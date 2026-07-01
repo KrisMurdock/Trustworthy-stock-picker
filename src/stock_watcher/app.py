@@ -1693,21 +1693,6 @@ class StockWatcherApp(App):
 
         self.notify(f"⚡ {quote.name or quote.code} 涨跌幅 {pct:+.2f}%", severity="warning", timeout=10)
 
-        # Feishu webhook notification (non-blocking)
-        if self._chat_cfg and self._chat_cfg.is_configured:
-            from stock_watcher.chat_sender import build_alert_card, send_feishu_card
-
-            card = build_alert_card(
-                alert.code,
-                quote.name or alert.code,
-                alert.describe(),
-                quote.price or 0,
-                quote.change_pct,
-            )
-            asyncio.create_task(send_feishu_card(self._chat_cfg, card))
-
-        # Log to alert history
-        self._log_alert_history(alert, quote)
 
     async def _on_alert_submit(self, raw: str) -> None:
         """Parse alert specification from user input."""
