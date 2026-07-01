@@ -15,11 +15,11 @@ from stock_watcher.models import Market
 
 TRADING_SCHEDULES = {
     "a_share": [
-        (dt.time(9, 30), dt.time(11, 30)),   # morning session
+        (dt.time(9, 15), dt.time(11, 30)),   # pre-auction + morning session
         (dt.time(13, 0), dt.time(15, 0)),     # afternoon session
     ],
     "hk": [
-        (dt.time(9, 30), dt.time(12, 0)),     # morning session
+        (dt.time(9, 15), dt.time(12, 0)),     # pre-auction + morning session
         (dt.time(13, 0), dt.time(16, 10)),    # afternoon + closing auction
     ],
     # US trading, Beijing time — spans midnight; handled specially
