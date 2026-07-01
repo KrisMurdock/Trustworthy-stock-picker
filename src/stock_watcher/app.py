@@ -892,6 +892,7 @@ class StockWatcherApp(App):
         self._poll_loop()
         self._daily_summary_loop()
         self._bot_loop()
+        return
 
     # ------------------------------------------------------------------
     # Bot server — background worker entry point
@@ -900,10 +901,13 @@ class StockWatcherApp(App):
     async def _bot_loop(self) -> None:
         """Background worker that polls Feishu for @mentions & replies via DeepSeek."""
         if not self._chat_cfg or not self._chat_cfg.can_receive:
+            self.notify("[bot] 未配置 app_id/app_secret，跳过")
             return
 
         from stock_watcher.bot_server import run_bot_server
         from stock_watcher.chat_sender import _get_hkd_cny_rate
+
+        self.notify("[bot] 轮询启动中...")
 
         self._bot_stop = asyncio.Event()
 
