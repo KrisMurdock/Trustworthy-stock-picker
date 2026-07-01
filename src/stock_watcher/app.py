@@ -1134,7 +1134,7 @@ class StockWatcherApp(App):
 
             # Determine push interval based on market status
             any_open = is_any_market_open(now)
-            interval = 180 if any_open else 3600  # 3 min vs 1 hour
+            interval = 60 if any_open else 3600  # 1 min vs 1 hour
 
             elapsed = time.monotonic() - last_push
             if elapsed < interval:
