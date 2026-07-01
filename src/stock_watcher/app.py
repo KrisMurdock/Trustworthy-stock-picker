@@ -1114,35 +1114,48 @@ class StockWatcherApp(App):
 
     @work(exclusive=False)
     async def _daily_summary_loop(self) -> None:
-        """Push summaries on a schedule: every 3 min during trading, every 1 hr closed."""
-        last_push: float = 0.0  # monotonic timestamp of last push
+        """Push summaries:
+        - During trading: compact price-only card every 60s.
+        - After close: full P&L card once per day.
+        """
+        last_price_push: float = 0.0
+        pnl_pushed_today: str = ""  # date string "YYYY-MM-DD"
 
         while not self._stopped:
             await asyncio.sleep(30)
 
-            if not self._latest_quotes:
+            if not self._latest_quotes or not self._chat_cfg or not self._chat_cfg.is_configured:
                 continue
 
             now = _now_cst()
             if not _is_weekday(now):
                 continue
 
-            # Determine push interval based on market status
+            today_str = now.strftime("%Y-%m-%d")
             any_open = is_any_market_open(now)
-            interval = 60 if any_open else 3600  # 1 min vs 1 hour
 
-            elapsed = time.monotonic() - last_push
-            if elapsed < interval:
-                continue
+            # ── Price card: every 60s during trading ──
+            if any_open:
+                elapsed = time.monotonic() - last_price_push
+                if elapsed >= 60:
+                    from stock_watcher.chat_sender import build_price_card, send_feishu_card
 
-            # Push summary via Feishu
-            if self._chat_cfg and self._chat_cfg.is_configured:
-                from stock_watcher.chat_sender import build_summary_card, send_feishu_card
+                    card = await build_price_card(self._latest_quotes, self._positions)
+                    ok = await send_feishu_card(self._chat_cfg, card)
+                    if ok:
+                        last_price_push = time.monotonic()
 
-                card = await build_summary_card(self._latest_quotes, self._positions)
-                ok = await send_feishu_card(self._chat_cfg, card)
-                if ok:
-                    last_push = time.monotonic()
+            # ── P&L card: once after all markets close ──
+            elif pnl_pushed_today != today_str:
+                # Check if markets have actually closed (past 16:10 CST for A+H, past 09:00 for US)
+                if now.hour >= 16:
+                    from stock_watcher.chat_sender import build_summary_card, send_feishu_card
+
+                    card = await build_summary_card(self._latest_quotes, self._positions)
+                    ok = await send_feishu_card(self._chat_cfg, card)
+                    if ok:
+                        pnl_pushed_today = today_str
+                        self.notify("[推送] 盘后盈亏汇总已发送")
 
     def _update_status(self) -> None:
         sb = self._status_bar

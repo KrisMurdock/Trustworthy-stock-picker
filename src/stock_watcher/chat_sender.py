@@ -104,6 +104,74 @@ def _wl_header_row() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Price-only card (intraday, every 1 min during trading)
+# ---------------------------------------------------------------------------
+
+async def build_price_card(
+    quotes: dict[str, StockQuote],
+    positions: dict[str, "Position"] | None = None,
+) -> dict:
+    """Compact card: code / name / price / change%, no P&L."""
+    positions = positions or {}
+    now_str = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).strftime("%H:%M:%S")
+    rate = await _get_hkd_cny_rate() if any(_is_hk(c) for c in quotes) else 1.0
+
+    pos_codes = [c for c in sorted(quotes) if (p := positions.get(c)) and p.is_valid]
+    wl_codes = [c for c in sorted(quotes) if c not in pos_codes]
+
+    elements: list[dict] = []
+    up = sum(1 for c in quotes.values() if c.change_pct is not None and c.change_pct >= 0)
+    down = sum(1 for c in quotes.values() if c.change_pct is not None and c.change_pct < 0)
+
+    # Header
+    elements.append(_row([
+        _cell("weighted", f"🔼 {up} 涨  🔽 {down} 跌  🕐 {now_str}"),
+    ]))
+    elements.append({"tag": "hr"})
+
+    if pos_codes:
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "📦 **持仓**"}})
+        elements.append(_wl_header_row())
+        elements.append({"tag": "hr"})
+        for code in pos_codes:
+            q = quotes[code]
+            r = rate if _is_hk(code) else 1.0
+            p_s = f"{q.price * r:.2f}" if q.price else "—"
+            n_s = (q.name or "—")[:4]
+            elements.append(_row([
+                _cell("80px", code),
+                _cell("64px", n_s),
+                _cell("64px", p_s),
+                _cell("72px", _color_pct(q.change_pct)),
+            ]))
+
+    if wl_codes:
+        elements.append({"tag": "hr"})
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "👀 **自选**"}})
+        elements.append(_wl_header_row())
+        elements.append({"tag": "hr"})
+        for code in wl_codes:
+            q = quotes[code]
+            r = rate if _is_hk(code) else 1.0
+            p_s = f"{q.price * r:.2f}" if q.price else "—"
+            n_s = (q.name or "—")[:4]
+            elements.append(_row([
+                _cell("80px", code),
+                _cell("64px", n_s),
+                _cell("64px", p_s),
+                _cell("72px", _color_pct(q.change_pct)),
+            ]))
+
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "header": _build_card_header("📊 实时行情", "blue"),
+            "elements": elements,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # Alert card
 # ---------------------------------------------------------------------------
 
