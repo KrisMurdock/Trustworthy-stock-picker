@@ -150,6 +150,7 @@ class AppConfig:
     proxies: list[str] = field(default_factory=list)
     positions: dict[str, Position] = field(default_factory=dict)
     alert_sound_command: str = ""
+    volatility_threshold: float = 3.0
     chat: Optional[ChatConfig] = None
     deepseek: Optional[DeepSeekConfig] = None
 
@@ -167,6 +168,7 @@ class AppConfig:
             alert_sound_command=str(d.get("alert_sound_command", "")),
             chat=ChatConfig.from_dict(d.get("chat", {})) if d.get("chat") else None,
             deepseek=DeepSeekConfig.from_dict(d.get("deepseek", {})) if d.get("deepseek") else None,
+            volatility_threshold=float(d.get("volatility_threshold", 3.0)),
         )
 
 

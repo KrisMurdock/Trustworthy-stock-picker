@@ -1096,6 +1096,8 @@ class StockWatcherApp(App):
             self._table.update_quote(quote)
             # Check alerts
             self._check_alerts(quote)
+            # Check volatility push (≥3% intraday move)
+            self._check_volatility_push(quote)
         else:
             cells = ["[#555555]→[/]", code, "—", "     —", "       —", "       —", "     —", "     —"]
             try:
@@ -1659,6 +1661,37 @@ class StockWatcherApp(App):
                 )
             except Exception:
                 pass
+
+    def _check_volatility_push(self, quote: StockQuote) -> None:
+        """Push a single-stock alert via Feishu when intraday change ≥ ±3%."""
+        threshold = self._cfg.volatility_threshold
+        pct = quote.change_pct
+        if pct is None or abs(pct) < threshold:
+            return
+
+        # Dedup: push only once per stock per 10 minutes
+        now = time.monotonic()
+        if not hasattr(self, "_vol_push_history"):
+            self._vol_push_history: dict[str, float] = {}
+        last = self._vol_push_history.get(quote.code, 0)
+        if now - last < 600:  # 10 min
+            return
+        self._vol_push_history[quote.code] = now
+
+        if self._chat_cfg and self._chat_cfg.is_configured:
+            from stock_watcher.chat_sender import build_alert_card, send_feishu_card
+
+            direction = "📈" if pct >= 0 else "📉"
+            card = build_alert_card(
+                quote.code,
+                quote.name or quote.code,
+                f"{direction} 涨跌幅 {pct:+.2f}%",
+                quote.price or 0,
+                pct,
+            )
+            asyncio.create_task(send_feishu_card(self._chat_cfg, card))
+
+        self.notify(f"⚡ {quote.name or quote.code} 涨跌幅 {pct:+.2f}%", severity="warning", timeout=10)
 
         # Feishu webhook notification (non-blocking)
         if self._chat_cfg and self._chat_cfg.is_configured:
