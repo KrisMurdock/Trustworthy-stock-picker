@@ -149,7 +149,6 @@ class StockTable(DataTable):
 
     # Column keys (must match add_columns labels + on_mount)
     COL_DIR = " "
-    COL_CODE = "代码"
     COL_NAME = "名称"
     COL_PRICE = "现价"
     COL_PCT = "涨跌幅"
@@ -170,7 +169,6 @@ class StockTable(DataTable):
 
     _COLUMN_LABELS: dict[str, str] = {
         " ": " ",
-        "代码": "代码",
         "名称": "名称",
         "现价": "现价",
         "涨跌幅": "涨跌幅",
@@ -193,7 +191,6 @@ class StockTable(DataTable):
     # Disguised labels when privacy mode is on
     _PRIVACY_LABELS: dict[str, str] = {
         " ": " ",
-        "代码": "ID",
         "名称": "项目",
         "现价": "T1",
         "涨跌幅": "T2",
@@ -253,7 +250,6 @@ class StockTable(DataTable):
     def on_mount(self) -> None:
         self.add_columns(
             self.COL_DIR,
-            self.COL_CODE,
             self.COL_NAME,
             self.COL_PRICE,
             self.COL_PCT,
@@ -309,7 +305,6 @@ class StockTable(DataTable):
         else:
             cells = [
                 self._fmt_dir(quote.direction, quote.code),
-                f"[bold]{quote.code}[/bold]",
                 quote.name or "—",
                 self._fmt_price(quote.price),
                 self._fmt_pct(quote.change_pct),
@@ -333,7 +328,6 @@ class StockTable(DataTable):
         price = quote.price or 0.0
         self._raw[row_key] = {
             self.COL_DIR: quote.change_pct or 0.0,
-            self.COL_CODE: quote.code,
             self.COL_NAME: quote.name or "",
             self.COL_PRICE: price,
             self.COL_PCT: quote.change_pct or 0.0,
