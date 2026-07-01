@@ -891,13 +891,13 @@ class StockWatcherApp(App):
 
         self._poll_loop()
         self._daily_summary_loop()
-        self._bot_server_loop_poll()
+        self._bot_loop()
 
     # ------------------------------------------------------------------
     # Bot server — background worker entry point
     # ------------------------------------------------------------------
 
-    async def _bot_server_loop_poll(self) -> None:
+    async def _bot_loop(self) -> None:
         """Background worker that polls Feishu for @mentions & replies via DeepSeek."""
         if not self._chat_cfg or not self._chat_cfg.can_receive:
             return
