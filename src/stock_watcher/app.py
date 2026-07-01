@@ -891,9 +891,13 @@ class StockWatcherApp(App):
 
         self._poll_loop()
         self._daily_summary_loop()
-        self._bot_server_loop()
+        self._bot_server_loop_poll()
 
-    async def _bot_server_loop(self) -> None:
+    # ------------------------------------------------------------------
+    # Bot server — background worker entry point
+    # ------------------------------------------------------------------
+
+    async def _bot_server_loop_poll(self) -> None:
         """Background worker that polls Feishu for @mentions & replies via DeepSeek."""
         if not self._chat_cfg or not self._chat_cfg.can_receive:
             return
@@ -1117,11 +1121,14 @@ class StockWatcherApp(App):
             sb.down_count = 0
             sb.flat_count = 0
             # Also hide portfolio data
-            pb = self.query_one(PortfolioBar)
-            pb.total_mval = 0.0
-            pb.total_pnl = 0.0
-            pb.total_pnlp = 0.0
-            pb.pos_count = 0
+            try:
+                pb = self.query_one(PortfolioBar)
+                pb.total_mval = 0.0
+                pb.total_pnl = 0.0
+                pb.total_pnlp = 0.0
+                pb.pos_count = 0
+            except Exception:
+                pass
             return
 
         # Stats
@@ -1132,26 +1139,30 @@ class StockWatcherApp(App):
         sb.flat_count = sb.total - sb.up_count - sb.down_count
 
         # Portfolio stats
-        pb = self.query_one(PortfolioBar)
-        total_mval = 0.0
-        total_pnl = 0.0
-        total_cost = 0.0
-        pos_count = 0
-        for code, pos in self._positions.items():
-            if not pos.is_valid:
-                continue
-            q = self._latest_quotes.get(code)
-            price = q.price if (q and q.price) else None
-            if price is None:
-                continue
-            pos_count += 1
-            total_mval += pos.market_value(price)
-            total_pnl += pos.pnl(price)
-            total_cost += pos.cost * pos.quantity
-        pb.total_mval = total_mval
-        pb.total_pnl = total_pnl
-        pb.total_pnlp = (total_pnl / total_cost * 100) if total_cost > 0 else 0.0
-        pb.pos_count = pos_count
+        try:
+            pb = self.query_one(PortfolioBar)
+        except Exception:
+            pb = None
+        if pb is not None:
+            total_mval = 0.0
+            total_pnl = 0.0
+            total_cost = 0.0
+            pos_count = 0
+            for code, pos in self._positions.items():
+                if not pos.is_valid:
+                    continue
+                q = self._latest_quotes.get(code)
+                price = q.price if (q and q.price) else None
+                if price is None:
+                    continue
+                pos_count += 1
+                total_mval += pos.market_value(price)
+                total_pnl += pos.pnl(price)
+                total_cost += pos.cost * pos.quantity
+            pb.total_mval = total_mval
+            pb.total_pnl = total_pnl
+            pb.total_pnlp = (total_pnl / total_cost * 100) if total_cost > 0 else 0.0
+            pb.pos_count = pos_count
 
     # ------------------------------------------------------------------
     # Config hot-reload
