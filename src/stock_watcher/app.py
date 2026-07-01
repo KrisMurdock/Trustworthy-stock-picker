@@ -283,7 +283,6 @@ class StockTable(DataTable):
             iname = f"Item {idx:03d}"
             cells = [
                 f" [bold {FLAT_COLOR}]→[/]",
-                f"[bold]{pid}[/bold]",
                 iname,
                 "    —",
                 "      —",
