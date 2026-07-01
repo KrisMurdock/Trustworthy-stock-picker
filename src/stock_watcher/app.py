@@ -891,47 +891,84 @@ class StockWatcherApp(App):
 
         self._poll_loop()
         self._daily_summary_loop()
-        self._bot_loop()
-        return
+
+        # Start bot polling via Textual's managed timer (auto-cancelled on exit)
+        self.set_interval(3.0, self._bot_poll_once)
+
+    def on_unmount(self) -> None:
+        """Cleanup when the app exits."""
+        self._stopped = True
+        if hasattr(self, "_bot_stop"):
+            self._bot_stop.set()
+        if hasattr(self, "_bot_task"):
+            self._bot_task.cancel()
 
     # ------------------------------------------------------------------
     # Bot server — background worker entry point
     # ------------------------------------------------------------------
 
-    async def _bot_loop(self) -> None:
-        """Background worker that polls Feishu for @mentions & replies via DeepSeek."""
+    async def _bot_poll_once(self) -> None:
+        """Called every 3s by Textual timer — polls Feishu for @mentions."""
         if not self._chat_cfg or not self._chat_cfg.can_receive:
-            self.notify("[bot] 未配置 app_id/app_secret，跳过")
             return
 
-        from stock_watcher.bot_server import run_bot_server
-        from stock_watcher.chat_sender import _get_hkd_cny_rate
+        try:
+            from stock_watcher.bot_server import _get_tenant_token, _discover_chats, _list_messages, _is_at_bot, _extract_text
+            from stock_watcher.chat_sender import _get_hkd_cny_rate
+            from stock_watcher.deepseek_chat import ask_deepseek, _build_context_from_store
 
-        self.notify("[bot] 轮询启动中...")
+            # Keep track of already-seen message IDs
+            if not hasattr(self, "_bot_seen_ids"):
+                self._bot_seen_ids: set[str] = set()
+                self._bot_chat_ids: set[str] | None = None
+                self.notify("[bot] 轮询已启动")
 
-        self._bot_stop = asyncio.Event()
+            token = await _get_tenant_token(
+                self._chat_cfg.feishu_app_id, self._chat_cfg.feishu_app_secret
+            )
+            if not token:
+                return
 
-        def _get_quotes():
-            return dict(self._latest_quotes)
+            # Lazy discover chats
+            if self._bot_chat_ids is None:
+                self._bot_chat_ids = await _discover_chats(token)
+                if self._bot_chat_ids:
+                    self.notify(f"[bot] 发现 {len(self._bot_chat_ids)} 个群聊")
 
-        def _get_positions():
-            return dict(self._positions)
+            for chat_id in list(self._bot_chat_ids or []):
+                msgs = await _list_messages(token, chat_id, limit=3)
+                for msg in msgs:
+                    msg_id = msg.get("message_id", "")
+                    if msg_id in self._bot_seen_ids:
+                        continue
+                    self._bot_seen_ids.add(msg_id)
 
-        async def _get_rate():
-            return await _get_hkd_cny_rate()
+                    if not _is_at_bot(msg):
+                        continue
 
-        def _notify(msg: str):
-            self.call_from_thread(self.notify, msg)
+                    text = _extract_text(msg)
+                    self.notify(f"[bot] 收到：{text[:60]}")
 
-        await run_bot_server(
-            self._chat_cfg,
-            self._deepseek_cfg,
-            _get_quotes,
-            _get_positions,
-            _get_rate,
-            _notify,
-            self._bot_stop,
-        )
+                    # Build context & ask AI
+                    rate = await _get_hkd_cny_rate()
+                    ctx = _build_context_from_store(
+                        self._latest_quotes, self._positions, rate
+                    )
+                    answer = await ask_deepseek(self._deepseek_cfg, ctx, text)
+
+                    # Reply
+                    from stock_watcher.bot_server import _reply_message
+                    ok = await _reply_message(token, msg_id, answer)
+                    if ok:
+                        self.notify(f"[bot] ✓ 已回复 ({len(answer)}字)")
+
+            # Prune old seen IDs
+            if len(self._bot_seen_ids) > 500:
+                self._bot_seen_ids = set(list(self._bot_seen_ids)[-200:])
+
+        except Exception as exc:
+            self.notify(f"[bot] 错误: {exc}")
+
 
     # ------------------------------------------------------------------
     # Column sort
