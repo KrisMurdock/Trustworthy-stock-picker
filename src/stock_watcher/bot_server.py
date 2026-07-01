@@ -181,11 +181,12 @@ async def _list_messages(token: str, chat_id: str, limit: int = 5) -> list[dict]
 def _is_at_bot(msg: dict) -> bool:
     """Check if the message @mentions the bot."""
     for mention in msg.get("mentions", []):
-        if mention.get("name", "").find("机器人") >= 0:
+        name = mention.get("name", "").lower()
+        if any(kw in name for kw in ("机器人", "bot", "stock", "watcher")):
             return True
-    # Fallback: check text content for @
+    # Fallback: check text content for @mention
     text = _extract_text(msg)
-    return "@" in text or "机器人" in text
+    return any(kw in text.lower() for kw in ("@", "机器人", "bot"))
 
 
 def _extract_text(msg: dict) -> str:
