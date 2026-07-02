@@ -886,6 +886,11 @@ class StockWatcherApp(App):
         self._stopped = False
         self._privacy_mode: bool = False
 
+        # Daily high/low tracker — reset each calendar day
+        self._daily_high: dict[str, float] = {}
+        self._daily_low: dict[str, float] = {}
+        self._daily_date: str = ""
+
         self._poll_loop()
         self._daily_summary_loop()
 
@@ -1102,6 +1107,8 @@ class StockWatcherApp(App):
             self._check_alerts(quote)
             # Check volatility push (≥3% intraday move)
             self._check_volatility_push(quote)
+            # Track daily high/low
+            self._update_daily_hl(code, quote)
         else:
             cells = ["[#555555]→[/]", code, "—", "     —", "       —", "       —", "     —", "     —"]
             try:
@@ -1144,7 +1151,7 @@ class StockWatcherApp(App):
                 if elapsed >= 60:
                     from stock_watcher.chat_sender import build_price_card, send_feishu_card
 
-                    card = await build_price_card(self._latest_quotes, self._positions)
+                    card = await build_price_card(self._latest_quotes, self._positions, self._daily_high, self._daily_low)
                     ok = await send_feishu_card(self._chat_cfg, card)
                     if ok:
                         last_price_push = time.monotonic()
@@ -1155,7 +1162,7 @@ class StockWatcherApp(App):
                 if now.hour >= 16:
                     from stock_watcher.chat_sender import build_summary_card, send_feishu_card
 
-                    card = await build_summary_card(self._latest_quotes, self._positions)
+                    card = await build_summary_card(self._latest_quotes, self._positions, self._daily_high, self._daily_low)
                     ok = await send_feishu_card(self._chat_cfg, card)
                     if ok:
                         pnl_pushed_today = today_str
@@ -1709,6 +1716,29 @@ class StockWatcherApp(App):
             asyncio.create_task(send_feishu_card(self._chat_cfg, card))
 
         self.notify(f"⚡ {quote.name or quote.code} 涨跌幅 {pct:+.2f}%", severity="warning", timeout=10)
+
+    def _update_daily_hl(self, code: str, quote: StockQuote) -> None:
+        """Track intraday high/low, resetting on a new calendar day."""
+        today = _now_cst().strftime("%Y%m%d")
+        if self._daily_date != today:
+            self._daily_date = today
+            self._daily_high.clear()
+            self._daily_low.clear()
+
+        price = quote.price
+        if price is None or price <= 0:
+            return
+
+        phigh = quote.high or price
+        plow = quote.low or price
+
+        prev_high = self._daily_high.get(code)
+        prev_low = self._daily_low.get(code)
+
+        if prev_high is None or phigh > prev_high:
+            self._daily_high[code] = phigh
+        if prev_low is None or plow < prev_low:
+            self._daily_low[code] = plow
 
 
     async def _on_alert_submit(self, raw: str) -> None:

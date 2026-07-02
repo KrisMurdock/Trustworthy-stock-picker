@@ -88,11 +88,11 @@ def _row(cells: list[dict]) -> dict:
 
 def _pos_header_row() -> dict:
     return _row([
-        _cell("80px", "**代码**"), _cell("64px", "**名称**"),
-        _cell("64px", "**现价**"), _cell("72px", "**涨跌幅**"),
+        _cell("80px", "**代码**"), _cell("56px", "**名称**"),
+        _cell("56px", "**现价**"), _cell("64px", "**涨跌幅**"),
         _cell("48px", "**持仓**"), _cell("48px", "**可用**"),
-        _cell("64px", "**成本**"), _cell("72px", "**市值**"),
-        _cell("72px", "**盈亏**"),
+        _cell("56px", "**成本**"), _cell("64px", "**市值**"),
+        _cell("64px", "**盈亏**"), _cell("48px", "**日内高**"), _cell("48px", "**日内低**"),
     ])
 
 
@@ -110,9 +110,13 @@ def _wl_header_row() -> dict:
 async def build_price_card(
     quotes: dict[str, StockQuote],
     positions: dict[str, "Position"] | None = None,
+    daily_high: dict[str, float] | None = None,
+    daily_low: dict[str, float] | None = None,
 ) -> dict:
-    """Compact card: code / name / price / change%, no P&L."""
+    """Compact card: code / name / price / change%, with daily H/L."""
     positions = positions or {}
+    daily_high = daily_high or {}
+    daily_low = daily_low or {}
     now_str = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).strftime("%H:%M:%S")
     rate = await _get_hkd_cny_rate() if any(_is_hk(c) for c in quotes) else 1.0
 
@@ -131,35 +135,51 @@ async def build_price_card(
 
     if pos_codes:
         elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "📦 **持仓**"}})
-        elements.append(_wl_header_row())
+        elements.append(_row([
+            _cell("80px", "**代码**"), _cell("56px", "**名称**"),
+            _cell("56px", "**现价**"), _cell("64px", "**涨跌幅**"),
+            _cell("56px", "**日内低**"), _cell("56px", "**日内高**"),
+        ]))
         elements.append({"tag": "hr"})
         for code in pos_codes:
             q = quotes[code]
             r = rate if _is_hk(code) else 1.0
             p_s = f"{q.price * r:.2f}" if q.price else "—"
             n_s = (q.name or "—")[:4]
+            lo_s = f"{daily_low[code] * r:.2f}" if code in daily_low else "—"
+            hi_s = f"{daily_high[code] * r:.2f}" if code in daily_high else "—"
             elements.append(_row([
                 _cell("80px", code),
-                _cell("64px", n_s),
-                _cell("64px", p_s),
-                _cell("72px", _color_pct(q.change_pct)),
+                _cell("56px", n_s),
+                _cell("56px", p_s),
+                _cell("64px", _color_pct(q.change_pct)),
+                _cell("56px", lo_s),
+                _cell("56px", hi_s),
             ]))
 
     if wl_codes:
         elements.append({"tag": "hr"})
         elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "👀 **自选**"}})
-        elements.append(_wl_header_row())
+        elements.append(_row([
+            _cell("80px", "**代码**"), _cell("56px", "**名称**"),
+            _cell("56px", "**现价**"), _cell("64px", "**涨跌幅**"),
+            _cell("56px", "**日内低**"), _cell("56px", "**日内高**"),
+        ]))
         elements.append({"tag": "hr"})
         for code in wl_codes:
             q = quotes[code]
             r = rate if _is_hk(code) else 1.0
             p_s = f"{q.price * r:.2f}" if q.price else "—"
             n_s = (q.name or "—")[:4]
+            lo_s = f"{daily_low[code] * r:.2f}" if code in daily_low else "—"
+            hi_s = f"{daily_high[code] * r:.2f}" if code in daily_high else "—"
             elements.append(_row([
                 _cell("80px", code),
-                _cell("64px", n_s),
-                _cell("64px", p_s),
-                _cell("72px", _color_pct(q.change_pct)),
+                _cell("56px", n_s),
+                _cell("56px", p_s),
+                _cell("64px", _color_pct(q.change_pct)),
+                _cell("56px", lo_s),
+                _cell("56px", hi_s),
             ]))
 
     return {
@@ -211,8 +231,12 @@ def build_alert_card(
 async def build_summary_card(
     quotes: dict[str, StockQuote],
     positions: dict[str, "Position"] | None = None,
+    daily_high: dict[str, float] | None = None,
+    daily_low: dict[str, float] | None = None,
 ) -> dict:
     positions = positions or {}
+    daily_high = daily_high or {}
+    daily_low = daily_low or {}
     now_str = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
     rate = await _get_hkd_cny_rate() if any(_is_hk(c) for c in quotes) else 1.0
 
@@ -253,16 +277,21 @@ async def build_summary_card(
                 mv_s = "—"
                 pnl_s = "—"
 
+            lo_s = f"{daily_low[code] * r:.2f}" if code in daily_low else "—"
+            hi_s = f"{daily_high[code] * r:.2f}" if code in daily_high else "—"
+
             elements.append(_row([
                 _cell("80px", code),
-                _cell("64px", name_s),
-                _cell("64px", price_s),
-                _cell("72px", pct_s),
+                _cell("56px", name_s),
+                _cell("56px", price_s),
+                _cell("64px", pct_s),
                 _cell("48px", qty_s),
                 _cell("48px", av_s),
-                _cell("64px", cst_s),
-                _cell("72px", mv_s),
-                _cell("72px", pnl_s),
+                _cell("56px", cst_s),
+                _cell("64px", mv_s),
+                _cell("64px", pnl_s),
+                _cell("48px", hi_s),
+                _cell("48px", lo_s),
             ]))
 
         total_pnl = sum(
