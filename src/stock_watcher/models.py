@@ -103,7 +103,7 @@ class StockQuote:
     @property
     def is_valid(self) -> bool:
         """A quote is valid only when price is available."""
-        return self.price is not None
+        return self.price is not None and self.price > 0
 
     @property
     def direction(self) -> str:

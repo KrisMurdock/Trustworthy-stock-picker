@@ -482,13 +482,13 @@ def _parse_float(s: str) -> Optional[float]:
 
 def _calc_pct(price: Optional[float], prev_close: Optional[float]) -> Optional[float]:
     """Compute change percentage from price and previous close."""
-    if price is None or prev_close is None or prev_close == 0:
+    if price is None or price == 0 or prev_close is None or prev_close == 0:
         return None
     return round((price - prev_close) / prev_close * 100, 2)
 
 
 def _calc_amount(price: Optional[float], prev_close: Optional[float]) -> Optional[float]:
     """Compute change amount from price and previous close."""
-    if price is None or prev_close is None:
+    if price is None or price == 0 or prev_close is None or prev_close == 0:
         return None
     return round(price - prev_close, 2)
