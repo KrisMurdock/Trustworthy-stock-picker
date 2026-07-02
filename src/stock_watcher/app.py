@@ -69,6 +69,10 @@ class StatusBar(Static):
     down_count: reactive[int] = reactive(0)
     flat_count: reactive[int] = reactive(0)
 
+    def on_mount(self) -> None:
+        """Refresh clock every second."""
+        self.set_interval(1.0, self.refresh)
+
     def watch_status(self, _: str) -> None:
         self.refresh()
 
