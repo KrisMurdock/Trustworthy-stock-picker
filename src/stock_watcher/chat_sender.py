@@ -143,11 +143,10 @@ async def build_price_card(
         elements.append({"tag": "hr"})
         for code in pos_codes:
             q = quotes[code]
-            r = rate if _is_hk(code) else 1.0
-            p_s = f"{q.price * r:.2f}" if q.price else "—"
+            p_s = f"{q.price:.2f}" if q.price else "—"
             n_s = (q.name or "—")[:4]
-            lo_s = f"{daily_low[code] * r:.2f}" if code in daily_low else "—"
-            hi_s = f"{daily_high[code] * r:.2f}" if code in daily_high else "—"
+            lo_s = f"{daily_low[code]:.2f}" if code in daily_low else "—"
+            hi_s = f"{daily_high[code]:.2f}" if code in daily_high else "—"
             elements.append(_row([
                 _cell("80px", code),
                 _cell("56px", n_s),
@@ -169,10 +168,10 @@ async def build_price_card(
         for code in wl_codes:
             q = quotes[code]
             r = rate if _is_hk(code) else 1.0
-            p_s = f"{q.price * r:.2f}" if q.price else "—"
+            p_s = f"{q.price:.2f}" if q.price else "—"
             n_s = (q.name or "—")[:4]
-            lo_s = f"{daily_low[code] * r:.2f}" if code in daily_low else "—"
-            hi_s = f"{daily_high[code] * r:.2f}" if code in daily_high else "—"
+            lo_s = f"{daily_low[code]:.2f}" if code in daily_low else "—"
+            hi_s = f"{daily_high[code]:.2f}" if code in daily_high else "—"
             elements.append(_row([
                 _cell("80px", code),
                 _cell("56px", n_s),
@@ -261,11 +260,11 @@ async def build_summary_card(
 
             pct_s = _color_pct(q.change_pct)
             raw_price = q.price or 0
-            price_s = f"{raw_price * r:.2f}" if q.price else "—"
+            price_s = f"{raw_price:.2f}" if q.price else "—"
             name_s = (q.name or "—")[:4]
             qty_s = str(p.quantity)
             av_s = str(p.available)
-            cst_s = f"{p.cost * r:.3f}"
+            cst_s = f"{p.cost:.3f}"
 
             if q.price:
                 mval = p.market_value(raw_price) * r
@@ -277,8 +276,8 @@ async def build_summary_card(
                 mv_s = "—"
                 pnl_s = "—"
 
-            lo_s = f"{daily_low[code] * r:.2f}" if code in daily_low else "—"
-            hi_s = f"{daily_high[code] * r:.2f}" if code in daily_high else "—"
+            lo_s = f"{daily_low[code]:.2f}" if code in daily_low else "—"
+            hi_s = f"{daily_high[code]:.2f}" if code in daily_high else "—"
 
             elements.append(_row([
                 _cell("80px", code),
@@ -300,7 +299,10 @@ async def build_summary_card(
         )
         elements.append({"tag": "hr"})
         elements.append({"tag": "div", "text": {"tag": "lark_md",
-            "content": f"💰 持仓总市值：**{total_mval:,.0f}** 元　　📈 持仓总盈亏：{_color_pnl(total_pnl)}"}})
+            "content": f"💰 持仓总市值：**{total_mval:,.0f}** RMB　　📈 持仓总盈亏：{_color_pnl(total_pnl)}"}})
+        if any(_is_hk(c) for c in pos_codes):
+            elements.append({"tag": "div", "text": {"tag": "lark_md",
+                "content": "🏷️ 现价/成本/日内高低：HKD　｜　盈亏/市值：RMB"}})
 
     # ── Section 2: 自选盯盘 ──
     if wl_codes:
