@@ -1109,6 +1109,8 @@ class StockWatcherApp(App):
             self._check_volatility_push(quote)
             # Track daily high/low
             self._update_daily_hl(code, quote)
+            # Push if price is near daily high or low
+            self._check_hl_proximity_push(code, quote)
         else:
             cells = ["[#555555]→[/]", code, "—", "     —", "       —", "       —", "     —", "     —"]
             try:
@@ -1739,6 +1741,46 @@ class StockWatcherApp(App):
             self._daily_high[code] = phigh
         if prev_low is None or plow < prev_low:
             self._daily_low[code] = plow
+
+    def _check_hl_proximity_push(self, code: str, quote: StockQuote) -> None:
+        """Push Feishu when price is within 0.8% of daily high or low."""
+        if not self._chat_cfg or not self._chat_cfg.is_configured:
+            return
+        price = quote.price
+        if price is None or price <= 0:
+            return
+        daily_hi = self._daily_high.get(code)
+        daily_lo = self._daily_low.get(code)
+        if daily_hi is None or daily_lo is None:
+            return
+
+        # Dedup: once per stock per 10 minutes
+        now = time.monotonic()
+        if not hasattr(self, "_hl_push_history"):
+            self._hl_push_history: dict[str, float] = {}
+        last = self._hl_push_history.get(code, 0)
+        if now - last < 600:
+            return
+
+        threshold = 0.008  # 0.8% proximity
+        near_high = daily_hi > 0 and abs(price - daily_hi) / daily_hi <= threshold
+        near_low = daily_lo > 0 and abs(price - daily_lo) / daily_lo <= threshold
+
+        if not near_high and not near_low:
+            return
+
+        self._hl_push_history[code] = now
+
+        from stock_watcher.chat_sender import build_alert_card, send_feishu_card
+
+        if near_high:
+            tag = f"📈 接近日内高点 {daily_hi:.2f}（当前 {price:.2f}）"
+        else:
+            tag = f"📉 接近日内低点 {daily_lo:.2f}（当前 {price:.2f}）"
+
+        card = build_alert_card(code, quote.name or code, tag, price, quote.change_pct)
+        asyncio.create_task(send_feishu_card(self._chat_cfg, card))
+        self.notify(f"🔔 {quote.name or code} {tag}", severity="warning", timeout=8)
 
 
     async def _on_alert_submit(self, raw: str) -> None:
