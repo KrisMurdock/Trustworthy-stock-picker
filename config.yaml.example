@@ -160,3 +160,74 @@ cninfo:
   seen_ids_path: "cninfo_seen.jsonl"
 
 # ---------------------------------------------------------------------------
+# 新闻聚合配置
+# 从多个免费新闻源拉取，AI 筛选重大新闻后通过飞书推送。
+# 新闻推送使用独立 webhook（chat.news_webhook），不刷屏主频道。
+# ---------------------------------------------------------------------------
+news:
+  sources:
+    eastmoney_stock: true
+    eastmoney_flash: true
+    sina_flash: true
+    cls_telegraph: true
+    yahoo_news: true
+
+  poll_interval: 300
+
+  sector_keywords:
+    机器人: ["机器人执行器", "人形机器人", "减速器"]
+    新能源: ["新能源车", "固态电池", "光伏设备", "风电设备"]
+    AI: ["人工智能", "ChatGPT", "算力概念", "AIGC概念"]
+    半导体: ["半导体", "芯片", "光刻机(胶)", "存储芯片"]
+    医药: ["创新药", "CRO", "中药", "医疗器械"]
+    消费: ["新零售", "跨境电商", "预制菜"]
+    军工: ["航天航空", "船舶制造", "北斗导航"]
+    金融: ["券商", "银行", "保险"]
+
+  trend_scoring:
+    ma_weight: 30
+    macd_weight: 25
+    rsi_weight: 20
+    consecutive_up_weight: 15
+    volume_ratio_weight: 10
+    lookback_days: 60
+    min_score_threshold: 50
+    top_n_candidates: 10
+    top_n_final: 5
+    max_stocks_per_card: 8
+
+  critical_keywords:
+  - 停牌
+  - 退市
+  - 重大资产重组
+  - 并购
+  - 业绩暴雷
+  - 立案调查
+  - 强制退市
+  - 暂停上市
+
+  ignore_keywords:
+  - 龙虎榜
+  - 大宗交易
+  - 融资融券
+
+  scheduled_push:
+    morning_briefing:
+      enabled: true
+      time: "09:00"
+    market_open:
+      enabled: true
+      time: "09:25"
+    a_share_close:
+      enabled: true
+      time: "15:05"
+    hk_close:
+      enabled: true
+      time: "16:15"
+    evening_briefing:
+      enabled: true
+      time: "20:00"
+
+  seen_ids_path: "news_seen.jsonl"
+
+# ---------------------------------------------------------------------------

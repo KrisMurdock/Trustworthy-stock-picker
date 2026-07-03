@@ -1320,41 +1320,36 @@ class StockWatcherApp(App):
             return
 
         from stock_watcher.news import (
-            SinaRollNewsFetcher,
-            YahooSearchNewsFetcher,
-            SinaStockNewsFetcher,
+            EastMoneyStockNewsFetcher,
+            EastMoneyFlashNewsFetcher,
+            SinaFlashNewsFetcher,
+            CLSTelegraphFetcher,
+            YahooNewsFetcher,
             NewsAggregator,
             NewsClassifier,
             NewsLevel,
-            build_news_card,
+            build_enriched_card,
         )
+        from stock_watcher.news.sector_matcher import SectorMatcher
+        from stock_watcher.news.trend_scorer import TrendScorer
+        from stock_watcher.news.trend_ranker import TrendRanker
         from stock_watcher.chat_sender import send_news_card
 
         cfg = self._news_cfg
 
-        # Build company name → code mapping for Sina roll keyword matching
-        name_map: dict[str, str] = {}
-        for code in self._queue.all_codes:
-            q = self._latest_quotes.get(code)
-            if q and q.name:
-                # Use short name (first 2-4 chars) for matching
-                short = q.name[:4]
-                if len(short) >= 2:
-                    name_map[short] = code
-                # Also add full name
-                name_map[q.name] = code
-        SinaRollNewsFetcher.set_name_mapping(name_map)
-
         # Build fetchers
         fetchers = []
         sources = cfg.sources
-        if sources.get("sina_roll", True):
-            fetchers.append(SinaRollNewsFetcher(enabled=True, fetch_per_lid=15))
-        if sources.get("sina_stock", True):
-            fetchers.append(SinaStockNewsFetcher(enabled=True, max_per_stock=10))
+        if sources.get("eastmoney_stock", True):
+            fetchers.append(EastMoneyStockNewsFetcher(enabled=True))
+        if sources.get("eastmoney_flash", True):
+            fetchers.append(EastMoneyFlashNewsFetcher(enabled=True))
+        if sources.get("sina_flash", True):
+            fetchers.append(SinaFlashNewsFetcher(enabled=True))
+        if sources.get("cls_telegraph", True):
+            fetchers.append(CLSTelegraphFetcher(enabled=True))
         if sources.get("yahoo_news", True):
-            yf = YahooSearchNewsFetcher(enabled=True, news_per_search=5)
-            fetchers.append(yf)
+            fetchers.append(YahooNewsFetcher(enabled=True))
 
         if not fetchers:
             self.notify("[news] 无启用的新闻源")
@@ -1370,6 +1365,26 @@ class StockWatcherApp(App):
         )
 
         self.notify(f"[news] 新闻轮询已启动 ({len(fetchers)} 源，间隔 {cfg.poll_interval}s)")
+
+        # Init sector enrichment components
+        sector_matcher = SectorMatcher(
+            sector_keywords=cfg.sector_keywords.keywords,
+            sector_list=None,  # populated on first use from live akshare data
+        )
+        trend_scorer = TrendScorer(
+            ma_weight=cfg.trend_scoring.ma_weight,
+            macd_weight=cfg.trend_scoring.macd_weight,
+            rsi_weight=cfg.trend_scoring.rsi_weight,
+            consecutive_up_weight=cfg.trend_scoring.consecutive_up_weight,
+            volume_ratio_weight=cfg.trend_scoring.volume_ratio_weight,
+        )
+        trend_ranker = TrendRanker(
+            deepseek_cfg=self._deepseek_cfg,
+            min_score=cfg.trend_scoring.min_score_threshold,
+            top_n_candidates=cfg.trend_scoring.top_n_candidates,
+            top_n_final=cfg.trend_scoring.top_n_final,
+            max_stocks=cfg.trend_scoring.max_stocks_per_card,
+        )
 
         while not self._stopped:
             try:
@@ -1422,8 +1437,74 @@ class StockWatcherApp(App):
                     await asyncio.sleep(cfg.poll_interval)
                     continue
 
-                # Push ALL news with levels
-                self._push_news_batch(classified)
+                # Push ALL news with levels — use enriched card when sector matched
+                for item, result in classified:
+                    if result.level != NewsLevel.CRITICAL:
+                        continue
+
+                    # Sector enrichment
+                    sectors = sector_matcher.match(item)
+                    tiered = None
+                    if sectors:
+                        # Fetch constituent stocks for each matched sector
+                        try:
+                            import akshare
+                            all_stocks: list = []
+                            for sec_name in sectors[:3]:  # max 3 sectors
+                                try:
+                                    df = akshare.stock_board_concept_cons_em(symbol=sec_name)
+                                    for _, row in df.iterrows():
+                                        all_stocks.append(SectorStock(
+                                            code=str(row.get("代码", "")),
+                                            name=str(row.get("名称", "")),
+                                            sector=sec_name,
+                                            price=float(row.get("最新价", 0) or 0),
+                                            change_pct=float(row.get("涨跌幅", 0) or 0),
+                                            high=float(row.get("最高", 0) or 0),
+                                            low=float(row.get("最低", 0) or 0),
+                                            open=float(row.get("今开", 0) or 0),
+                                            prev_close=float(row.get("昨收", 0) or 0),
+                                            volume=int(row.get("成交量", 0) or 0),
+                                            turnover=float(row.get("换手率", 0) or 0),
+                                            pe=float(row.get("市盈率-动态", 0) or 0),
+                                            pb=float(row.get("市净率", 0) or 0),
+                                        ))
+                                except Exception:
+                                    logger.warning("Sector fetch failed for %s", sec_name, exc_info=True)
+
+                            # Score and rank
+                            if all_stocks:
+                                from stock_watcher.models import SectorStock  # noqa
+                                # Fetch historical data and score
+                                stock_scores: dict[str, TrendScore] = {}
+                                for s in all_stocks[:30]:  # cap at 30 to avoid rate limit
+                                    try:
+                                        df = akshare.stock_zh_a_hist_tx(
+                                            symbol=f"sh{s.code}" if s.code.startswith("6") else f"sz{s.code}",
+                                            start_date=(dt.datetime.now() - dt.timedelta(days=90)).strftime("%Y%m%d"),
+                                            end_date=dt.datetime.now().strftime("%Y%m%d"),
+                                        )
+                                        stock_scores[s.code] = trend_scorer.score(s.code, df)
+                                    except Exception:
+                                        stock_scores[s.code] = TrendScore(code=s.code)
+
+                                pos_codes = set(self._queue.all_codes)
+                                tiered = trend_ranker.rank(
+                                    all_stocks, stock_scores,
+                                    positions=pos_codes,
+                                    watchlist=pos_codes,
+                                )
+                        except Exception:
+                            logger.warning("Sector enrichment failed", exc_info=True)
+
+                    # Build and push card
+                    card = build_enriched_card(
+                        news=item, classify=result,
+                        sector=sectors[0] if sectors else None,
+                        tiered=tiered,
+                    )
+                    asyncio.create_task(send_news_card(self._chat_cfg, card))
+
                 self._news_aggregator.persist_seen()
 
             except Exception as exc:

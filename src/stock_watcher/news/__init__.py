@@ -6,7 +6,7 @@ from stock_watcher.news.yahoo_search import YahooSearchNewsFetcher
 from stock_watcher.news.sina_stock import SinaStockNewsFetcher
 from stock_watcher.news.aggregator import NewsAggregator
 from stock_watcher.news.classifier import NewsClassifier, NewsLevel, ClassifyResult
-from stock_watcher.news.card_builder import build_news_card
+from stock_watcher.news.card_builder import build_news_card, build_enriched_card
 
 __all__ = [
     "BaseNewsFetcher",
