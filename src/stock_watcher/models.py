@@ -151,6 +151,43 @@ class WatchlistItem:
 
 
 # ---------------------------------------------------------------------------
+# Announcement model (cninfo)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Announcement:
+    """A company announcement from 巨潮资讯网."""
+
+    id: str                          # announcement ID (unique)
+    sec_code: str                    # stock code (e.g. "000001")
+    sec_name: str                    # stock name (e.g. "平安银行")
+    title: str                       # announcement title
+    announcement_time: str           # e.g. "2025-07-01 16:30"
+    adjunct_url: str = ""            # PDF download path
+    org_id: str = ""                 # cninfo org ID
+
+    @property
+    def pdf_url(self) -> str:
+        """Full PDF download URL."""
+        if not self.adjunct_url:
+            return ""
+        return f"http://static.cninfo.com.cn/{self.adjunct_url}"
+
+    @classmethod
+    def from_api_item(cls, item: dict, sec_code: str, org_id: str) -> "Announcement":
+        return cls(
+            id=str(item.get("id") or item.get("announcementId", "")),
+            sec_code=sec_code,
+            sec_name=str(item.get("secName", "")),
+            title=str(item.get("announcementTitle", "")),
+            announcement_time=str(item.get("announcementTime", "")),
+            adjunct_url=str(item.get("adjunctUrl", "")),
+            org_id=org_id,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Alert rule
 # ---------------------------------------------------------------------------
 
@@ -214,3 +251,85 @@ class AlertRule:
             alert_type=AlertType(d["type"]),
             value=float(d["value"]),
         )
+
+
+# ---------------------------------------------------------------------------
+# News item (news aggregator)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class NewsItem:
+    """A unified news article from any source.
+
+    Equality is based on ``id`` only — two items with the same ID
+    are considered duplicates regardless of other field differences.
+    """
+
+    id: str = field(compare=True)
+    source: str = field(default="", compare=False)       # e.g. "sina_roll", "sina_stock", "yahoo_search"
+    title: str = field(default="", compare=False)
+    summary: str = field(default="", compare=False)        # content preview, ≤ 200 chars
+    url: str = field(default="", compare=False)
+    published_at: str = field(default="", compare=False)   # ISO 8601 timestamp
+    related_codes: list[str] = field(default_factory=list, compare=False)
+    source_priority: int = field(default=2, compare=False) # 1=high, 2=medium, 3=low
+
+    @property
+    def has_codes(self) -> bool:
+        """True if this news item is linked to specific stock codes."""
+        return len(self.related_codes) > 0
+
+    def relates_to(self, codes: set[str]) -> bool:
+        """True if this item is relevant to any of the given stock codes."""
+        if not self.related_codes:
+            return True  # market-wide news, always relevant
+        return bool(set(self.related_codes) & codes)
+
+
+# ---------------------------------------------------------------------------
+# Sector stock (sector enrichment)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SectorStock:
+    """A constituent stock of a concept sector with real-time quote data."""
+
+    code: str
+    name: str
+    sector: str = ""
+    price: float = 0.0
+    change_pct: float = 0.0
+    high: float = 0.0
+    low: float = 0.0
+    open: float = 0.0
+    prev_close: float = 0.0
+    volume: int = 0
+    turnover: float = 0.0   # 换手率 (%)
+    pe: float = 0.0          # 市盈率-动态
+    pb: float = 0.0          # 市净率
+
+
+# ---------------------------------------------------------------------------
+# Trend score (sector enrichment)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TrendScore:
+    """Technical indicator scoring result for a single stock (0-100 scale)."""
+
+    code: str
+    total_score: int = 0
+    ma_score: int = 0
+    macd_score: int = 0
+    rsi_score: int = 0
+    consecutive_up: int = 0
+    volume_ratio_score: int = 0
+    ma5: float = 0.0
+    ma10: float = 0.0
+    ma20: float = 0.0
+    rsi14: float = 0.0
+    consecutive_up_days: int = 0
+    reason: str = ""

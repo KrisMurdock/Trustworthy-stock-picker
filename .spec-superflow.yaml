@@ -1,0 +1,12 @@
+# spec-superflow state file for news-aggregator
+change: news-aggregator
+workflow: full
+dp_0_confirmed: true
+dp_0_decisions: "Scope: 新闻聚合与飞书推送 + 板块识别 + 行情嵌入 + 趋势排序; Constraints: Python>=3.10, async httpx, AKShare+腾讯源, DeepSeek API; Related: 合并板块增强到 news-aggregator; Communication: draft review"
+dp_0_timestamp: "2025-07-03T06:50:00Z"
+dp_1_result: "confirmed: 关键词板块匹配 + 成分股实时行情 + 技术指标打分(MA/MACD/RSI/连涨/量比) + DeepSeek精选Top5 + 三级展示(持仓>自选>趋势) + 飞书卡片嵌入行情"
+dp_1_timestamp: "2025-07-03T07:00:00Z"
+dp_2_result: "approved: all 5 artifacts validated — proposal/specs/design/tasks with sector enrichment scope, zero placeholders"
+dp_2_timestamp: "2025-07-03T08:00:00Z"
+dp_3_result: "approved: 29 requirements, 16 tasks, 14 test files, 5 review gates, 8 rewind triggers, zero coverage gaps"
+dp_3_timestamp: "2025-07-03T08:10:00Z"

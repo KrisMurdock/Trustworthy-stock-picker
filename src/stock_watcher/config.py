@@ -13,6 +13,20 @@ import yaml
 from stock_watcher.models import AlertRule, Position
 
 
+# ---------------------------------------------------------------------------
+# Module-level defaults used by dataclass field factories
+# ---------------------------------------------------------------------------
+
+_DEFAULT_CRITICAL_KEYWORDS = [
+    "停牌", "退市", "重大资产重组", "并购", "业绩暴雷",
+    "立案调查", "强制退市", "暂停上市",
+]
+
+_DEFAULT_IGNORE_KEYWORDS = [
+    "龙虎榜", "大宗交易", "融资融券",
+]
+
+
 # The YAML key for the watchlist
 WATCHLIST_KEY = "watchlist"
 ALERTS_KEY = "alerts"
@@ -72,9 +86,13 @@ class RequestConfig:
 class ChatConfig:
     """Chat bot configuration — webhook (push) + full bot (receive & reply)."""
 
-    # Webhook (out-bound only)
+    # Webhook (out-bound only) — 行情/告警/汇总推送
     feishu_webhook: str = ""
     feishu_secret: str = ""
+
+    # 新闻推送专用 Webhook（独立频道，避免刷屏）
+    news_webhook: str = ""
+    news_secret: str = ""
 
     # Full bot credentials (for WebSocket event receiving + API calls)
     feishu_app_id: str = ""
@@ -83,6 +101,10 @@ class ChatConfig:
     @property
     def is_configured(self) -> bool:
         return bool(self.feishu_webhook)
+
+    @property
+    def news_configured(self) -> bool:
+        return bool(self.news_webhook)
 
     @property
     def can_receive(self) -> bool:
@@ -94,6 +116,8 @@ class ChatConfig:
         return cls(
             feishu_webhook=str(d.get("feishu_webhook", "")),
             feishu_secret=str(d.get("feishu_secret", "")),
+            news_webhook=str(d.get("news_webhook", "")),
+            news_secret=str(d.get("news_secret", "")),
             feishu_app_id=str(d.get("feishu_app_id", "")),
             feishu_app_secret=str(d.get("feishu_app_secret", "")),
         )
@@ -102,6 +126,8 @@ class ChatConfig:
         return {
             "feishu_webhook": self.feishu_webhook,
             "feishu_secret": self.feishu_secret,
+            "news_webhook": self.news_webhook,
+            "news_secret": self.news_secret,
             "feishu_app_id": self.feishu_app_id,
             "feishu_app_secret": self.feishu_app_secret,
         }
@@ -139,6 +165,41 @@ class DeepSeekConfig:
 
 
 @dataclass
+class CninfoConfig:
+    """巨潮资讯网公告轮询配置."""
+
+    enabled: bool = False
+    poll_interval: float = 120.0  # 公告轮询间隔（秒），默认 2 分钟
+    page_size: int = 10           # 每次查询获取的公告条数
+    summary_enabled: bool = True  # 是否用 DeepSeek 生成摘要
+    # 重大事项关键词过滤（公告标题包含任一关键词即推送）
+    major_keywords: list[str] = field(default_factory=lambda: [
+        "年报", "年度报告",
+        "季报", "季度报告",
+        "半年报", "半年度报告",
+        "业绩预告", "业绩快报",
+        "重大合同", "重大资产重组",
+        "减持", "增持",
+        "停牌", "复牌",
+        "分红", "送转", "权益分派",
+        "风险警示",
+    ])
+    # 记录的公告 ID 持久化文件
+    seen_ids_path: str = "cninfo_seen.jsonl"
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "CninfoConfig":
+        return cls(
+            enabled=bool(d.get("enabled", False)),
+            poll_interval=float(d.get("poll_interval", 120)),
+            page_size=int(d.get("page_size", 10)),
+            summary_enabled=bool(d.get("summary_enabled", True)),
+            major_keywords=[str(k) for k in d.get("major_keywords", [])] or cls.major_keywords,
+            seen_ids_path=str(d.get("seen_ids_path", "cninfo_seen.jsonl")),
+        )
+
+
+@dataclass
 class AppConfig:
     """Top-level application configuration."""
 
@@ -153,6 +214,8 @@ class AppConfig:
     volatility_threshold: float = 3.0
     chat: Optional[ChatConfig] = None
     deepseek: Optional[DeepSeekConfig] = None
+    cninfo: Optional[CninfoConfig] = None
+    news: Optional["NewsConfig"] = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "AppConfig":
@@ -168,7 +231,138 @@ class AppConfig:
             alert_sound_command=str(d.get("alert_sound_command", "")),
             chat=ChatConfig.from_dict(d.get("chat", {})) if d.get("chat") else None,
             deepseek=DeepSeekConfig.from_dict(d.get("deepseek", {})) if d.get("deepseek") else None,
+            cninfo=CninfoConfig.from_dict(d.get("cninfo", {})) if d.get("cninfo") else None,
             volatility_threshold=float(d.get("volatility_threshold", 3.0)),
+            news=NewsConfig.from_dict(d.get("news", {})) if d.get("news") else None,
+        )
+
+
+# ---------------------------------------------------------------------------
+# News aggregation config
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ScheduledPushConfig:
+    """单个定时推送的时间与开关."""
+
+    enabled: bool = True
+    time: str = ""  # "HH:MM" format
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "ScheduledPushConfig":
+        return cls(
+            enabled=bool(d.get("enabled", True)),
+            time=str(d.get("time", "")),
+        )
+
+
+@dataclass
+class SectorKeywordsConfig:
+    """板块关键词映射配置."""
+
+    keywords: dict[str, list[str]] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "SectorKeywordsConfig":
+        if not d:
+            return cls()
+        result: dict[str, list[str]] = {}
+        for k, v in d.items():
+            result[str(k)] = [str(x) for x in v] if isinstance(v, list) else []
+        return cls(keywords=result)
+
+
+@dataclass
+class TrendScoringConfig:
+    """技术指标打分权重配置."""
+
+    ma_weight: int = 30
+    macd_weight: int = 25
+    rsi_weight: int = 20
+    consecutive_up_weight: int = 15
+    volume_ratio_weight: int = 10
+    lookback_days: int = 60
+    min_score_threshold: int = 50
+    top_n_candidates: int = 10
+    top_n_final: int = 5
+    max_stocks_per_card: int = 8
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "TrendScoringConfig":
+        if not d:
+            return cls()
+        return cls(
+            ma_weight=int(d.get("ma_weight", 30)),
+            macd_weight=int(d.get("macd_weight", 25)),
+            rsi_weight=int(d.get("rsi_weight", 20)),
+            consecutive_up_weight=int(d.get("consecutive_up_weight", 15)),
+            volume_ratio_weight=int(d.get("volume_ratio_weight", 10)),
+            lookback_days=int(d.get("lookback_days", 60)),
+            min_score_threshold=int(d.get("min_score_threshold", 50)),
+            top_n_candidates=int(d.get("top_n_candidates", 10)),
+            top_n_final=int(d.get("top_n_final", 5)),
+            max_stocks_per_card=int(d.get("max_stocks_per_card", 8)),
+        )
+
+
+@dataclass
+class NewsConfig:
+    """新闻聚合与推送配置."""
+
+    poll_interval: float = 300.0  # 秒
+    # 新闻源开关
+    sources: dict[str, bool] = field(default_factory=lambda: {
+        "eastmoney_stock": True,
+        "eastmoney_flash": True,
+        "sina_flash": True,
+        "cls_telegraph": True,
+        "yahoo_news": True,
+    })
+    # 板块关键词映射
+    sector_keywords: SectorKeywordsConfig = field(default_factory=SectorKeywordsConfig)
+    # 技术指标打分权重
+    trend_scoring: TrendScoringConfig = field(default_factory=TrendScoringConfig)
+    # 重要性分类关键词
+    critical_keywords: list[str] = field(default_factory=lambda: _DEFAULT_CRITICAL_KEYWORDS.copy())
+    ignore_keywords: list[str] = field(default_factory=lambda: _DEFAULT_IGNORE_KEYWORDS.copy())
+    # 定时推送
+    scheduled_push: dict[str, ScheduledPushConfig] = field(default_factory=lambda: {
+        "morning_briefing": ScheduledPushConfig(time="09:00"),
+        "market_open": ScheduledPushConfig(time="09:25"),
+        "a_share_close": ScheduledPushConfig(time="15:05"),
+        "hk_close": ScheduledPushConfig(time="16:15"),
+        "evening_briefing": ScheduledPushConfig(time="20:00"),
+    })
+    seen_ids_path: str = "news_seen.jsonl"
+
+    @property
+    def enabled_sources(self) -> list[str]:
+        return [k for k, v in self.sources.items() if v]
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "NewsConfig":
+        sources = {
+            "eastmoney_stock": bool(d.get("sources", {}).get("eastmoney_stock", True)),
+            "eastmoney_flash": bool(d.get("sources", {}).get("eastmoney_flash", True)),
+            "sina_flash": bool(d.get("sources", {}).get("sina_flash", True)),
+            "cls_telegraph": bool(d.get("sources", {}).get("cls_telegraph", True)),
+            "yahoo_news": bool(d.get("sources", {}).get("yahoo_news", True)),
+        }
+        sp_raw = d.get("scheduled_push", {}) or {}
+        scheduled_push = {
+            key: ScheduledPushConfig.from_dict(sp_raw.get(key, {}))
+            for key in ["morning_briefing", "market_open", "a_share_close", "hk_close", "evening_briefing"]
+        }
+        return cls(
+            poll_interval=float(d.get("poll_interval", 120)),
+            sources=sources,
+            sector_keywords=SectorKeywordsConfig.from_dict(d.get("sector_keywords", {})),
+            trend_scoring=TrendScoringConfig.from_dict(d.get("trend_scoring", {})),
+            critical_keywords=[str(k) for k in d.get("critical_keywords", [])] or _DEFAULT_CRITICAL_KEYWORDS,
+            ignore_keywords=[str(k) for k in d.get("ignore_keywords", [])] or _DEFAULT_IGNORE_KEYWORDS,
+            scheduled_push=scheduled_push,
+            seen_ids_path=str(d.get("seen_ids_path", "news_seen.jsonl")),
         )
 
 

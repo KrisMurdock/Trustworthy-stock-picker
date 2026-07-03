@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import logging
 import os
 import shlex
 import subprocess
@@ -42,6 +43,8 @@ from stock_watcher.scheduler import (
     is_any_market_open,
 )
 
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Color constants (A-share convention: red = up, green = down)
@@ -68,6 +71,7 @@ class StatusBar(Static):
     up_count: reactive[int] = reactive(0)
     down_count: reactive[int] = reactive(0)
     flat_count: reactive[int] = reactive(0)
+    news_info: reactive[str] = reactive("")
 
     def on_mount(self) -> None:
         """Refresh clock every second."""
@@ -97,6 +101,9 @@ class StatusBar(Static):
     def watch_flat_count(self, _: int) -> None:
         self.refresh()
 
+    def watch_news_info(self, _: str) -> None:
+        self.refresh()
+
     def render(self) -> str:
         now = dt.datetime.now().strftime("%H:%M:%S")
         parts = [f"[bold]📊 {self.status}[/bold]"]
@@ -108,6 +115,8 @@ class StatusBar(Static):
             f"[{DOWN_COLOR}]↓{self.down_count}[/]  "
             f"[{FLAT_COLOR}]→{self.flat_count}[/]"
         )
+        if self.news_info:
+            parts.append(f"[bold #6699ff]📰 {self.news_info}[/]")
         if self.errors > 0:
             parts.append(f"[bold #ffaa00]⚠ 错误 {self.errors}[/]")
         return "  │  ".join(parts)
@@ -886,6 +895,17 @@ class StockWatcherApp(App):
         self._stopped = False
         self._privacy_mode: bool = False
 
+        # cninfo announcement state
+        self._cninfo_dedup: object = None  # set in _cninfo_loop on first use
+        self._cninfo_cfg = self._cfg.cninfo
+
+        # news aggregator state
+        self._news_aggregator: object = None  # NewsAggregator
+        self._news_classifier: object = None  # NewsClassifier
+        self._news_cfg = self._cfg.news
+        self._news_push_history: dict[str, float] = {}  # per-stock last push time
+        self._news_stats: dict[str, int] = {"fetched": 0, "filtered": 0, "critical": 0}
+
         # Daily high/low tracker — reset each calendar day
         self._daily_high: dict[str, float] = {}
         self._daily_low: dict[str, float] = {}
@@ -896,6 +916,18 @@ class StockWatcherApp(App):
 
         # Start bot polling via Textual's managed timer (auto-cancelled on exit)
         self.set_interval(3.0, self._bot_poll_once)
+
+        # Start cninfo announcement polling
+        if self._cninfo_cfg and self._cninfo_cfg.enabled:
+            self._cninfo_loop()
+
+        # Start news aggregator polling
+        if self._news_cfg and self._news_cfg.enabled_sources:
+            self._news_loop()
+
+        # Start scheduled push (open/close/briefings)
+        if self._news_cfg and self._chat_cfg:
+            self._scheduled_push_loop()
 
     def on_unmount(self) -> None:
         """Cleanup when the app exits."""
@@ -1170,6 +1202,288 @@ class StockWatcherApp(App):
                         pnl_pushed_today = today_str
                         self.notify("[推送] 盘后盈亏汇总已发送")
 
+    # ------------------------------------------------------------------
+    # cninfo announcement polling
+    # ------------------------------------------------------------------
+
+    @work(exclusive=False)
+    async def _cninfo_loop(self) -> None:
+        """Poll cninfo for new announcements on A-share watchlist stocks."""
+        # Lazy init dedup on first run
+        if self._cninfo_dedup is None:
+            from stock_watcher.cninfo_fetcher import AnnouncementDedup
+
+            dedup_path = Path(self._cninfo_cfg.seen_ids_path) if self._cninfo_cfg else Path("cninfo_seen.jsonl")
+            self._cninfo_dedup = AnnouncementDedup(dedup_path)
+            self.notify("[cninfo] 公告轮询已启动")
+
+        while not self._stopped:
+            cfg = self._cninfo_cfg
+            if not cfg or not cfg.enabled:
+                await asyncio.sleep(60)
+                continue
+
+            if not self._chat_cfg or not self._chat_cfg.is_configured:
+                await asyncio.sleep(60)
+                continue
+
+            # Only poll during daytime (avoid unnecessary API calls at night)
+            now = _now_cst()
+            if now.hour < 8 or now.hour >= 22:
+                await asyncio.sleep(cfg.poll_interval)
+                continue
+
+            # Get A-share stock codes from watchlist + positions
+            a_codes: list[str] = []
+            for code in self._queue.all_codes:
+                if code.startswith("sh") or code.startswith("sz"):
+                    a_codes.append(code)
+            # Also include position-only codes not in watchlist
+            for code in self._positions:
+                if code not in a_codes and (code.startswith("sh") or code.startswith("sz")):
+                    a_codes.append(code)
+
+            if not a_codes:
+                await asyncio.sleep(cfg.poll_interval)
+                continue
+
+            from stock_watcher.cninfo_fetcher import fetch_announcements, filter_major
+
+            # Use proxy for cninfo if configured (required for non-China IPs)
+            cninfo_proxy = ""
+            if self._cfg.proxies and len(self._cfg.proxies) > 0:
+                cninfo_proxy = self._cfg.proxies[0]
+
+            for code in a_codes:
+                if self._stopped:
+                    break
+
+                try:
+                    announcements = await fetch_announcements(
+                        code, cfg, self._request_cfg, proxy=cninfo_proxy,
+                    )
+                except Exception:
+                    continue
+
+                if not announcements:
+                    continue
+
+                # Filter by major keywords
+                major = filter_major(announcements, cfg.major_keywords)
+                if not major:
+                    continue
+
+                # Dedup — only new announcements
+                new_anns = self._cninfo_dedup.filter_new(major)
+                if not new_anns:
+                    continue
+
+                # Get stock name
+                q = self._latest_quotes.get(code)
+                name = q.name if q and q.name else code
+
+                # Summarize with DeepSeek if configured
+                summaries: dict[str, str] = {}
+                if cfg.summary_enabled and self._deepseek_cfg and self._deepseek_cfg.is_configured:
+                    try:
+                        from stock_watcher.cninfo_sender import summarize_batch
+                        summaries = await summarize_batch(self._deepseek_cfg, new_anns)
+                    except Exception:
+                        pass
+
+                # Build and send card
+                try:
+                    from stock_watcher.cninfo_sender import build_announcement_card, send_announcement_card
+
+                    card = build_announcement_card(code, name, new_anns, summaries)
+                    ok = await send_announcement_card(self._chat_cfg, card)
+                    if ok:
+                        for ann in new_anns:
+                            self._cninfo_dedup.mark_seen(ann)
+                        self.notify(f"[cninfo] {name} {len(new_anns)} 条公告已推送")
+                except Exception:
+                    pass
+
+                # Small delay between stocks to be gentle with APIs
+                await asyncio.sleep(2)
+
+            await asyncio.sleep(cfg.poll_interval)
+
+    # ------------------------------------------------------------------
+    # News aggregator polling
+    # ------------------------------------------------------------------
+
+    @work(exclusive=False)
+    async def _news_loop(self) -> None:
+        """Poll news sources, classify, and push critical news to Feishu."""
+        if not self._news_cfg or not self._news_cfg.enabled_sources:
+            return
+
+        from stock_watcher.news import (
+            SinaRollNewsFetcher,
+            YahooSearchNewsFetcher,
+            SinaStockNewsFetcher,
+            NewsAggregator,
+            NewsClassifier,
+            NewsLevel,
+            build_news_card,
+        )
+        from stock_watcher.chat_sender import send_news_card
+
+        cfg = self._news_cfg
+
+        # Build company name → code mapping for Sina roll keyword matching
+        name_map: dict[str, str] = {}
+        for code in self._queue.all_codes:
+            q = self._latest_quotes.get(code)
+            if q and q.name:
+                # Use short name (first 2-4 chars) for matching
+                short = q.name[:4]
+                if len(short) >= 2:
+                    name_map[short] = code
+                # Also add full name
+                name_map[q.name] = code
+        SinaRollNewsFetcher.set_name_mapping(name_map)
+
+        # Build fetchers
+        fetchers = []
+        sources = cfg.sources
+        if sources.get("sina_roll", True):
+            fetchers.append(SinaRollNewsFetcher(enabled=True, fetch_per_lid=15))
+        if sources.get("sina_stock", True):
+            fetchers.append(SinaStockNewsFetcher(enabled=True, max_per_stock=10))
+        if sources.get("yahoo_news", True):
+            yf = YahooSearchNewsFetcher(enabled=True, news_per_search=5)
+            fetchers.append(yf)
+
+        if not fetchers:
+            self.notify("[news] 无启用的新闻源")
+            return
+
+        # Init aggregator and classifier
+        seen_path = Path(cfg.seen_ids_path) if cfg.seen_ids_path else Path("news_seen.jsonl")
+        self._news_aggregator = NewsAggregator(fetchers, str(seen_path))
+        self._news_classifier = NewsClassifier(
+            deepseek_cfg=self._deepseek_cfg,
+            critical_keywords=cfg.critical_keywords,
+            ignore_keywords=cfg.ignore_keywords,
+        )
+
+        self.notify(f"[news] 新闻轮询已启动 ({len(fetchers)} 源，间隔 {cfg.poll_interval}s)")
+
+        while not self._stopped:
+            try:
+                codes = self._queue.all_codes
+                # Aggregate
+                items = await self._news_aggregator.aggregate(codes)
+
+                # Track stats for briefing card
+                self._news_stats["fetched"] = len(items)
+
+                if not items:
+                    self._news_stats["filtered"] = 0
+                    self._news_stats["critical"] = 0
+                    await asyncio.sleep(cfg.poll_interval)
+                    continue
+
+                # Per-source count
+                from collections import Counter
+                src_counts = Counter(i.source for i in items)
+                logger.info("news: %d items %s", len(items),
+                            " ".join(f"{s}={c}" for s, c in src_counts.items()))
+
+                # Classify — full AI analysis
+                classified: list[tuple] = []  # (NewsItem, ClassifyResult)
+                critical_n = notable_n = ignore_n = 0
+                ai_ok = 0
+                for item in items:
+                    result = await self._news_classifier.classify(item)
+                    classified.append((item, result))
+                    if result.level == NewsLevel.CRITICAL:
+                        critical_n += 1
+                    elif result.level == NewsLevel.NOTABLE:
+                        notable_n += 1
+                    else:
+                        ignore_n += 1
+                    if result.reason and "失败" not in result.reason and "未配置" not in result.reason and "默认" not in result.reason:
+                        ai_ok += 1
+
+                self._news_stats["filtered"] = notable_n + ignore_n
+                self._news_stats["critical"] = critical_n
+
+                # Update TUI status bar
+                ai_flag = f" ⚡AI:{ai_ok}/{len(items)}" if ai_ok < len(items) else ""
+                self._status_bar.news_info = (
+                    f"新闻 {len(items)}条"
+                    f" 🔴{critical_n} 🟡{notable_n} ⚪{ignore_n}{ai_flag}"
+                )
+
+                if not classified:
+                    await asyncio.sleep(cfg.poll_interval)
+                    continue
+
+                # Push ALL news with levels
+                self._push_news_batch(classified)
+                self._news_aggregator.persist_seen()
+
+            except Exception as exc:
+                logger.warning("news_loop error: %s", exc)
+
+            await asyncio.sleep(cfg.poll_interval)
+
+    def _push_news_batch(self, classified: list) -> None:
+        """推送本轮全部新闻到飞书新闻频道（含 AI 摘要/标的/多空）."""
+        from stock_watcher.news import build_news_card
+        from stock_watcher.chat_sender import send_news_card
+
+        if not self._chat_cfg or not self._chat_cfg.news_configured:
+            return
+        if not classified:
+            return
+
+        stats = self._news_stats
+        card = build_news_card(
+            classified,  # (NewsItem, ClassifyResult)
+            fetched=stats.get("fetched", 0),
+        )
+        asyncio.create_task(send_news_card(self._chat_cfg, card))
+
+        critical = stats.get("critical", 0)
+        notable = stats.get("filtered", 0) - critical
+        self.notify(
+            f"[news] 推送 {len(classified)} 条 "
+            f"(🔴{critical} 🟡{notable})"
+        )
+
+    # ------------------------------------------------------------------
+    # Scheduled push
+    # ------------------------------------------------------------------
+
+    @work(exclusive=False)
+    async def _scheduled_push_loop(self) -> None:
+        """启动定时推送调度器."""
+        from stock_watcher.scheduled_push import ScheduledPush
+
+        if not self._chat_cfg or not self._news_cfg:
+            return
+
+        push = ScheduledPush(
+            self._chat_cfg,
+            self._news_cfg,
+            lambda: self._latest_quotes,
+            lambda: self._positions,
+            lambda: dict(self._news_stats),
+        )
+        self.notify("[push] 定时推送已启动")
+        try:
+            stop = asyncio.Event()
+            self._push_stop = stop
+            await push.run(stop)
+        except Exception as exc:
+            logger.warning("scheduled_push error: %s", exc)
+
+    # ------------------------------------------------------------------
+
     def _update_status(self) -> None:
         sb = self._status_bar
         sb.status = self._calendar.status_string()
@@ -1290,6 +1604,8 @@ class StockWatcherApp(App):
         self._backoff = MarketBackoffManager(new_cfg.backoff)
         self._cfg = new_cfg  # keep settings panel in sync
         self._chat_cfg = new_cfg.chat
+        self._cninfo_cfg = new_cfg.cninfo
+        self._news_cfg = new_cfg.news
 
         if added or removed:
             names = []

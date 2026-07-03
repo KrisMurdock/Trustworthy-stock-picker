@@ -363,3 +363,28 @@ async def send_feishu_card(cfg: ChatConfig, card: dict) -> bool:
         return False
     except Exception:
         return False
+
+
+async def send_news_card(cfg: ChatConfig, card: dict) -> bool:
+    """Send a card message to the news-specific Feishu webhook.  Returns True on success."""
+    if not cfg.news_configured:
+        return False
+
+    payload: dict = {"msg_type": card["msg_type"], "card": card["card"]}
+    ts = int(time.time())
+    if cfg.news_secret:
+        payload["timestamp"] = str(ts)
+        payload["sign"] = _generate_sign(ts, cfg.news_secret)
+
+    try:
+        async with httpx.AsyncClient(timeout=FEISHU_WEBHOOK_TIMEOUT) as client:
+            resp = await client.post(
+                cfg.news_webhook, json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+        if resp.status_code == 200:
+            body = resp.json()
+            return body.get("StatusCode") == 0 or body.get("code") == 0
+        return False
+    except Exception:
+        return False
