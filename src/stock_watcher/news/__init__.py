@@ -18,4 +18,5 @@ __all__ = [
     "NewsLevel",
     "ClassifyResult",
     "build_news_card",
+    "build_enriched_card",
 ]

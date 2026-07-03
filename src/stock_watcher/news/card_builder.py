@@ -5,9 +5,15 @@ from __future__ import annotations
 import datetime as dt
 
 from stock_watcher.news.classifier import ClassifyResult, NewsLevel
+from stock_watcher.news.trend_ranker import RankedResult
 from stock_watcher.models import NewsItem
 
 SOURCE_LABELS: dict[str, str] = {
+    "eastmoney_stock": "东财个股",
+    "eastmoney_flash": "东财快讯",
+    "sina_flash": "新浪快讯",
+    "cls_telegraph": "财联社",
+    "yahoo_news": "雅虎财经",
     "sina_roll": "新浪财经",
     "sina_stock": "新浪个股",
     "yahoo_search": "雅虎财经",
@@ -125,6 +131,168 @@ def build_news_card(
         "card": {
             "header": {
                 "title": {"tag": "plain_text", "content": f"📰 新闻速报 ({count}条)"},
+                "template": "blue",
+            },
+            "elements": elements,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Enriched card builder (sector + tiered stock quotes)
+# ---------------------------------------------------------------------------
+
+TIER_LABELS = {
+    1: "📌 你的持仓",
+    2: "👁 你关注的",
+    3: "🔥 趋势最强",
+}
+
+
+def build_enriched_card(
+    news: NewsItem,
+    classify: ClassifyResult | None = None,
+    sector: str | None = None,
+    tiered: RankedResult | None = None,
+    max_stocks: int = 8,
+) -> dict:
+    """Build a Feishu card with sector overview and tiered stock quotes.
+
+    Args:
+        news: The news item being pushed.
+        classify: AI classification result (optional).
+        sector: Matched sector name (None → fall back to basic card).
+        tiered: Tiered stock list from TrendRanker (None → basic card).
+        max_stocks: Max stocks to show across all tiers.
+
+    Returns:
+        Feishu interactive card JSON dict.
+    """
+    now_str = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).strftime("%H:%M")
+    source_tag = SOURCE_LABELS.get(news.source, news.source)
+
+    # --- Determine card type ---
+    if sector and tiered:
+        return _build_sector_card(news, classify, sector, tiered, max_stocks, now_str, source_tag)
+    else:
+        return _build_basic_card(news, classify, now_str, source_tag)
+
+
+def _build_sector_card(
+    news: NewsItem,
+    classify: ClassifyResult | None,
+    sector: str,
+    tiered: RankedResult,
+    max_stocks: int,
+    now_str: str,
+    source_tag: str,
+) -> dict:
+    """Build the enriched sector + tiered stock card."""
+    elements: list[dict] = []
+
+    # Header info row
+    elements.append({
+        "tag": "div",
+        "text": {"tag": "lark_md", "content": f"🕐 {now_str}  📡 {source_tag}  📰 {news.title}"},
+    })
+    elements.append({"tag": "hr"})
+
+    # Sector overview
+    elements.append({
+        "tag": "div",
+        "text": {"tag": "lark_md", "content": f"**板块：{sector}**"},
+    })
+
+    if classify and classify.reason:
+        elements.append({
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": f"💡 {classify.reason}"},
+        })
+
+    # Tiered stocks — cap at max_stocks total
+    all_tiers = [(1, tiered.tier1), (2, tiered.tier2), (3, tiered.tier3)]
+    shown = 0
+
+    for tier_num, tier_stocks in all_tiers:
+        if not tier_stocks:
+            continue
+        if shown >= max_stocks:
+            break
+
+        elements.append({
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": TIER_LABELS[tier_num]},
+        })
+
+        for s in tier_stocks:
+            if shown >= max_stocks:
+                break
+            # Format: 名称 代码 涨跌幅% 价格 H:高 L:低 O:开
+            sign = "+" if s.change_pct > 0 else ""
+            row = (
+                f"　{s.name} {s.code} "
+                f"{sign}{s.change_pct:.2f}% "
+                f"¥{s.price:.2f} "
+                f"H:{s.high:.2f} L:{s.low:.2f} O:{s.open:.2f}"
+            )
+            elements.append({
+                "tag": "div",
+                "text": {"tag": "lark_md", "content": row},
+            })
+            shown += 1
+
+    elements.append({"tag": "hr"})
+
+    # News link
+    if news.url:
+        elements.append({
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": f"[查看原文]({news.url})"},
+        })
+
+    title = f"📰 {sector} 异动"
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "header": {
+                "title": {"tag": "plain_text", "content": title},
+                "template": "blue",
+            },
+            "elements": elements,
+        },
+    }
+
+
+def _build_basic_card(
+    news: NewsItem,
+    classify: ClassifyResult | None,
+    now_str: str,
+    source_tag: str,
+) -> dict:
+    """Fall back to basic single-news card when no sector matched."""
+    elements: list[dict] = [
+        {"tag": "div", "text": {"tag": "lark_md", "content": f"🕐 {now_str}  📡 {source_tag}"}},
+        {"tag": "hr"},
+        {"tag": "div", "text": {"tag": "lark_md", "content": f"**{news.title}**"}},
+    ]
+
+    if classify and classify.summary:
+        elements.append({
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": classify.summary[:200]},
+        })
+
+    if news.url:
+        elements.append({
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": f"[查看原文]({news.url})"},
+        })
+
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "header": {
+                "title": {"tag": "plain_text", "content": "📰 重大新闻"},
                 "template": "blue",
             },
             "elements": elements,
