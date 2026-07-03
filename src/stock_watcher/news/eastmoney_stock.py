@@ -37,8 +37,8 @@ class EastMoneyStockNewsFetcher(BaseNewsFetcher):
 
             try:
                 raw_code = _SH_PREFIX.sub("", _SZ_PREFIX.sub("", code))
-                import akshare
-                df = akshare.stock_news_em(symbol=raw_code)
+                import akshare, asyncio as _asyncio
+                df = await _asyncio.to_thread(akshare.stock_news_em, symbol=raw_code)
             except Exception:
                 logger.warning("%s: fetch failed for %s", self.source_name, code, exc_info=True)
                 self._record_failure()

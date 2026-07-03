@@ -21,8 +21,8 @@ class CLSTelegraphFetcher(BaseNewsFetcher):
             return []
 
         try:
-            import akshare
-            df = akshare.stock_info_global_cls()
+            import akshare, asyncio as _asyncio
+            df = await _asyncio.to_thread(akshare.stock_info_global_cls)
         except Exception:
             logger.warning("%s: fetch failed", self.source_name, exc_info=True)
             self._record_failure()

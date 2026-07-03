@@ -1452,7 +1452,9 @@ class StockWatcherApp(App):
                             all_stocks: list = []
                             for sec_name in sectors[:3]:  # max 3 sectors
                                 try:
-                                    df = akshare.stock_board_concept_cons_em(symbol=sec_name)
+                                    df = await asyncio.to_thread(
+                                        akshare.stock_board_concept_cons_em, symbol=sec_name
+                                    )
                                     for _, row in df.iterrows():
                                         all_stocks.append(SectorStock(
                                             code=str(row.get("代码", "")),
@@ -1479,7 +1481,8 @@ class StockWatcherApp(App):
                                 stock_scores: dict[str, TrendScore] = {}
                                 for s in all_stocks[:30]:  # cap at 30 to avoid rate limit
                                     try:
-                                        df = akshare.stock_zh_a_hist_tx(
+                                        df = await asyncio.to_thread(
+                                            akshare.stock_zh_a_hist_tx,
                                             symbol=f"sh{s.code}" if s.code.startswith("6") else f"sz{s.code}",
                                             start_date=(dt.datetime.now() - dt.timedelta(days=90)).strftime("%Y%m%d"),
                                             end_date=dt.datetime.now().strftime("%Y%m%d"),
