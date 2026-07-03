@@ -199,3 +199,53 @@ class TestNewsConfigExtended:
         ]
         for s in expected_sources:
             assert s in cfg.sources, f"Missing source: {s}"
+
+
+# ---------------------------------------------------------------------------
+# Smoke tests (require network — skip in CI)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.smoke
+class TestAkshareSmoke:
+    """Verify akshare API connectivity for required functions.
+
+    NOTE: East Money API aggressively rate-limits this server IP.
+    ``stock_board_concept_name_em`` and ``stock_board_concept_cons_em``
+    work intermittently — they succeeded during manual testing but may
+    fail under rapid re-runs.  The Tencent source ``stock_zh_a_hist_tx``
+    is the reliable fallback (design decision D9).
+    """
+
+    @pytest.mark.xfail(
+        reason="East Money rate-limits this server; succeeds with ≥5s intervals",
+        raises=Exception,
+    )
+    def test_concept_board_list(self):
+        """stock_board_concept_name_em returns > 100 concept sectors."""
+        import akshare
+        df = akshare.stock_board_concept_name_em()
+        assert len(df) > 100, f"Expected >100 sectors, got {len(df)}"
+        assert "板块名称" in df.columns
+
+    @pytest.mark.xfail(
+        reason="East Money rate-limits this server (calls name_em internally)",
+        raises=Exception,
+    )
+    def test_concept_constituent_with_quotes(self):
+        """stock_board_concept_cons_em returns > 10 stocks with quote fields."""
+        import akshare
+        df = akshare.stock_board_concept_cons_em(symbol="机器人执行器")
+        assert len(df) > 10, f"Expected >10 stocks, got {len(df)}"
+        for col in ["最新价", "涨跌幅", "最高", "最低", "今开", "昨收", "换手率"]:
+            assert col in df.columns, f"Missing column: {col}"
+
+    def test_tx_hist_daily_data(self):
+        """stock_zh_a_hist_tx returns >= 20 rows of OHLC data from Tencent."""
+        import akshare
+        df = akshare.stock_zh_a_hist_tx(
+            symbol="sh688017", start_date="20250601", end_date="20250703"
+        )
+        assert len(df) >= 20, f"Expected >=20 rows, got {len(df)}"
+        for col in ["date", "open", "close", "high", "low", "amount"]:
+            assert col in df.columns, f"Missing column: {col}"
