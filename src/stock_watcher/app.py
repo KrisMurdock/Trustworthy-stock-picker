@@ -31,7 +31,7 @@ from textual.widgets import (
 )
 from textual.binding import Binding
 
-from stock_watcher.config import load_config, save_watchlist, save_alerts, save_positions, AppConfig
+from stock_watcher.config import load_config, save_watchlist, save_alerts, save_positions, AppConfig, ChatConfig
 from stock_watcher.fetcher import get_fetcher, FetchError, search_stocks, SearchResult
 from stock_watcher.models import StockQuote, Market, AlertRule, AlertType, Position
 from stock_watcher.scheduler import (
@@ -905,6 +905,24 @@ class StockWatcherApp(App):
         self._news_cfg = self._cfg.news
         self._news_push_history: dict[str, float] = {}  # per-stock last push time
         self._news_stats: dict[str, int] = {"fetched": 0, "filtered": 0, "critical": 0}
+
+        # Controllers (MVC)
+        from stock_watcher.controllers import AlertController, PollController, NewsController, BotController
+        self._alert_ctrl = AlertController(alerts=list(self._cfg.alerts))
+        self._poll_ctrl = PollController(
+            watchlist=self._queue.all_codes,
+            request_cfg=self._request_cfg,
+            alert_ctrl=self._alert_ctrl,
+            backoff=self._backoff,
+            poll_interval=self._cfg.poll_interval,
+            on_quote=lambda q: self._latest_quotes.update({q.code: q}),
+            on_alert=lambda a, q: self._fire_alert(a, q),
+        )
+        self._news_ctrl: NewsController | None = None
+        self._bot_ctrl = BotController(
+            chat_cfg=self._chat_cfg or ChatConfig(),
+            deepseek_cfg=self._deepseek_cfg,
+        )
 
         # Daily high/low tracker — reset each calendar day
         self._daily_high: dict[str, float] = {}
