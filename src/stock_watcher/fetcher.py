@@ -222,13 +222,20 @@ def parse_sina_us_response(code: str, text: str) -> StockQuote:
       0: name
       1: price
       2: change_pct (%)
-      3: datetime
+      3: datetime (CST)
       4: change_amount
       5: high (day)
       6: open
       7: low (day)
       8: 52-week high
       9: 52-week low
+     10: volume
+     11: —
+     12: market_cap (USD)
+     13: —
+     14: pe (市盈率)
+     15-25: —
+     26: prev_close
     """
     text = text.strip()
     if not text:
@@ -245,7 +252,7 @@ def parse_sina_us_response(code: str, text: str) -> StockQuote:
         return StockQuote(code=code)
 
     fields = raw.split(",")
-    if len(fields) < 8:
+    if len(fields) < 15:
         return StockQuote(code=code)
 
     try:
@@ -253,7 +260,11 @@ def parse_sina_us_response(code: str, text: str) -> StockQuote:
         change_pct = _parse_float(fields[2])
         change_amount = _parse_float(fields[4])
         high = _parse_float(fields[5])
+        open_ = _parse_float(fields[6])
         low = _parse_float(fields[7])
+        volume = _parse_float(fields[10])
+        market_cap = _parse_float(fields[12]) if len(fields) > 12 else None
+        pe = _parse_float(fields[14]) if len(fields) > 14 else None
     except (ValueError, IndexError):
         return StockQuote(code=code)
 
@@ -265,6 +276,10 @@ def parse_sina_us_response(code: str, text: str) -> StockQuote:
         change_amount=change_amount,
         high=high,
         low=low,
+        open=open_,
+        volume=volume,
+        pe=pe,
+        market_cap=market_cap,
     )
 
 
