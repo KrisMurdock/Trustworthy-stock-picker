@@ -2241,25 +2241,22 @@ class StockWatcherApp(App):
 
 
 def main(config_path: Optional[str] = None) -> None:
-    logging.basicConfig(
-        level=logging.WARNING,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        stream=sys.stderr,
-    )
-    # Log to file to avoid corrupting Textual TUI (both stdout/stderr share terminal)
+    # Force log to file to avoid corrupting Textual TUI (both stdout/stderr share terminal)
+    # Must clear handlers first because akshare import may have already created a stderr handler
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.WARNING)
     log_file = Path("/tmp/stock_watcher.log")
-    logging.basicConfig(
-        level=logging.WARNING,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        filename=str(log_file),
-        filemode="w",
-    )
+    handler = logging.FileHandler(str(log_file), mode="w")
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    root_logger.addHandler(handler)
     # Only stock_watcher modules log at INFO; third-party libs stay at WARNING
     logging.getLogger("stock_watcher").setLevel(logging.INFO)
     # Suppress per-cycle noise from high-frequency pollers
     logging.getLogger("stock_watcher.news.aggregator").setLevel(logging.WARNING)
     logging.getLogger("stock_watcher.news.classifier").setLevel(logging.WARNING)
     logging.getLogger("stock_watcher.controllers.poll_controller").setLevel(logging.WARNING)
+    logger = logging.getLogger("stock_watcher.app")
     logger.info("log file: %s", log_file)
     path = Path(config_path) if config_path else Path("config.yaml")
     if not path.is_absolute():
