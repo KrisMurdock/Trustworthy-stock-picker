@@ -2257,6 +2257,11 @@ class StockWatcherApp(App):
 
 
 def main(config_path: Optional[str] = None) -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        stream=sys.stderr,
+    )
     path = Path(config_path) if config_path else Path("config.yaml")
     if not path.is_absolute():
         path = Path.cwd() / path

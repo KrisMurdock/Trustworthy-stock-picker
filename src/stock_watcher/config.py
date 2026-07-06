@@ -355,7 +355,7 @@ class NewsConfig:
             for key in ["morning_briefing", "market_open", "a_share_close", "hk_close", "evening_briefing"]
         }
         return cls(
-            poll_interval=float(d.get("poll_interval", 120)),
+            poll_interval=float(d.get("poll_interval", 300.0)),
             sources=sources,
             sector_keywords=SectorKeywordsConfig.from_dict(d.get("sector_keywords", {})),
             trend_scoring=TrendScoringConfig.from_dict(d.get("trend_scoring", {})),
