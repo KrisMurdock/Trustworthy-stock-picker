@@ -24,8 +24,8 @@ class SinaFlashNewsFetcher(BaseNewsFetcher):
             return []
 
         try:
-            import akshare, asyncio as _asyncio
-            df = await _asyncio.to_thread(akshare.stock_info_global_sina)
+            import akshare
+            df = await self._run_blocking(akshare.stock_info_global_sina)
         except Exception:
             logger.warning("%s: fetch failed", self.source_name, )
             self._record_failure()
@@ -36,9 +36,21 @@ class SinaFlashNewsFetcher(BaseNewsFetcher):
 
         try:
             for _idx, row in df.iterrows():
-                title = str(row.get("title", "")).strip()
-                content = str(row.get("content", "")).strip()
-                published = str(row.get("time", "")).strip()
+                # akshare returns columns: 时间, 内容 (Chinese)
+                # The "内容" field contains both title and body in one string
+                raw_content = str(row.get("内容", "")).strip()
+                published = str(row.get("时间", "")).strip()
+
+                # Split content into title (first sentence/clause) and body
+                # Typical format: "  市场消息：渣打银行携手贝莱德推出亚太多元资产基金。"
+                title = raw_content
+                content = ""
+                for sep in ["。", "；", "，", "！", "？"]:
+                    idx = raw_content.find(sep)
+                    if idx > 0:
+                        title = raw_content[:idx + 1].strip()
+                        content = raw_content[idx + 1:].strip()
+                        break
 
                 # Use title as dedup key (Sina may not provide URLs)
                 key = f"{title}:{published}"

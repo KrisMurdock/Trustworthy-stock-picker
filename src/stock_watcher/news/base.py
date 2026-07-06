@@ -38,7 +38,7 @@ class BaseNewsFetcher(ABC):
         """抓取最新新闻。失败时返回 [] 并记录日志."""
         ...
 
-    async def _run_blocking(self, func, *args, timeout: float | None = None) -> Any:
+    async def _run_blocking(self, func, *args, timeout: float | None = None, **kwargs) -> Any:
         """在线程池中运行阻塞函数，带硬超时。
 
         使用 ThreadPoolExecutor.submit().result(timeout=N) 实现真正的超时中断。
@@ -48,7 +48,7 @@ class BaseNewsFetcher(ABC):
         loop = asyncio.get_running_loop()
 
         def _runner():
-            return func(*args)
+            return func(*args, **kwargs)
 
         fut = None
         pool = ThreadPoolExecutor(max_workers=1)

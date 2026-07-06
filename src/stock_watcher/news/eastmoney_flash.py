@@ -27,8 +27,8 @@ class EastMoneyFlashNewsFetcher(BaseNewsFetcher):
             return []
 
         try:
-            import akshare, asyncio as _asyncio
-            df = await _asyncio.to_thread(akshare.stock_info_global_em)
+            import akshare
+            df = await self._run_blocking(akshare.stock_info_global_em)
         except Exception:
             logger.warning("%s: fetch failed", self.source_name, )
             self._record_failure()
