@@ -50,7 +50,7 @@ class YahooNewsFetcher(BaseNewsFetcher):
                 t = await _asyncio.to_thread(yfinance.Ticker, ticker)
                 news_list = await _asyncio.to_thread(lambda: t.news or [])
             except Exception:
-                logger.warning("%s: fetch failed for %s", self.source_name, code, exc_info=True)
+                logger.warning("%s: fetch failed for %s", self.source_name, code, )
                 self._record_failure()
                 continue
 
@@ -83,7 +83,7 @@ class YahooNewsFetcher(BaseNewsFetcher):
                     ))
                 self._record_success()
             except Exception:
-                logger.warning("%s: parse failed for %s", self.source_name, code, exc_info=True)
+                logger.warning("%s: parse failed for %s", self.source_name, code, )
                 self._record_failure()
                 continue
 

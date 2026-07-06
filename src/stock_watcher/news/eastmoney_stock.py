@@ -40,7 +40,7 @@ class EastMoneyStockNewsFetcher(BaseNewsFetcher):
                 import akshare, asyncio as _asyncio
                 df = await _asyncio.to_thread(akshare.stock_news_em, symbol=raw_code)
             except Exception:
-                logger.warning("%s: fetch failed for %s", self.source_name, code, exc_info=True)
+                logger.warning("%s: fetch failed for %s", self.source_name, code, )
                 self._record_failure()
                 continue
 
@@ -70,7 +70,7 @@ class EastMoneyStockNewsFetcher(BaseNewsFetcher):
                 self._record_success()
             except Exception:
                 logger.warning(
-                    "%s: parse failed for %s", self.source_name, code, exc_info=True
+                    "%s: parse failed for %s", self.source_name, code, 
                 )
                 self._record_failure()
                 continue
