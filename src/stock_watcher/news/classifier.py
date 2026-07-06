@@ -41,7 +41,10 @@ class ClassifyResult:
 _ANALYZE_PROMPT = """你是一个资深财经新闻分析师。请对以下新闻做多维度分析。
 
 分析维度：
-1. level: 重要性 — critical（直接影响持仓股的重大事件）、notable（值得关注）、ignore（常规/无关）
+1. level: 重要性分级标准：
+   - critical：满足任一即判为 critical — ①直接影响持仓个股的重大事件（业绩、重组、增减持等），②重大宏观政策/行业变革（利率调整、产业政策、监管新规、贸易政策等），③热门赛道/板块龙头的重大事件（技术突破、市场份额剧变、重大合作/并购），④可能导致市场大幅波动的突发事件（地缘政治、自然灾害影响供应链、黑天鹅事件）
+   - notable：对市场/行业有一般性影响但非紧急的新闻
+   - ignore：常规报道、重复信息、与投资决策无关的内容
 2. summary: 用 1-2 句简洁中文总结核心内容，突出对投资者的影响
 3. stocks: 涉及的个股名称列表，如["贵州茅台", "宁德时代"]，无关则 []
 4. sectors: 涉及的板块/行业名称列表，如["白酒板块", "新能源"]，无关则 []
@@ -60,16 +63,25 @@ class NewsClassifier:
         deepseek_cfg: DeepSeekConfig | None,
         critical_keywords: list[str] | None = None,
         ignore_keywords: list[str] | None = None,
+        watchlist_info: str = "",
     ) -> None:
         self._cfg = deepseek_cfg
         self._critical_kw = [k.lower() for k in (critical_keywords or [])]
         self._ignore_kw = [k.lower() for k in (ignore_keywords or [])]
+        self._watchlist_info = watchlist_info
         self._cache: dict[str, ClassifyResult] = {}
         self._call_times: list[float] = []
 
     # ------------------------------------------------------------------
     # 主入口
     # ------------------------------------------------------------------
+
+    def set_watchlist(self, codes: list[str]) -> None:
+        """设置当前自选股列表，AI 分类时会据此判断新闻相关性."""
+        if codes:
+            self._watchlist_info = f"自选股代码: {', '.join(codes[:15])}"
+        else:
+            self._watchlist_info = ""
 
     async def classify(self, item: NewsItem) -> ClassifyResult:
         """对单条新闻做全维度分析."""
@@ -127,9 +139,12 @@ class NewsClassifier:
         self._rate_limit()
 
         url = f"{self._cfg.api_base.rstrip('/')}/chat/completions"
+        user_content = f"标题：{item.title}\n内容：{item.summary[:300]}"
+        if self._watchlist_info:
+            user_content = f"用户持仓关注：{self._watchlist_info}\n\n{user_content}"
         messages = [
             {"role": "system", "content": _ANALYZE_PROMPT},
-            {"role": "user", "content": f"标题：{item.title}\n内容：{item.summary[:300]}"},
+            {"role": "user", "content": user_content},
         ]
 
         for attempt in range(2):

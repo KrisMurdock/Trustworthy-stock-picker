@@ -1388,6 +1388,9 @@ class StockWatcherApp(App):
                 classified: list[tuple] = []  # (NewsItem, ClassifyResult)
                 critical_n = notable_n = ignore_n = 0
                 ai_ok = 0
+
+                # 注入自选股上下文，帮助 AI 判断相关性
+                self._news_classifier.set_watchlist(codes)
                 for item in items:
                     result = await self._news_classifier.classify(item)
                     classified.append((item, result))
