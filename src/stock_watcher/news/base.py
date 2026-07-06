@@ -133,6 +133,119 @@ class BaseNewsFetcher(ABC):
         while self._failure_history and self._failure_history[0] < cutoff:
             self._failure_history.pop(0)
 
+    # ------------------------------------------------------------------
+    # Proxy + retry (Phase 2)
+    # ------------------------------------------------------------------
+
+    _proxy_pool = None  # type: ignore  # injected by aggregator
+
+    async def _run_blocking_with_proxy(
+        self, func, *args, proxy: str, timeout: float | None = None
+    ) -> Any:
+        """在线程中运行阻塞函数，通过环境变量注入代理。
+
+        akshare → requests → 自动读取 HTTP_PROXY / HTTPS_PROXY。
+        在 _runner 闭包内 save/restore 环境变量，避免线程间污染。
+        """
+        _to = timeout if timeout is not None else self._fetch_timeout
+        loop = asyncio.get_running_loop()
+
+        # 解析代理地址
+        proxy_url = proxy
+        if "://" in proxy:
+            proxy_url = proxy.split("://", 1)[1]
+
+        def _runner():
+            import os as _os
+            # Save original
+            _orig_http = _os.environ.get("HTTP_PROXY")
+            _orig_https = _os.environ.get("HTTPS_PROXY")
+            try:
+                _os.environ["HTTP_PROXY"] = f"http://{proxy_url}"
+                _os.environ["HTTPS_PROXY"] = f"http://{proxy_url}"
+                return func(*args)
+            finally:
+                # Restore
+                if _orig_http is not None:
+                    _os.environ["HTTP_PROXY"] = _orig_http
+                else:
+                    _os.environ.pop("HTTP_PROXY", None)
+                if _orig_https is not None:
+                    _os.environ["HTTPS_PROXY"] = _orig_https
+                else:
+                    _os.environ.pop("HTTPS_PROXY", None)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(_runner)
+            try:
+                return await loop.run_in_executor(None, lambda: fut.result(timeout=_to))
+            except Exception:
+                fut.cancel()
+                raise
+
+    async def _fetch_with_retry(
+        self, func, *args, timeout: float | None = None
+    ) -> Any:
+        """混合策略：直连优先 → 代理 fallback。
+
+        1. 直连尝试（_run_blocking）
+        2. 瞬时错误 → 最多尝试 3 个不同代理
+        3. 永久错误（SSL等）→ 直接 raise
+        4. 全部失败 → raise last error
+        """
+        _to = timeout if timeout is not None else self._fetch_timeout
+        last_error: Exception | None = None
+
+        # Step 1: 直连
+        try:
+            return await self._run_blocking(func, *args, timeout=_to)
+        except Exception as e:
+            if not self._is_retryable(type(e)):
+                raise
+            last_error = e
+
+        # Step 2: 代理 fallback
+        pool = getattr(self, '_proxy_pool', None)
+        if pool is not None and pool.available_count > 0:
+            for proxy in pool.get_proxies(3):
+                try:
+                    return await self._run_blocking_with_proxy(
+                        func, *args, proxy=proxy,
+                        timeout=max(_to, 20.0),
+                    )
+                except Exception as e:
+                    pool.mark_dead(proxy)
+                    last_error = e
+                    continue
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("_fetch_with_retry: no error captured")
+
+    @staticmethod
+    def _is_retryable(error_type: type) -> bool:
+        """判断错误是否应重试（瞬时错误）vs 快速失败（永久错误）。"""
+        import ssl
+
+        # Built-in retryable
+        if issubclass(error_type, (TimeoutError, ConnectionError)):
+            return True
+
+        # SSL errors are NOT retryable — TCP-level block
+        if issubclass(error_type, ssl.SSLError):
+            return False
+
+        # String-based matching for httpx errors (avoid hard import dependency)
+        name = error_type.__name__ if hasattr(error_type, '__name__') else str(error_type)
+        if name in ("TimeoutException", "ConnectError", "RemoteProtocolError",
+                     "ReadTimeout", "WriteTimeout", "PoolTimeout"):
+            return True
+        if name in ("HTTPStatusError",):
+            return False
+
+        # Default: do not retry unknown errors
+        return False
+
     @staticmethod
     def _make_id(source: str, identifier: str) -> str:
         """生成确定性 news ID: sha1(source + identifier)[:16]."""
