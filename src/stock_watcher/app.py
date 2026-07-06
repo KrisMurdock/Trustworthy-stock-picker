@@ -282,6 +282,25 @@ class StockTable(DataTable):
             self.COL_MCAP,
         )
 
+    @staticmethod
+    def _trunc_name(name: str, max_width: int = 8) -> str:
+        """截断过长的股票名称，超出部分用 ... 代替.
+        
+        CJK 字符按 2 宽度计算，ASCII 按 1 宽度计算。
+        """
+        if not name:
+            return "—"
+        width = 0
+        result: list[str] = []
+        for ch in name:
+            cw = 2 if '\u4e00' <= ch <= '\u9fff' or '\u3000' <= ch <= '\u303f' else 1
+            if width + cw > max_width:
+                result.append("...")
+                break
+            result.append(ch)
+            width += cw
+        return "".join(result)
+
     def update_quote(self, quote: StockQuote) -> None:
         """Insert or update a row for the given quote."""
         row_key = quote.code
@@ -317,7 +336,7 @@ class StockTable(DataTable):
         else:
             cells = [
                 self._fmt_dir(quote.direction, quote.code),
-                quote.name or "—",
+                self._trunc_name(quote.name or ""),
                 self._fmt_price(quote.price),
                 self._fmt_pct(quote.change_pct),
                 self._fmt_amount(quote.change_amount),
