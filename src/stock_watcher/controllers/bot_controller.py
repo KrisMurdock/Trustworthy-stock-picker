@@ -96,7 +96,7 @@ class BotController:
         from stock_watcher.chat_sender import _get_hkd_cny_rate
         from stock_watcher.deepseek_chat import _build_context_from_store, ask_deepseek
 
-        hkd_rate = _get_hkd_cny_rate()
+        hkd_rate = await _get_hkd_cny_rate()
         context = _build_context_from_store(quotes, positions, hkd_rate)
         answer = await ask_deepseek(self._deepseek_cfg, context, text)
 

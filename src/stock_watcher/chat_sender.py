@@ -32,13 +32,16 @@ async def _get_hkd_cny_rate() -> float:
     if _hkd_cny_rate is not None:
         return _hkd_cny_rate
     try:
-        async with httpx.AsyncClient(timeout=5) as c:
-            r = await c.get("https://open.er-api.com/v6/latest/HKD")
+        from stock_watcher.http_client import get_shared_client
+        client = get_shared_client()
+        r = await client.get("https://open.er-api.com/v6/latest/HKD", timeout=5.0)
+        if r.status_code == 200:
             data = r.json()
             _hkd_cny_rate = float(data["rates"].get("CNY", 0.92))
+        else:
+            _hkd_cny_rate = 0.92
     except Exception:
-        logger.warning("HKD/CNY rate fetch failed, using fallback 0.92", exc_info=True)
-        _hkd_cny_rate = 0.92  # fallback
+        _hkd_cny_rate = 0.92
     return _hkd_cny_rate
 
 
