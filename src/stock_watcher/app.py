@@ -1486,7 +1486,7 @@ class StockWatcherApp(App):
                         sector=sectors[0] if sectors else None,
                         tiered=tiered,
                     )
-                    asyncio.create_task(send_news_card(self._chat_cfg, card))
+                    asyncio.create_task(self._safe_send_news_card(self._chat_cfg, card))
 
                 self._news_aggregator.persist_seen()
 

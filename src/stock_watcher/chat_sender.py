@@ -356,11 +356,11 @@ async def send_feishu_card(cfg: ChatConfig, card: dict) -> bool:
         payload["sign"] = _generate_sign(ts, cfg.feishu_secret)
 
     try:
-        async with httpx.AsyncClient(timeout=FEISHU_WEBHOOK_TIMEOUT) as client:
-            resp = await client.post(
-                cfg.feishu_webhook, json=payload,
-                headers={"Content-Type": "application/json"},
-            )
+        client = get_shared_client()
+        resp = await client.post(
+            cfg.feishu_webhook, json=payload,
+            headers={"Content-Type": "application/json"},
+        )
         if resp.status_code == 200:
             body = resp.json()
             return body.get("StatusCode") == 0 or body.get("code") == 0
