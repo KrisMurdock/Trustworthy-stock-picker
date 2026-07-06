@@ -19,7 +19,7 @@ class TestSinaFlashNewsFetcher:
         fetcher = SinaFlashNewsFetcher()
         mock_df = MagicMock()
         mock_df.iterrows.return_value = iter([
-            (0, {"title": "新浪快讯", "content": "内容", "time": "2025-07-01 10:30"}),
+            (0, {"内容": "新浪快讯。这是详细内容部分", "时间": "2025-07-01 10:30"}),
         ])
 
         with patch("akshare.stock_info_global_sina", return_value=mock_df):

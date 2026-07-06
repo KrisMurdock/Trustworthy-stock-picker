@@ -4,6 +4,8 @@ from stock_watcher.news.base import BaseNewsFetcher
 from stock_watcher.news.eastmoney_stock import EastMoneyStockNewsFetcher
 from stock_watcher.news.eastmoney_flash import EastMoneyFlashNewsFetcher
 from stock_watcher.news.sina_flash import SinaFlashNewsFetcher
+from stock_watcher.news.sina_roll import SinaRollNewsFetcher
+from stock_watcher.news.sina_stock import SinaStockNewsFetcher
 from stock_watcher.news.cls_telegraph import CLSTelegraphFetcher
 from stock_watcher.news.yahoo_news import YahooNewsFetcher
 from stock_watcher.news.aggregator import NewsAggregator
@@ -18,6 +20,8 @@ __all__ = [
     "EastMoneyStockNewsFetcher",
     "EastMoneyFlashNewsFetcher",
     "SinaFlashNewsFetcher",
+    "SinaRollNewsFetcher",
+    "SinaStockNewsFetcher",
     "CLSTelegraphFetcher",
     "YahooNewsFetcher",
     "NewsAggregator",
