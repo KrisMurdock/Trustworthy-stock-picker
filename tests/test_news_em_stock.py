@@ -75,7 +75,7 @@ class TestEastMoneyStockNewsFetcher:
             items = asyncio.run(fetcher.fetch(["sh600519"]))
 
         assert items == []
-        assert fetcher._consecutive_failures == 1
+        assert len(fetcher._failure_history) == 1
 
     def test_dedup_by_url_within_source(self):
         """Duplicate URLs from akshare should produce single NewsItem."""
