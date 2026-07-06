@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Optional
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from stock_watcher.config import CninfoConfig, RequestConfig
 from stock_watcher.models import Announcement
@@ -80,6 +83,7 @@ async def _resolve_org_id(
 
         return None
     except Exception:
+        logger.warning("cninfo fetch failed for %s", sec_code, exc_info=True)
         return None
 
 

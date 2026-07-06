@@ -37,6 +37,7 @@ async def _get_hkd_cny_rate() -> float:
             data = r.json()
             _hkd_cny_rate = float(data["rates"].get("CNY", 0.92))
     except Exception:
+        logger.warning("HKD/CNY rate fetch failed, using fallback 0.92", exc_info=True)
         _hkd_cny_rate = 0.92  # fallback
     return _hkd_cny_rate
 
