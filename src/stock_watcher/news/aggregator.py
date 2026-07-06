@@ -46,21 +46,47 @@ class NewsAggregator:
 
         watchlist_set = set(watchlist_codes)
 
-        # 并发抓取
-        tasks = []
+        # 并发抓取 — 根据熔断状态分支
+        tasks = {}
         for f in self._fetchers:
-            if f.enabled:
-                tasks.append(self._fetch_one(f, watchlist_codes))
+            if not f.enabled:
+                continue
+            if f.state == "green":
+                task = asyncio.create_task(self._fetch_one(f, watchlist_codes))
+                tasks[task] = f
+            elif f.state == "yellow" and f.should_probe():
+                logger.info("%s: probing (half-open)", f.source_name)
+                task = asyncio.create_task(self._fetch_one(f, watchlist_codes))
+                tasks[task] = f
+            else:
+                state_label = f.state.upper()
+                logger.debug(
+                    "%s: skipped (state=%s, cooldown=%.0fs)",
+                    f.source_name, state_label, f.cooldown_remaining,
+                )
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        if not tasks:
+            return []
+
+        done, pending = await asyncio.wait(
+            tasks.keys(), timeout=60, return_when=asyncio.ALL_COMPLETED,
+        )
+
+        # Cancel any still-pending tasks (e.g. akshare hung in thread)
+        for task in pending:
+            fetcher = tasks[task]
+            logger.warning("%s: fetch timed out (60s)", fetcher.source_name)
+            task.cancel()
 
         # 收集
         all_items: list[NewsItem] = []
-        for result in results:
-            if isinstance(result, Exception):
-                logger.warning("fetcher failed: %s", result)
-                continue
-            all_items.extend(result)
+        for task in done:
+            fetcher = tasks[task]
+            try:
+                result = task.result()
+                all_items.extend(result)
+            except Exception as exc:
+                logger.warning("%s: fetch error: %s", fetcher.source_name, exc)
 
         # 时间过滤：仅保留今天的新闻
         today_items = self._today_filter(all_items)
@@ -82,9 +108,12 @@ class NewsAggregator:
     ) -> list[NewsItem]:
         """包装单个 Fetcher 调用，处理异常."""
         try:
-            return await fetcher.fetch(codes)
+            result = await fetcher.fetch(codes)
+            fetcher._record_success()
+            return result
         except Exception as exc:
             logger.error("%s fetch error: %s", fetcher.source_name, exc)
+            fetcher._record_failure()
             return []
 
     # ------------------------------------------------------------------
