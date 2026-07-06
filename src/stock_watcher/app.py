@@ -970,12 +970,18 @@ class StockWatcherApp(App):
             self._scheduled_push_loop()
 
     def on_unmount(self) -> None:
-        """Cleanup when the app exits."""
+        """Cleanup when the app exits — force-cancel all pending IO to exit quickly."""
         self._stopped = True
         if hasattr(self, "_bot_stop"):
             self._bot_stop.set()
         if hasattr(self, "_bot_task"):
             self._bot_task.cancel()
+        if hasattr(self, "_push_stop"):
+            self._push_stop.set()
+        # Close the shared HTTP client to unblock any in-flight requests
+        # (httpx.TimeoutException / CancelledError are already caught in all fetchers)
+        from stock_watcher.http_client import close_shared_client
+        close_shared_client()
 
     # ------------------------------------------------------------------
     # Bot server — background worker entry point
@@ -1319,6 +1325,12 @@ class StockWatcherApp(App):
         from stock_watcher.news.trend_ranker import TrendRanker
         from stock_watcher.chat_sender import send_news_card
 
+        async def _safe_send(cfg, card):
+            try:
+                await send_news_card(cfg, card)
+            except Exception:
+                pass  # already logged by send_news_card, just suppress
+
         cfg = self._news_cfg
 
         # Build fetchers
@@ -1438,6 +1450,8 @@ class StockWatcherApp(App):
 
                 # Push ALL news with levels — use enriched card when sector matched
                 for item, result in classified:
+                    if self._stopped:
+                        break
                     if result.level != NewsLevel.CRITICAL:
                         continue
 
@@ -1450,6 +1464,8 @@ class StockWatcherApp(App):
                             import akshare
                             all_stocks: list = []
                             for sec_name in sectors[:3]:  # max 3 sectors
+                                if self._stopped:
+                                    break
                                 try:
                                     df = await asyncio.to_thread(
                                         akshare.stock_board_concept_cons_em, symbol=sec_name
@@ -1473,12 +1489,17 @@ class StockWatcherApp(App):
                                 except Exception:
                                     logger.warning("Sector fetch failed for %s", sec_name, exc_info=True)
 
+                            if self._stopped:
+                                break
+
                             # Score and rank
                             if all_stocks:
                                 from stock_watcher.models import SectorStock  # noqa
                                 # Fetch historical data and score
                                 stock_scores: dict[str, TrendScore] = {}
                                 for s in all_stocks[:30]:  # cap at 30 to avoid rate limit
+                                    if self._stopped:
+                                        break
                                     try:
                                         df = await asyncio.to_thread(
                                             akshare.stock_zh_a_hist_tx,
@@ -1490,6 +1511,7 @@ class StockWatcherApp(App):
                                     except Exception:
                                         stock_scores[s.code] = TrendScore(code=s.code)
 
+                            if not self._stopped:
                                 pos_codes = set(self._queue.all_codes)
                                 tiered = trend_ranker.rank(
                                     all_stocks, stock_scores,
@@ -1505,7 +1527,7 @@ class StockWatcherApp(App):
                         sector=sectors[0] if sectors else None,
                         tiered=tiered,
                     )
-                    asyncio.create_task(self._safe_send_news_card(self._chat_cfg, card))
+                    asyncio.create_task(_safe_send(self._chat_cfg, card))
 
                 self._news_aggregator.persist_seen()
 
