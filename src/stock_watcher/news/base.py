@@ -44,12 +44,14 @@ class BaseNewsFetcher(ABC):
         def _runner():
             return func(*args)
 
+        fut = None
         pool = ThreadPoolExecutor(max_workers=1)
         try:
             fut = pool.submit(_runner)
             return await loop.run_in_executor(None, lambda: fut.result(timeout=_to))
         except Exception:
-            fut.cancel()
+            if fut is not None:
+                fut.cancel()
             raise
         finally:
             pool.shutdown(wait=False)

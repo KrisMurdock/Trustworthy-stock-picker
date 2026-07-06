@@ -49,6 +49,20 @@ class TestRunBlocking:
 
         asyncio.run(run())
 
+    def test_uses_fetch_timeout_default(self):
+        """When timeout=None, self._fetch_timeout is used as the timeout."""
+        fetcher = _TestFetcher()
+        fetcher._fetch_timeout = 0.3
+
+        async def run():
+            t0 = time.monotonic()
+            with pytest.raises(TimeoutError):
+                await fetcher._run_blocking(lambda: time.sleep(10))
+            elapsed = time.monotonic() - t0
+            assert elapsed < 2.0  # should fail fast, not wait 10s
+
+        asyncio.run(run())
+
     def test_timeout_returns_control_to_event_loop(self):
         """After timeout, the event loop is not blocked."""
         fetcher = _TestFetcher()
