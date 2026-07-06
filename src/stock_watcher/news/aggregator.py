@@ -126,11 +126,9 @@ class NewsAggregator:
                 result = await fetcher.fetch(codes, proxy=proxy)  # type: ignore
             else:
                 result = await fetcher.fetch(codes)
-            fetcher._record_success()
             return result
         except Exception as exc:
             logger.error("%s fetch error: %s", fetcher.source_name, exc)
-            fetcher._record_failure()
             return []
 
     # ------------------------------------------------------------------

@@ -20,7 +20,9 @@ class _MockFetcher(BaseNewsFetcher):
     async def fetch(self, watchlist_codes: list[str]) -> list[NewsItem]:
         self.fetch_called += 1
         if self._should_fail:
+            self._record_failure()
             raise RuntimeError("mock fetch error")
+        self._record_success()
         return self._items
 
 

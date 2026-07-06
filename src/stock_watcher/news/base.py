@@ -109,9 +109,14 @@ class BaseNewsFetcher(ABC):
     def _record_failure(self) -> None:
         """记录一次失败."""
         now = _time.monotonic()
-        # In YELLOW, a probe failure keeps us in YELLOW — just reset the probe timer.
+        # In YELLOW, a probe failure keeps us in YELLOW — reset the probe timer
+        # and bump the last failure timestamp so failures don't decay out of
+        # the window while probes are still failing.  Use a timestamp just
+        # past the cooldown boundary so we stay YELLOW, not RED.
         if self.state == "yellow":
             self._last_probe_time = now
+            if self._failure_history:
+                self._failure_history[-1] = now - self._cooldown_period
             return
         self._failure_history.append(now)
         self._prune_old_failures(now)
@@ -175,13 +180,17 @@ class BaseNewsFetcher(ABC):
                 else:
                     _os.environ.pop("HTTPS_PROXY", None)
 
-        with ThreadPoolExecutor(max_workers=1) as pool:
+        fut = None
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
             fut = pool.submit(_runner)
-            try:
-                return await loop.run_in_executor(None, lambda: fut.result(timeout=_to))
-            except Exception:
+            return await loop.run_in_executor(None, lambda: fut.result(timeout=_to))
+        except Exception:
+            if fut is not None:
                 fut.cancel()
-                raise
+            raise
+        finally:
+            pool.shutdown(wait=False)
 
     async def _fetch_with_retry(
         self, func, *args, timeout: float | None = None, **kwargs
