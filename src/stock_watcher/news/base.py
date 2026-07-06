@@ -140,7 +140,7 @@ class BaseNewsFetcher(ABC):
     _proxy_pool = None  # type: ignore  # injected by aggregator
 
     async def _run_blocking_with_proxy(
-        self, func, *args, proxy: str, timeout: float | None = None
+        self, func, *args, proxy: str, timeout: float | None = None, **kwargs
     ) -> Any:
         """在线程中运行阻塞函数，通过环境变量注入代理。
 
@@ -163,7 +163,7 @@ class BaseNewsFetcher(ABC):
             try:
                 _os.environ["HTTP_PROXY"] = f"http://{proxy_url}"
                 _os.environ["HTTPS_PROXY"] = f"http://{proxy_url}"
-                return func(*args)
+                return func(*args, **kwargs)
             finally:
                 # Restore
                 if _orig_http is not None:
@@ -184,7 +184,7 @@ class BaseNewsFetcher(ABC):
                 raise
 
     async def _fetch_with_retry(
-        self, func, *args, timeout: float | None = None
+        self, func, *args, timeout: float | None = None, **kwargs
     ) -> Any:
         """混合策略：直连优先 → 代理 fallback。
 
@@ -198,7 +198,7 @@ class BaseNewsFetcher(ABC):
 
         # Step 1: 直连
         try:
-            return await self._run_blocking(func, *args, timeout=_to)
+            return await self._run_blocking(func, *args, timeout=_to, **kwargs)
         except Exception as e:
             if not self._is_retryable(type(e)):
                 raise
@@ -211,7 +211,7 @@ class BaseNewsFetcher(ABC):
                 try:
                     return await self._run_blocking_with_proxy(
                         func, *args, proxy=proxy,
-                        timeout=max(_to, 20.0),
+                        timeout=max(_to, 20.0), **kwargs
                     )
                 except Exception as e:
                     pool.mark_dead(proxy)

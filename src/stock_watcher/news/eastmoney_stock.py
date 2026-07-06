@@ -38,7 +38,7 @@ class EastMoneyStockNewsFetcher(BaseNewsFetcher):
             try:
                 raw_code = _SH_PREFIX.sub("", _SZ_PREFIX.sub("", code))
                 import akshare
-                df = await self._run_blocking(akshare.stock_news_em, symbol=raw_code)
+                df = await self._fetch_with_retry(akshare.stock_news_em, symbol=raw_code)
             except Exception:
                 logger.warning("%s: fetch failed for %s", self.source_name, code, )
                 self._record_failure()

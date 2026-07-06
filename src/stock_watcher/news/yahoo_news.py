@@ -47,8 +47,8 @@ class YahooNewsFetcher(BaseNewsFetcher):
             try:
                 ticker = self._to_yahoo_ticker(code)
                 import yfinance
-                t = await self._run_blocking(yfinance.Ticker, ticker)
-                news_list = await self._run_blocking(lambda: t.news or [])
+                t = await self._fetch_with_retry(yfinance.Ticker, ticker)
+                news_list = await self._fetch_with_retry(lambda: t.news or [])
             except Exception:
                 logger.warning("%s: fetch failed for %s", self.source_name, code, )
                 self._record_failure()

@@ -22,7 +22,7 @@ class CLSTelegraphFetcher(BaseNewsFetcher):
 
         try:
             import akshare
-            df = await self._run_blocking(akshare.stock_info_global_cls)
+            df = await self._fetch_with_retry(akshare.stock_info_global_cls)
         except Exception:
             logger.warning("%s: fetch failed", self.source_name, )
             self._record_failure()
