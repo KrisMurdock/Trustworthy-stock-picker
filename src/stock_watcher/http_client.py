@@ -10,17 +10,21 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _client: httpx.AsyncClient | None = None
+_loop_id: int | None = None
 
 
 def get_shared_client() -> httpx.AsyncClient:
-    """Return a module-level singleton AsyncClient.
+    """Return a module-level singleton AsyncClient, recreated per event loop."""
+    global _client, _loop_id
+    try:
+        loop = asyncio.get_running_loop()
+        current_id = id(loop)
+    except RuntimeError:
+        current_id = 0
 
-    Creates the client on first call; subsequent calls return the same instance.
-    Use ``close_shared_client()`` to reset (mainly for test cleanup).
-    """
-    global _client
-    if _client is None:
+    if _client is None or _loop_id != current_id:
         _client = httpx.AsyncClient(timeout=15.0)
+        _loop_id = current_id
     return _client
 
 

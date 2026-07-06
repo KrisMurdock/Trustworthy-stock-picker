@@ -922,6 +922,9 @@ class StockWatcherApp(App):
         self._bot_ctrl = BotController(
             chat_cfg=self._chat_cfg or ChatConfig(),
             deepseek_cfg=self._deepseek_cfg,
+            get_quotes=lambda: self._latest_quotes,
+            get_positions=lambda: self._positions,
+            on_notify=lambda msg: self.notify(msg),
         )
 
         # Daily high/low tracker — reset each calendar day
@@ -960,66 +963,8 @@ class StockWatcherApp(App):
     # ------------------------------------------------------------------
 
     async def _bot_poll_once(self) -> None:
-        """Called every 3s by Textual timer — polls Feishu for @mentions."""
-        if not self._chat_cfg or not self._chat_cfg.can_receive:
-            return
-
-        try:
-            from stock_watcher.bot_server import _get_tenant_token, _discover_chats, _list_messages, _is_at_bot, _extract_text
-            from stock_watcher.chat_sender import _get_hkd_cny_rate
-            from stock_watcher.deepseek_chat import ask_deepseek, _build_context_from_store
-
-            # Keep track of already-seen message IDs
-            if not hasattr(self, "_bot_seen_ids"):
-                self._bot_seen_ids: set[str] = set()
-                self._bot_chat_ids: set[str] | None = None
-                self.notify("[bot] 轮询已启动")
-
-            token = await _get_tenant_token(
-                self._chat_cfg.feishu_app_id, self._chat_cfg.feishu_app_secret
-            )
-            if not token:
-                return
-
-            # Lazy discover chats
-            if self._bot_chat_ids is None:
-                self._bot_chat_ids = await _discover_chats(token)
-                if self._bot_chat_ids:
-                    self.notify(f"[bot] 发现 {len(self._bot_chat_ids)} 个群聊")
-
-            for chat_id in list(self._bot_chat_ids or []):
-                msgs = await _list_messages(token, chat_id, limit=3)
-                for msg in msgs:
-                    msg_id = msg.get("message_id", "")
-                    if msg_id in self._bot_seen_ids:
-                        continue
-                    self._bot_seen_ids.add(msg_id)
-
-                    if not _is_at_bot(msg):
-                        continue
-
-                    text = _extract_text(msg)
-                    self.notify(f"[bot] 收到：{text[:60]}")
-
-                    # Build context & ask AI
-                    rate = await _get_hkd_cny_rate()
-                    ctx = _build_context_from_store(
-                        self._latest_quotes, self._positions, rate
-                    )
-                    answer = await ask_deepseek(self._deepseek_cfg, ctx, text)
-
-                    # Reply
-                    from stock_watcher.bot_server import _reply_message
-                    ok = await _reply_message(token, msg_id, answer)
-                    if ok:
-                        self.notify(f"[bot] ✓ 已回复 ({len(answer)}字)")
-
-            # Prune old seen IDs
-            if len(self._bot_seen_ids) > 500:
-                self._bot_seen_ids = set(list(self._bot_seen_ids)[-200:])
-
-        except Exception as exc:
-            self.notify(f"[bot] 错误: {exc}")
+        """Called every 3s by Textual timer — delegates to BotController."""
+        await self._bot_ctrl.poll_once()
 
 
     # ------------------------------------------------------------------

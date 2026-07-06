@@ -9,6 +9,7 @@ from typing import Optional
 import httpx
 
 from stock_watcher.config import RequestConfig
+from stock_watcher.http_client import get_shared_client
 from stock_watcher.models import Market, StockQuote
 
 
@@ -304,7 +305,7 @@ class SinaFetcher(Fetcher):
     async def fetch(self, code: str) -> StockQuote:
         api_code = self._api_code(code)
         url = self.BASE_URL.format(code=api_code)
-        client = httpx.AsyncClient(timeout=self._config.timeout)
+        client = get_shared_client()
         try:
             headers = {
                 "User-Agent": self._config.get_random_ua(),
@@ -323,7 +324,7 @@ class SinaFetcher(Fetcher):
         except FetchError:
             raise
         finally:
-            await client.aclose()
+            pass  # shared client, do not close
 
 
 class TencentFetcher(Fetcher):
@@ -333,7 +334,7 @@ class TencentFetcher(Fetcher):
 
     async def fetch(self, code: str) -> StockQuote:
         url = self.BASE_URL.format(code=code)
-        client = httpx.AsyncClient(timeout=self._config.timeout)
+        client = get_shared_client()
         try:
             headers = {
                 "User-Agent": self._config.get_random_ua(),
@@ -350,7 +351,7 @@ class TencentFetcher(Fetcher):
         except FetchError:
             raise
         finally:
-            await client.aclose()
+            pass  # shared client, do not close
 
 
 def get_fetcher(code: str, request_config: Optional[RequestConfig] = None) -> Fetcher:
@@ -393,7 +394,7 @@ async def search_stocks(
 
     url = f"https://suggest3.sinajs.cn/suggest/type=11,12,31,14,15&key={query}"
 
-    client = httpx.AsyncClient(timeout=request_config.timeout)
+    client = get_shared_client()
     try:
         headers = {
             "User-Agent": request_config.get_random_ua(),
@@ -406,7 +407,7 @@ async def search_stocks(
     except httpx.TimeoutException:
         return []
     finally:
-        await client.aclose()
+        pass  # shared client, do not close
 
 
 def _parse_suggest_response(text: str) -> list[SearchResult]:
