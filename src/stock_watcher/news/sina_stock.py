@@ -30,7 +30,9 @@ class SinaStockNewsFetcher(BaseNewsFetcher):
         super().__init__(enabled=enabled)
         self._max_per_stock = max_per_stock
 
-    async def fetch(self, watchlist_codes: list[str]) -> list[NewsItem]:
+    async def fetch(
+        self, watchlist_codes: list[str], proxy: str | None = None
+    ) -> list[NewsItem]:
         """抓取自选股个股新闻（仅 A 股）."""
         a_codes = [c for c in watchlist_codes if c.startswith(("sh", "sz"))]
         if not a_codes:
@@ -39,7 +41,7 @@ class SinaStockNewsFetcher(BaseNewsFetcher):
         items: list[NewsItem] = []
         seen: set[str] = set()
 
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, proxy=proxy) as client:
             for code in a_codes:
                 try:
                     batch = await self._fetch_stock(client, code)

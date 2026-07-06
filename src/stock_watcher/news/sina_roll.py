@@ -43,11 +43,13 @@ class SinaRollNewsFetcher(BaseNewsFetcher):
         self._lids = lids or _DEFAULT_LIDS
         self._fetch_per_lid = fetch_per_lid
 
-    async def fetch(self, watchlist_codes: list[str]) -> list[NewsItem]:
+    async def fetch(
+        self, watchlist_codes: list[str], proxy: str | None = None
+    ) -> list[NewsItem]:
         items: list[NewsItem] = []
         seen_urls: set[str] = set()
 
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, proxy=proxy) as client:
             for lid in self._lids:
                 try:
                     batch = await self._fetch_lid(client, lid, watchlist_codes)
