@@ -1286,6 +1286,8 @@ class StockWatcherApp(App):
             EastMoneyStockNewsFetcher,
             EastMoneyFlashNewsFetcher,
             SinaFlashNewsFetcher,
+            SinaRollNewsFetcher,
+            SinaStockNewsFetcher,
             CLSTelegraphFetcher,
             YahooNewsFetcher,
             NewsAggregator,
@@ -1309,6 +1311,10 @@ class StockWatcherApp(App):
             fetchers.append(EastMoneyFlashNewsFetcher(enabled=True))
         if sources.get("sina_flash", True):
             fetchers.append(SinaFlashNewsFetcher(enabled=True))
+        if sources.get("sina_roll", True):
+            fetchers.append(SinaRollNewsFetcher(enabled=True))
+        if sources.get("sina_stock", True):
+            fetchers.append(SinaStockNewsFetcher(enabled=True))
         if sources.get("cls_telegraph", True):
             fetchers.append(CLSTelegraphFetcher(enabled=True))
         if sources.get("yahoo_news", True):
@@ -1318,9 +1324,17 @@ class StockWatcherApp(App):
             self.notify("[news] 无启用的新闻源")
             return
 
+        # Init aggregator with proxy pool (Phase 2)
+        from stock_watcher.proxy_pool import ProxyPool
+        proxy_pool = ProxyPool(cache_path="proxy_cache.json")
+        # Kick off initial async refresh (don't block startup)
+        asyncio.create_task(proxy_pool.refresh())
+
         # Init aggregator and classifier
         seen_path = Path(cfg.seen_ids_path) if cfg.seen_ids_path else Path("news_seen.jsonl")
-        self._news_aggregator = NewsAggregator(fetchers, str(seen_path))
+        self._news_aggregator = NewsAggregator(
+            fetchers, str(seen_path), proxy_pool=proxy_pool,
+        )
         self._news_classifier = NewsClassifier(
             deepseek_cfg=self._deepseek_cfg,
             critical_keywords=cfg.critical_keywords,
@@ -1475,6 +1489,10 @@ class StockWatcherApp(App):
 
             except Exception as exc:
                 logger.warning("news_loop error: %s", exc)
+
+            # Refresh proxy pool periodically (every 30 min, or when low)
+            if proxy_pool.available_count < 3:
+                asyncio.create_task(proxy_pool.refresh())
 
             await asyncio.sleep(cfg.poll_interval)
 

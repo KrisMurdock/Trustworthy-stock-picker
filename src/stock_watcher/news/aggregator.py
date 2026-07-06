@@ -27,8 +27,10 @@ class NewsAggregator:
         self,
         fetchers: list[BaseNewsFetcher],
         seen_path: str = "news_seen.jsonl",
+        proxy_pool = None,
     ) -> None:
         self._fetchers = fetchers
+        self._proxy_pool = proxy_pool
         self._seen_path = Path(seen_path)
         self._seen_ids: set[str] = set()
         self._seen_urls: set[str] = set()
@@ -106,9 +108,24 @@ class NewsAggregator:
     async def _fetch_one(
         self, fetcher: BaseNewsFetcher, codes: list[str]
     ) -> list[NewsItem]:
-        """包装单个 Fetcher 调用，处理异常."""
+        """包装单个 Fetcher 调用，处理异常。注入代理池引用."""
+        # Inject proxy pool reference into fetcher
+        if self._proxy_pool is not None:
+            fetcher._proxy_pool = self._proxy_pool  # type: ignore
+
+        # For httpx fetchers, pick a proxy if available
+        proxy = None
+        if self._proxy_pool is not None and self._proxy_pool.available_count > 0:
+            proxy = self._proxy_pool.get_proxy()
+
         try:
-            result = await fetcher.fetch(codes)
+            # Pass proxy to httpx fetchers that accept it
+            import inspect
+            sig = inspect.signature(fetcher.fetch)
+            if 'proxy' in sig.parameters:
+                result = await fetcher.fetch(codes, proxy=proxy)  # type: ignore
+            else:
+                result = await fetcher.fetch(codes)
             fetcher._record_success()
             return result
         except Exception as exc:
