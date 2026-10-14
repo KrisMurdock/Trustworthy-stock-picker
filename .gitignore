@@ -4,11 +4,14 @@
 /reasonix.toml
 /config.yaml
 /config.runtime.yaml
+/feishu.config
+/docker/.env
 
 # Go runtime and remote data
 /data
 /logs/
 /bin/
+/.builds/
 *.test
 /coverage.out
 

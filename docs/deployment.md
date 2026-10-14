@@ -1,0 +1,45 @@
+# 部署、升级与排障
+
+原生/systemd 与 Compose 是两种运行方式，同一数据目录同时只允许一个写入进程。部署前停止旧写入实例；`check`、`status` 可以在服务运行时读取状态。
+
+## 共同准备
+
+1. 保持 Windows 在线及 SSH 反向隧道可用，由宿主机把共享挂载至 `/mnt/windows_database`。确认 `findmnt -T /mnt/windows_database -o TARGET,FSTYPE` 显示 cifs。容器不会建立隧道或挂载 SMB。
+2. 从 `config.yaml.example` 创建私有配置，保留 `require_cifs: true`，核对股池、策略与有效交易日历。根配置默认 `data_dir: data`；在源码目录创建指向现有共享的软链接，或通过环境变量指定共享绝对路径。
+3. 按[环境变量说明](environment-variables.md)配置通知及滚动日志。目录 `logs/` 在宿主机；行情与状态在 Windows。先关闭通知完成检查，再按实际需要启用通道。
+4. 记录提交 SHA、镜像 ID 或包校验和。升级前备份配置与共享盘状态，保留旧制品。
+
+## 原生与 systemd
+
+在源码目录 `make build`，或解压经过校验的原生发布包。使用包部署时，将下面服务模板中的工作目录、程序和配置绝对路径改为实际安装位置。
+
+```bash
+./bin/stock-watcher version
+./bin/stock-watcher check -config config.yaml
+sudo install -m 644 deploy/stock-watcher.service /etc/systemd/system/stock-watcher.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now stock-watcher.service
+sudo systemctl status stock-watcher.service
+journalctl -u stock-watcher.service -n 50 --no-pager
+```
+
+模板默认目录 `/root/data/codebase/toys_project/stock_watcher`，读取 `/etc/stock-watcher.env`，等待网络与已有 `mnt-windows_database.automount`。SELinux Enforcing 环境需配置适当的程序路径策略；本服务器原生路径已有 `bin_t` 策略，替换二进制后运行 `sudo restorecon -v /root/data/codebase/toys_project/stock_watcher/bin/stock-watcher` 再重启。
+
+原生发布包没有开发启动脚本，服务直接运行 Go。升级先停止服务，再校验新包、替换二进制和公开材料，保留私有配置、股池修改和数据，恢复文件标签，执行 check 后启动。回滚使用保存的旧制品及兼容配置；如果另一次功能升级改变持久数据版本，须先检查其兼容说明，不能直接降级覆盖账本。
+
+## 容器
+
+完整操作见 [docker/README.md](../docker/README.md)（源码仓库提供）。Compose 不开放端口；以原生 check 命令做健康检查，验证配置、日历、CIFS、读写探针和账本可读性。它不验证实时行情供应商与飞书发送可用性。每分钟检查一次，三次连续失败标记 unhealthy；Docker 不会仅因 unhealthy 自动重启容器，需查看原因，恢复共享后复查。
+
+默认 CPU 1 核、内存 256 MiB、PID 64，根文件系统只读，删除全部 Linux capabilities；仅 /data 和 /logs 可写。当前共享使用 root UID 权限，所以容器默认 root，不能随意切换用户；改变用户前需要同步调整共享及配置权限并验证。生产额外需要允许访问行情和飞书的出站网络。
+
+## 部署后验收与排障
+
+- `version` 与预期提交一致；`check` 返回 `status: ready`；`status` 能读取账本；检查启动日志及退出码。Compose 使用 `ps` 核对 healthy，systemd 使用 `is-active`。
+- 报“CIFS”或路径不存在：检查 Windows/隧道/宿主机挂载。共享重新挂载后，容器可能仍持有旧 bind mount，应重建容器。不要关闭 CIFS 校验或创建本地 data 目录绕过故障。
+- 报权限不足：确认运行 UID、私有配置可读及共享可写。SELinux 拒绝时检查宿主机审计日志与专用策略，不要对整个 Windows 盘递归重标记。
+- 报缺少 webhook：检查启用通道引用的变量名和环境文件是否生效，只检查是否设置，不输出值。检查通知权限前先使用关闭通知的配置；真实发送需单独确认。
+- 报日历越界：更新官方交易日历。当前公开示例只覆盖 2026 年；测试用宽范围日历不得用于生产。
+- 冷启动大量研究数据时关注内存及退出码 137，按实际需求调整 Compose 限额；不能把进程存在等同于任务成功。
+
+此项目没有登录/管理员角色和 Web UI，部署验证 URL 不适用。部署验收使用实际运行方式的 CLI、容器健康状态和 Windows 文件；行情同步和真实飞书投递另做有明确目标的业务验收。密码登录的 Windows 隧道仍需终端保持在线，无人值守重连需要专用密钥另行配置。

@@ -1,0 +1,60 @@
+name: stock-watcher
+services:
+  stock-watcher:
+    image: ${STOCK_WATCHER_IMAGE:-stock-watcher:local}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${STOCK_WATCHER_VERSION:-development}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 1.0
+    mem_limit: 256m
+    pids_limit: 64
+    stop_grace_period: 20s
+    env_file:
+      - path: ${STOCK_WATCHER_RUNTIME_ENV:?Set the absolute runtime env file path}
+        format: raw
+    environment:
+      STOCK_WATCHER_DATA_DIR: /data
+      STOCK_WATCHER_LOG_DIR: /logs
+      STOCK_WATCHER_LOG_COLOR: "off"
+    volumes:
+      - type: bind
+        source: ${STOCK_WATCHER_HOST_DATA:?Set the existing CIFS mount path}
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${STOCK_WATCHER_HOST_CONFIG:?Set the existing private config path}
+        target: /app/config.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${STOCK_WATCHER_HOST_POOL:?Set the existing leaders.yaml path}
+        target: /app/leaders.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${STOCK_WATCHER_HOST_LOGS:?Set the existing logs directory}
+        target: /logs
+        bind:
+          create_host_path: false
+    command: [run, -config, /app/config.yaml]
+    healthcheck:
+      test: [CMD, stock-watcher, check, -config, /app/config.yaml]
+      interval: 60s
+      timeout: 15s
+      start_period: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

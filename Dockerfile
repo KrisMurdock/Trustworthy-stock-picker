@@ -8,6 +8,9 @@ ARG VERSION=development
 RUN CGO_ENABLED=0 go build -p=1 -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /stock-watcher ./cmd/stock-watcher
 
 FROM alpine:3.22
+ARG VERSION=development
+LABEL org.opencontainers.image.title="stock-watcher" \
+      org.opencontainers.image.revision="${VERSION}"
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=build /stock-watcher /usr/local/bin/stock-watcher

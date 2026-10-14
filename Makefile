@@ -1,7 +1,17 @@
 VERSION ?= $(shell git rev-parse HEAD)
 GO ?= go
+IMAGE ?= stock-watcher:$(VERSION)
+CONFIG ?= config.yaml
+BUILD_GOARCH ?= amd64
+.DEFAULT_GOAL := help
 
-.PHONY: test vet build image clean
+.PHONY: help fmt-check test vet build run check status smoke ci package image docker-build docker-smoke clean
+
+help:
+	@printf '%s\n' 'make build / run / check / status  构建与本地运行（CONFIG=config.yaml）' 'make ci                         格式、静态检查、竞态测试、CLI 冒烟、发布包' 'make image / docker-smoke       构建镜像 / 验证容器（IMAGE、VERSION 可覆盖）' 'make package                   Linux 发布包（BUILD_GOARCH=amd64 或 arm64）' 'make clean                     清理 bin 和 .builds'
+
+fmt-check:
+	@files="$$(gofmt -l cmd internal)"; if [ -n "$$files" ]; then printf '%s\n' "$$files"; exit 1; fi
 
 test:
 	$(GO) test -race ./...
@@ -13,8 +23,29 @@ build:
 	mkdir -p bin
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o bin/stock-watcher ./cmd/stock-watcher
 
-image:
-	docker build --build-arg VERSION=$(VERSION) -t stock-watcher:$(VERSION) .
+run: build
+	bash scripts/run.sh "$(CONFIG)"
+
+check: build
+	./bin/stock-watcher check -config "$(CONFIG)"
+
+status: build
+	./bin/stock-watcher status -config "$(CONFIG)"
+
+smoke: build
+	bash tests/smoke.sh "$(CURDIR)/bin/stock-watcher"
+
+ci:
+	bash scripts/ci.sh
+
+package:
+	GO="$(GO)" VERSION="$(VERSION)" BUILD_GOARCH="$(BUILD_GOARCH)" bash scripts/package.sh
+
+image docker-build:
+	docker build --build-arg VERSION="$(VERSION)" -t "$(IMAGE)" .
+
+docker-smoke: image
+	bash tests/smoke.sh --image "$(IMAGE)"
 
 clean:
-	rm -rf bin
+	rm -rf bin .builds

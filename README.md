@@ -96,42 +96,23 @@ FEISHU_SECRET=...
 
 日线直接请求腾讯行情 HTTP 接口，沿用旧项目的数据协议。第三方免费行情接口可能限流或改变协议；HTTP 超时默认 10 秒，每只股票请求之间至少 350 毫秒，错误可见且不会生成假数据。运行配置仅包含股池、日线、筛选、飞书和交易日历，修改后需重启生效；不兼容的配置字段会被明确拒绝。
 
-## 部署与验证
+## 工程结构、部署与验证
+
+对照 support-agent 补齐了容器部署、环境配置、发布包、CI、冒烟和运维材料。各目录职责与适用范围见[工程结构说明](docs/repository-layout.md)。
 
 ```bash
-make test
-make vet
-make build
-make image
+make help
+make ci               # 格式、静态检查、竞态测试、构建、CLI 冒烟、发布包
+make docker-smoke     # 镜像构建与容器验收
+make package          # .builds/stock-watcher/linux/amd64
 ```
 
-容器使用同一个原生 CLI、配置和 CIFS 检查；应先由宿主机挂载 Windows，再映射共享盘：
+- [开发与发布包](docs/development.md)：依赖、Makefile 入口、版本和校验和。
+- [环境变量](docs/environment-variables.md)：业务配置、开发 .env、systemd 和 Compose 的加载区别。
+- [Compose 部署](docker/README.md)：Windows 挂载、参数准备、构建、健康检查与升级回滚。
+- [部署与排障](docs/deployment.md)：原生/systemd、日志、共享故障及部署后验收。
+- [测试范围](tests/README.md)：成功路径、缺失配置、权限、超时与取消清理。
 
-```bash
-docker run --rm --cpus=1 --memory=256m \
-  --mount type=bind,src=/mnt/windows_database,dst=/data \
-  --mount type=bind,src="$PWD/config.yaml",dst=/app/config.yaml,readonly \
-  --mount type=bind,src="$PWD/logs",dst=/logs \
-  --env-file /etc/stock-watcher.env \
-  stock-watcher:<commit-sha> run -config /app/config.yaml
-```
+容器和 systemd 均直接运行 Go CLI。宿主机先挂载 Windows；同一数据目录只运行一个写入实例。`version` 返回构建版本，镜像标签建议使用完整提交 SHA。生产保留 `require_cifs: true`，日志在服务器 `logs/` 有限轮转，行情与账本直接写入 Windows。
 
-宿主机直接使用 `bin/stock-watcher` 或 systemd 运行，服务模板中的工作目录为 `/root/data/codebase/toys_project/stock_watcher`。确认私有配置与 Windows 挂载可用后安装：
-
-```bash
-sudo install -m 644 deploy/stock-watcher.service /etc/systemd/system/stock-watcher.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now stock-watcher.service
-sudo systemctl status stock-watcher.service
-```
-
-SELinux Enforcing 环境需为程序配置 `bin_t` 文件路径策略。本服务器已经配置该策略；每次重新构建后、启动或重启服务前恢复标签：
-
-```bash
-sudo restorecon -v /root/data/codebase/toys_project/stock_watcher/bin/stock-watcher
-sudo systemctl restart stock-watcher.service
-```
-
-`./bin/stock-watcher version` 返回构建对应的提交 SHA。服务安装不会自动配置 Windows 开机 SSH 隧道；目前密码登录隧道仍需要保持终端开启，无人值守重连需另行配置专用 SSH 密钥。
-
-日志 stdout 和 `logs/stock-watcher.log` 格式一致：`[带时区时间] [LEVEL] [文件:行号] 英文消息 {JSON 属性}`。环境变量 `STOCK_WATCHER_LOG_MAX_MB`（10）、`STOCK_WATCHER_LOG_MAX_DAYS`（7）、`STOCK_WATCHER_LOG_BACKUPS`（10）控制大小、天数、份数轮转及 gzip 压缩；`STOCK_WATCHER_LOG_JSON` 开启整条 JSON，`STOCK_WATCHER_LOG_COLOR` 支持 auto/force/off，文件与 JSON 永无颜色。
+当前密码登录的 Windows SSH 隧道仍需要保持终端开启，无人值守重连需另行配置专用 SSH 密钥。
