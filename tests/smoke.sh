@@ -70,6 +70,25 @@ must_fail check -config "$CONFIG"
 sed -i 's/require_cifs: true/require_cifs: false/' "$FIXTURE/config.yaml"
 sed -i '/name: feishu-main/,/secret_env:/s/enabled: false/enabled: true/' "$FIXTURE/config.yaml"
 must_fail check -config "$CONFIG"
+printf '%s\n' 'webhook: https://open.feishu.cn/open-apis/bot/v2/hook/smoke-test-only' > "$FIXTURE/feishu.config"
+sed -i '/name: feishu-main/a\      credentials_file: feishu.config' "$FIXTURE/config.yaml"
+invoke check-config -config "$CONFIG" | tail -n 1 | jq -e '.status == "valid"' >/dev/null
+mv "$FIXTURE/feishu.config" "$FIXTURE/feishu.saved"
+must_fail check-config -config "$CONFIG"
+mv "$FIXTURE/feishu.saved" "$FIXTURE/feishu.config"
+if [[ "$MODE" == container ]]; then
+  chmod 755 "$FIXTURE"
+  chmod 644 "$FIXTURE/config.yaml" "$FIXTURE/leaders.yaml"
+  chmod 600 "$FIXTURE/feishu.config"
+  denied=0
+  timeout 30s docker run --rm --network none --user 65534:65534 --read-only \
+    --mount "type=bind,src=$FIXTURE,dst=/fixture,readonly" \
+    "$IMAGE" check-config -config "$CONFIG" > "$FIXTURE/denied-credentials.txt" 2>&1 || denied=$?
+  test "$denied" -eq 1
+  grep -q 'cannot open Feishu credentials file' "$FIXTURE/denied-credentials.txt"
+  if grep -q 'smoke-test-only' "$FIXTURE/denied-credentials.txt"; then exit 1; fi
+fi
+sed -i '/^      credentials_file: feishu.config$/d' "$FIXTURE/config.yaml"
 sed -i '/name: feishu-main/,/secret_env:/s/enabled: true/enabled: false/' "$FIXTURE/config.yaml"
 if [[ "$MODE" == container ]]; then
   chmod 755 "$FIXTURE"

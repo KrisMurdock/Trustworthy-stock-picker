@@ -49,9 +49,10 @@ type Config struct {
 		Channels []NotifyChannel `yaml:"channels"`
 	} `yaml:"notify"`
 	Feishu struct {
-		Enabled bool   `yaml:"enabled"`
-		Webhook string `yaml:"webhook,omitempty"`
-		Secret  string `yaml:"secret,omitempty"`
+		Enabled         bool   `yaml:"enabled"`
+		CredentialsFile string `yaml:"credentials_file,omitempty"`
+		Webhook         string `yaml:"webhook,omitempty"`
+		Secret          string `yaml:"secret,omitempty"`
 	} `yaml:"feishu"`
 	Calendar struct {
 		ValidFrom    string   `yaml:"valid_from"`
@@ -61,13 +62,14 @@ type Config struct {
 }
 
 type NotifyChannel struct {
-	Name       string `yaml:"name"`
-	Type       string `yaml:"type"`
-	Enabled    bool   `yaml:"enabled"`
-	WebhookEnv string `yaml:"webhook_env,omitempty"`
-	SecretEnv  string `yaml:"secret_env,omitempty"`
-	Webhook    string `yaml:"-"`
-	Secret     string `yaml:"-"`
+	Name            string `yaml:"name"`
+	Type            string `yaml:"type"`
+	Enabled         bool   `yaml:"enabled"`
+	CredentialsFile string `yaml:"credentials_file,omitempty"`
+	WebhookEnv      string `yaml:"webhook_env,omitempty"`
+	SecretEnv       string `yaml:"secret_env,omitempty"`
+	Webhook         string `yaml:"-"`
+	Secret          string `yaml:"-"`
 }
 
 var stockCode = regexp.MustCompile(`^(sh(60|68)[0-9]{4}|sz(00|30)[0-9]{4})$`)
@@ -139,6 +141,13 @@ func Load(path string) (Config, error) {
 	if v, ok := os.LookupEnv("STOCK_WATCHER_DATA_DIR"); ok {
 		c.DataDir = v
 	}
+	if c.Feishu.CredentialsFile != "" {
+		credentials, err := loadFeishuCredentials(path, c.Feishu.CredentialsFile)
+		if err != nil {
+			return Config{}, err
+		}
+		c.Feishu.Webhook, c.Feishu.Secret = credentials.Webhook, credentials.Secret
+	}
 	if v, ok := os.LookupEnv("FEISHU_WEBHOOK"); ok {
 		c.Feishu.Webhook = v
 	}
@@ -147,11 +156,22 @@ func Load(path string) (Config, error) {
 	}
 	for i := range c.Notify.Channels {
 		channel := &c.Notify.Channels[i]
+		if channel.CredentialsFile != "" {
+			credentials, err := loadFeishuCredentials(path, channel.CredentialsFile)
+			if err != nil {
+				return Config{}, err
+			}
+			channel.Webhook, channel.Secret = credentials.Webhook, credentials.Secret
+		}
 		if channel.WebhookEnv != "" {
-			channel.Webhook = os.Getenv(channel.WebhookEnv)
+			if v, ok := os.LookupEnv(channel.WebhookEnv); ok {
+				channel.Webhook = v
+			}
 		}
 		if channel.SecretEnv != "" {
-			channel.Secret = os.Getenv(channel.SecretEnv)
+			if v, ok := os.LookupEnv(channel.SecretEnv); ok {
+				channel.Secret = v
+			}
 		}
 	}
 	if strings.TrimSpace(c.DataDir) == "" {
@@ -244,8 +264,11 @@ func (c Config) Validate() error {
 	if c.Selection.MinVolumeRatio < 1 || c.Selection.MinVolumeRatio > 10 || c.Selection.RSIMin < 0 || c.Selection.RSIMax > 100 || c.Selection.RSIMin > c.Selection.RSIMax || c.Selection.MinDayChange > c.Selection.MaxDayChange {
 		return errors.New("invalid selection volume, RSI or daily change range")
 	}
-	if c.Feishu.Enabled {
-		u, err := url.Parse(c.Feishu.Webhook)
+	for _, channel := range c.NotificationChannels() {
+		if channel.Type != "feishu" {
+			return errors.New("unsupported notification channel type")
+		}
+		u, err := url.Parse(channel.Webhook)
 		if err != nil || u.Scheme != "https" || u.Host != "open.feishu.cn" || !strings.HasPrefix(u.Path, "/open-apis/bot/v2/hook/") || len(strings.TrimPrefix(u.Path, "/open-apis/bot/v2/hook/")) < 8 || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return errors.New("enabled Feishu requires a valid HTTPS custom bot webhook")
 		}

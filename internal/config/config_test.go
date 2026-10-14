@@ -104,3 +104,97 @@ func TestNotificationChannelNamesAndUnknownFields(t *testing.T) {
 		}
 	}
 }
+
+func TestFeishuCredentialsFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "config.yaml")
+	text := valid + "feishu:\n  enabled: true\n  credentials_file: feishu.config\n  webhook: https://open.feishu.cn/open-apis/bot/v2/hook/old-value\n  secret: old-secret\n"
+	if err := os.WriteFile(path, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	credentials := filepath.Join(root, "feishu.config")
+	for _, tc := range []struct {
+		name, content string
+		ok            bool
+	}{
+		{"webhook only", "webhook: https://open.feishu.cn/open-apis/bot/v2/hook/file-value\n", true},
+		{"with secret", "webhook: https://open.feishu.cn/open-apis/bot/v2/hook/file-value\nsecret: private-marker\n", true},
+		{"unknown field", "private-marker: hidden\n", false},
+		{"malformed", "webhook: [private-marker\n", false},
+		{"extra document", "webhook: private-marker\n---\nsecret: hidden\n", false},
+		{"invalid URL", "webhook: https://example.com/private-marker\n", false},
+		{"empty", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(credentials, []byte(tc.content), 0600); err != nil {
+				t.Fatal(err)
+			}
+			c, err := Load(path)
+			if (err == nil) != tc.ok {
+				t.Fatalf("unexpected config validity: %v", err)
+			}
+			if err != nil && strings.Contains(err.Error(), "private-marker") {
+				t.Fatal("credential leaked in error")
+			}
+			if tc.ok && c.Feishu.Webhook != "https://open.feishu.cn/open-apis/bot/v2/hook/file-value" {
+				t.Fatal("file did not override inline value")
+			}
+			if tc.name == "webhook only" && c.Feishu.Secret != "" {
+				t.Fatal("stale inline signature secret retained")
+			}
+		})
+	}
+	if err := os.WriteFile(credentials, []byte("webhook: https://open.feishu.cn/open-apis/bot/v2/hook/file-value\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FEISHU_WEBHOOK", "https://open.feishu.cn/open-apis/bot/v2/hook/env-value")
+	t.Setenv("FEISHU_SECRET", "env-secret")
+	c, err := Load(path)
+	if err != nil || c.Feishu.Webhook != os.Getenv("FEISHU_WEBHOOK") || c.Feishu.Secret != "env-secret" {
+		t.Fatal("environment did not override credentials file")
+	}
+	t.Setenv("FEISHU_WEBHOOK", "")
+	if _, err := Load(path); err == nil {
+		t.Fatal("explicit empty environment silently fell back to file")
+	}
+	if err := os.Remove(credentials); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("missing explicit credentials file accepted")
+	}
+}
+
+func TestNamedChannelCredentialsFileAndEnvironment(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "config.yaml")
+	cfg := valid + `notify:
+  channels:
+    - name: feishu-main
+      type: feishu
+      enabled: true
+      credentials_file: feishu.config
+      webhook_env: STARTUP_TEST_WEBHOOK
+      secret_env: STARTUP_TEST_SECRET
+`
+	if err := os.WriteFile(path, []byte(cfg), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "feishu.config"), []byte("webhook: https://open.feishu.cn/open-apis/bot/v2/hook/file-value\nsecret: file-secret\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil || c.NotificationChannels()[0].Secret != "file-secret" {
+		t.Fatal("unset environment did not use file")
+	}
+	t.Setenv("STARTUP_TEST_WEBHOOK", "https://open.feishu.cn/open-apis/bot/v2/hook/env-value")
+	t.Setenv("STARTUP_TEST_SECRET", "")
+	c, err = Load(path)
+	if err != nil || c.NotificationChannels()[0].Webhook != os.Getenv("STARTUP_TEST_WEBHOOK") || c.NotificationChannels()[0].Secret != "" {
+		t.Fatal("channel environment precedence incorrect")
+	}
+	t.Setenv("STARTUP_TEST_WEBHOOK", "")
+	if _, err := Load(path); err == nil {
+		t.Fatal("empty environment did not clear file webhook")
+	}
+}

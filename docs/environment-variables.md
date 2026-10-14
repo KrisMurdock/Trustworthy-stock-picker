@@ -5,8 +5,8 @@
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | STOCK_WATCHER_DATA_DIR | 使用 YAML data_dir | 行情与状态目录；环境变量覆盖 YAML。生产必须指向已挂载 CIFS |
-| FEISHU_WEBHOOK | 旧 feishu.webhook 配置值 | 默认飞书通道 webhook；显式空值也会覆盖旧 YAML 值 |
-| FEISHU_SECRET | 旧 feishu.secret 配置值 | 机器人签名密钥；未启用签名时可省略 |
+| FEISHU_WEBHOOK | 凭证文件或旧 feishu.webhook 配置值 | 默认飞书通道 webhook；显式空值也会覆盖文件或旧 YAML 值 |
+| FEISHU_SECRET | 凭证文件或旧 feishu.secret 配置值 | 机器人签名密钥；未启用签名时可省略 |
 | STOCK_WATCHER_LOG_DIR | logs | 相对路径按配置文件所在目录解析，生产有限本地日志 |
 | STOCK_WATCHER_LOG_MAX_MB | 10 | 单文件大小上限 MB，整数 1～1000 |
 | STOCK_WATCHER_LOG_MAX_DAYS | 7 | 轮转日志保留天数，整数 1～1000 |
@@ -15,6 +15,8 @@
 | STOCK_WATCHER_LOG_COLOR | auto | auto / force / off，仅控制 stdout；文件和 JSON 无颜色 |
 
 多飞书通道可在 `notify.channels[].webhook_env` / `secret_env` 指定不同变量名。启用通道必须配置有效 webhook；示例所有通道默认关闭。不要把凭证写进命令行、提交、构建参数或报告。
+
+可在 `notify.channels[]` 或旧 `feishu` 节点声明 `credentials_file: feishu.config`，文件内容只接受 `webhook: ...` 和可选 `secret: ...`。Go 按配置文件目录解析相对路径，所有命令共用此加载规则；指定文件缺失、无读取权限或格式错误时启动失败，错误不会回显内容。优先级为环境变量 > 凭证文件 > 旧 YAML 内联值；文件中未配置 secret 就不继承旧内联 secret。凭证文件本身不切换 `enabled`。容器须额外只读挂载该文件，默认 Compose 仍使用环境变量。
 
 ## 三种加载方式
 

@@ -104,6 +104,36 @@ func (m *Monitor) readState() (State, error) {
 
 func (m *Monitor) migrateLegacy(raw persistedState) (State, error) {
 	state := notify.NewLedger()
+	// v1 recorded successful delivery by date. Preserve it before a startup
+	// refresh replaces the report, otherwise upgrading can resend that date.
+	if raw.LastDelivered != "" {
+		target, err := m.Calendar.Next(raw.LastDelivered)
+		if err != nil {
+			return state, err
+		}
+		if !calendar.Expired(target, m.Now()) {
+			var report selection.Report
+			if err := m.Store.Read("reports/"+raw.LastDelivered+".json", &report); err != nil {
+				return state, fmt.Errorf("cannot recover legacy delivered report: %w", err)
+			}
+			if validateLegacyReport(report, 0) != nil || report.AsOf != raw.LastDelivered || report.Target != target {
+				return state, errors.New("invalid legacy delivered report")
+			}
+			message, err := reportmessage.FromSelection(report)
+			if err != nil {
+				return state, err
+			}
+			channels := m.legacyChannels()
+			if err := state.Enqueue(report.AsOf, message, channels); err != nil {
+				return state, err
+			}
+			for _, name := range channels {
+				if err := state.MarkDelivered(message.EventID, name); err != nil {
+					return state, err
+				}
+			}
+		}
+	}
 	if raw.Pending != nil {
 		pending := raw.Pending
 		if err := validateLegacyReport(pending.Report, pending.Attempts); err != nil {
@@ -117,15 +147,7 @@ func (m *Monitor) migrateLegacy(raw persistedState) (State, error) {
 		if err != nil {
 			return state, errors.New("pending report has an invalid T+1 date")
 		}
-		// v1 only had the Feishu sender. Reuse the configured Feishu channel name
-		// when present, otherwise preserve the legacy default for later re-enable.
-		channels := []string{"feishu-main"}
-		for _, configured := range m.Config.NotificationChannels() {
-			if configured.Enabled && configured.Type == "feishu" {
-				channels = []string{configured.Name}
-				break
-			}
-		}
+		channels := m.legacyChannels()
 		if err := state.Enqueue(pending.Report.AsOf, message, channels); err != nil {
 			return state, err
 		}
@@ -149,6 +171,17 @@ func (m *Monitor) migrateLegacy(raw persistedState) (State, error) {
 		return state, err
 	}
 	return state, nil
+}
+
+func (m *Monitor) legacyChannels() []string {
+	// v1 only had the Feishu sender. Preserve its configured name, or the
+	// legacy default if notifications are temporarily disabled.
+	for _, configured := range m.Config.NotificationChannels() {
+		if configured.Enabled && configured.Type == "feishu" {
+			return []string{configured.Name}
+		}
+	}
+	return []string{"feishu-main"}
 }
 
 func validateLegacyReport(r selection.Report, attempts int) error {
@@ -303,17 +336,7 @@ func (m *Monitor) Cycle(ctx context.Context) error {
 	if err != nil {
 		return errors.Join(deliveryErr, err)
 	}
-	if len(m.Channels) == 0 {
-		return deliveryErr
-	}
-	message, err := reportmessage.FromSelection(report)
-	if err != nil {
-		return errors.Join(deliveryErr, err)
-	}
-	if err := state.Enqueue(report.AsOf, message, m.channelNames()); err != nil {
-		return errors.Join(deliveryErr, err)
-	}
-	if err := m.writeState(state); err != nil {
+	if _, err := m.enqueueReport(&state, report); err != nil {
 		return errors.Join(deliveryErr, err)
 	}
 	return errors.Join(deliveryErr, m.flushState(ctx, &state))
@@ -430,15 +453,23 @@ func (m *Monitor) Retry(channel string) error {
 func (m *Monitor) Status() (State, error) { return m.readState() }
 
 func (m *Monitor) Run(ctx context.Context) error {
+	startupReady := false
 	for {
-		err := m.Cycle(ctx)
+		var err error
+		if !startupReady {
+			err = m.prepareStartup(ctx)
+			startupReady = err == nil
+		}
+		if startupReady {
+			err = m.Cycle(ctx)
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		delay := config.Duration(m.Config.PollInterval)
 		if err != nil {
-			m.Log.Warn("Monitor cycle failed", "error", err)
 			delay = max(delay, time.Minute)
+			m.Log.Warn("Monitor cycle failed", "startup_ready", startupReady, "retry_after", delay.String(), "error", err)
 		}
 		timer := time.NewTimer(delay)
 		select {

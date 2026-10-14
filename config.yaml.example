@@ -46,12 +46,15 @@ notify:
     - name: feishu-main
       type: feishu
       enabled: false
+      # Optional private YAML containing webhook and optional secret; relative to this config.
+      # credentials_file: feishu.config
       webhook_env: FEISHU_WEBHOOK
       secret_env: FEISHU_SECRET
 
 # Legacy compatibility. Use notify.channels for new deployments.
 # feishu:
 #   enabled: false
+#   # credentials_file: feishu.config
 #   # Set FEISHU_WEBHOOK and optionally FEISHU_SECRET in a private environment file.
 
 # Official SZSE/SSE 2026 holiday schedule. Calendar must be updated before 2027.
