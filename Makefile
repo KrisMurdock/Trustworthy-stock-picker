@@ -34,6 +34,7 @@ status: build
 
 smoke: build
 	bash tests/run_test.sh
+	python3 tests/calculate_strategy_test.py
 	bash tests/smoke.sh "$(CURDIR)/bin/stock-watcher"
 
 ci:
