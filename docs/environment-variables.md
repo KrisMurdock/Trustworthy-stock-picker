@@ -18,7 +18,7 @@
 
 ## 三种加载方式
 
-- 本地开发：复制 `.env.example` 为根 `.env`，`make run` 通过 Bash 加载后 exec Go。该文件须是可信的 Shell 赋值；含特殊字符的值使用单引号。`make check/status` 和直接运行二进制不自动读取 `.env`，可在可信 shell 中先执行 `set -a; source .env; set +a`。
+- 本地开发：复制 `.env.example` 为根 `.env`，`make run` 在前台启动时通过 Bash 加载后 exec Go。如果同仓库同配置的 systemd 实例已运行，则仅显示现有服务信息，不加载 `.env` 或自动重启。该文件须是可信的 Shell 赋值；含特殊字符的值使用单引号。`make check/status` 和直接运行二进制不自动读取 `.env`，可在可信 shell 中先执行 `set -a; source .env; set +a`。
 - systemd：模板读取 `/etc/stock-watcher.env`。使用 `KEY=value`，不加 `export`，参考 systemd EnvironmentFile 语法；Go 程序本身不读取 dotenv。
 - Compose：`docker/.env` 只提供部署路径和版本；`STOCK_WATCHER_RUNTIME_ENV` 指向独立运行变量文件，Compose 用 `format: raw` 传入值。这里用不带外层引号的 `KEY=value`，`$` 等字符原样传入。不要把带 Shell 引号的开发 `.env` 直接复制过来。
 

@@ -22,7 +22,11 @@ make status CONFIG=config.yaml
 make run CONFIG=config.yaml
 ```
 
-运行依赖可用 Windows 挂载；本地测试才使用 `require_cifs: false`。`scripts/run.sh` 只为 `make run` 加载开发环境变量后 exec Go，容器和 systemd 均直接启动 Go。
+运行依赖可用 Windows 挂载；本地测试才使用 `require_cifs: false`。`make run` 先检查本机 systemd：若 `stock-watcher.service` 已运行同一个仓库二进制和同一配置，则显示现有 PID 与状态、日志、重启指令，不重复构建或启动。它不会自动应用代码、配置或环境变量的变化；升级仍按部署流程执行。
+
+没有匹配服务时，`scripts/run.sh` 构建二进制、加载开发 `.env` 后 exec Go。其他仓库或不同 `CONFIG` 会继续正常启动，并由数据目录写锁判断是否冲突。systemd 查询失败或超过 3 秒时继续原生启动，由 CLI 返回真实结果。容器和 systemd 均直接启动 Go。
+
+若想从后台服务切换为前台调试，执行 `systemctl stop stock-watcher.service` 后再 `make run`；调试结束后执行 `systemctl start stock-watcher.service` 恢复后台运行。不要删除 `.stock-watcher.lock` 文件绕过正在运行的实例。
 
 ## 发布制品
 

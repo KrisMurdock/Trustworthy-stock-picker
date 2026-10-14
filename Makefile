@@ -23,8 +23,8 @@ build:
 	mkdir -p bin
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o bin/stock-watcher ./cmd/stock-watcher
 
-run: build
-	bash scripts/run.sh "$(CONFIG)"
+run:
+	+bash scripts/run.sh "$(CONFIG)"
 
 check: build
 	./bin/stock-watcher check -config "$(CONFIG)"
@@ -33,6 +33,7 @@ status: build
 	./bin/stock-watcher status -config "$(CONFIG)"
 
 smoke: build
+	bash tests/run_test.sh
 	bash tests/smoke.sh "$(CURDIR)/bin/stock-watcher"
 
 ci:
