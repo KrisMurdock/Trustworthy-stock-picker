@@ -21,6 +21,10 @@ selection:
   min_day_change_pct: -3
   max_day_change_pct: 7
 
+sync:
+  min_coverage_pct: 95
+  incremental_bars: 5
+
 # Set enabled=true to replace legacy filtering with full-pool short-horizon ranking.
 # Old configurations keep legacy behavior. Costs other than commission are assumptions.
 strategy:

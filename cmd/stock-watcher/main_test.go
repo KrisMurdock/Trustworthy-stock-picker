@@ -54,15 +54,49 @@ calendar:
 `
 	p := filepath.Join(root, "config.yaml")
 	os.WriteFile(p, []byte(cfg), 0600)
+	if err := run([]string{"check", "-config", p}); err == nil {
+		t.Fatal("check reported ready before market database initialization")
+	}
+	if err := run([]string{"init", "-config", p}); err != nil {
+		t.Fatal(err)
+	}
 	if err := run([]string{"check", "-config", p}); err != nil {
 		t.Fatal(err)
 	}
-	os.Remove(data)
+	os.RemoveAll(data)
 	if err := run([]string{"check", "-config", p}); err == nil {
 		t.Fatal("missing root accepted")
 	}
 	if _, err := os.Stat(data); !os.IsNotExist(err) {
 		t.Fatal("fallback created")
+	}
+}
+
+func TestCLIInitCreatesMarketDatabase(t *testing.T) {
+	root := t.TempDir()
+	data := filepath.Join(root, "data")
+	if err := os.Mkdir(data, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `schema_version: 1
+data_dir: data
+require_cifs: false
+stocks:
+  - code: sz000001
+calendar:
+  valid_from: '2026-01-01'
+  valid_through: '2026-12-31'
+  holidays: []
+`
+	p := filepath.Join(root, "config.yaml")
+	if err := os.WriteFile(p, []byte(cfg), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"init", "-config", p}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(data, "market.db")); err != nil {
+		t.Fatalf("market database was not initialized: %v", err)
 	}
 }
 

@@ -29,6 +29,7 @@ func TestLoadValidation(t *testing.T) {
 		{"strategy_valid", valid + "strategy:\n  schema_version: 1\n  enabled: true\n  commission_rate: 0.0001\n", true},
 		{"strategy_fee_percent", valid + "strategy:\n  schema_version: 1\n  enabled: true\n  commission_rate: 1\n", false},
 		{"strategy_positive_stop", valid + "strategy:\n  schema_version: 1\n  enabled: true\n  stop_net_pct: 3\n", false},
+		{"bad_listed_from", strings.Replace(valid, "sz000001", "sz000001\n    listed_from: '2026-13-01'", 1), false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			p := filepath.Join(t.TempDir(), "config.yaml")
@@ -102,6 +103,22 @@ func TestNotificationChannelNamesAndUnknownFields(t *testing.T) {
 		if _, err := Load(p); err == nil || strings.Contains(err.Error(), "secret") {
 			t.Fatalf("accepted invalid channel config or leaked value: %v", err)
 		}
+	}
+}
+
+func TestSyncDefaultsAndValidation(t *testing.T) {
+	c := Defaults()
+	if c.Sync.MinCoveragePct != 95 || c.Sync.IncrementalBars != 5 {
+		t.Fatalf("unexpected sync defaults: %+v", c.Sync)
+	}
+	c.Sync.MinCoveragePct = 101
+	if err := c.Validate(); err == nil {
+		t.Fatal("accepted coverage above 100 percent")
+	}
+	c = Defaults()
+	c.Sync.IncrementalBars = 1
+	if err := c.Validate(); err == nil {
+		t.Fatal("accepted too-small incremental window")
 	}
 }
 

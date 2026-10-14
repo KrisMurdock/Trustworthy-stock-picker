@@ -78,8 +78,13 @@ func Build(c config.Config, histories []market.History, asof, target string, now
 	ranked := []Candidate{}
 	for _, s := range c.Stocks {
 		h, ok := byCode[s.Code]
-		if !ok || h.Version != 1 || h.Adjust != c.Daily.Adjust || h.AsOf != asof {
-			return r, errors.New("incomplete or mismatched pool history")
+		if !ok {
+			r.Excluded = append(r.Excluded, Excluded{Code: s.Code, Reason: "missing_data"})
+			continue
+		}
+		if h.Version != 1 || h.Adjust != c.Daily.Adjust || h.AsOf != asof {
+			r.Excluded = append(r.Excluded, Excluded{Code: s.Code, Reason: "invalid_or_stale_data", LastDate: lastDate(h)})
+			continue
 		}
 		if len(h.Bars) == 0 {
 			r.Excluded = append(r.Excluded, Excluded{Code: s.Code, Reason: "no_history"})
@@ -142,6 +147,13 @@ func Build(c config.Config, histories []market.History, asof, target string, now
 	sum := sha256.Sum256(data)
 	r.ID = hex.EncodeToString(sum[:12])
 	return r, nil
+}
+
+func lastDate(h market.History) string {
+	if len(h.Bars) == 0 {
+		return ""
+	}
+	return h.Bars[len(h.Bars)-1].Date
 }
 
 // BuildWithExecution keeps legacy configuration and persisted v1 reports readable.

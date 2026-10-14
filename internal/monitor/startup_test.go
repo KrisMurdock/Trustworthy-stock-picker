@@ -42,6 +42,10 @@ func TestStartupUsesCompletedSessionAndPublicationWindow(t *testing.T) {
 			m.Now = func() time.Time { return now }
 			m.Config.Calendar.Holidays = []string{"2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08"}
 			m.Calendar = calendar.New(m.Config)
+			source.holidays = map[string]bool{}
+			for _, holiday := range m.Config.Calendar.Holidays {
+				source.holidays[holiday] = true
+			}
 			if err := m.prepareStartup(context.Background()); err != nil {
 				t.Fatal(err)
 			}

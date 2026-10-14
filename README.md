@@ -10,6 +10,7 @@
 make build
 cp config.yaml.example config.yaml
 chmod 600 config.yaml
+./bin/stock-watcher init -config config.yaml
 ./bin/stock-watcher check -config config.yaml
 ./bin/stock-watcher sync -config config.yaml
 ./bin/stock-watcher preview -config config.yaml -as-of 2026-10-13
@@ -24,7 +25,7 @@ chmod 600 config.yaml
 
 `sync` 只下载并生成报告，不发送消息。`once` 只执行一次定时调度，遵循 18:05 和开盘前补发窗口，不执行启动强制同步。`status` 查看投递状态，`retry [channel]` 在停止服务并修正永久错误后解除指定通道或全部通道的阻塞。修改配置或股池后重启生效。启动日志显示日期、同步进度和入队通道数；未推送时记录原因（未启用通道、已过买入时点或已有投递记录）。
 
-`leaders.yaml` 保存已核对的 104 个证券代码和名称，可直接添加或删除股票。用户原名单另外 6 个疑似笔误在 `leaders.pending.yaml`，确认前不参与下载与筛选。上海和深圳 A 股支持带市场前缀的代码；名称不会参与自动猜测。维护者应使用已核对的证券代码。`cmd/resolve-pool` 可辅助核对名称，结果须人工检查。
+`leaders.yaml` 保存已核对的 104 个证券代码和名称，可直接添加或删除股票。用户原名单另外 6 个疑似笔误在 `leaders.pending.yaml`，确认前不参与下载与筛选。上海和深圳 A 股支持带市场前缀的代码；名称不会参与自动猜测。维护者应使用已核对的证券代码。新上市股票若早于同步窗口的完整交易日不足，可在股票配置中填写 `listed_from: YYYY-MM-DD`，同步会从该上市日期校验连续交易日。`cmd/resolve-pool` 可辅助核对名称，结果须人工检查。
 
 ## 短线净收益排名
 
@@ -65,21 +66,21 @@ chmod 600 config.yaml
 
 评分延续旧代码的均线 30 分、MACD 25 分、RSI 20 分、连涨 15 分、量比 10 分。修正旧 RSI 最后一根的平滑计算；量比使用同一返回序列的成交量原值，不把成交额当成交量。MA、MACD、RSI 使用同一窗口的前复权价格。默认重新下载最近 365 个自然日的完整窗口，避免把不同日期复权基准的数据拼在一起。阈值、Top N、历史范围和时间均可配置。这是透明的技术规则筛选，尚未经过收益回测。
 
-没有股票通过时，报告和飞书明确显示“没有满足筛选规则的股票”。过期、停牌和数据不足单独列出；任何股票的网络请求或数据格式错误会阻止整池报告推送，重试成功后才生成完整报告。
+没有股票通过时，报告和飞书明确显示“没有满足筛选规则的股票”。过期、停牌和数据不足单独列出；单票永久数据错误会隔离并告警，临时网络、共享盘和事务错误会阻止本轮发布，覆盖率达到门槛后才生成报告。
 
 ## Windows 文件
 
 ```text
 data/                       # 实际位于 Windows 共享盘
-  daily/2026-10-13/sh600000.json
-  execution/2026-10-13/sh600000.json  # 新策略：不复权成交价格
-  reports/2026-10-13.json
+  market.db                 # SQLite 主数据文件；首次部署由 init 显式创建
   state/delivery.json
   .stock-watcher.lock
 logs/stock-watcher.log       # 服务器上的有限运行日志
 ```
 
-持久投递账本使用 `schema_version: 2`、UTF-8 JSON、ISO 日期和带时区 RFC3339Nano 时间；旧版 `schema_version: 1` 的单条待发送记录会在读取时迁移，超过投递窗口 30 天的终态事件会清理。价格为人民币，`volume_raw` 为供应商原值，单位标记为 `provider_raw`，`data_field` 记录 `qfqday` / `hfqday` / `day`；缺字段、非有限数、版本错误和损坏状态都会报错，不自动清空状态。日线文件包含来源、复权方式、请求截止日和实际最后一根日线日期；可在 Windows 用编辑器直接读取。
+先执行 `./bin/stock-watcher init -config config.yaml` 创建 `market.db`，再运行 `sync` 或 `run`。普通写入模式不会自动创建数据库，避免共享盘挂载错误时误写到错误位置。行情日线、复权/不复权窗口、同步状态、覆盖率和筛选报告在同一个 SQLite 事务中发布；事务失败时保留上一份完整快照。`preview`、`research` 和 `status` 使用只读连接。旧版 `daily/`、`execution/` 和 `reports/` JSON 仅作为数据库不存在时的只读兼容回退，新的 CLI 生产路径不再写入这些行情 JSON。
+
+持久投递账本使用 `schema_version: 2`、UTF-8 JSON、ISO 日期和带时区 RFC3339Nano 时间；旧版 `schema_version: 1` 的单条待发送记录会在读取时迁移，超过投递窗口 30 天的终态事件会清理。SQLite 中的价格按百万分之一元的定点整数存储，同时保留供应商原始成交量、换算后的股数、来源、复权方式、请求截止日和实际最后一根日线日期；缺字段、非有限数、版本错误和损坏状态都会报错，不自动清空状态。投递账本继续使用 JSON，以便独立保存发送状态。
 
 单个进程持有共享文件锁。JSON 文件先写临时文件、fsync，再原子重命名；共享目录内的软链接被拒绝。`require_cifs: false` 仅适合本地测试，生产应保持 `true`。共享盘故障时停止本轮写入；已保存的数据和待发送记录保留。日志和程序本身占用少量服务器磁盘，行情不会保存第二份服务器副本。
 
