@@ -24,7 +24,7 @@ build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o bin/stock-watcher ./cmd/stock-watcher
 
 run:
-	+bash scripts/run.sh "$(CONFIG)"
+	bash scripts/run.sh "$(CONFIG)"
 
 check: build
 	./bin/stock-watcher check -config "$(CONFIG)"

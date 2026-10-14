@@ -4,20 +4,14 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 CONFIG_FILE="${1:-config.yaml}"
 CONFIG_PATH="$(realpath -m -- "$CONFIG_FILE")"
-# systemd owns the writer in deployed checkouts. Only reuse the exact same
-# executable/configuration; other checkouts and custom configs still launch.
+SERVICE_PID=''
+# Only take over the exact repository executable and configuration.
 if command -v systemctl >/dev/null && command -v ps >/dev/null &&
   timeout 3s systemctl is-active --quiet stock-watcher.service 2>/dev/null; then
-  SERVICE_PID="$(timeout 3s systemctl show --property=MainPID --value stock-watcher.service 2>/dev/null || true)"
-  if [[ "$SERVICE_PID" =~ ^[1-9][0-9]*$ ]] &&
-    [[ "$(ps -p "$SERVICE_PID" -o args= 2>/dev/null || true)" == "$ROOT_DIR/bin/stock-watcher run -config $CONFIG_PATH" ]]; then
-    printf 'stock-watcher.service is already running (PID %s).\n' "$SERVICE_PID"
-    printf '%s\n' 'No rebuild or second process was started. Configuration/environment changes need a service restart.' \
-      'Status: systemctl status stock-watcher.service --no-pager' \
-      'Logs: journalctl -u stock-watcher.service -f' \
-      'Restart: systemctl restart stock-watcher.service' \
-      'Foreground: systemctl stop stock-watcher.service && make run'
-    exit 0
+  candidate="$(timeout 3s systemctl show --property=MainPID --value stock-watcher.service 2>/dev/null || true)"
+  if [[ "$candidate" =~ ^[1-9][0-9]*$ ]] &&
+    [[ "$(ps -p "$candidate" -o args= 2>/dev/null || true)" == "$ROOT_DIR/bin/stock-watcher run -config $CONFIG_PATH" ]]; then
+    SERVICE_PID="$candidate"
   fi
 fi
 make build
@@ -25,5 +19,20 @@ if [[ -f .env ]]; then
   set -a
   source .env
   set +a
+fi
+if [[ -n "$SERVICE_PID" ]]; then
+  # Validate without opening the shared writer or migrating its live ledger.
+  ./bin/stock-watcher check-config -config "$CONFIG_FILE"
+  printf 'Stopping stock-watcher.service (PID %s) before foreground startup...\n' "$SERVICE_PID"
+  if ! timeout 30s systemctl stop stock-watcher.service; then
+    echo 'Cannot stop stock-watcher.service; foreground startup aborted. Check service permissions and status.' >&2
+    exit 1
+  fi
+  stopped_pid="$(timeout 3s systemctl show --property=MainPID --value stock-watcher.service)"
+  if [[ "$stopped_pid" != 0 ]]; then
+    echo 'stock-watcher.service has not stopped; foreground startup aborted.' >&2
+    exit 1
+  fi
+  printf '%s\n' 'Starting in foreground. Ctrl+C stops this process; use systemctl start stock-watcher.service to return to background operation.'
 fi
 exec ./bin/stock-watcher run -config "$CONFIG_FILE"

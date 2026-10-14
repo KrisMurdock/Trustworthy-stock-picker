@@ -32,7 +32,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check|sync|preview|research|plan|run|once|status|retry [channel] [-config config.yaml] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check-config|check|sync|preview|research|plan|run|once|status|retry [channel] [-config config.yaml] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -54,7 +54,7 @@ func run(args []string) error {
 		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
-	case "check", "sync", "preview", "research", "plan", "run", "once", "status", "retry":
+	case "check-config", "check", "sync", "preview", "research", "plan", "run", "once", "status", "retry":
 	default:
 		return errors.New("unknown command")
 	}
@@ -78,6 +78,9 @@ func run(args []string) error {
 	options, err := logging.EnvOptions()
 	if err != nil {
 		return err
+	}
+	if command == "check-config" {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "valid", "pool_size": len(c.Stocks)})
 	}
 	if !filepath.IsAbs(options.Dir) {
 		options.Dir = filepath.Join(filepath.Dir(*path), options.Dir)

@@ -2,7 +2,7 @@
 
 `make ci` 验证格式、go vet、`go test -race ./...`、本机构建、实际 CLI 冒烟和发布包。`make docker-smoke` 构建镜像并运行同一组 CLI 断言，再验证低权限用户、实际 Compose 的健康检查与原样环境变量、SIGTERM 生命周期。
 
-`bash tests/run_test.sh` 在临时仓库内用 mock systemctl/ps 和 CLI 验证 `make run`：同仓库同配置的现有服务不会触发构建或第二次启动，不同配置/仓库仍启动，服务未运行、权限不足、查询超时不会误报已运行；缺配置和开发环境变量加载仍按原生路径处理。该回归检查包含在 `make smoke` / `make ci` 中。
+`bash tests/run_test.sh` 在临时仓库内用 mock systemctl/ps 和 CLI 验证 `make run`：同仓库同配置时按“构建、配置校验、停止后台、启动前台”的顺序执行；构建/校验失败保留后台，停止失败或仍有 PID 时不启动前台。不同配置/仓库不停止服务；服务查询拒绝/超时、缺配置、dotenv 加载和 make dry-run 均有断言。该回归检查包含在 `make smoke` / `make ci` 中。
 
 | 验收分支 | 可执行检查 |
 | --- | --- |

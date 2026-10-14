@@ -22,11 +22,11 @@ make status CONFIG=config.yaml
 make run CONFIG=config.yaml
 ```
 
-运行依赖可用 Windows 挂载；本地测试才使用 `require_cifs: false`。`make run` 先检查本机 systemd：若 `stock-watcher.service` 已运行同一个仓库二进制和同一配置，则显示现有 PID 与状态、日志、重启指令，不重复构建或启动。它不会自动应用代码、配置或环境变量的变化；升级仍按部署流程执行。
+运行依赖可用 Windows 挂载；本地测试才使用 `require_cifs: false`。`make run` 用于前台运行，会构建并加载开发 `.env`。若 `stock-watcher.service` 已运行同一个仓库二进制和同一配置，则先用原生 `check-config` 校验业务配置与日志环境变量，通过后正常停止后台服务，确认 MainPID 为 0，再进入前台运行。构建或配置校验失败时不停止原服务；停止失败或超时时中止前台启动并报错。
 
-没有匹配服务时，`scripts/run.sh` 构建二进制、加载开发 `.env` 后 exec Go。其他仓库或不同 `CONFIG` 会继续正常启动，并由数据目录写锁判断是否冲突。systemd 查询失败或超过 3 秒时继续原生启动，由 CLI 返回真实结果。容器和 systemd 均直接启动 Go。
+没有匹配服务时直接 exec Go；其他仓库或不同 `CONFIG` 不会触发服务停止，仍由数据目录写锁判断是否冲突。每次 systemd 查询限时 3 秒，停止服务限时 30 秒。查询不可用时继续原生启动，由 CLI 返回真实结果。容器和 systemd 均直接启动 Go。`make -n run` 只预演命令，不启动或停止进程。
 
-若想从后台服务切换为前台调试，执行 `systemctl stop stock-watcher.service` 后再 `make run`；调试结束后执行 `systemctl start stock-watcher.service` 恢复后台运行。不要删除 `.stock-watcher.lock` 文件绕过正在运行的实例。
+前台进程通过 Ctrl+C 退出，之后可执行 `systemctl start stock-watcher.service` 恢复后台运行；SELinux 环境先按部署文档恢复二进制标签。前台使用当前 shell 和开发 `.env`，后台使用服务 EnvironmentFile，凭证须按对应方式配置。`check-config` 只校验配置，不代表共享盘或外部服务健康；完整健康检查仍使用 `check`。不要删除 `.stock-watcher.lock` 文件绕过正在运行的实例。
 
 ## 发布制品
 

@@ -65,3 +65,21 @@ calendar:
 		t.Fatal("fallback created")
 	}
 }
+
+func TestCheckConfigBeforeStoppingService(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	valid := "schema_version: 1\ndata_dir: missing\nstocks:\n  - code: sz000001\ncalendar:\n  valid_from: '2026-01-01'\n  valid_through: '2026-12-31'\n"
+	if err := os.WriteFile(p, []byte(valid), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"check-config", "-config", p}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"check-config", "-config", p + ".missing"}); err == nil {
+		t.Fatal("missing config accepted")
+	}
+	t.Setenv("STOCK_WATCHER_LOG_MAX_MB", "invalid")
+	if err := run([]string{"check-config", "-config", p}); err == nil {
+		t.Fatal("invalid logging settings accepted")
+	}
+}
