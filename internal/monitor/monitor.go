@@ -70,8 +70,21 @@ func (m *Monitor) readState() (State, error) {
 	}
 	if s.Pending != nil {
 		r := s.Pending.Report
-		if r.Version != 1 || r.ID == "" || r.AsOf == "" || r.Target == "" || !r.SelectionEnabled || s.Pending.Attempts < 0 {
+		if (r.Version != 1 && r.Version != 2) || r.ID == "" || r.AsOf == "" || r.Target == "" || !r.SelectionEnabled || s.Pending.Attempts < 0 {
 			return s, errors.New("invalid persisted delivery state")
+		}
+		if r.Version == 2 && (r.Strategy != "short_horizon_v1" || r.Research == nil || r.Research.Version != 1) {
+			return s, errors.New("invalid persisted strategy report")
+		}
+		if r.Version == 2 {
+			if r.Research.AsOf != r.AsOf || r.Research.Strategy != r.Strategy || !r.Research.Parameters.Enabled || r.Research.Parameters.Validate() != nil || len(r.Ranking) == 0 || r.Eligible != len(r.Ranking) {
+				return s, errors.New("invalid persisted strategy metadata")
+			}
+			for _, candidate := range r.Ranking {
+				if candidate.Plan != nil && candidate.Plan.Version != 1 {
+					return s, errors.New("unsupported persisted trade plan version")
+				}
+			}
 		}
 		next, err := m.Calendar.Next(r.AsOf)
 		if err != nil || next != r.Target {
@@ -106,6 +119,7 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 	end, _ := time.Parse("2006-01-02", asof)
 	start := end.AddDate(0, 0, -m.Config.Daily.HistoryDays).Format("2006-01-02")
 	histories := make([]market.History, 0, len(m.Config.Stocks))
+	raw := make([]market.History, 0, len(m.Config.Stocks))
 	for i, stock := range m.Config.Stocks {
 		if err := ctx.Err(); err != nil {
 			return report, err
@@ -121,6 +135,21 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 			return report, fmt.Errorf("daily storage failed for %s", stock.Code)
 		}
 		histories = append(histories, h)
+		if m.Config.Strategy.Enabled {
+			select {
+			case <-ctx.Done():
+				return report, ctx.Err()
+			case <-time.After(350 * time.Millisecond):
+			}
+			r, err := m.Source.Fetch(ctx, stock, start, asof, "none")
+			if err != nil {
+				return report, fmt.Errorf("raw download failed for %s: %w", stock.Code, err)
+			}
+			if err := m.Store.Write("execution/"+asof+"/"+stock.Code+".json", r); err != nil {
+				return report, fmt.Errorf("raw storage failed for %s", stock.Code)
+			}
+			raw = append(raw, r)
+		}
 		if (i+1)%10 == 0 {
 			m.info("Daily download progress", "completed", i+1, "total", len(m.Config.Stocks), "as_of", asof)
 		}
@@ -134,7 +163,7 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 			}
 		}
 	}
-	report, err = selection.Build(m.Config, histories, asof, target, m.Now())
+	report, err = selection.BuildWithExecution(ctx, m.Config, histories, raw, asof, target, m.Now())
 	if err != nil {
 		return report, err
 	}
@@ -145,19 +174,33 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 	return report, nil
 }
 func (m *Monitor) Preview(asof string) (selection.Report, error) {
+	return m.PreviewContext(context.Background(), asof)
+}
+func (m *Monitor) PreviewContext(ctx context.Context, asof string) (selection.Report, error) {
 	histories := make([]market.History, 0, len(m.Config.Stocks))
+	raw := make([]market.History, 0, len(m.Config.Stocks))
 	for _, s := range m.Config.Stocks {
+		if err := ctx.Err(); err != nil {
+			return selection.Report{}, err
+		}
 		var h market.History
 		if err := m.Store.Read("daily/"+asof+"/"+s.Code+".json", &h); err != nil {
 			return selection.Report{}, err
 		}
 		histories = append(histories, h)
+		if m.Config.Strategy.Enabled {
+			var r market.History
+			if err := m.Store.Read("execution/"+asof+"/"+s.Code+".json", &r); err != nil {
+				return selection.Report{}, fmt.Errorf("raw execution history unavailable for %s; sync with strategy enabled", s.Code)
+			}
+			raw = append(raw, r)
+		}
 	}
 	target, err := m.Calendar.Next(asof)
 	if err != nil {
 		return selection.Report{}, err
 	}
-	return selection.Build(m.Config, histories, asof, target, m.Now())
+	return selection.BuildWithExecution(ctx, m.Config, histories, raw, asof, target, m.Now())
 }
 
 func (m *Monitor) Cycle(ctx context.Context) error {

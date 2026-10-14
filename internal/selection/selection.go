@@ -2,42 +2,30 @@
 package selection
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"sort"
 	"stock-watcher/internal/config"
+	"stock-watcher/internal/indicators"
 	"stock-watcher/internal/market"
+	"stock-watcher/internal/strategy"
 	"strings"
 	"time"
 )
 
-type Metrics struct {
-	Score            int     `json:"score"`
-	MAScore          int     `json:"ma_score"`
-	MACDScore        int     `json:"macd_score"`
-	RSIScore         int     `json:"rsi_score"`
-	ConsecutiveScore int     `json:"consecutive_score"`
-	VolumeScore      int     `json:"volume_score"`
-	MA5              float64 `json:"ma5"`
-	MA10             float64 `json:"ma10"`
-	MA20             float64 `json:"ma20"`
-	DIF              float64 `json:"dif"`
-	DEA              float64 `json:"dea"`
-	RSI14            float64 `json:"rsi14"`
-	VolumeRatio      float64 `json:"volume_ratio"`
-	UpDays           int     `json:"up_days"`
-}
+type Metrics = indicators.Metrics
 type Candidate struct {
-	Code      string  `json:"code"`
-	Name      string  `json:"name"`
-	Sector    string  `json:"sector,omitempty"`
-	Close     float64 `json:"close"`
-	ChangePct float64 `json:"change_pct"`
-	Metrics   Metrics `json:"metrics"`
+	Code      string              `json:"code"`
+	Name      string              `json:"name"`
+	Sector    string              `json:"sector,omitempty"`
+	Close     float64             `json:"close"`
+	ChangePct float64             `json:"change_pct"`
+	Metrics   Metrics             `json:"metrics"`
+	Ranking   *strategy.Candidate `json:"ranking,omitempty"`
 }
 type Excluded struct {
 	Code     string `json:"code"`
@@ -45,139 +33,33 @@ type Excluded struct {
 	LastDate string `json:"last_date,omitempty"`
 }
 type Report struct {
-	Version          int         `json:"schema_version"`
-	ID               string      `json:"id"`
-	AsOf             string      `json:"as_of"`
-	Target           string      `json:"target_trading_date"`
-	GeneratedAt      time.Time   `json:"generated_at"`
-	Strategy         string      `json:"strategy"`
-	SelectionEnabled bool        `json:"selection_enabled"`
-	Adjust           string      `json:"adjust"`
-	MinScore         int         `json:"min_score"`
-	TopN             int         `json:"top_n"`
-	PoolSize         int         `json:"pool_size"`
-	Eligible         int         `json:"eligible"`
-	Passed           int         `json:"passed"`
-	Rules            []string    `json:"rules"`
-	Selected         []Candidate `json:"selected"`
-	Excluded         []Excluded  `json:"excluded"`
-	Filtered         []Excluded  `json:"filtered"`
+	Version          int                  `json:"schema_version"`
+	ID               string               `json:"id"`
+	AsOf             string               `json:"as_of"`
+	Target           string               `json:"target_trading_date"`
+	GeneratedAt      time.Time            `json:"generated_at"`
+	Strategy         string               `json:"strategy"`
+	SelectionEnabled bool                 `json:"selection_enabled"`
+	Adjust           string               `json:"adjust"`
+	MinScore         int                  `json:"min_score"`
+	TopN             int                  `json:"top_n"`
+	PoolSize         int                  `json:"pool_size"`
+	Eligible         int                  `json:"eligible"`
+	Passed           int                  `json:"passed"`
+	Rules            []string             `json:"rules"`
+	Selected         []Candidate          `json:"selected"`
+	Excluded         []Excluded           `json:"excluded"`
+	Filtered         []Excluded           `json:"filtered"`
+	Ranking          []strategy.Candidate `json:"ranking,omitempty"`
+	Research         *strategy.Research   `json:"research,omitempty"`
 }
 
-func sma(closes []float64, n int) float64 {
-	sum := 0.0
-	for _, v := range closes[len(closes)-n:] {
-		sum += v
-	}
-	return sum / float64(n)
-}
-func ema(values []float64, n int) []float64 {
-	out := make([]float64, 0, len(values)-n+1)
-	sum := 0.0
-	for _, v := range values[:n] {
-		sum += v
-	}
-	last := sum / float64(n)
-	out = append(out, last)
-	for _, v := range values[n:] {
-		last += (v - last) * 2 / float64(n+1)
-		out = append(out, last)
-	}
-	return out
-}
-func Score(bars []market.Bar) (Metrics, error) {
-	if len(bars) < 35 {
-		return Metrics{}, errors.New("insufficient history: 35 daily bars required")
-	}
-	closes := make([]float64, len(bars))
-	for i, b := range bars {
-		if b.Close <= 0 || math.IsNaN(b.Close) || math.IsInf(b.Close, 0) || b.Volume < 0 || math.IsNaN(b.Volume) || math.IsInf(b.Volume, 0) {
-			return Metrics{}, errors.New("invalid indicator input")
-		}
-		closes[i] = b.Close
-	}
-	m := Metrics{MA5: sma(closes, 5), MA10: sma(closes, 10), MA20: sma(closes, 20)}
-	if m.MA5 > m.MA10 && m.MA10 > m.MA20 {
-		m.MAScore = 30
-	} else if m.MA5 > m.MA10 {
-		m.MAScore = 15
-	}
-	fast := ema(closes, 12)
-	slow := ema(closes, 26)
-	dif := make([]float64, len(slow))
-	for i := range dif {
-		dif[i] = fast[i+14] - slow[i]
-	}
-	dea := ema(dif, 9)
-	m.DIF = dif[len(dif)-1]
-	m.DEA = dea[len(dea)-1]
-	hist := (m.DIF - m.DEA) * 2
-	prevHist := (dif[len(dif)-2] - dea[len(dea)-2]) * 2
-	if m.DIF > m.DEA && hist > prevHist {
-		m.MACDScore = 25
-	} else if m.DIF > m.DEA {
-		m.MACDScore = 15
-	}
-	gain, loss := 0.0, 0.0
-	for i := 1; i <= 14; i++ {
-		delta := closes[i] - closes[i-1]
-		if delta > 0 {
-			gain += delta
-		} else {
-			loss -= delta
-		}
-	}
-	gain /= 14
-	loss /= 14
-	for i := 15; i < len(closes); i++ {
-		delta := closes[i] - closes[i-1]
-		gain = (gain*13 + math.Max(delta, 0)) / 14
-		loss = (loss*13 + math.Max(-delta, 0)) / 14
-	}
-	if gain == 0 && loss == 0 {
-		m.RSI14 = 50
-	} else if loss == 0 {
-		m.RSI14 = 100
-	} else {
-		m.RSI14 = 100 - 100/(1+gain/loss)
-	}
-	switch {
-	case m.RSI14 >= 60 && m.RSI14 <= 80:
-		m.RSIScore = 20
-	case m.RSI14 >= 50 && m.RSI14 < 60:
-		m.RSIScore = 12
-	case m.RSI14 >= 40 && m.RSI14 < 50:
-		m.RSIScore = 5
-	}
-	for i := len(closes) - 1; i > 0 && closes[i] > closes[i-1]; i-- {
-		m.UpDays++
-	}
-	switch {
-	case m.UpDays >= 3:
-		m.ConsecutiveScore = 15
-	case m.UpDays == 2:
-		m.ConsecutiveScore = 10
-	case m.UpDays == 1:
-		m.ConsecutiveScore = 4
-	}
-	volume := 0.0
-	for _, b := range bars[len(bars)-6 : len(bars)-1] {
-		volume += b.Volume
-	}
-	volume /= 5
-	if volume > 0 {
-		m.VolumeRatio = bars[len(bars)-1].Volume / volume
-	}
-	if m.VolumeRatio >= 1.5 {
-		m.VolumeScore = 10
-	} else if m.VolumeRatio >= 1 {
-		m.VolumeScore = 5
-	}
-	m.Score = m.MAScore + m.MACDScore + m.RSIScore + m.ConsecutiveScore + m.VolumeScore
-	return m, nil
-}
+func Score(bars []market.Bar) (Metrics, error) { return indicators.Score(bars) }
 
 func Build(c config.Config, histories []market.History, asof, target string, now time.Time) (Report, error) {
+	if c.Strategy.Enabled {
+		return Report{}, errors.New("short-horizon strategy requires raw execution histories")
+	}
 	r := Report{Version: 1, AsOf: asof, Target: target, GeneratedAt: now.In(market.Shanghai), Strategy: "leader_daily_v1", SelectionEnabled: c.Selection.Enabled, Adjust: c.Daily.Adjust, MinScore: c.Selection.MinScore, TopN: c.Selection.TopN, PoolSize: len(c.Stocks), Selected: []Candidate{}, Excluded: []Excluded{}, Filtered: []Excluded{}, Rules: []string{
 		"收盘价 > MA20 且 MA5 > MA10 > MA20",
 		fmt.Sprintf("量比 ≥ %.2f 且 MACD DIF > DEA", c.Selection.MinVolumeRatio),
@@ -257,6 +139,58 @@ func Build(c config.Config, histories []market.History, asof, target string, now
 	identity.GeneratedAt = time.Time{}
 	identity.ID = ""
 	data, _ := json.Marshal(identity)
+	sum := sha256.Sum256(data)
+	r.ID = hex.EncodeToString(sum[:12])
+	return r, nil
+}
+
+// BuildWithExecution keeps legacy configuration and persisted v1 reports readable.
+// Short-horizon reports have their own v2 contract; histories remain v1.
+func BuildWithExecution(ctx context.Context, c config.Config, histories, raw []market.History, asof, target string, now time.Time) (Report, error) {
+	if !c.Strategy.Enabled {
+		return Build(c, histories, asof, target, now)
+	}
+	result, err := strategy.Analyze(ctx, c, histories, raw, asof)
+	if err != nil {
+		return Report{}, err
+	}
+	r := Report{Version: 2, AsOf: asof, Target: target, GeneratedAt: now.In(market.Shanghai), Strategy: "short_horizon_v1", SelectionEnabled: c.Selection.Enabled, Adjust: c.Daily.Adjust, TopN: c.Selection.TopN, PoolSize: len(c.Stocks), Eligible: len(result.Ranking), Ranking: result.Ranking, Research: &result.Research, Selected: []Candidate{}, Excluded: []Excluded{}, Filtered: []Excluded{}, Rules: []string{
+		fmt.Sprintf("次日开盘模拟买入；净止盈 %.1f%% / 净止损 %.1f%%", c.Strategy.TargetNetPct, c.Strategy.StopNetPct),
+		fmt.Sprintf("买入当日不卖出；买入后第 %d 个交易日收盘到期退出", c.Strategy.MaxHoldingDays),
+		"机会分结合价量特征和已完成历史交易；不足证据不推荐；参考卖价需按实际买入成本重算",
+	}}
+	for _, stock := range c.Stocks {
+		if reason, ok := result.Excluded[stock.Code]; ok {
+			r.Excluded = append(r.Excluded, Excluded{Code: stock.Code, Reason: reason})
+		}
+	}
+	if r.Eligible == 0 {
+		return r, errors.New("no stocks have complete eligible strategy data")
+	}
+	for _, x := range r.Ranking {
+		if !x.Recommended {
+			r.Filtered = append(r.Filtered, Excluded{Code: x.Code, Reason: "strategy_evidence_or_risk_gate"})
+			continue
+		}
+		r.Passed++
+		if !c.Selection.Enabled || len(r.Selected) >= r.TopN {
+			continue
+		}
+		copy := x
+		for _, h := range histories {
+			if h.Code == x.Code {
+				r.Selected = append(r.Selected, Candidate{Code: x.Code, Name: x.Name, Close: h.Bars[len(h.Bars)-1].Close, ChangePct: x.Features.Return1, Metrics: x.Features.Metrics, Ranking: &copy})
+				break
+			}
+		}
+	}
+	identity := r
+	identity.GeneratedAt = time.Time{}
+	identity.ID = ""
+	data, err := json.Marshal(identity)
+	if err != nil {
+		return r, err
+	}
 	sum := sha256.Sum256(data)
 	r.ID = hex.EncodeToString(sum[:12])
 	return r, nil

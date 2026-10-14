@@ -22,13 +22,14 @@ type Stock struct {
 }
 
 type Config struct {
-	Version      int     `yaml:"schema_version"`
-	DataDir      string  `yaml:"data_dir"`
-	RequireCIFS  bool    `yaml:"require_cifs"`
-	PollInterval string  `yaml:"poll_interval"`
-	Timeout      string  `yaml:"request_timeout"`
-	PoolFile     string  `yaml:"pool_file,omitempty"`
-	Stocks       []Stock `yaml:"stocks"`
+	Strategy     Strategy `yaml:"strategy"`
+	Version      int      `yaml:"schema_version"`
+	DataDir      string   `yaml:"data_dir"`
+	RequireCIFS  bool     `yaml:"require_cifs"`
+	PollInterval string   `yaml:"poll_interval"`
+	Timeout      string   `yaml:"request_timeout"`
+	PoolFile     string   `yaml:"pool_file,omitempty"`
+	Stocks       []Stock  `yaml:"stocks"`
 	Daily        struct {
 		RunAt       string `yaml:"run_at"`
 		HistoryDays int    `yaml:"history_days"`
@@ -62,6 +63,7 @@ func ValidCode(s string) bool { return stockCode.MatchString(s) }
 
 func Defaults() Config {
 	c := Config{Version: 1, DataDir: "data", RequireCIFS: true, PollInterval: "5m", Timeout: "10s"}
+	c.Strategy = DefaultStrategy()
 	c.Daily.RunAt = "18:05"
 	c.Daily.HistoryDays = 365
 	c.Daily.Adjust = "qfq"
@@ -83,7 +85,8 @@ func Load(path string) (Config, error) {
 	}
 	defer f.Close()
 	c := Defaults()
-	c.Version = 0 // Files must explicitly declare the schema; defaults are for constructors.
+	c.Version = 0          // Files must explicitly declare the schema; defaults are for constructors.
+	c.Strategy.Version = 0 // Explicit when the optional strategy is enabled.
 	d := yaml.NewDecoder(io.LimitReader(f, 1<<20))
 	d.KnownFields(true)
 	if err := d.Decode(&c); err != nil {
@@ -145,6 +148,12 @@ func Load(path string) (Config, error) {
 func (c Config) Validate() error {
 	if c.Version != 1 {
 		return errors.New("schema_version must be 1")
+	}
+	if err := c.Strategy.Validate(); err != nil {
+		return err
+	}
+	if c.Strategy.Enabled && c.Daily.Adjust != "qfq" {
+		return errors.New("strategy requires daily.adjust=qfq")
 	}
 	if strings.TrimSpace(c.DataDir) == "" {
 		return errors.New("data_dir is required")

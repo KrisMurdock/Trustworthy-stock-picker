@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/feishu"
 	"stock-watcher/internal/market"
@@ -13,8 +14,9 @@ import (
 )
 
 type fakeSource struct {
-	calls int
-	err   error
+	calls      int
+	err        error
+	failAdjust string
 }
 
 func (f *fakeSource) Fetch(ctx context.Context, s config.Stock, start, end, adjust string) (market.History, error) {
@@ -22,7 +24,7 @@ func (f *fakeSource) Fetch(ctx context.Context, s config.Stock, start, end, adju
 	if ctx.Err() != nil {
 		return market.History{}, ctx.Err()
 	}
-	if f.err != nil {
+	if f.err != nil && (f.failAdjust == "" || f.failAdjust == adjust) {
 		return market.History{}, f.err
 	}
 	bars := []market.Bar{}
@@ -33,7 +35,11 @@ func (f *fakeSource) Fetch(ctx context.Context, s config.Stock, start, end, adju
 		}
 		d = d.AddDate(0, 0, -1)
 	}
-	return market.History{Version: 1, Code: s.Code, Name: s.Name, Source: "tencent", DataField: "qfqday", VolumeUnit: "provider_raw", FetchedAt: time.Now(), Adjust: adjust, AsOf: end, Bars: bars}, nil
+	field := "qfqday"
+	if adjust == "none" {
+		field = "day"
+	}
+	return market.History{Version: 1, Code: s.Code, Name: s.Name, Source: "tencent", DataField: field, VolumeUnit: "provider_raw", FetchedAt: time.Now(), Adjust: adjust, AsOf: end, Bars: bars}, nil
 }
 
 type fakeSender struct {
@@ -165,5 +171,61 @@ func TestCorruptStateAndBeforeClose(t *testing.T) {
 	m.Now = func() time.Time { return now }
 	if err := m.Cycle(context.Background()); err != nil || source.calls != 0 {
 		t.Fatal("ran before close")
+	}
+}
+
+func TestStrategySyncRawResearchPersistenceAndRetry(t *testing.T) {
+	m, source, sender := fixture(t)
+	m.Config.Strategy.Enabled = true
+	sender.err = &feishu.Failure{Status: 503, Kind: "status"}
+	if err := m.Cycle(context.Background()); err == nil {
+		t.Fatal("expected failed notification")
+	}
+	if source.calls != 2 {
+		t.Fatal("raw execution history not fetched")
+	}
+	state, err := m.Status()
+	if err != nil || state.Pending == nil || state.Pending.Report.Version != 2 || len(state.Pending.Report.Ranking) != 1 {
+		t.Fatalf("new report not persisted %+v %v", state, err)
+	}
+	preview, err := m.Preview("2026-10-13")
+	if err != nil || preview.Research == nil || preview.ID != state.Pending.Report.ID {
+		t.Fatalf("new preview mismatch %+v %v", preview, err)
+	}
+	now := m.Now().Add(3 * time.Minute)
+	m.Now = func() time.Time { return now }
+	sender.err = nil
+	if err := m.Cycle(context.Background()); err != nil || source.calls != 2 || sender.calls != 2 {
+		t.Fatal("v2 pending was not reused")
+	}
+	// Unknown nested contracts must not be silently sent after a restart.
+	state.Pending.Report.Ranking[0].Plan.Version = 2
+	if err := m.Store.Write("state/delivery.json", state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Status(); err == nil {
+		t.Fatal("unknown nested trade plan version accepted")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := m.PreviewContext(ctx, "2026-10-13"); !errors.Is(err, context.Canceled) {
+		t.Fatal("preview cancellation ignored")
+	}
+}
+
+func TestRawFailureDoesNotPublishAnAdjustedOnlyReport(t *testing.T) {
+	m, source, sender := fixture(t)
+	m.Config.Strategy.Enabled = true
+	source.err, source.failAdjust = errors.New("raw source unavailable"), "none"
+	if err := m.Cycle(context.Background()); err == nil || source.calls != 2 || sender.calls != 0 {
+		t.Fatal("missing raw prices did not block the whole report")
+	}
+	var report selection.Report
+	if err := m.Store.Read("reports/2026-10-13.json", &report); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("adjusted-only report persisted")
+	}
+	state, err := m.Status()
+	if err != nil || state.Pending != nil {
+		t.Fatal("partial data became a pending notification")
 	}
 }

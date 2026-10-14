@@ -21,6 +21,26 @@ selection:
   min_day_change_pct: -3
   max_day_change_pct: 7
 
+# Set enabled=true to replace legacy filtering with full-pool short-horizon ranking.
+# Old configurations keep legacy behavior. Costs other than commission are assumptions.
+strategy:
+  schema_version: 1
+  enabled: false
+  target_net_pct: 3       # also measures 2.5%; allowed targets: 2.5 or 3
+  stop_net_pct: -3
+  max_holding_days: 5     # trading days AFTER buying, earliest sale on day 1
+  trade_cash: 20000       # inclusive of buy fees; replace with actual per-stock budget
+  commission_rate: 0.0001 # user: 万一, charged on both sides
+  min_commission: 5       # assumption; set 0 if the broker waives the minimum
+  transfer_rate: 0.00001
+  sell_stamp_rate: 0.0005
+  slippage_rate: 0.0005
+  max_entry_gap_pct: 3
+  min_evidence: 60
+  min_training_days: 40
+  holdout_days: 40
+  min_rank_score: 60
+
 feishu:
   enabled: false
   # Set FEISHU_WEBHOOK and optionally FEISHU_SECRET in a private environment file.

@@ -16,6 +16,7 @@ import (
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/monitor"
 	"stock-watcher/internal/storage"
+	"stock-watcher/internal/strategy"
 	"syscall"
 	"time"
 )
@@ -30,7 +31,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check|sync|preview|run|once|status|retry [-config config.yaml] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check|sync|preview|research|plan|run|once|status|retry [-config config.yaml] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -39,7 +40,9 @@ func run(args []string) error {
 	}
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
 	path := f.String("config", "config.yaml", "configuration file")
-	asof := f.String("as-of", "", "completed data date (sync/preview only)")
+	asof := f.String("as-of", "", "completed data date (sync/preview/research only)")
+	code := f.String("code", "", "stock code (plan only)")
+	entry := f.Float64("entry-price", 0, "actual buy fill price (plan only)")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -47,16 +50,26 @@ func run(args []string) error {
 		return errors.New("unexpected positional arguments")
 	}
 	switch command {
-	case "check", "sync", "preview", "run", "once", "status", "retry":
+	case "check", "sync", "preview", "research", "plan", "run", "once", "status", "retry":
 	default:
 		return errors.New("unknown command")
 	}
-	if *asof != "" && command != "sync" && command != "preview" {
-		return errors.New("as-of is supported by sync and preview only")
+	if *asof != "" && command != "sync" && command != "preview" && command != "research" {
+		return errors.New("as-of is supported by sync, preview and research only")
+	}
+	if command != "plan" && (*code != "" || *entry != 0) {
+		return errors.New("trade price flags require the plan command")
 	}
 	c, err := config.Load(*path)
 	if err != nil {
 		return err
+	}
+	if command == "plan" {
+		p, err := strategy.NewPlan(c.Strategy, *code, *entry)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(p)
 	}
 	options, err := logging.EnvOptions()
 	if err != nil {
@@ -73,7 +86,7 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	openStore := storage.Open
-	if command == "status" || command == "preview" || command == "check" {
+	if command == "status" || command == "preview" || command == "research" || command == "check" {
 		openStore = storage.OpenView
 	}
 	store, err := openStore(c.DataDir, c.RequireCIFS)
@@ -108,7 +121,7 @@ func run(args []string) error {
 			return err
 		}
 		return printJSON(s)
-	case "sync", "preview":
+	case "sync", "preview", "research":
 		day := *asof
 		if day == "" {
 			day, err = cal.Completed(time.Now())
@@ -123,9 +136,15 @@ func run(args []string) error {
 			}
 			return printJSON(r)
 		}
-		r, err := m.Preview(day)
+		r, err := m.PreviewContext(ctx, day)
 		if err != nil {
 			return err
+		}
+		if command == "research" {
+			if r.Research == nil {
+				return errors.New("research requires enabled short-horizon strategy")
+			}
+			return printJSON(r.Research)
 		}
 		return printJSON(r)
 	case "retry":
