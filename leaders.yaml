@@ -1,0 +1,210 @@
+schema_version: 1
+stocks:
+  - code: sh601606
+    name: 长城军工
+  - code: sh603118
+    name: 共进股份
+  - code: sz002396
+    name: 星网锐捷
+  - code: sz002080
+    name: 中材科技
+  - code: sh600176
+    name: 中国巨石
+  - code: sh603256
+    name: 宏和科技
+  - code: sz000823
+    name: 超声电子
+  - code: sz002636
+    name: 金安国纪
+  - code: sh688519
+    name: 南亚新材
+  - code: sh603186
+    name: 华正新材
+  - code: sh600183
+    name: 生益科技
+  - code: sz000034
+    name: 神州数码
+  - code: sz000938
+    name: 紫光股份
+  - code: sh603019
+    name: 中科曙光
+  - code: sh601138
+    name: 工业富联
+  - code: sz000977
+    name: 浪潮信息
+  - code: sh688048
+    name: 长光华芯
+  - code: sh688313
+    name: 仕佳光子
+  - code: sz002859
+    name: 洁美科技
+  - code: sh603678
+    name: 火炬电子
+  - code: sz300408
+    name: 三环集团
+  - code: sz000636
+    name: 风华高科
+  - code: sz300316
+    name: 晶盛机电
+  - code: sz002617
+    name: 露笑科技
+  - code: sh688234
+    name: 天岳先进
+  - code: sh688300
+    name: 联瑞新材
+  - code: sz300475
+    name: 香农芯创
+  - code: sh688535
+    name: 华海诚科
+  - code: sz300623
+    name: 捷捷微电
+  - code: sh605111
+    name: 新洁能
+  - code: sz300373
+    name: 扬杰科技
+  - code: sh600460
+    name: 士兰微
+  - code: sh688403
+    name: 汇成股份
+  - code: sh603005
+    name: 晶方科技
+  - code: sz002185
+    name: 华天科技
+  - code: sz002409
+    name: 雅克科技
+  - code: sz300666
+    name: 江丰电子
+  - code: sz300054
+    name: 鼎龙股份
+  - code: sh688126
+    name: 沪硅产业
+  - code: sh688019
+    name: 安集科技
+  - code: sh688120
+    name: 华海清科
+  - code: sh688082
+    name: 盛美上海
+  - code: sh688072
+    name: 拓荆科技
+  - code: sh688012
+    name: 中微公司
+  - code: sz300346
+    name: 南大光电
+  - code: sz002971
+    name: 和远气体
+  - code: sz002549
+    name: 凯美特气
+  - code: sh688106
+    name: 金宏气体
+  - code: sh688268
+    name: 华特气体
+  - code: sz002669
+    name: 康达新材
+  - code: sz301630
+    name: 同宇新材
+  - code: sh601208
+    name: 东材科技
+  - code: sh603002
+    name: 宏昌电子
+  - code: sh605589
+    name: 圣泉集团
+  - code: sh688312
+    name: 燕麦科技
+  - code: sz300410
+    name: 正业科技
+  - code: sh688700
+    name: 东威科技
+  - code: sz301200
+    name: 大族数控
+  - code: sz300102
+    name: 乾照光电
+  - code: sz300620
+    name: 光库科技
+  - code: sz002023
+    name: 海特高新
+  - code: sh600703
+    name: 三安光电
+  - code: sz002428
+    name: 云南锗业
+  - code: sz000657
+    name: 中钨高新
+  - code: sz002378
+    name: 章源钨业
+  - code: sh600549
+    name: 厦门钨业
+  - code: sh603228
+    name: 景旺电子
+  - code: sz002916
+    name: 深南电路
+  - code: sz002463
+    name: 沪电股份
+  - code: sz002938
+    name: 鹏鼎控股
+  - code: sz002491
+    name: 通鼎互联
+  - code: sh600498
+    name: 烽火通信
+  - code: sz301205
+    name: 联特科技
+  - code: sh600522
+    name: 中天科技
+  - code: sh600487
+    name: 亨通光电
+  - code: sz002384
+    name: 东山精密
+  - code: sh600198
+    name: 大唐电信
+  - code: sh603893
+    name: 瑞芯微
+  - code: sz002281
+    name: 光迅科技
+  - code: sh603288
+    name: 海天味业
+  - code: sz000333
+    name: 美的集团
+  - code: sh603259
+    name: 药明康德
+  - code: sh600276
+    name: 恒瑞医药
+  - code: sh688981
+    name: 中芯国际
+  - code: sz002415
+    name: 海康威视
+  - code: sh600036
+    name: 招商银行
+  - code: sz002475
+    name: 立讯精密
+  - code: sh600900
+    name: 长江电力
+  - code: sz300394
+    name: 天孚通信
+  - code: sz300476
+    name: 胜宏科技
+  - code: sz002156
+    name: 通富微电
+  - code: sz000988
+    name: 华工科技
+  - code: sh688256
+    name: 寒武纪
+  - code: sz002594
+    name: 比亚迪
+  - code: sh601869
+    name: 长飞光纤
+  - code: sh688825
+    name: 长鑫科技
+  - code: sz300750
+    name: 宁德时代
+  - code: sz300308
+    name: 中际旭创
+  - code: sh600584
+    name: 长电科技
+  - code: sz300502
+    name: 新易盛
+  - code: sz002371
+    name: 北方华创
+  - code: sh688808
+    name: 联讯仪器
+  - code: sh688733
+    name: 壹石通
+  - code: sh688802
+    name: 沐曦股份

@@ -13,3 +13,18 @@ htmlcov/
 reasonix.toml
 config.yaml
 positions.yaml
+
+# Go runtime and remote data
+/data
+/logs/
+/bin/
+/config.runtime.yaml
+*.test
+
+# Coding-agent planning artifacts
+/docs/adr/
+/docs/agents/
+/docs/superpowers/
+/.scratch/
+/.codegraph/
+/CONTEXT.md
