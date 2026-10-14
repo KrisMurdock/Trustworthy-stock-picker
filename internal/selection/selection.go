@@ -91,7 +91,7 @@ func Score(bars []market.Bar) (Metrics, error) {
 	}
 	closes := make([]float64, len(bars))
 	for i, b := range bars {
-		if b.Close <= 0 || math.IsNaN(b.Close) || math.IsInf(b.Close, 0) || b.VolumeLots < 0 || math.IsNaN(b.VolumeLots) || math.IsInf(b.VolumeLots, 0) {
+		if b.Close <= 0 || math.IsNaN(b.Close) || math.IsInf(b.Close, 0) || b.Volume < 0 || math.IsNaN(b.Volume) || math.IsInf(b.Volume, 0) {
 			return Metrics{}, errors.New("invalid indicator input")
 		}
 		closes[i] = b.Close
@@ -162,11 +162,11 @@ func Score(bars []market.Bar) (Metrics, error) {
 	}
 	volume := 0.0
 	for _, b := range bars[len(bars)-6 : len(bars)-1] {
-		volume += b.VolumeLots
+		volume += b.Volume
 	}
 	volume /= 5
 	if volume > 0 {
-		m.VolumeRatio = bars[len(bars)-1].VolumeLots / volume
+		m.VolumeRatio = bars[len(bars)-1].Volume / volume
 	}
 	if m.VolumeRatio >= 1.5 {
 		m.VolumeScore = 10
@@ -205,7 +205,7 @@ func Build(c config.Config, histories []market.History, asof, target string, now
 			r.Excluded = append(r.Excluded, Excluded{Code: s.Code, Reason: "stale_or_suspended", LastDate: last.Date})
 			continue
 		}
-		if last.VolumeLots == 0 {
+		if last.Volume == 0 {
 			r.Excluded = append(r.Excluded, Excluded{Code: s.Code, Reason: "no_trading_volume", LastDate: last.Date})
 			continue
 		}

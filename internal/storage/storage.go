@@ -14,6 +14,7 @@ import (
 )
 
 const cifsMagic = 0xff534d42
+const smb2Magic = 0xfe534d42 // Linux SMB2/SMB3 filesystem, including this Windows mount.
 const maxFileBytes = 8 << 20
 
 type Store struct {
@@ -23,15 +24,11 @@ type Store struct {
 }
 
 func Open(root string, requireCIFS bool) (*Store, error) {
-	root, err := filepath.Abs(root)
+	s, err := OpenView(root, requireCIFS)
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{root: root, requireCIFS: requireCIFS}
-	// Never create a missing data root. This is what prevents local fallback.
-	if err := s.Check(); err != nil {
-		return nil, err
-	}
+	root = s.root
 	f, err := os.OpenFile(filepath.Join(root, ".stock-watcher.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, errors.New("storage lock is not writable")
@@ -41,6 +38,20 @@ func Open(root string, requireCIFS bool) (*Store, error) {
 		return nil, errors.New("another stock-watcher process owns the data directory")
 	}
 	s.lock = f
+	return s, nil
+}
+
+// OpenView allows atomic read-only status queries while the single writer runs.
+func OpenView(root string, requireCIFS bool) (*Store, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	s := &Store{root: root, requireCIFS: requireCIFS}
+	// Never create a missing data root. This is what prevents local fallback.
+	if err := s.Check(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 func (s *Store) Close() error {
@@ -57,11 +68,16 @@ func (s *Store) Check() error {
 	if err != nil || !info.IsDir() {
 		return errors.New("data root is unavailable; no local fallback")
 	}
+	// Lookup a child to activate systemd autofs. Stat(root) alone can report the
+	// dormant autofs filesystem even when the SSH tunnel and share are ready.
+	if _, err := os.Stat(filepath.Join(s.root, ".stock-watcher.lock")); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return errors.New("remote storage is unavailable")
+	}
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(s.root, &st); err != nil {
 		return errors.New("cannot inspect data filesystem")
 	}
-	if s.requireCIFS && uint64(st.Type) != cifsMagic {
+	if s.requireCIFS && uint64(st.Type) != cifsMagic && uint64(st.Type) != smb2Magic {
 		return errors.New("data root is not mounted CIFS; no local fallback")
 	}
 	return nil
@@ -125,6 +141,9 @@ func (s *Store) path(name string, create bool) (string, error) {
 }
 
 func (s *Store) Write(name string, value any) error {
+	if s.lock == nil {
+		return errors.New("storage view cannot write without exclusive ownership")
+	}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err

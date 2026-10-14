@@ -72,7 +72,11 @@ func run(args []string) error {
 	defer log.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	store, err := storage.Open(c.DataDir, c.RequireCIFS)
+	openStore := storage.Open
+	if command == "status" || command == "preview" || command == "check" {
+		openStore = storage.OpenView
+	}
+	store, err := openStore(c.DataDir, c.RequireCIFS)
 	if err != nil {
 		return err
 	}

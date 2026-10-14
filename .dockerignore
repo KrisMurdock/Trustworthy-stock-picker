@@ -1,0 +1,10 @@
+.git
+bin
+logs
+data
+config.yaml
+config.runtime.yaml
+.env
+*.env
+AGENTS.md
+README.md

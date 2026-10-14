@@ -55,3 +55,27 @@ func TestMissingRootIsNotCreated(t *testing.T) {
 		t.Fatal("created fallback directory")
 	}
 }
+
+func TestReadOnlyViewWithActiveWriter(t *testing.T) {
+	root := t.TempDir()
+	writer, err := Open(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if err := writer.Write("state.json", map[string]int{"schema_version": 1}); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := OpenView(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	var state map[string]int
+	if err := reader.Read("state.json", &state); err != nil || state["schema_version"] != 1 {
+		t.Fatal("concurrent status read failed")
+	}
+	if err := reader.Write("state.json", map[string]int{}); err == nil {
+		t.Fatal("read view wrote without lock")
+	}
+}

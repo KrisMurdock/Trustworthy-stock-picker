@@ -1,0 +1,26 @@
+schema_version: 1
+pending:
+- input_name: 国际辅材
+  suggested_name: 国际复材
+  suggested_code: sz301526
+  status: awaiting_confirmation
+- input_name: 山东玻钎
+  suggested_name: 山东玻纤
+  suggested_code: sh605006
+  status: awaiting_confirmation
+- input_name: 媛姐科技
+  suggested_name: 源杰科技
+  suggested_code: sh688498
+  status: awaiting_confirmation
+- input_name: 华瑞微
+  suggested_name: 华润微
+  suggested_code: sh688396
+  status: awaiting_confirmation
+- input_name: 洛阳泪业
+  suggested_name: 洛阳钼业
+  suggested_code: sh603993
+  status: awaiting_confirmation
+- input_name: XD老凤祥
+  suggested_name: 老凤祥
+  suggested_code: sh600612
+  status: awaiting_confirmation

@@ -1,0 +1,19 @@
+[Unit]
+Description=A-share leader pool daily synchronization and T+1 recommendations
+Wants=network-online.target mnt-windows_database.automount
+After=network-online.target mnt-windows_database.automount
+
+[Service]
+Type=simple
+WorkingDirectory=/root/data/codebase/toys_project/stock_watcher
+EnvironmentFile=-/etc/stock-watcher.env
+ExecStart=/root/data/codebase/toys_project/stock_watcher/bin/stock-watcher run -config /root/data/codebase/toys_project/stock_watcher/config.yaml
+Restart=on-failure
+RestartSec=60
+TimeoutStopSec=20
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,442 +1,92 @@
-# Stock Watcher · 股票监控
+# stock_watcher
 
-> Real-time stock monitor in the terminal — A-shares, HK, and US markets.
-> 终端里的实时股票行情看板 — 支持 A 股、港股、美股。
+原生 Go 的 A 股龙头股池日线监控。服务器下载历史日线，直接写入 Windows 共享盘；收盘后筛选下一交易日 T+1 的候选股，并通过飞书自定义机器人推送。生产运行不需要 Python。
 
-<div align="center">
+## 运行
 
-**[English](#english)** &nbsp;|&nbsp; **[中文](#中文)**
-
-</div>
-
-![Stock Watcher TUI](docs/image.png)
-
----
-
-<h2 id="english">🇬🇧 English</h2>
-
-## Features
-
-- **Multi-market** — Shanghai (`sh`), Shenzhen (`sz`), Hong Kong (`hk`), and US (`us`) stocks
-- **Live polling** — auto-refreshes during trading hours, pauses when markets close
-- **Sortable table** — click column headers to sort by price, change%, P&L, and more
-- **Price alerts** — configurable thresholds (price above/below, change% above/below) with bell + system notification
-- **Position tracking** — record cost, quantity, and see unrealized P&L per stock
-- **Detail panel** — bid/ask order book (A-shares), PE ratio (HK), recent alert history
-- **Feishu push** (optional) — alert cards and periodic summaries to a Feishu/Lark group
-- **AI chat** (optional) — DeepSeek-powered `@bot` replies inside Feishu groups
-- **Privacy mode** — one-key disguise: all stock names and numbers hidden
-- **CSV export** — dump the current table to a timestamped `.csv` file
-- **Hot reload** — edit `config.yaml` or `positions.yaml` without restarting
-
-## Prerequisites
-
-- **Python** ≥ 3.11
-- **pip** (or your favourite package manager)
-
-## Quick Start
+需要 Linux、Go 1.26 和已经挂载的 CIFS 共享。服务器上的 `data` 链接到 `/mnt/windows_database`，对应 Windows `D:\shared_database`。默认拒绝本地磁盘回退，Windows 关机或 SSH 隧道断开时不会改写服务器磁盘。
 
 ```bash
-# Clone
-git clone https://github.com/KrisMurdock/job_time_stock_watcher.git
-cd job_time_stock_watcher
-
-# Install dependencies
-pip install -e .
-
-# Copy example config files
+make build
 cp config.yaml.example config.yaml
-cp positions.yaml.example positions.yaml
-
-# Edit watchlist
-# Open config.yaml and replace the stock codes with your own
-
-# Run
-python -m stock_watcher.app
+chmod 600 config.yaml
+./bin/stock-watcher check -config config.yaml
+./bin/stock-watcher sync -config config.yaml
+./bin/stock-watcher preview -config config.yaml -as-of 2026-10-13
+./bin/stock-watcher run -config config.yaml
 ```
 
-Or use the convenience script:
+`sync` 下载并生成报告，不发送消息。`run` 在交易日 18:05（北京时间）生成 T+1 报告；启动晚于计划时间时，允许在下一交易日开盘前补发。`once` 执行一次同样的调度流程。`status` 查看持久投递状态，`retry` 在停止服务并修正权限、签名等永久错误后解除待发送记录的阻塞。改变配置或股池后重启生效，同一数据日不会重复生成推送；下一数据日使用新配置。
+
+`leaders.yaml` 保存已核对的 104 个证券代码和名称，可直接添加或删除股票。用户原名单另外 6 个疑似笔误在 `leaders.pending.yaml`，确认前不参与下载与筛选。上海和深圳 A 股支持带市场前缀的代码；名称不会参与自动猜测。维护者应使用已核对的证券代码。`cmd/resolve-pool` 可辅助核对名称，结果须人工检查。
+
+## 首版筛选条件
+
+条件全部满足后，按现有技术趋势评分降序取前 5 名，分数相同时按证券代码排序：
+
+- 收盘价 > MA20，且 MA5 > MA10 > MA20。
+- 今日成交量 / 前 5 个交易日平均成交量 ≥ 1.2，且 MACD DIF > DEA。
+- RSI14 在 50～80，单日涨跌幅在 -3%～7%，总分至少 70。
+- 排除 ST、退市标记、无成交量、当日数据未更新及不足 35 根日线的股票。
+
+评分延续旧代码的均线 30 分、MACD 25 分、RSI 20 分、连涨 15 分、量比 10 分。修正旧 RSI 最后一根的平滑计算；量比使用同一返回序列的成交量原值，不把成交额当成交量。MA、MACD、RSI 使用同一窗口的前复权价格。默认重新下载最近 365 个自然日的完整窗口，避免把不同日期复权基准的数据拼在一起。阈值、Top N、历史范围和时间均可配置。这是透明的技术规则筛选，尚未经过收益回测。
+
+没有股票通过时，报告和飞书明确显示“没有满足筛选规则的股票”。过期、停牌和数据不足单独列出；任何股票的网络请求或数据格式错误会阻止整池报告推送，重试成功后才生成完整报告。
+
+## Windows 文件
+
+```text
+data/                       # 实际位于 Windows 共享盘
+  daily/2026-10-13/sh600000.json
+  reports/2026-10-13.json
+  state/delivery.json
+  .stock-watcher.lock
+logs/stock-watcher.log       # 服务器上的有限运行日志
+```
+
+持久数据使用 `schema_version: 1`、UTF-8 JSON、ISO 日期和带时区 RFC3339Nano 时间。价格为人民币，`volume_raw` 为供应商原值，单位标记为 `provider_raw`，`data_field` 记录 `qfqday` / `hfqday` / `day`；缺字段、非有限数、版本错误和损坏状态都会报错，不自动清空状态。日线文件包含来源、复权方式、请求截止日和实际最后一根日线日期；可在 Windows 用编辑器直接读取。
+
+单个进程持有共享文件锁。JSON 文件先写临时文件、fsync，再原子重命名；共享目录内的软链接被拒绝。`require_cifs: false` 仅适合本地测试，生产应保持 `true`。共享盘故障时停止本轮写入；已保存的数据和待发送记录保留。日志和程序本身占用少量服务器磁盘，行情不会保存第二份服务器副本。
+
+## 飞书配置
+
+在群里添加自定义机器人，用受限权限配置文件或 `/etc/stock-watcher.env` 保存凭证，不要提交到 Git：
+
+```text
+FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/...
+FEISHU_SECRET=...
+```
+
+在 `config.yaml` 将 `feishu.enabled` 设为 `true`。开启签名时，按[飞书官方签名规则](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot)计算 HMAC-SHA256 和 Base64。只有 HTTP 200 且业务码为 0 才确认送达。429、5xx、限流和网络错误持久重试；401/403、签名或关键词错误阻塞待发送记录，需要修正配置并运行 `retry`。日志不输出 webhook、secret 或原始响应。
+
+推送是至少一次投递：请求成功后、写入确认前异常退出可能重复。卡片包含固定事件 ID。过了目标交易日 09:30 的消息不再发送。没有设置有效 webhook 时 `sync` 和报告预览仍可独立使用。
+
+## 交易日历与数据源
+
+2026 日历来自[深交所休市通知](https://www.szse.cn/disclosure/notice/general/t20251222_618087.html)。T+1 跳过周末和配置中的节假日；日历覆盖到期会报错，应提前按新年度通知更新。未收盘日期不会用于筛选。
+
+日线直接请求腾讯行情 HTTP 接口，沿用旧项目的数据协议，未调用 AKShare。第三方免费行情接口可能限流或改变协议；HTTP 超时默认 10 秒，每只股票请求之间至少 350 毫秒，错误可见且不会生成假数据。配置修改、旧 TUI 热加载、港美股、持仓、新闻及 AI 群聊不属于新运行时。旧配置会被新格式明确拒绝，应从示例迁移股池、时间与飞书凭证。
+
+## 部署与验证
 
 ```bash
-./run.sh
+make test
+make vet
+make build
+make image
 ```
 
-## Configuration
-
-All settings live in `config.yaml`. A documented example is at [`config.yaml.example`](config.yaml.example).
-
-### Core settings
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `poll_interval` | float | `2.5` | Seconds between each stock fetch |
-| `watchlist` | list | *example* | Stock codes with market prefixes |
-| `alerts` | list | `[]` | Alert rules (see below) |
-| `proxies` | list | `[]` | HTTP proxy URLs (e.g. `http://127.0.0.1:7890`) |
-
-### Request tuning
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `request.timeout` | int | `10` | HTTP timeout (seconds) |
-| `request.user_agent_pool` | list | *browsers* | UA strings, one picked per request |
-
-### Backoff (exponential retry)
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `backoff.base` | float | `5` | Initial delay (seconds) |
-| `backoff.max` | float | `120` | Maximum delay |
-| `backoff.multiplier` | float | `2` | Exponent factor per failure |
-
-### Alert sound
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `alert_sound_command` | string | `""` | Shell command for custom audio (Linux: `paplay`, macOS: `afplay`) |
-
-### Stock codes
-
-Prefixes map to markets:
-
-| Prefix | Market | Example |
-|--------|--------|---------|
-| `sh` | Shanghai A-share | `sh600519` (Kweichow Moutai) |
-| `sz` | Shenzhen A-share | `sz000001` (Ping An Bank) |
-| `hk` | Hong Kong | `hk00700` (Tencent) |
-| `us` | US | `ustsla` (Tesla), `usaapl` (Apple) |
-
-### Alerts
-
-Alert rules live under the `alerts` key. Each rule has three fields:
-
-```yaml
-alerts:
-  - code: hk00700        # stock code
-    type: price_above    # price_above | price_below | pct_above | pct_below
-    value: 433.0         # threshold (yuan for price, number for %)
-```
-
-### Positions
-
-Positions are stored in a separate file — `positions.yaml`. Copy the example:
+容器使用同一个原生 CLI、配置和 CIFS 检查；应先由宿主机挂载 Windows，再映射共享盘：
 
 ```bash
-cp positions.yaml.example positions.yaml
+docker run --rm --cpus=1 --memory=256m \
+  --mount type=bind,src=/mnt/windows_database,dst=/data \
+  --mount type=bind,src="$PWD/config.yaml",dst=/app/config.yaml,readonly \
+  --mount type=bind,src="$PWD/logs",dst=/logs \
+  --env-file /etc/stock-watcher.env \
+  stock-watcher:<commit-sha> run -config /app/config.yaml
 ```
 
-Format:
+`deploy/stock-watcher.service` 是宿主机服务模板；合并并验证目标目录的制品后安装和启用。`./bin/stock-watcher version` 返回构建对应的提交 SHA。服务安装不会自动配置 Windows 开机 SSH 隧道；目前密码登录隧道仍需要保持终端开启，无人值守重连需另行配置专用 SSH 密钥。
 
-```yaml
-hk00700:
-  cost: 430.0       # buy-in average cost (yuan)
-  quantity: 100     # total shares held
-  available: 100    # tradable shares
-```
-
-Hot-reloaded — no restart needed.
-
-## Usage
-
-### Key bindings
-
-| Key | Action |
-|-----|--------|
-| `a` | **Add stock** — enter code or name to search |
-| `d` | **Delete stock** — remove the highlighted row |
-| `t` | **Set alert** — `pa 450` (price above), `pb 420` (price below), `ca 5` (change% above), `cb 3` (change% below) |
-| `v` | **View alerts** — list all alert rules, press `d` to delete one |
-| `h` | **Alert history** — last 200 fired alerts |
-| `p` | **Set position** — `420 200` (cost 420 yuan, 200 shares). Empty to delete. |
-| `s` | **Settings** — show current config |
-| `e` | **Export CSV** |
-| `r` | **Manual refresh** — force-refresh all stocks |
-| `x` | **Privacy mode** — hide all stock names and numbers |
-| `Enter` | **Detail popup** — full info for highlighted stock |
-| `Ctrl+N` | **Reload config** — hot-reload `config.yaml` and `positions.yaml` |
-| `Esc` | **Close / cancel** — dismiss any popup or prompt |
-| `Click header` | **Sort** — click column header to sort (asc → desc → unsort) |
-| `q` | **Quit** |
-
-### Status bar (top)
-
-Shows market status (trading / closed), clock, fetch latency, stock counts (↑ / ↓ / →), and error/backoff state.
-
-### Portfolio bar (bottom)
-
-Shows total positions, total market value, and total unrealized P&L (amount + %), green for profit, red for loss.
-
-## Integrations (optional)
-
-### Feishu / Lark bot
-
-1. In your Feishu group, add a **custom bot** (webhook)
-2. Copy the webhook URL into `config.yaml`:
-   ```yaml
-   chat:
-     feishu_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR-WEBHOOK"
-   ```
-3. The bot will send alert cards and periodic market summaries
-
-For bidirectional `@bot` chat, you also need a Feishu app with WebSocket enabled:
-
-```yaml
-chat:
-  feishu_app_id: "YOUR-APP-ID"
-  feishu_app_secret: "YOUR-APP-SECRET"
-```
-
-### DeepSeek AI
-
-When Feishu bidirectional bot is enabled, `@bot` mentions are answered by DeepSeek:
-
-```yaml
-deepseek:
-  api_key: "YOUR-API-KEY"   # get from https://platform.deepseek.com/api_keys
-  model: "deepseek-chat"
-```
-
-## Project Layout
-
-```
-.
-├── config.yaml.example      # annotated config template
-├── positions.yaml.example   # position data template
-├── run.sh                   # convenience launch script
-├── pyproject.toml           # project metadata and dependencies
-├── docs/
-│   ├── image.png            # TUI screenshot
-│   └── adr/                 # architecture decision records
-├── src/stock_watcher/
-│   ├── app.py               # TUI application (entry point)
-│   ├── config.py            # config loading, hot-reload, persistence
-│   ├── fetcher.py           # market data API clients (Sina, Tencent)
-│   ├── models.py            # data models (Quote, Alert, Position, etc.)
-│   ├── chat_sender.py       # Feishu webhook card sender
-│   ├── bot_server.py        # Feishu WebSocket bidirectional bot
-│   └── deepseek_chat.py     # DeepSeek AI integration
-└── tests/
-    ├── test_app.py          # TUI integration tests
-    ├── test_config.py       # config parsing and persistence tests
-    ├── test_fetcher.py      # API fetcher tests
-    ├── test_models.py       # model unit tests
-    └── test_scheduler.py    # polling and backoff tests
-```
-
-## License
-
-MIT
-
----
-
-<h2 id="中文">🇨🇳 中文</h2>
-
-## 功能特性
-
-- **多市场** — 上海A股 (`sh`)、深圳A股 (`sz`)、港股 (`hk`)、美股 (`us`)
-- **实时轮询** — 交易时段自动刷新，休市自动暂停节省带宽
-- **表头排序** — 点击表头按现价、涨跌幅、盈亏等排序
-- **价格告警** — 可配置的阈值（上破/下破价格、涨跌幅），触发时响铃 + 系统通知
-- **持仓管理** — 记录成本价、股数，实时显示浮动盈亏
-- **详情弹窗** — 五档买卖盘口（A股）、市盈率（港股）、近期告警记录
-- **飞书推送**（可选）— 告警卡片 + 定时行情摘要推送到飞书群
-- **AI 对话**（可选）— 接入 DeepSeek，在飞书群内 @机器人 智能回复
-- **隐私模式** — 一键伪装：所有股票名和数字隐藏，防止屏幕被窥
-- **CSV 导出** — 当前表格一键导出到带时间戳的 `.csv` 文件
-- **热加载** — 修改 `config.yaml` 或 `positions.yaml` 无需重启
-
-## 环境要求
-
-- **Python** ≥ 3.11
-- **pip**（或你习惯的包管理器）
-
-## 快速开始
-
-```bash
-# 克隆仓库
-git clone https://github.com/KrisMurdock/job_time_stock_watcher.git
-cd job_time_stock_watcher
-
-# 安装依赖
-pip install -e .
-
-# 复制示例配置文件
-cp config.yaml.example config.yaml
-cp positions.yaml.example positions.yaml
-
-# 编辑自选股
-# 打开 config.yaml，把 watchlist 里的代码换成你自己的
-
-# 运行
-python -m stock_watcher.app
-```
-
-或者用便捷脚本：
-
-```bash
-./run.sh
-```
-
-## 配置说明
-
-所有配置在 `config.yaml` 中。带注释的示例文件见 [`config.yaml.example`](config.yaml.example)。
-
-### 核心配置
-
-| 字段 | 类型 | 默认值 | 说明 |
-|-------|------|---------|------|
-| `poll_interval` | float | `2.5` | 轮询间隔（秒），控制每隔多少秒拉取一只股票的行情 |
-| `watchlist` | list | *示例* | 自选股列表，股票代码带市场前缀 |
-| `alerts` | list | `[]` | 告警规则（见下方） |
-| `proxies` | list | `[]` | HTTP 代理地址，留空表示直连 |
-
-### 请求配置
-
-| 字段 | 类型 | 默认值 | 说明 |
-|-------|------|---------|------|
-| `request.timeout` | int | `10` | HTTP 请求超时（秒） |
-| `request.user_agent_pool` | list | *浏览器* | User-Agent 池，每次请求随机选一个 |
-
-### 退避策略（指数退避）
-
-| 字段 | 类型 | 默认值 | 说明 |
-|-------|------|---------|------|
-| `backoff.base` | float | `5` | 初始退避秒数 |
-| `backoff.max` | float | `120` | 最大退避秒数（天花板） |
-| `backoff.multiplier` | float | `2` | 每次失败的乘数 |
-
-### 告警声音
-
-| 字段 | 类型 | 默认值 | 说明 |
-|-------|------|---------|------|
-| `alert_sound_command` | string | `""` | 自定义音效 shell 命令（Linux: `paplay`，macOS: `afplay`） |
-
-### 股票代码前缀
-
-| 前缀 | 市场 | 示例 |
-|--------|--------|---------|
-| `sh` | 上海A股 | `sh600519`（贵州茅台） |
-| `sz` | 深圳A股 | `sz000001`（平安银行） |
-| `hk` | 港股 | `hk00700`（腾讯控股） |
-| `us` | 美股 | `ustsla`（特斯拉）、`usaapl`（苹果） |
-
-### 告警规则
-
-告警规则放在 `alerts` 下，每条包含三个字段：
-
-```yaml
-alerts:
-  - code: hk00700        # 股票代码
-    type: price_above    # price_above（上破）/ price_below（下破）/ pct_above（涨幅超）/ pct_below（跌幅超）
-    value: 433.0         # 阈值（价格用元，百分比用数字，如 5.0 表示 5%）
-```
-
-### 持仓信息
-
-持仓数据单独存放在 `positions.yaml`。先复制示例：
-
-```bash
-cp positions.yaml.example positions.yaml
-```
-
-格式：
-
-```yaml
-hk00700:
-  cost: 430.0       # 买入成本价（元）
-  quantity: 100     # 持仓股数
-  available: 100    # 可用股数
-```
-
-支持热加载 — 修改后无需重启。
-
-## 使用说明
-
-### 快捷键
-
-| 按键 | 功能 |
-|-----|--------|
-| `a` | **添加股票** — 输入代码或名称搜索 |
-| `d` | **删除股票** — 删除当前高亮的行 |
-| `t` | **设置告警** — 格式：`pa 450`（价格上破450）、`pb 420`（价格下破420）、`ca 5`（涨幅超5%）、`cb 3`（跌幅超3%） |
-| `v` | **查看告警** — 列出所有告警规则，选中后按 `d` 删除 |
-| `h` | **告警历史** — 查看最近 200 条触发记录 |
-| `p` | **设置持仓** — 格式：`420 200`（成本420元、200股），留空删除持仓 |
-| `s` | **查看配置** — 显示当前配置参数 |
-| `e` | **导出 CSV** |
-| `r` | **手动刷新** — 强制立即刷新所有股票 |
-| `x` | **隐私模式** — 一键隐藏所有股票名称和数字 |
-| `Enter` | **详情弹窗** — 当前高亮股票的完整信息 |
-| `Ctrl+N` | **重新加载配置** — 热加载 config.yaml 和 positions.yaml |
-| `Esc` | **关闭/取消** — 关闭弹窗或取消输入 |
-| `点击表头` | **排序** — 点击表头排序（升序 → 降序 → 取消排序） |
-| `q` | **退出** |
-
-### 顶部状态栏
-
-显示市场状态（交易中/休市）、当前时间、抓取延迟、涨跌平统计数、错误和退避状态。
-
-### 底部持仓栏
-
-显示持仓数、总市值、总浮动盈亏（金额+百分比），盈利绿色、亏损红色。
-
-## 可选集成
-
-### 飞书/Lark 机器人
-
-1. 在飞书群设置中添加**自定义机器人**（webhook）
-2. 将 webhook 地址填入 `config.yaml`：
-   ```yaml
-   chat:
-     feishu_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/你的webhook地址"
-   ```
-3. 机器人将自动推送告警卡片和定时行情摘要
-
-如需双向 `@机器人` 对话，还需在飞书开放平台创建企业自建应用并开启 WebSocket：
-
-```yaml
-chat:
-  feishu_app_id: "你的APP-ID"
-  feishu_app_secret: "你的APP-SECRET"
-```
-
-### DeepSeek AI 对话
-
-启用飞书双向机器人后，群内 @机器人 的问题将由 DeepSeek 回答：
-
-```yaml
-deepseek:
-  api_key: "你的API-KEY"   # 在 https://platform.deepseek.com/api_keys 获取
-  model: "deepseek-chat"
-```
-
-## 项目结构
-
-```
-.
-├── config.yaml.example      # 带注释的配置模板
-├── positions.yaml.example   # 持仓数据模板
-├── run.sh                   # 便捷启动脚本
-├── pyproject.toml           # 项目元数据和依赖声明
-├── docs/
-│   ├── image.png            # TUI 截图
-│   └── adr/                 # 架构决策记录
-├── src/stock_watcher/
-│   ├── app.py               # TUI 应用（入口）
-│   ├── config.py            # 配置加载、热加载、持久化
-│   ├── fetcher.py           # 行情数据接口（新浪、腾讯）
-│   ├── models.py            # 数据模型（Quote、Alert、Position 等）
-│   ├── chat_sender.py       # 飞书 webhook 卡片发送
-│   ├── bot_server.py        # 飞书 WebSocket 双向机器人
-│   └── deepseek_chat.py     # DeepSeek AI 集成
-└── tests/
-    ├── test_app.py          # TUI 集成测试
-    ├── test_config.py       # 配置解析和持久化测试
-    ├── test_fetcher.py      # API 抓取测试
-    ├── test_models.py       # 模型单元测试
-    └── test_scheduler.py    # 轮询和退避测试
-```
-
-## 许可证
-
-MIT
+日志 stdout 和 `logs/stock-watcher.log` 格式一致：`[带时区时间] [LEVEL] [文件:行号] 英文消息 {JSON 属性}`。环境变量 `STOCK_WATCHER_LOG_MAX_MB`（10）、`STOCK_WATCHER_LOG_MAX_DAYS`（7）、`STOCK_WATCHER_LOG_BACKUPS`（10）控制大小、天数、份数轮转及 gzip 压缩；`STOCK_WATCHER_LOG_JSON` 开启整条 JSON，`STOCK_WATCHER_LOG_COLOR` 支持 auto/force/off，文件与 JSON 永无颜色。

@@ -1,233 +1,51 @@
-# ===========================================================================
-# Stock Watcher 配置文件
-# ===========================================================================
-# 修改此文件后无需重启程序 — 自动检测并热加载，或按 Ctrl+N 手动触发。
-#
-# 代码前缀说明：
-#   sh = 上海A股 (例: sh600519 = 贵州茅台)
-#   sz = 深圳A股 (例: sz000001 = 平安银行)
-#   hk = 港股    (例: hk00700 = 腾讯控股)
-#   us = 美股    (例: usaapl = 苹果)
-# ===========================================================================
+schema_version: 1
+# data is a symlink to /mnt/windows_database on the host. Do not create a local directory.
+data_dir: data
+require_cifs: true
+pool_file: leaders.yaml
+poll_interval: 5m
+request_timeout: 10s
 
-# ---------------------------------------------------------------------------
-# 轮询间隔（秒）
-# 控制每隔多少秒拉取一次最新行情。A股交易时段内持续轮询，
-# 休市时段自动暂停以节省带宽。
-# ---------------------------------------------------------------------------
-poll_interval: 2.5
+daily:
+  run_at: '18:05'  # Asia/Shanghai, completed sessions only
+  history_days: 365
+  adjust: qfq
 
-# ---------------------------------------------------------------------------
-# 自选股列表
-# 在 TUI 中按 a 键添加股票，按 d 键删除。
-# ---------------------------------------------------------------------------
-watchlist:
-- sh603848
-- sz002920
-- sz002278
-- sh600678
-- sz000785
-- sz000537
-- sh600032
-- sh600905
-- hk00700
-- ustsla
-- usgoog
-- usbaba
+selection:
+  enabled: true
+  min_score: 70
+  top_n: 5
+  min_volume_ratio: 1.2
+  rsi_min: 50
+  rsi_max: 80
+  min_day_change_pct: -3
+  max_day_change_pct: 7
 
-# ---------------------------------------------------------------------------
-# 告警规则
-# 当股价或涨跌幅触发设定条件时，TUI 底部会弹出通知。
-# 每条规则包含三个字段：
-#   code  - 股票代码（带前缀）
-#   type  - 告警类型：price_above | price_below | pct_above | pct_below
-#   value - 阈值（价格用元，百分比用数字，如 5.0 表示 5%）
-# ---------------------------------------------------------------------------
-alerts:
-# 示例：当贵州茅台股价上破 1800 元时触发告警（取消注释即可启用）
-# - code: sh600519
-#   type: price_above / price_below
-#   value: 1800.0
-- code: hk00700
-  type: price_above
-  value: 433.0
-
-# ---------------------------------------------------------------------------
-# 代理设置
-# 如需通过 HTTP 代理访问行情接口，在此添加代理地址。
-# 留空表示直连。
-# 巨潮资讯网公告接口需要境内 IP，如部署在境外请配置代理。
-# 示例: ["http://127.0.0.1:7890", "http://user:pass@proxy:8080"]
-# ---------------------------------------------------------------------------
-proxies: []
-
-# ---------------------------------------------------------------------------
-# HTTP 请求配置
-# ---------------------------------------------------------------------------
-request:
-  # 请求超时（秒）
-  timeout: 10
-  # User-Agent 池 — 每次请求随机选一个，降低被反爬的概率
-  user_agent_pool:
-  - Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)
-    Chrome/126.0.0.0 Safari/537.36
-  - Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like
-    Gecko) Version/17.4 Safari/605.1.15
-  - Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0
-    Safari/537.36
-
-# ---------------------------------------------------------------------------
-# 失败重试策略（指数退避）
-# 当 API 请求失败时，按照 基数 × 乘数^次数 的公式延迟重试，
-# 但最长不超过 max 秒。每次延迟随机浮动 ±25% 以避免惊群效应。
-# ---------------------------------------------------------------------------
-backoff:
-  # 初始退避秒数
-  base: 5
-  # 最大退避秒数（天花板）
-  max: 120
-  # 每次失败的退避乘数
-  multiplier: 2
-
-# ---------------------------------------------------------------------------
-# 告警声音
-# 触发告警时终端会响铃（\a）。如需播放自定义音效，在此填入 shell 命令。
-# 命令以非阻塞方式执行，不影响主程序运行。
-#
-# Linux 示例: "paplay /usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga"
-# macOS 示例: "afplay /System/Library/Sounds/Ping.aiff"
-# Windows 示例: "powershell -c (New-Object Media.SoundPlayer 'C:\\Windows\\Media\\Alarm01.wav').PlaySync()"
-#
-# 留空表示仅使用终端响铃。
-# ---------------------------------------------------------------------------
-alert_sound_command: ""
-
-# ---------------------------------------------------------------------------
-# 飞书/钉钉机器人通知
-# 在群设置中添加自定义机器人，将 webhook URL 填到下方。
-# feishu_secret 是签名密钥（可选，在机器人设置页面获取）。
-# ---------------------------------------------------------------------------
-chat:
-  feishu_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR-WEBHOOK-URL"
-  feishu_secret: ""
-  # 机器人双向对话需要：在飞书开放平台创建「企业自建应用」获取
-  feishu_app_id: "YOUR-APP-ID"
-  feishu_app_secret: "YOUR-APP-SECRET"
-
-# ---------------------------------------------------------------------------
-# DeepSeek AI 对话（用于群内 @机器人 智能回复）
-# api_key 在 https://platform.deepseek.com/api_keys 获取
-# ---------------------------------------------------------------------------
-deepseek:
-  api_key: "YOUR-API-KEY"
-  model: "deepseek-chat"
-
-# ---------------------------------------------------------------------------
-# 巨潮资讯网公告推送
-# 轮询关注股票的公告，重大事项通过飞书推送。
-# 仅支持 A 股（sh/sz 前缀）。
-# ---------------------------------------------------------------------------
-cninfo:
-  # 是否启用公告轮询
+feishu:
   enabled: false
-  # 轮询间隔（秒），建议 ≥ 60 秒
-  poll_interval: 120
-  # 每次查询获取的公告条数
-  page_size: 10
-  # 是否用 DeepSeek 生成公告摘要（需配置 deepseek）
-  summary_enabled: true
-  # 重大事项关键词（公告标题匹配任一即推送）
-  major_keywords:
-  - 年报
-  - 年度报告
-  - 季报
-  - 季度报告
-  - 半年报
-  - 半年度报告
-  - 业绩预告
-  - 业绩快报
-  - 重大合同
-  - 重大资产重组
-  - 减持
-  - 增持
-  - 停牌
-  - 复牌
-  - 分红
-  - 送转
-  - 权益分派
-  - 风险警示
-  # 已推送公告 ID 持久化文件
-  seen_ids_path: "cninfo_seen.jsonl"
+  # Set FEISHU_WEBHOOK and optionally FEISHU_SECRET in a private environment file.
 
-# ---------------------------------------------------------------------------
-# 新闻聚合配置
-# 从多个免费新闻源拉取，AI 筛选重大新闻后通过飞书推送。
-# 新闻推送使用独立 webhook（chat.news_webhook），不刷屏主频道。
-# ---------------------------------------------------------------------------
-news:
-  sources:
-    eastmoney_stock: true
-    eastmoney_flash: true
-    sina_flash: true
-    cls_telegraph: true
-    yahoo_news: true
-
-  poll_interval: 300
-
-  sector_keywords:
-    机器人: ["机器人执行器", "人形机器人", "减速器"]
-    新能源: ["新能源车", "固态电池", "光伏设备", "风电设备"]
-    AI: ["人工智能", "ChatGPT", "算力概念", "AIGC概念"]
-    半导体: ["半导体", "芯片", "光刻机(胶)", "存储芯片"]
-    医药: ["创新药", "CRO", "中药", "医疗器械"]
-    消费: ["新零售", "跨境电商", "预制菜"]
-    军工: ["航天航空", "船舶制造", "北斗导航"]
-    金融: ["券商", "银行", "保险"]
-
-  trend_scoring:
-    ma_weight: 30
-    macd_weight: 25
-    rsi_weight: 20
-    consecutive_up_weight: 15
-    volume_ratio_weight: 10
-    lookback_days: 60
-    min_score_threshold: 50
-    top_n_candidates: 10
-    top_n_final: 5
-    max_stocks_per_card: 8
-
-  critical_keywords:
-  - 停牌
-  - 退市
-  - 重大资产重组
-  - 并购
-  - 业绩暴雷
-  - 立案调查
-  - 强制退市
-  - 暂停上市
-
-  ignore_keywords:
-  - 龙虎榜
-  - 大宗交易
-  - 融资融券
-
-  scheduled_push:
-    morning_briefing:
-      enabled: true
-      time: "09:00"
-    market_open:
-      enabled: true
-      time: "09:25"
-    a_share_close:
-      enabled: true
-      time: "15:05"
-    hk_close:
-      enabled: true
-      time: "16:15"
-    evening_briefing:
-      enabled: true
-      time: "20:00"
-
-  seen_ids_path: "news_seen.jsonl"
-
-# ---------------------------------------------------------------------------
+# Official SZSE/SSE 2026 holiday schedule. Calendar must be updated before 2027.
+calendar:
+  valid_from: '2026-01-01'
+  valid_through: '2026-12-31'
+  holidays:
+    - '2026-01-01'
+    - '2026-01-02'
+    - '2026-02-16'
+    - '2026-02-17'
+    - '2026-02-18'
+    - '2026-02-19'
+    - '2026-02-20'
+    - '2026-02-23'
+    - '2026-04-06'
+    - '2026-05-01'
+    - '2026-05-04'
+    - '2026-05-05'
+    - '2026-06-19'
+    - '2026-09-25'
+    - '2026-10-01'
+    - '2026-10-02'
+    - '2026-10-05'
+    - '2026-10-06'
+    - '2026-10-07'

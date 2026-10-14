@@ -56,7 +56,7 @@ type Config struct {
 	} `yaml:"calendar"`
 }
 
-var stockCode = regexp.MustCompile(`^(sh(60|68)[0-9]{4}|sz(00|30)[0-9]{4}|bj(4|8)[0-9]{5}|bj92[0-9]{4})$`)
+var stockCode = regexp.MustCompile(`^(sh(60|68)[0-9]{4}|sz(00|30)[0-9]{4})$`)
 
 func ValidCode(s string) bool { return stockCode.MatchString(s) }
 

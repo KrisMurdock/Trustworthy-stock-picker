@@ -20,22 +20,24 @@ import (
 var Shanghai = time.FixedZone("Asia/Shanghai", 8*60*60)
 
 type Bar struct {
-	Date       string  `json:"date"`
-	Open       float64 `json:"open"`
-	Close      float64 `json:"close"`
-	High       float64 `json:"high"`
-	Low        float64 `json:"low"`
-	VolumeLots float64 `json:"volume_lots"`
+	Date   string  `json:"date"`
+	Open   float64 `json:"open"`
+	Close  float64 `json:"close"`
+	High   float64 `json:"high"`
+	Low    float64 `json:"low"`
+	Volume float64 `json:"volume_raw"`
 }
 type History struct {
-	Version   int       `json:"schema_version"`
-	Code      string    `json:"code"`
-	Name      string    `json:"name"`
-	Source    string    `json:"source"`
-	Adjust    string    `json:"adjust"`
-	AsOf      string    `json:"as_of"`
-	FetchedAt time.Time `json:"fetched_at"`
-	Bars      []Bar     `json:"bars"`
+	Version    int       `json:"schema_version"`
+	Code       string    `json:"code"`
+	Name       string    `json:"name"`
+	Source     string    `json:"source"`
+	Adjust     string    `json:"adjust"`
+	DataField  string    `json:"data_field"`
+	VolumeUnit string    `json:"volume_unit"`
+	AsOf       string    `json:"as_of"`
+	FetchedAt  time.Time `json:"fetched_at"`
+	Bars       []Bar     `json:"bars"`
 }
 type Failure struct {
 	Status int
@@ -60,6 +62,7 @@ func (c *Client) Close() { c.HTTP.CloseIdleConnections() }
 // Fetch replaces the full adjusted window; merging qfq data from different base dates is unsafe.
 func (c *Client) Fetch(ctx context.Context, stock config.Stock, start, end, adjust string) (History, error) {
 	h := History{Version: 1, Code: stock.Code, Name: stock.Name, Source: "tencent", Adjust: adjust, AsOf: end, FetchedAt: time.Now().In(Shanghai)}
+	h.VolumeUnit = "provider_raw"
 	if !config.ValidCode(stock.Code) {
 		return h, errors.New("invalid A-share code")
 	}
@@ -107,6 +110,11 @@ func (c *Client) Fetch(ctx context.Context, stock config.Stock, start, end, adju
 		return h, err
 	}
 	h.Bars = bars
+	var fieldEnvelope struct {
+		Data map[string]map[string]json.RawMessage `json:"data"`
+	}
+	_ = json.Unmarshal(body, &fieldEnvelope)
+	h.DataField = adjustmentField(fieldEnvelope.Data[stock.Code], adjust)
 	if name != "" {
 		h.Name = name
 	}
@@ -129,12 +137,11 @@ func Parse(code string, body []byte, start, end, adjust string) ([]Bar, string, 
 	if json.Unmarshal(raw, &stock) != nil {
 		return nil, "", errors.New("invalid daily stock response")
 	}
-	key := "day"
-	if adjust != "none" {
-		key = adjust + "day"
-	}
+	key := adjustmentField(stock, adjust)
 	var rows [][]json.RawMessage
-	// Do not silently substitute unadjusted rows for an adjusted request.
+	// Tencent returns day when an adjusted series uses the base day data; this is
+	// also the protocol used by the legacy stock_zh_a_hist_tx adapter. Record the
+	// actual field in History rather than disguising this provider behavior.
 	if json.Unmarshal(stock[key], &rows) != nil || len(rows) == 0 || len(rows) > 640 {
 		return nil, "", errors.New("missing requested daily adjustment data")
 	}
@@ -154,7 +161,7 @@ func Parse(code string, body []byte, start, end, adjust string) ([]Bar, string, 
 		}
 		seen[date] = true
 		b := Bar{Date: date}
-		values := []*float64{&b.Open, &b.Close, &b.High, &b.Low, &b.VolumeLots}
+		values := []*float64{&b.Open, &b.Close, &b.High, &b.Low, &b.Volume}
 		for i, target := range values {
 			var str string
 			if json.Unmarshal(row[i+1], &str) != nil {
@@ -183,4 +190,13 @@ func Parse(code string, body []byte, start, end, adjust string) ([]Bar, string, 
 		return nil, "", errors.New("no daily data in requested window")
 	}
 	return bars, name, nil
+}
+
+func adjustmentField(stock map[string]json.RawMessage, adjust string) string {
+	if adjust != "none" {
+		if _, ok := stock[adjust+"day"]; ok {
+			return adjust + "day"
+		}
+	}
+	return "day"
 }

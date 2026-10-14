@@ -1,0 +1,18 @@
+FROM golang:1.26.4-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd ./cmd
+COPY internal ./internal
+ARG VERSION=development
+RUN CGO_ENABLED=0 go build -p=1 -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /stock-watcher ./cmd/stock-watcher
+
+FROM alpine:3.22
+RUN apk add --no-cache ca-certificates
+WORKDIR /app
+COPY --from=build /stock-watcher /usr/local/bin/stock-watcher
+COPY config.yaml.example /app/config.yaml
+COPY leaders.yaml /app/leaders.yaml
+ENV STOCK_WATCHER_DATA_DIR=/data STOCK_WATCHER_LOG_DIR=/logs STOCK_WATCHER_LOG_COLOR=off
+ENTRYPOINT ["/usr/local/bin/stock-watcher"]
+CMD ["run", "-config", "/app/config.yaml"]

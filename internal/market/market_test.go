@@ -2,11 +2,13 @@ package market
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"stock-watcher/internal/config"
+	"strings"
 	"testing"
 	"time"
 )
@@ -66,5 +68,13 @@ func TestHTTPFailureAndCancellation(t *testing.T) {
 	_, err = c.Fetch(ctx, config.Stock{Code: "sz000001"}, "2026-01-01", "2026-10-13", "qfq")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("lost cancellation: %v", err)
+	}
+}
+
+func TestTencentDayResponseForAdjustedRequest(t *testing.T) {
+	body := strings.ReplaceAll(response, "qfqday", "day")
+	bars, _, err := Parse("sz000001", []byte(body), "2026-01-01", "2026-10-13", "qfq")
+	if err != nil || len(bars) != 1 || adjustmentField(map[string]json.RawMessage{"day": json.RawMessage(`[]`)}, "qfq") != "day" {
+		t.Fatal("Tencent base-series response not supported")
 	}
 }

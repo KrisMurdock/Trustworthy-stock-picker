@@ -29,7 +29,7 @@ func (f *fakeSource) Fetch(ctx context.Context, s config.Stock, start, end, adju
 	d, _ := time.Parse("2006-01-02", end)
 	for len(bars) < 60 {
 		if d.Weekday() != time.Saturday && d.Weekday() != time.Sunday {
-			bars = append([]market.Bar{{Date: d.Format("2006-01-02"), Open: 10, Close: 10, High: 11, Low: 9, VolumeLots: 100}}, bars...)
+			bars = append([]market.Bar{{Date: d.Format("2006-01-02"), Open: 10, Close: 10, High: 11, Low: 9, Volume: 100}}, bars...)
 		}
 		d = d.AddDate(0, 0, -1)
 	}

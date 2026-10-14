@@ -54,7 +54,10 @@ func main() {
 		}
 		time.Sleep(350 * time.Millisecond)
 	}
-	encoded, _ := json.MarshalIndent(out, "", "  ")
+	encoded, _ := json.MarshalIndent(struct {
+		Version int      `json:"schema_version"`
+		Results []result `json:"results"`
+	}{1, out}, "", "  ")
 	if err := os.WriteFile(os.Args[2], encoded, 0600); err != nil {
 		fmt.Fprintln(os.Stderr, "cannot save results")
 		os.Exit(1)

@@ -1,16 +1,9 @@
 #!/usr/bin/env bash
-# stock_watcher — A-share & HK real-time stock price monitor
-# Usage: ./run.sh [config.yaml]
-
 set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONFIG="${1:-$SCRIPT_DIR/config.yaml}"
-
-if [ ! -f "$CONFIG" ]; then
-    echo "错误: 配置文件不存在: $CONFIG"
-    exit 1
+project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+binary="$project_dir/bin/stock-watcher"
+if [[ ! -x "$binary" ]]; then
+  printf '%s\n' 'Build the native Go binary first: make build' >&2
+  exit 1
 fi
-
-cd "$SCRIPT_DIR"
-exec python3 -m stock_watcher.app "$CONFIG"
+exec "$binary" run -config "${1:-$project_dir/config.yaml}"
