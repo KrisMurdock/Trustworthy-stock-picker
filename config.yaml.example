@@ -6,6 +6,11 @@ pool_file: leaders.yaml
 poll_interval: 5m
 request_timeout: 10s
 
+# Read-only dashboard starts with run / make run. No separate frontend process.
+web:
+  enabled: true
+  listen: '127.0.0.1:8080' # STOCK_WATCHER_WEB_ADDR overrides this address.
+
 daily:
   run_at: '18:05'  # Asia/Shanghai, completed sessions only
   history_days: 365

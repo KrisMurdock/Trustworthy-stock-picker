@@ -50,3 +50,6 @@ docker compose --env-file docker/.env -f docker/compose.yaml down
 ```
 
 停止不会删除宿主机数据。回滚到保留的旧镜像标签并重建服务；先确认配置与持久账本格式兼容。共享故障排查、凭证加载和部署验收见[部署文档](../docs/deployment.md)。
+## 网页入口
+
+`run` 会同时提供监控任务与嵌入网页。Compose 将容器 8080 映射至宿主机 `127.0.0.1:8080`；浏览器打开该地址即可查看全量股池、摘要快照和每日排名。修改 `docker/.env` 的 `STOCK_WATCHER_WEB_BIND` 可调整宿主机地址/端口。网页没有账号或写入接口，远程访问需通过受控网络或已有认证反向代理，根路径、`/api/` 和 `/assets/` 应保持一致。

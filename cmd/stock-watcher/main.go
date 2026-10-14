@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"stock-watcher/internal/calendar"
 	"stock-watcher/internal/config"
+	"stock-watcher/internal/dashboard"
 	"stock-watcher/internal/feishu"
 	"stock-watcher/internal/logging"
 	"stock-watcher/internal/market"
@@ -197,7 +198,12 @@ func run(args []string) error {
 	case "once":
 		return m.Cycle(ctx)
 	case "run":
-		err := m.Run(ctx)
+		var err error
+		if c.Web.Enabled {
+			err = runServices(ctx, c.Web.Listen, dashboard.NewHandler(c, marketDB, log), m.Run, log)
+		} else {
+			err = m.Run(ctx)
+		}
 		if errors.Is(err, context.Canceled) {
 			log.Info("Stock watcher stopped")
 			return nil

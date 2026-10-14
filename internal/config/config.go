@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,7 +33,11 @@ type Config struct {
 	Timeout      string   `yaml:"request_timeout"`
 	PoolFile     string   `yaml:"pool_file,omitempty"`
 	Stocks       []Stock  `yaml:"stocks"`
-	Daily        struct {
+	Web          struct {
+		Enabled bool   `yaml:"enabled"`
+		Listen  string `yaml:"listen"`
+	} `yaml:"web"`
+	Daily struct {
 		RunAt       string `yaml:"run_at"`
 		HistoryDays int    `yaml:"history_days"`
 		Adjust      string `yaml:"adjust"`
@@ -84,6 +90,8 @@ func ValidCode(s string) bool { return stockCode.MatchString(s) }
 func Defaults() Config {
 	c := Config{Version: 1, DataDir: "data", RequireCIFS: true, PollInterval: "5m", Timeout: "10s"}
 	c.Strategy = DefaultStrategy()
+	c.Web.Enabled = true
+	c.Web.Listen = "127.0.0.1:8080"
 	c.Daily.RunAt = "18:05"
 	c.Daily.HistoryDays = 365
 	c.Daily.Adjust = "qfq"
@@ -148,6 +156,9 @@ func Load(path string) (Config, error) {
 	if v, ok := os.LookupEnv("STOCK_WATCHER_DATA_DIR"); ok {
 		c.DataDir = v
 	}
+	if v, ok := os.LookupEnv("STOCK_WATCHER_WEB_ADDR"); ok {
+		c.Web.Listen = v
+	}
 	if c.Feishu.CredentialsFile != "" {
 		credentials, err := loadFeishuCredentials(path, c.Feishu.CredentialsFile)
 		if err != nil {
@@ -195,6 +206,13 @@ func Load(path string) (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if c.Web.Enabled {
+		host, port, err := net.SplitHostPort(c.Web.Listen)
+		n, portErr := strconv.Atoi(port)
+		if err != nil || portErr != nil || n < 1 || n > 65535 || (host != "" && host != "localhost" && net.ParseIP(host) == nil) {
+			return errors.New("web.listen must be an IP address or localhost with a port from 1 to 65535")
+		}
+	}
 	if c.Version != 1 {
 		return errors.New("schema_version must be 1")
 	}

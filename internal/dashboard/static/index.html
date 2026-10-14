@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#164d59">
+    <meta name="description" content="查看全量股池、交易日摘要快照和每日推送排名。">
+    <title>股池观察 · Stock Watcher</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/assets/style.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳转至看板内容</a>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="/" aria-label="Stock Watcher 股池观察首页">
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M6 24V15m10 9V8m10 16V4"/><path d="m5 12 10-7 8 5 5-7"/></svg></span>
+          <span><strong>STOCK WATCHER</strong><span class="brand-caption">把每日变化，看得更清楚</span></span>
+        </a>
+        <nav class="header-nav" aria-label="看板导航"><a href="#snapshot">摘要快照</a><a href="#rankings">日推排名</a><a href="#stock-pool">全部股票</a></nav>
+        <span class="market-label">A 股 · 日线观察</span>
+      </div>
+    </header>
+    <main id="main-content" class="page">
+      <section class="page-heading" aria-labelledby="dashboard-title">
+        <div><p class="eyebrow">YOUR DAILY MARKET OVERVIEW</p><h1 id="dashboard-title" data-testid="dashboard-title">股池观察<span class="heading-dot">.</span></h1><p class="intro">全量股票数据、每日摘要与机会排名，一览即知。</p></div>
+        <div class="refresh-area"><button id="refresh-button" class="button button-primary" type="button" data-testid="refresh-button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.3 7a6.5 6.5 0 1 0 .1 5M16.3 3v4h-4"/></svg><span>刷新快照</span></button><p id="auto-refresh-label">每 60 秒自动刷新</p></div>
+      </section>
+
+      <div id="error-state" class="notice notice-error" role="alert" data-testid="error-state" hidden><div><strong id="error-title">快照加载失败</strong><p id="error-message"></p></div><button id="retry-button" class="button button-secondary" type="button" data-testid="retry-button">重新加载</button></div>
+      <div id="loading-state" class="loading-state" role="status" data-testid="loading-state"><span class="spinner" aria-hidden="true"></span><div><strong>正在读取最新快照</strong><p>汇总股池数据与每日排名…</p></div></div>
+      <noscript><p class="notice notice-error">请启用 JavaScript，以加载股票数据与历史报告。</p></noscript>
+
+      <div id="dashboard-content" hidden>
+        <section id="snapshot" class="snapshot-section" aria-labelledby="snapshot-title">
+          <div class="section-heading snapshot-heading"><div><p class="eyebrow">MARKET SNAPSHOT</p><h2 id="snapshot-title">摘要快照</h2></div><div class="snapshot-date"><span class="tag tag-neutral">已完成交易日 · 非实时行情</span><strong id="snapshot-date">—</strong></div></div>
+          <div class="summary-grid" data-testid="snapshot-summary">
+            <article class="summary-card"><div class="card-label"><span>全量股池</span><span class="card-symbol" aria-hidden="true">▦</span></div><p class="card-value"><span id="pool-count">—</span><small>支股票</small></p><p class="card-note">覆盖配置中的全部股票</p></article>
+            <article class="summary-card"><div class="card-label"><span>已同步数据</span><span class="card-symbol" aria-hidden="true">↙</span></div><p class="card-value"><span id="available-count">—</span><small>支</small></p><p class="card-note">缺失 <strong id="missing-count">—</strong> 支 · 缺失数据保留在列表中</p></article>
+            <article class="summary-card"><div class="card-label"><span>筛选有效</span><span class="card-symbol" aria-hidden="true">⌁</span></div><p class="card-value"><span id="eligible-count">—</span><small>支</small></p><p class="card-note">本期入选 <strong id="selected-count">—</strong> 支</p></article>
+            <article class="summary-card summary-coverage"><div class="card-label"><span>数据覆盖率</span><span class="card-symbol" aria-hidden="true">◉</span></div><p class="card-value"><span id="coverage-value">—</span><small>%</small></p><progress id="coverage-progress" max="100" value="0" aria-label="股池数据覆盖率"></progress></article>
+          </div>
+          <div class="snapshot-meta"><span class="sync-label"><span id="sync-dot" class="status-dot" aria-hidden="true"></span><span id="sync-status">等待同步</span></span><span id="snapshot-generated">快照生成：—</span><span id="snapshot-adjust">价格口径：—</span><span id="snapshot-target">目标交易日：—</span></div>
+          <div id="empty-state" class="notice notice-info" role="status" data-testid="empty-state" hidden><div><strong>等待首次同步</strong><p>尚无可展示的日线快照。首次同步完成后，这里会显示行情、摘要和排名；下方仍保留全部股池股票。</p></div></div>
+        </section>
+
+        <section id="rankings" class="panel" aria-labelledby="ranking-title">
+          <div class="panel-heading"><div><p class="eyebrow">DAILY RANKING</p><h2 id="ranking-title">日推排名 <span id="ranking-count" class="count-tag">—</span></h2><p id="ranking-description" class="section-description">查看已保存的每日机会排名与推荐依据。</p></div><div class="date-control"><label for="report-date-select">报告日期</label><select id="report-date-select" data-testid="report-date-select" disabled><option value="">暂无报告</option></select></div></div>
+          <div id="report-meta" class="report-meta" hidden></div>
+          <div id="report-notice" class="notice notice-info report-notice" hidden></div>
+          <div id="report-loading" class="section-empty" role="status" hidden><span class="spinner" aria-hidden="true"></span><p>正在读取历史报告…</p></div>
+          <div id="report-error-state" class="notice notice-error report-notice" role="alert" data-testid="report-error-state" hidden><div><strong>历史报告加载失败</strong><p id="report-error-message"></p></div><button id="report-retry-button" class="button button-secondary" data-testid="report-retry-button" type="button">重试</button></div>
+          <div id="ranking-empty-state" class="section-empty" data-testid="ranking-empty-state"><span class="empty-symbol" aria-hidden="true">≡</span><strong>暂无每日排名</strong><p>同步完成并生成报告后，可在这里回看每日筛选结果。</p></div>
+          <div id="ranking-table-wrap" class="table-scroll ranking-scroll" role="region" aria-label="每日排名表，可横向滚动" tabindex="0" hidden><table class="ranking-table"><caption class="sr-only">所选报告日期的每日排名、推荐依据与风险</caption><thead><tr><th scope="col" class="rank-column">排名</th><th scope="col">股票</th><th scope="col" id="ranking-score-label" class="numeric">机会分</th><th scope="col">推荐状态</th><th scope="col">观察依据</th><th scope="col">风险提示</th></tr></thead><tbody id="ranking-body"></tbody></table></div>
+          <div class="panel-footer"><span id="ranking-footer">排名以已保存的报告为准</span><span>仅供研究参考，不构成投资建议</span></div>
+        </section>
+
+        <section id="stock-pool" class="panel stock-panel" aria-labelledby="stocks-title">
+          <div class="panel-heading"><div><p class="eyebrow">THE COMPLETE WATCHLIST</p><h2 id="stocks-title">全部股票 <span id="stock-count" class="count-tag">—</span></h2><p class="section-description">保留整个股池，统一查看价格、技术指标与数据状态。</p></div><div class="market-legend"><span><i class="legend-dot rise-bg"></i>红涨</span><span><i class="legend-dot fall-bg"></i>绿跌</span><span>— 暂无数据</span></div></div>
+          <div class="table-tools"><div class="search-control"><label class="sr-only" for="stock-search">搜索股票名称或代码</label><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><input id="stock-search" data-testid="stock-search" type="search" placeholder="搜索股票名称或代码" autocomplete="off"></div><div class="filter-control"><label class="sr-only" for="pool-filter">按行业筛选</label><select id="pool-filter" data-testid="pool-filter"><option value="">全部行业</option></select></div><div class="sort-control"><label for="stock-sort">排序</label><select id="stock-sort" data-testid="stock-sort"><option value="code">股票代码</option><option value="name">股票名称</option><option value="close">收盘价</option><option value="change_pct">涨跌幅</option><option value="volume">成交量</option><option value="ma5">MA5</option><option value="ma10">MA10</option><option value="ma20">MA20</option><option value="rsi14">RSI14</option><option value="volume_ratio">量比</option><option value="score">趋势分</option></select><button id="sort-direction" class="button button-icon" data-testid="sort-direction" type="button" aria-label="当前升序，点击改为降序" title="切换排序方向">↑</button></div><p id="stock-visible-count" class="visible-count" aria-live="polite"></p></div>
+          <div class="table-scroll stock-scroll" role="region" aria-label="全量股池数据表，可横向滚动" tabindex="0"><table class="stock-table"><caption class="sr-only">全量股池日线数据与技术指标，缺失数值以横线显示</caption><thead><tr><th scope="col" data-sort="code" aria-sort="ascending"><button type="button" data-column="code">股票 <span class="sort-marker" aria-hidden="true">↑</span></button></th><th scope="col">行业</th><th scope="col" class="numeric" data-sort="close"><button type="button" data-column="close">收盘价 <span class="sort-marker" aria-hidden="true"></span></button></th><th scope="col" class="numeric" data-sort="change_pct"><button type="button" data-column="change_pct">涨跌幅 <span class="sort-marker" aria-hidden="true"></span></button></th><th scope="col" class="numeric" data-sort="volume"><button type="button" data-column="volume">成交量 <span class="sort-marker" aria-hidden="true"></span></button></th><th scope="col" class="numeric" data-sort="ma5"><button type="button" data-column="ma5">MA5 <span class="sort-marker" aria-hidden="true"></span></button></th><th scope="col" class="numeric" data-sort="ma10"><button type="button" data-column="ma10">MA10 <span class="sort-marker" aria-hidden="true"></span></button></th><th scope="col" class="numeric" data-sort="ma20"><button type="button" data-column="ma20">MA20 <span class="sort-marker" aria-hidden="true"></span></button></th><th scope="col" class="numeric" data-sort="rsi14"><button type="button" data-column="rsi14">RSI14 <span class="sort-marker" aria-hidden="true"></span></button></th><th scope="col" class="numeric" data-sort="volume_ratio"><button type="button" data-column="volume_ratio">量比 <span class="sort-marker" aria-hidden="true"></span></button></th><th scope="col" class="numeric" data-sort="score"><button type="button" data-column="score">趋势分 <span class="sort-marker" aria-hidden="true"></span></button></th><th scope="col">数据状态</th></tr></thead><tbody id="stock-body"></tbody></table></div>
+          <div id="stock-empty-state" class="section-empty" data-testid="stock-empty-state" hidden><strong>没有匹配的股票</strong><p>试试其他名称、代码或行业。</p><button id="clear-filters" class="button button-secondary" type="button">清除筛选</button></div>
+          <div class="panel-footer"><span id="stocks-footer">日线收盘数据 · 成交量使用数据源原始单位</span><span>点击列名可排序 · 缺失数据始终排在末尾</span></div>
+        </section>
+      </div>
+      <footer class="site-footer"><span>STOCK WATCHER <span class="footer-separator">/</span> 每日有据，观察有序</span><span>行情与指标来自已保存的交易日快照</span></footer>
+      <p id="live-status" class="sr-only" aria-live="polite" aria-atomic="true"></p>
+    </main>
+  </body>
+</html>

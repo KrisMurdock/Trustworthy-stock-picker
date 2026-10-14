@@ -5,6 +5,7 @@
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | STOCK_WATCHER_DATA_DIR | 使用 YAML data_dir | 行情与状态目录；环境变量覆盖 YAML。生产必须指向已挂载 CIFS |
+| STOCK_WATCHER_WEB_ADDR | YAML web.listen，默认 127.0.0.1:8080 | `run` 的只读网页监听地址；IP 或 localhost 加端口。容器默认 0.0.0.0:8080 |
 | FEISHU_WEBHOOK | 凭证文件或旧 feishu.webhook 配置值 | 默认飞书通道 webhook；显式空值也会覆盖文件或旧 YAML 值 |
 | FEISHU_SECRET | 凭证文件或旧 feishu.secret 配置值 | 机器人签名密钥；未启用签名时可省略 |
 | STOCK_WATCHER_LOG_DIR | logs | 相对路径按配置文件所在目录解析，生产有限本地日志 |
@@ -32,6 +33,7 @@
 | --- | --- | --- |
 | STOCK_WATCHER_IMAGE | stock-watcher:local | 构建、启动所用镜像；发布使用明确提交 SHA 标签 |
 | STOCK_WATCHER_VERSION | development | 写入二进制与镜像 revision 的版本；发布设为完整提交 SHA |
+| STOCK_WATCHER_WEB_BIND | 127.0.0.1:8080 | Compose 网页的宿主机绑定地址与端口，容器内固定 8080 |
 | STOCK_WATCHER_HOST_DATA | 必填 | 已挂载 Windows 共享的宿主机绝对路径 |
 | STOCK_WATCHER_HOST_CONFIG | 必填 | 私有 YAML 配置文件绝对路径 |
 | STOCK_WATCHER_HOST_POOL | 必填 | leaders.yaml 绝对路径 |
@@ -39,6 +41,8 @@
 | STOCK_WATCHER_RUNTIME_ENV | 必填 | 独立运行变量文件绝对路径 |
 
 Compose 固定容器内数据 `/data`、配置 `/app/config.yaml`、股池 `/app/leaders.yaml`、日志 `/logs`，并关闭颜色；私有 YAML 的 `pool_file` 应为 `leaders.yaml`。Compose 的 environment 覆盖运行变量文件中的 DATA_DIR、LOG_DIR、LOG_COLOR。
+
+`run` 同时启动监控任务和网页，默认只允许本机访问。配置 `web.enabled: false` 可以关闭网页；网页没有账号或写入接口，需要远程访问时通过受控网络或已有认证反向代理开放。Compose 固定容器监听 `0.0.0.0:8080`，并用 `STOCK_WATCHER_WEB_BIND` 控制宿主机入口。应用使用根路径 `/`，反向代理应保留 `/api/` 和 `/assets/` 路径；不支持直接挂到子路径前缀。
 
 路径不自动创建，配置和股池只读挂载。容器根文件系统只读，不需要 SMB 凭证或挂载权限。CIFS 由宿主机负责，`require_cifs: true` 保持启用。不要运行会展开凭证的 `docker compose config` 普通输出；用 `config --quiet` 检查。
 

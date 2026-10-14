@@ -23,6 +23,9 @@ services:
       STOCK_WATCHER_DATA_DIR: /data
       STOCK_WATCHER_LOG_DIR: /logs
       STOCK_WATCHER_LOG_COLOR: "off"
+      STOCK_WATCHER_WEB_ADDR: "0.0.0.0:8080"
+    ports:
+      - "${STOCK_WATCHER_WEB_BIND:-127.0.0.1:8080}:8080"
     volumes:
       - type: bind
         source: ${STOCK_WATCHER_HOST_DATA:?Set the existing CIFS mount path}
