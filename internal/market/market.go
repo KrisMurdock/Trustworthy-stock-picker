@@ -79,12 +79,33 @@ func (h History) Validate() error {
 type Failure struct {
 	Status int
 	Kind   string
+	Reason string
 }
 
 func (f *Failure) Error() string {
+	if f.Reason != "" {
+		return fmt.Sprintf("daily request failed (%s, HTTP %d): %s", f.Kind, f.Status, f.Reason)
+	}
 	return fmt.Sprintf("daily request failed (%s, HTTP %d)", f.Kind, f.Status)
 }
-func (f *Failure) Retryable() bool { return f.Status == 0 || f.Status == 429 || f.Status >= 500 }
+func (f *Failure) Retryable() bool {
+	return f.Status == 0 || f.Status == http.StatusRequestTimeout || f.Status == http.StatusTooManyRequests || f.Status >= 500
+}
+
+type DataError struct {
+	Reason string
+}
+
+func (e *DataError) Error() string { return "daily data rejected: " + e.Reason }
+
+func IsIsolatable(err error) bool {
+	var failure *Failure
+	if errors.As(err, &failure) {
+		return !failure.Retryable()
+	}
+	var dataErr *DataError
+	return errors.As(err, &dataErr)
+}
 
 type Client struct {
 	HTTP     *http.Client
@@ -98,6 +119,10 @@ func (c *Client) Close() { c.HTTP.CloseIdleConnections() }
 
 // Fetch replaces the full adjusted window; merging qfq data from different base dates is unsafe.
 func (c *Client) Fetch(ctx context.Context, stock config.Stock, start, end, adjust string) (History, error) {
+	return c.FetchWindow(ctx, stock, start, end, adjust, 640)
+}
+
+func (c *Client) FetchWindow(ctx context.Context, stock config.Stock, start, end, adjust string, count int) (History, error) {
 	h := History{Version: 1, Code: stock.Code, Name: stock.Name, Source: "tencent", Adjust: adjust, AsOf: end, FetchedAt: time.Now().In(Shanghai)}
 	h.VolumeUnit = "provider_raw"
 	if !config.ValidCode(stock.Code) {
@@ -119,8 +144,11 @@ func (c *Client) Fetch(ctx context.Context, stock config.Stock, start, end, adju
 	if err != nil {
 		return h, &Failure{Kind: "request"}
 	}
+	if count < 1 || count > 640 {
+		return h, errors.New("invalid daily count")
+	}
 	query := u.Query()
-	query.Set("param", strings.Join([]string{stock.Code, "day", start, end, "640", suffix}, ","))
+	query.Set("param", strings.Join([]string{stock.Code, "day", start, end, strconv.Itoa(count), suffix}, ","))
 	u.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -142,9 +170,9 @@ func (c *Client) Fetch(ctx context.Context, stock config.Stock, start, end, adju
 	if err != nil || len(body) > 2<<20 {
 		return h, &Failure{Kind: "body"}
 	}
-	bars, name, err := Parse(stock.Code, body, start, end, adjust)
+	bars, name, err := ParseWithLimit(stock.Code, body, start, end, adjust, count)
 	if err != nil {
-		return h, err
+		return h, &DataError{Reason: err.Error()}
 	}
 	h.Bars = bars
 	var fieldEnvelope struct {
@@ -159,6 +187,14 @@ func (c *Client) Fetch(ctx context.Context, stock config.Stock, start, end, adju
 }
 
 func Parse(code string, body []byte, start, end, adjust string) ([]Bar, string, error) {
+	return parseWithLimit(code, body, start, end, adjust, 640)
+}
+
+func ParseWithLimit(code string, body []byte, start, end, adjust string, count int) ([]Bar, string, error) {
+	return parseWithLimit(code, body, start, end, adjust, count)
+}
+
+func parseWithLimit(code string, body []byte, start, end, adjust string, count int) ([]Bar, string, error) {
 	var envelope struct {
 		Code *int                       `json:"code"`
 		Data map[string]json.RawMessage `json:"data"`
@@ -181,7 +217,7 @@ func Parse(code string, body []byte, start, end, adjust string) ([]Bar, string, 
 	// actual field in History rather than disguising this provider behavior.
 	// Tencent can append today's live bar to the requested 640 historical rows.
 	// Permit that one response row, but keep the persisted window capped at 640.
-	if json.Unmarshal(stock[key], &rows) != nil || len(rows) == 0 || len(rows) > 641 {
+	if json.Unmarshal(stock[key], &rows) != nil || len(rows) == 0 || len(rows) > count+1 {
 		return nil, "", errors.New("missing requested daily adjustment data")
 	}
 	bars := make([]Bar, 0, len(rows))
@@ -228,10 +264,17 @@ func Parse(code string, body []byte, start, end, adjust string) ([]Bar, string, 
 	if len(bars) == 0 {
 		return nil, "", errors.New("no daily data in requested window")
 	}
-	if len(bars) > 640 {
+	if len(bars) > count {
 		return nil, "", errors.New("daily data window exceeds size limit")
 	}
 	return bars, name, nil
+}
+
+func VolumeShares(code string, raw float64) float64 {
+	if strings.HasPrefix(code, "sh68") {
+		return raw
+	}
+	return raw * 100
 }
 
 func adjustmentField(stock map[string]json.RawMessage, adjust string) string {

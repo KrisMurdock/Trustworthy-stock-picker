@@ -40,3 +40,16 @@ func TestNextAndCompleted(t *testing.T) {
 		t.Fatal("missing publication")
 	}
 }
+
+func TestTradingDaysRejectsUncoveredWindow(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Calendar.ValidFrom = "2026-01-01"
+	cfg.Calendar.ValidThrough = "2026-12-31"
+	c := New(cfg)
+	if _, err := c.TradingDays("2025-12-31", "2026-01-05"); err == nil {
+		t.Fatal("accepted start outside calendar coverage")
+	}
+	if _, err := c.TradingDays("2026-12-30", "2027-01-02"); err == nil {
+		t.Fatal("accepted end outside calendar coverage")
+	}
+}

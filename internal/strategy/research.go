@@ -294,13 +294,24 @@ func datasets(c config.Config, histories, raw []market.History, asof string) ([]
 	for _, stock := range c.Stocks {
 		h, ok := adjusted[stock.Code]
 		r, exists := byCode[stock.Code]
-		if !ok || !exists || h.AsOf != asof || r.AsOf != asof || h.Adjust != "qfq" || r.Adjust != "none" || len(h.Bars) != len(r.Bars) {
-			return nil, errors.New("incomplete or mismatched adjusted/raw pool")
+		if !ok || !exists {
+			continue
 		}
+		if h.AsOf != asof || r.AsOf != asof || h.Adjust != "qfq" || r.Adjust != "none" {
+			continue
+		}
+		if len(h.Bars) != len(r.Bars) {
+			continue
+		}
+		aligned := true
 		for i := range h.Bars {
 			if h.Bars[i].Date != r.Bars[i].Date {
-				return nil, errors.New("adjusted/raw sessions do not align")
+				aligned = false
+				break
 			}
+		}
+		if !aligned {
+			continue
 		}
 		data = append(data, Dataset{h, r})
 	}
@@ -314,6 +325,18 @@ func Analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 	data, err := datasets(c, histories, raw, asof)
 	if err != nil {
 		return result, err
+	}
+	if len(data) == 0 {
+		return result, errors.New("incomplete or mismatched adjusted/raw pool")
+	}
+	present := map[string]bool{}
+	for _, dataset := range data {
+		present[dataset.Adjusted.Code] = true
+	}
+	for _, stock := range c.Stocks {
+		if !present[stock.Code] {
+			result.Excluded[stock.Code] = "missing_or_mismatched_data"
+		}
 	}
 	if _, err := time.Parse("2006-01-02", asof); err != nil {
 		return result, errors.New("invalid research as-of")

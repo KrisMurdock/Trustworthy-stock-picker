@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/market"
@@ -10,6 +11,7 @@ import (
 	reportmessage "stock-watcher/internal/notify/report"
 	"stock-watcher/internal/selection"
 	"stock-watcher/internal/storage"
+	"strings"
 	"testing"
 	"time"
 )
@@ -18,6 +20,7 @@ type fakeSource struct {
 	calls      int
 	err        error
 	failAdjust string
+	failCode   string
 }
 
 func (f *fakeSource) Fetch(ctx context.Context, s config.Stock, start, end, adjust string) (market.History, error) {
@@ -25,12 +28,13 @@ func (f *fakeSource) Fetch(ctx context.Context, s config.Stock, start, end, adju
 	if ctx.Err() != nil {
 		return market.History{}, ctx.Err()
 	}
-	if f.err != nil && (f.failAdjust == "" || f.failAdjust == adjust) {
+	if f.err != nil && (f.failCode == "" || f.failCode == s.Code) && (f.failAdjust == "" || f.failAdjust == adjust) {
 		return market.History{}, f.err
 	}
 	bars := []market.Bar{}
 	d, _ := time.Parse("2006-01-02", end)
-	for len(bars) < 60 {
+	first, _ := time.Parse("2006-01-02", start)
+	for !d.Before(first) {
 		if d.Weekday() != time.Saturday && d.Weekday() != time.Sunday {
 			bars = append([]market.Bar{{Date: d.Format("2006-01-02"), Open: 10, Close: 10, High: 11, Low: 9, Volume: 100}}, bars...)
 		}
@@ -195,6 +199,113 @@ func TestCorruptStateAndBeforeClose(t *testing.T) {
 	m.Now = func() time.Time { return now }
 	if err := m.Cycle(context.Background()); err != nil || source.calls != 0 {
 		t.Fatal("ran before close")
+	}
+}
+
+func TestSQLiteSyncIsAtomicAndIsolatesPermanentStockFailure(t *testing.T) {
+	m, source, channel := fixture(t)
+	m.Config.Stocks = make([]config.Stock, 20)
+	for i := range m.Config.Stocks {
+		m.Config.Stocks[i] = config.Stock{Code: "sz" + fmt.Sprintf("%06d", i+1), Name: "测试"}
+	}
+	m.Config.Sync.MinCoveragePct = 95
+	m.Config.Notify.Channels = nil
+	marketDB, err := storage.InitMarket(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Market = marketDB
+	t.Cleanup(func() { m.Market.Close() })
+	source.err = &market.Failure{Status: 403, Kind: "status"}
+	source.failCode = m.Config.Stocks[0].Code
+	report, err := m.Sync(context.Background(), "2026-10-13")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Eligible != 19 || len(report.Excluded) != 1 {
+		t.Fatalf("isolated stock was not excluded: eligible=%d excluded=%+v", report.Eligible, report.Excluded)
+	}
+	var legacy selection.Report
+	if err := m.Store.Read("reports/2026-10-13.json", &legacy); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("SQLite sync wrote legacy JSON report")
+	}
+	stored, err := m.Market.LoadReport(context.Background(), "2026-10-13")
+	if err != nil || stored.ID != report.ID {
+		t.Fatalf("SQLite report missing: %v %+v", err, stored)
+	}
+	_ = channel
+}
+
+func TestSQLiteSyncDoesNotPublishBelowCoverageThreshold(t *testing.T) {
+	m, source, _ := fixture(t)
+	m.Config.Sync.MinCoveragePct = 100
+	marketDB, err := storage.InitMarket(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Market = marketDB
+	t.Cleanup(func() { m.Market.Close() })
+	source.err = &market.Failure{Status: 403, Kind: "status"}
+	_, err = m.Sync(context.Background(), "2026-10-13")
+	if err == nil || !strings.Contains(err.Error(), "coverage") {
+		t.Fatalf("missing coverage gate: %v", err)
+	}
+	if _, err := m.Market.LoadReport(context.Background(), "2026-10-13"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("below-threshold sync published a report")
+	}
+}
+
+func TestValidateHistoryEnforcesPublishWindow(t *testing.T) {
+	m, _, _ := fixture(t)
+	history := market.History{
+		Version: 1, Code: "sz000001", Name: "测试", Source: "tencent", Adjust: "qfq",
+		DataField: "qfqday", VolumeUnit: "provider_raw", AsOf: "2026-10-13", FetchedAt: time.Now(),
+		Bars: []market.Bar{
+			{Date: "2026-10-10", Open: 10, Close: 10, High: 11, Low: 9, Volume: 100},
+			{Date: "2026-10-13", Open: 10, Close: 10, High: 11, Low: 9, Volume: 100},
+		},
+	}
+	if err := validateHistory(m.Calendar, config.Stock{Code: history.Code, Name: history.Name}, history, "2026-10-10", "2026-10-13"); err == nil {
+		t.Fatal("accepted internal trading-day gap")
+	}
+	history.Bars[1].Date = "2026-10-12"
+	if err := validateHistory(m.Calendar, config.Stock{Code: history.Code, Name: history.Name}, history, "2026-10-10", "2026-10-13"); err == nil {
+		t.Fatal("accepted stale final bar")
+	}
+	history.DataField = "day"
+	history.Bars[1].Date = "2026-10-13"
+	if err := validateHistory(m.Calendar, config.Stock{Code: history.Code, Name: history.Name}, history, "2026-10-10", "2026-10-13"); err == nil {
+		t.Fatal("accepted qfq fallback field without guard")
+	}
+}
+
+func TestValidateHistoryRejectsContiguousTruncation(t *testing.T) {
+	m, source, _ := fixture(t)
+	full, err := source.Fetch(context.Background(), m.Config.Stocks[0], "2026-01-01", "2026-10-13", "qfq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	full.Bars = full.Bars[len(full.Bars)-60:]
+	if err := validateHistory(m.Calendar, m.Config.Stocks[0], full, "2026-01-01", "2026-10-13"); err == nil {
+		t.Fatal("accepted contiguous truncated history")
+	}
+}
+
+func TestMergeHistoryRespectsRequestedAsOf(t *testing.T) {
+	previous := market.History{
+		Version: 1, Code: "sz000001", Name: "测试", Source: "tencent", Adjust: "none",
+		DataField: "day", VolumeUnit: "provider_raw", AsOf: "2026-10-14", FetchedAt: time.Now(),
+		Bars: []market.Bar{
+			{Date: "2026-10-13", Open: 10, Close: 10, High: 11, Low: 9, Volume: 100},
+			{Date: "2026-10-14", Open: 10, Close: 10, High: 11, Low: 9, Volume: 100},
+		},
+	}
+	recent := previous
+	recent.AsOf = "2026-10-13"
+	recent.Bars = []market.Bar{{Date: "2026-10-13", Open: 11, Close: 11, High: 12, Low: 10, Volume: 120}}
+	merged := mergeHistory(previous, recent, config.Stock{Code: "sz000001", Name: "测试"}, "2026-10-10", "2026-10-13")
+	if len(merged.Bars) != 1 || merged.Bars[0].Date != "2026-10-13" {
+		t.Fatalf("future bar leaked into historical merge: %+v", merged.Bars)
 	}
 }
 

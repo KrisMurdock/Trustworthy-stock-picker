@@ -16,9 +16,10 @@ import (
 )
 
 type Stock struct {
-	Code   string `yaml:"code" json:"code"`
-	Name   string `yaml:"name,omitempty" json:"name,omitempty"`
-	Sector string `yaml:"sector,omitempty" json:"sector,omitempty"`
+	Code       string `yaml:"code" json:"code"`
+	Name       string `yaml:"name,omitempty" json:"name,omitempty"`
+	Sector     string `yaml:"sector,omitempty" json:"sector,omitempty"`
+	ListedFrom string `yaml:"listed_from,omitempty" json:"listed_from,omitempty"`
 }
 
 type Config struct {
@@ -45,6 +46,10 @@ type Config struct {
 		MaxDayChange   float64 `yaml:"max_day_change_pct"`
 		MinDayChange   float64 `yaml:"min_day_change_pct"`
 	} `yaml:"selection"`
+	Sync struct {
+		MinCoveragePct  float64 `yaml:"min_coverage_pct"`
+		IncrementalBars int     `yaml:"incremental_bars"`
+	} `yaml:"sync"`
 	Notify struct {
 		Channels []NotifyChannel `yaml:"channels"`
 	} `yaml:"notify"`
@@ -87,6 +92,8 @@ func Defaults() Config {
 	c.Selection.RSIMax = 80
 	c.Selection.MinDayChange = -3
 	c.Selection.MaxDayChange = 7
+	c.Sync.MinCoveragePct = 95
+	c.Sync.IncrementalBars = 5
 	return c
 }
 
@@ -219,6 +226,11 @@ func (c Config) Validate() error {
 		if len(s.Name) > 128 || len(s.Sector) > 128 {
 			return errors.New("stock labels are too long")
 		}
+		if s.ListedFrom != "" {
+			if _, err := time.Parse("2006-01-02", s.ListedFrom); err != nil {
+				return errors.New("stock listed_from must be a valid date")
+			}
+		}
 		stocks[s.Code] = true
 	}
 	clock, err := time.Parse("15:04", c.Daily.RunAt)
@@ -243,6 +255,11 @@ func (c Config) Validate() error {
 	}
 	if c.Selection.MinVolumeRatio < 1 || c.Selection.MinVolumeRatio > 10 || c.Selection.RSIMin < 0 || c.Selection.RSIMax > 100 || c.Selection.RSIMin > c.Selection.RSIMax || c.Selection.MinDayChange > c.Selection.MaxDayChange {
 		return errors.New("invalid selection volume, RSI or daily change range")
+	}
+	if math.IsNaN(c.Sync.MinCoveragePct) || math.IsInf(c.Sync.MinCoveragePct, 0) ||
+		c.Sync.MinCoveragePct < 0 || c.Sync.MinCoveragePct > 100 ||
+		c.Sync.IncrementalBars < 2 || c.Sync.IncrementalBars > 30 {
+		return errors.New("invalid sync coverage or incremental bars")
 	}
 	if c.Feishu.Enabled {
 		u, err := url.Parse(c.Feishu.Webhook)

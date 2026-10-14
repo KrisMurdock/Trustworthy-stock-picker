@@ -123,3 +123,21 @@ func TestTencentAppendedLiveBarIsFilteredIntoRequestedWindow(t *testing.T) {
 		t.Fatal("unbounded provider rows accepted")
 	}
 }
+
+func TestFetchWindowUsesRequestedIncrementalCount(t *testing.T) {
+	body := strings.ReplaceAll(response, "qfqday", "day")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("param"); got != "sz000001,day,2026-10-01,2026-10-13,5," {
+			t.Fatalf("unexpected incremental query: %s", got)
+		}
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	c := NewClient(time.Second)
+	c.Endpoint = srv.URL
+	defer c.Close()
+	_, err := c.FetchWindow(context.Background(), config.Stock{Code: "sz000001"}, "2026-10-01", "2026-10-13", "none", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+}

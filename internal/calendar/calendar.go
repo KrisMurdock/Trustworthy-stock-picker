@@ -19,6 +19,11 @@ func New(c config.Config) *Calendar {
 	}
 	return x
 }
+
+func (c *Calendar) ValidFrom() string {
+	return c.start
+}
+
 func Date(t time.Time) string { return t.In(market.Shanghai).Format("2006-01-02") }
 func (c *Calendar) Trading(day string) (bool, error) {
 	t, err := time.ParseInLocation("2006-01-02", day, market.Shanghai)
@@ -26,6 +31,32 @@ func (c *Calendar) Trading(day string) (bool, error) {
 		return false, errors.New("date outside configured exchange calendar coverage")
 	}
 	return t.Weekday() != time.Saturday && t.Weekday() != time.Sunday && !c.closed[day], nil
+}
+
+func (c *Calendar) TradingDays(start, end string) ([]string, error) {
+	first, err := time.ParseInLocation("2006-01-02", start, market.Shanghai)
+	if err != nil {
+		return nil, errors.New("invalid start date")
+	}
+	last, err := time.ParseInLocation("2006-01-02", end, market.Shanghai)
+	if err != nil || first.After(last) {
+		return nil, errors.New("invalid end date")
+	}
+	if start < c.start || end > c.end {
+		return nil, errors.New("date outside configured exchange calendar coverage")
+	}
+	days := []string{}
+	for day := first; !day.After(last); day = day.AddDate(0, 0, 1) {
+		date := Date(day)
+		ok, err := c.Trading(date)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			days = append(days, date)
+		}
+	}
+	return days, nil
 }
 func (c *Calendar) Next(day string) (string, error) {
 	t, err := time.ParseInLocation("2006-01-02", day, market.Shanghai)

@@ -32,7 +32,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check|sync|preview|research|plan|run|once|status|retry [channel] [-config config.yaml] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher init|check|sync|preview|research|plan|run|once|status|retry [channel] [-config config.yaml] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -54,7 +54,7 @@ func run(args []string) error {
 		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
-	case "check", "sync", "preview", "research", "plan", "run", "once", "status", "retry":
+	case "init", "check", "sync", "preview", "research", "plan", "run", "once", "status", "retry":
 	default:
 		return errors.New("unknown command")
 	}
@@ -75,6 +75,19 @@ func run(args []string) error {
 		}
 		return json.NewEncoder(os.Stdout).Encode(p)
 	}
+	if command == "init" {
+		store, err := storage.Open(c.DataDir, c.RequireCIFS)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		marketDB, err := storage.InitMarket(c.DataDir, c.RequireCIFS)
+		if err != nil {
+			return err
+		}
+		defer marketDB.Close()
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "initialized", "market_db": marketDB.Path()})
+	}
 	options, err := logging.EnvOptions()
 	if err != nil {
 		return err
@@ -90,14 +103,28 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	openStore := storage.Open
+	readOnly := false
 	if command == "status" || command == "preview" || command == "research" || command == "check" {
 		openStore = storage.OpenView
+		readOnly = true
 	}
 	store, err := openStore(c.DataDir, c.RequireCIFS)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
+	openMarket := storage.OpenMarket
+	if readOnly {
+		openMarket = storage.OpenMarketView
+	}
+	marketDB, err := openMarket(c.DataDir, c.RequireCIFS)
+	if err != nil {
+		return err
+	}
+	defer marketDB.Close()
+	if command == "check" && !marketDB.HasDatabase() {
+		return errors.New("market database is not initialized; run stock-watcher init")
+	}
 	source := market.NewClient(config.Duration(c.Timeout))
 	defer source.Close()
 	channels, closeChannels, err := buildChannels(c)
@@ -109,7 +136,7 @@ func run(args []string) error {
 		log.RegisterSecret(channel.Webhook)
 		log.RegisterSecret(channel.Secret)
 	}
-	m := monitor.New(c, store, source, channels, log)
+	m := monitor.NewWithMarketDB(c, store, marketDB, source, channels, log)
 	cal := calendar.New(c)
 	if _, err := cal.Trading(calendar.Date(time.Now())); err != nil {
 		return err
