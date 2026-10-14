@@ -179,7 +179,9 @@ func Parse(code string, body []byte, start, end, adjust string) ([]Bar, string, 
 	// Tencent returns day when an adjusted series uses the base day data; this is
 	// also the protocol used by the legacy stock_zh_a_hist_tx adapter. Record the
 	// actual field in History rather than disguising this provider behavior.
-	if json.Unmarshal(stock[key], &rows) != nil || len(rows) == 0 || len(rows) > 640 {
+	// Tencent can append today's live bar to the requested 640 historical rows.
+	// Permit that one response row, but keep the persisted window capped at 640.
+	if json.Unmarshal(stock[key], &rows) != nil || len(rows) == 0 || len(rows) > 641 {
 		return nil, "", errors.New("missing requested daily adjustment data")
 	}
 	bars := make([]Bar, 0, len(rows))
@@ -225,6 +227,9 @@ func Parse(code string, body []byte, start, end, adjust string) ([]Bar, string, 
 	}
 	if len(bars) == 0 {
 		return nil, "", errors.New("no daily data in requested window")
+	}
+	if len(bars) > 640 {
+		return nil, "", errors.New("daily data window exceeds size limit")
 	}
 	return bars, name, nil
 }

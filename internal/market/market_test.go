@@ -98,3 +98,28 @@ func TestHistoryValidationRejectsCorruptStoredMetadata(t *testing.T) {
 		t.Fatal("duplicate persisted dates accepted")
 	}
 }
+
+func TestTencentAppendedLiveBarIsFilteredIntoRequestedWindow(t *testing.T) {
+	// Tencent may append the current session to the 640 historical rows requested.
+	date, _ := time.Parse("2006-01-02", "2026-10-14")
+	rows := [][]string{}
+	for len(rows) < 641 {
+		if date.Weekday() != time.Saturday && date.Weekday() != time.Sunday {
+			rows = append(rows, []string{date.Format("2006-01-02"), "10", "10", "11", "9", "100"})
+		}
+		date = date.AddDate(0, 0, -1)
+	}
+	body, _ := json.Marshal(map[string]any{"code": 0, "data": map[string]any{"sz000001": map[string]any{"day": rows}}})
+	bars, _, err := Parse("sz000001", body, "2025-10-14", "2026-10-13", "none")
+	if err != nil || len(bars) == 0 || len(bars) > 640 || bars[len(bars)-1].Date != "2026-10-13" {
+		t.Fatalf("appended current bar blocked or leaked into completed window: bars=%d err=%v", len(bars), err)
+	}
+	if _, _, err := Parse("sz000001", body, "2020-01-01", "2026-10-14", "none"); err == nil {
+		t.Fatal("persisted 640-bar contract was exceeded")
+	}
+	rows = append(rows, []string{date.Format("2006-01-02"), "10", "10", "11", "9", "100"})
+	body, _ = json.Marshal(map[string]any{"code": 0, "data": map[string]any{"sz000001": map[string]any{"day": rows}}})
+	if _, _, err := Parse("sz000001", body, "2025-10-14", "2026-10-13", "none"); err == nil {
+		t.Fatal("unbounded provider rows accepted")
+	}
+}
