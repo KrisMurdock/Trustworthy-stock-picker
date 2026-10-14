@@ -55,6 +55,7 @@ must_fail() {
 }
 invoke version | tee "$FIXTURE/version.txt"
 test -s "$FIXTURE/version.txt"
+invoke init -config "$CONFIG" | tail -n 1 | jq -e '.status == "initialized"' >/dev/null
 invoke check -config "$CONFIG" | tail -n 1 | jq -e '.status == "ready" and .pool_size > 0 and .notification_channels == 0' >/dev/null
 invoke status -config "$CONFIG" | tail -n 1 | jq -e '.schema_version == 2' >/dev/null
 invoke plan -config "$CONFIG" -code sz000001 -entry-price 10 > "$FIXTURE/plan.json"
@@ -116,6 +117,7 @@ ENV
 services:
   stock-watcher:
     network_mode: none
+    ports: !reset []
     healthcheck:
       interval: 1s
       timeout: 5s
