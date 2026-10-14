@@ -39,6 +39,43 @@ type History struct {
 	FetchedAt  time.Time `json:"fetched_at"`
 	Bars       []Bar     `json:"bars"`
 }
+
+// Validate protects the same contract when JSON is read back from Windows.
+func (h History) Validate() error {
+	if h.Version != 1 || !config.ValidCode(h.Code) || h.Name == "" || h.Source != "tencent" || h.VolumeUnit != "provider_raw" || h.FetchedAt.IsZero() {
+		return errors.New("missing or unsupported history metadata")
+	}
+	if _, err := time.Parse("2006-01-02", h.AsOf); err != nil {
+		return errors.New("invalid history as-of date")
+	}
+	if h.Adjust != "none" && h.Adjust != "qfq" && h.Adjust != "hfq" {
+		return errors.New("invalid history adjustment")
+	}
+	if h.DataField != "day" && (h.Adjust == "none" || h.DataField != h.Adjust+"day") {
+		return errors.New("mismatched history adjustment field")
+	}
+	if len(h.Bars) == 0 || len(h.Bars) > 640 {
+		return errors.New("invalid history bar count")
+	}
+	previous := ""
+	for _, b := range h.Bars {
+		d, err := time.Parse("2006-01-02", b.Date)
+		if err != nil || b.Date <= previous || b.Date > h.AsOf || d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
+			return errors.New("invalid history bar ordering or date")
+		}
+		previous = b.Date
+		for _, v := range []float64{b.Open, b.Close, b.High, b.Low, b.Volume} {
+			if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+				return errors.New("invalid history numeric value")
+			}
+		}
+		if b.Open <= 0 || b.Close <= 0 || b.Low <= 0 || b.High < math.Max(b.Open, b.Close) || b.Low > math.Min(b.Open, b.Close) {
+			return errors.New("invalid history OHLC range")
+		}
+	}
+	return nil
+}
+
 type Failure struct {
 	Status int
 	Kind   string

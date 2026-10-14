@@ -78,3 +78,23 @@ func TestTencentDayResponseForAdjustedRequest(t *testing.T) {
 		t.Fatal("Tencent base-series response not supported")
 	}
 }
+
+func TestHistoryValidationRejectsCorruptStoredMetadata(t *testing.T) {
+	bars, name, err := Parse("sz000001", []byte(response), "2026-01-01", "2026-10-13", "qfq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := History{Version: 1, Code: "sz000001", Name: name, Source: "tencent", Adjust: "qfq", DataField: "qfqday", VolumeUnit: "provider_raw", AsOf: "2026-10-13", FetchedAt: time.Now(), Bars: bars}
+	if err := h.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	h.VolumeUnit = ""
+	if err := h.Validate(); err == nil {
+		t.Fatal("missing volume unit accepted")
+	}
+	h.VolumeUnit = "provider_raw"
+	h.Bars = append(h.Bars, h.Bars[0])
+	if err := h.Validate(); err == nil {
+		t.Fatal("duplicate persisted dates accepted")
+	}
+}

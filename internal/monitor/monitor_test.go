@@ -33,7 +33,7 @@ func (f *fakeSource) Fetch(ctx context.Context, s config.Stock, start, end, adju
 		}
 		d = d.AddDate(0, 0, -1)
 	}
-	return market.History{Version: 1, Code: s.Code, Name: s.Name, Adjust: adjust, AsOf: end, Bars: bars}, nil
+	return market.History{Version: 1, Code: s.Code, Name: s.Name, Source: "tencent", DataField: "qfqday", VolumeUnit: "provider_raw", FetchedAt: time.Now(), Adjust: adjust, AsOf: end, Bars: bars}, nil
 }
 
 type fakeSender struct {

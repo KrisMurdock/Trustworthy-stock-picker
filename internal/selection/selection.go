@@ -185,6 +185,9 @@ func Build(c config.Config, histories []market.History, asof, target string, now
 	}}
 	byCode := map[string]market.History{}
 	for _, h := range histories {
+		if err := h.Validate(); err != nil {
+			return r, fmt.Errorf("invalid persisted history for %s: %w", h.Code, err)
+		}
 		if _, exists := byCode[h.Code]; exists {
 			return r, errors.New("duplicate stock history")
 		}

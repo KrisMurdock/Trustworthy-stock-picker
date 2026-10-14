@@ -28,9 +28,16 @@ func TestScoreMinimumAndFlatSeries(t *testing.T) {
 func TestGoldenMetricsAndCandidateFilters(t *testing.T) {
 	bars := make([]market.Bar, 61)
 	for i := range bars {
-		bars[i] = market.Bar{Date: "2026-10-12", Close: 50 + 0.1*float64(i) + 0.4*math.Sin(float64(i)*1.5), Volume: 100}
+		bars[i] = market.Bar{Open: 50 + 0.1*float64(i) + 0.4*math.Sin(float64(i)*1.5), High: 100, Low: 1, Close: 50 + 0.1*float64(i) + 0.4*math.Sin(float64(i)*1.5), Volume: 100}
 	}
-	bars[len(bars)-1].Date = "2026-10-13"
+	d, _ := time.Parse("2006-01-02", "2026-10-13")
+	for i := len(bars) - 1; i >= 0; i-- {
+		for d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
+			d = d.AddDate(0, 0, -1)
+		}
+		bars[i].Date = d.Format("2006-01-02")
+		d = d.AddDate(0, 0, -1)
+	}
 	bars[len(bars)-1].Volume = 150
 	m, err := Score(bars)
 	if err != nil {
@@ -45,7 +52,7 @@ func TestGoldenMetricsAndCandidateFilters(t *testing.T) {
 	c := config.Defaults()
 	c.Selection.Enabled = true
 	c.Stocks = []config.Stock{{Code: "sz000001"}}
-	h := market.History{Version: 1, Code: "sz000001", Name: "测试股票", AsOf: "2026-10-13", Adjust: "qfq", Bars: bars}
+	h := market.History{Version: 1, Code: "sz000001", Name: "测试股票", Source: "tencent", DataField: "qfqday", VolumeUnit: "provider_raw", FetchedAt: time.Now(), AsOf: "2026-10-13", Adjust: "qfq", Bars: bars}
 	r, err := Build(c, []market.History{h}, h.AsOf, "2026-10-14", time.Now())
 	if err != nil || len(r.Selected) != 1 || r.Selected[0].Metrics.Score < 70 {
 		t.Fatalf("expected candidate %+v %v", r, err)
@@ -60,7 +67,7 @@ func TestGoldenMetricsAndCandidateFilters(t *testing.T) {
 		t.Fatal("ST stock recommended")
 	}
 	h.Name = "正常股票"
-	h.Bars[len(h.Bars)-1].Date = "2026-10-12"
+	h.Bars = h.Bars[:len(h.Bars)-1]
 	if _, err := Build(c, []market.History{h}, h.AsOf, "2026-10-14", time.Now()); err == nil {
 		t.Fatal("stale pool should fail")
 	}
