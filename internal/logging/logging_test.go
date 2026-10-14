@@ -12,6 +12,11 @@ import (
 	"time"
 )
 
+type credentialConfig struct {
+	Webhook string `json:"webhook"`
+	Secret  string `json:"secret"`
+}
+
 func TestTextLocationRedactionAndRotation(t *testing.T) {
 	root := t.TempDir()
 	var stdout bytes.Buffer
@@ -71,5 +76,24 @@ func TestJSONNeverUsesColor(t *testing.T) {
 	var v map[string]any
 	if json.Unmarshal(out.Bytes(), &v) != nil || v["token"] != "[REDACTED]" || !strings.Contains(v["msg"].(string), "[INFO]") {
 		t.Fatal("invalid JSON log")
+	}
+}
+
+func TestRegisteredSecretsAndStructAttributesAreRedacted(t *testing.T) {
+	var out bytes.Buffer
+	l, err := New(Options{Dir: t.TempDir(), MaxBytes: 1024, MaxDays: 1, Backups: 1, Color: "off", Stdout: &out})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	l.RegisterSecret("https://example.invalid/hook/sentinel")
+	l.RegisterSecret("secret-sentinel")
+	l.Info("credential event", "config", credentialConfig{
+		Webhook: "https://example.invalid/hook/sentinel",
+		Secret:  "secret-sentinel",
+	})
+	text := out.String()
+	if strings.Contains(text, "sentinel") || !strings.Contains(text, "[REDACTED]") {
+		t.Fatalf("credentials leaked: %s", text)
 	}
 }

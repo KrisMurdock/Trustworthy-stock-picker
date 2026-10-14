@@ -45,6 +45,9 @@ type Config struct {
 		MaxDayChange   float64 `yaml:"max_day_change_pct"`
 		MinDayChange   float64 `yaml:"min_day_change_pct"`
 	} `yaml:"selection"`
+	Notify struct {
+		Channels []NotifyChannel `yaml:"channels"`
+	} `yaml:"notify"`
 	Feishu struct {
 		Enabled bool   `yaml:"enabled"`
 		Webhook string `yaml:"webhook,omitempty"`
@@ -55,6 +58,16 @@ type Config struct {
 		ValidThrough string   `yaml:"valid_through"`
 		Holidays     []string `yaml:"holidays"`
 	} `yaml:"calendar"`
+}
+
+type NotifyChannel struct {
+	Name       string `yaml:"name"`
+	Type       string `yaml:"type"`
+	Enabled    bool   `yaml:"enabled"`
+	WebhookEnv string `yaml:"webhook_env,omitempty"`
+	SecretEnv  string `yaml:"secret_env,omitempty"`
+	Webhook    string `yaml:"-"`
+	Secret     string `yaml:"-"`
 }
 
 var stockCode = regexp.MustCompile(`^(sh(60|68)[0-9]{4}|sz(00|30)[0-9]{4})$`)
@@ -132,6 +145,15 @@ func Load(path string) (Config, error) {
 	if v, ok := os.LookupEnv("FEISHU_SECRET"); ok {
 		c.Feishu.Secret = v
 	}
+	for i := range c.Notify.Channels {
+		channel := &c.Notify.Channels[i]
+		if channel.WebhookEnv != "" {
+			channel.Webhook = os.Getenv(channel.WebhookEnv)
+		}
+		if channel.SecretEnv != "" {
+			channel.Secret = os.Getenv(channel.SecretEnv)
+		}
+	}
 	if strings.TrimSpace(c.DataDir) == "" {
 		return Config{}, errors.New("data_dir is required")
 	}
@@ -173,6 +195,22 @@ func (c Config) Validate() error {
 	if len(c.Stocks) == 0 || len(c.Stocks) > 500 {
 		return errors.New("stocks must contain 1 to 500 A-share stocks")
 	}
+	if len(c.Notify.Channels) > 0 && c.Feishu.Enabled {
+		return errors.New("set notify.channels or feishu, not both")
+	}
+	channelNames := map[string]bool{}
+	for _, channel := range c.Notify.Channels {
+		if !regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`).MatchString(channel.Name) || strings.TrimSpace(channel.Type) == "" || channelNames[channel.Name] {
+			return errors.New("notify channels contain an invalid or duplicate name")
+		}
+		if channel.WebhookEnv != "" && !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(channel.WebhookEnv) {
+			return errors.New("notify channel webhook_env is invalid")
+		}
+		if channel.SecretEnv != "" && !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(channel.SecretEnv) {
+			return errors.New("notify channel secret_env is invalid")
+		}
+		channelNames[channel.Name] = true
+	}
 	stocks := map[string]bool{}
 	for _, s := range c.Stocks {
 		if !ValidCode(s.Code) || stocks[s.Code] {
@@ -207,9 +245,6 @@ func (c Config) Validate() error {
 		return errors.New("invalid selection volume, RSI or daily change range")
 	}
 	if c.Feishu.Enabled {
-		if !c.Selection.Enabled {
-			return errors.New("Feishu recommendations require enabled selection")
-		}
 		u, err := url.Parse(c.Feishu.Webhook)
 		if err != nil || u.Scheme != "https" || u.Host != "open.feishu.cn" || !strings.HasPrefix(u.Path, "/open-apis/bot/v2/hook/") || len(strings.TrimPrefix(u.Path, "/open-apis/bot/v2/hook/")) < 8 || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return errors.New("enabled Feishu requires a valid HTTPS custom bot webhook")
@@ -227,6 +262,22 @@ func (c Config) Validate() error {
 			return errors.New("calendar contains invalid or duplicate holidays")
 		}
 		dates[day] = true
+	}
+	return nil
+}
+
+func (c Config) NotificationChannels() []NotifyChannel {
+	if len(c.Notify.Channels) > 0 {
+		out := make([]NotifyChannel, 0, len(c.Notify.Channels))
+		for _, channel := range c.Notify.Channels {
+			if channel.Enabled {
+				out = append(out, channel)
+			}
+		}
+		return out
+	}
+	if c.Feishu.Enabled {
+		return []NotifyChannel{{Name: "feishu-main", Type: "feishu", Enabled: true, Webhook: c.Feishu.Webhook, Secret: c.Feishu.Secret}}
 	}
 	return nil
 }

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"stock-watcher/internal/config"
+	"stock-watcher/internal/notify"
 	"stock-watcher/internal/selection"
 	"stock-watcher/internal/strategy"
 	"strconv"
@@ -54,7 +56,7 @@ func TestDeliveryAcknowledgementAndPermissions(t *testing.T) {
 		name, body string
 		status     int
 		ok, retry  bool
-	}{{"success", `{"code":0}`, 200, true, false}, {"legacy", `{"StatusCode":0}`, 200, true, false}, {"unsigned_result", `{}`, 200, false, false}, {"bad_signature", `{"code":19021}`, 200, false, false}, {"permission", `{}`, 403, false, false}, {"limit", `{"code":11232}`, 200, false, true}, {"server", `{}`, 503, false, true}} {
+	}{{"success", `{"code":0}`, 200, true, false}, {"legacy", `{"StatusCode":0}`, 200, true, false}, {"unknown_result", `{}`, 200, false, true}, {"bad_signature", `{"code":19021}`, 200, false, false}, {"permission", `{}`, 403, false, false}, {"limit", `{"code":11232}`, 200, false, true}, {"server", `{}`, 503, false, true}} {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var p map[string]any
@@ -69,7 +71,7 @@ func TestDeliveryAcknowledgementAndPermissions(t *testing.T) {
 			defer srv.Close()
 			c := NewClient(srv.URL, "test-secret", time.Second)
 			defer c.Close()
-			err := c.Send(context.Background(), selection.Report{AsOf: "2026-10-13", Target: "2026-10-14"})
+			err := c.Send(context.Background(), notify.Message{Version: 1, EventID: "event", Title: "title", Sections: []notify.Section{{Lines: []string{"line"}}}})
 			if (err == nil) != tt.ok {
 				t.Fatalf("error=%v", err)
 			}
@@ -80,5 +82,79 @@ func TestDeliveryAcknowledgementAndPermissions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestResponseClassificationAndRetryAfter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "17")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "", time.Second)
+	defer c.Close()
+	err := c.Send(context.Background(), notify.Message{Version: 1, EventID: "event", Sections: []notify.Section{{Lines: []string{"line"}}}})
+	var failure *notify.DeliveryError
+	if !errors.As(err, &failure) || failure.Kind != notify.Retryable || failure.RetryAfter != 17*time.Second {
+		t.Fatalf("unexpected 429 failure: %#v", err)
+	}
+}
+
+func TestUnexpectedSuccessStatusIsUnknown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"code":0}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "", time.Second)
+	defer c.Close()
+	err := c.Send(context.Background(), notify.Message{Version: 1, EventID: "event", Sections: []notify.Section{{Lines: []string{"line"}}}})
+	var failure *notify.DeliveryError
+	if !errors.As(err, &failure) || failure.Kind != notify.Unknown || failure.Status != http.StatusAccepted {
+		t.Fatalf("unexpected 202 failure: %#v", err)
+	}
+}
+
+func TestOversizedCardIsTrimmedBeforeRequest(t *testing.T) {
+	var calls int
+	var received int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		received = len(data)
+		w.Write([]byte(`{"code":0}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "", time.Second)
+	defer c.Close()
+	err := c.Send(context.Background(), notify.Message{
+		Version:  1,
+		EventID:  "event",
+		Sections: []notify.Section{{Lines: []string{strings.Repeat("长", 30000), "事件 ID：event"}}},
+	})
+	if err != nil || calls != 1 || received > maxPayloadBytes {
+		t.Fatalf("oversized payload was not trimmed: err=%v calls=%d bytes=%d", err, calls, received)
+	}
+}
+
+func TestCardRendersMessageWithoutSelectionDependency(t *testing.T) {
+	payload := Card(notify.Message{
+		Version:  1,
+		EventID:  "event-1",
+		Title:    "title",
+		Sections: []notify.Section{{Heading: "heading", Lines: []string{"first", "second"}}},
+	})
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{"\"title\":{\"content\":\"title\"", "heading", "first", "second"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("card does not contain %q: %s", want, text)
+		}
 	}
 }

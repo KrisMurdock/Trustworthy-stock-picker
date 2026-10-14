@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strconv"
@@ -25,13 +27,16 @@ type Options struct {
 	Stdout           io.Writer
 }
 type Logger struct {
-	mu   sync.Mutex
-	opts Options
-	file *os.File
-	size int64
-	day  string
-	seq  int
+	mu      sync.Mutex
+	opts    Options
+	file    *os.File
+	size    int64
+	day     string
+	seq     int
+	secrets []string
 }
+
+func Nop() *Logger { return &Logger{} }
 
 func EnvOptions() (Options, error) {
 	o := Options{Dir: "logs", MaxBytes: 10 << 20, MaxDays: 7, Backups: 10, Color: "auto", Stdout: os.Stdout}
@@ -127,6 +132,19 @@ func (l *Logger) Info(msg string, attrs ...any)  { l.write("INFO", msg, attrs) }
 func (l *Logger) Warn(msg string, attrs ...any)  { l.write("WARN", msg, attrs) }
 func (l *Logger) Error(msg string, attrs ...any) { l.write("ERROR", msg, attrs) }
 func (l *Logger) Debug(msg string, attrs ...any) { l.write("DEBUG", msg, attrs) }
+func (l *Logger) RegisterSecret(value string) {
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, secret := range l.secrets {
+		if secret == value {
+			return
+		}
+	}
+	l.secrets = append(l.secrets, value)
+}
 func sensitive(key string) bool {
 	k := strings.ToLower(key)
 	for _, word := range []string{"token", "secret", "password", "authorization", "webhook", "credential"} {
@@ -137,39 +155,74 @@ func sensitive(key string) bool {
 	return false
 }
 func scrub(value any) any {
-	if m, ok := value.(map[string]any); ok {
-		out := map[string]any{}
-		for k, v := range m {
-			if sensitive(k) {
-				out[k] = "[REDACTED]"
-			} else {
-				out[k] = scrub(v)
-			}
-		}
-		return out
-	}
-	if a, ok := value.([]any); ok {
-		out := make([]any, len(a))
-		for i, v := range a {
-			out[i] = scrub(v)
-		}
-		return out
-	}
 	if err, ok := value.(error); ok {
 		return err.Error()
 	}
-	return value
+	return scrubValue(reflect.ValueOf(value))
+}
+
+func scrubValue(value reflect.Value) any {
+	if !value.IsValid() {
+		return nil
+	}
+	if value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return nil
+		}
+		return scrubValue(value.Elem())
+	}
+	switch value.Kind() {
+	case reflect.Map:
+		out := map[string]any{}
+		iter := value.MapRange()
+		for iter.Next() {
+			key := fmt.Sprint(iter.Key().Interface())
+			if sensitive(key) {
+				out[key] = "[REDACTED]"
+			} else {
+				out[key] = scrubValue(iter.Value())
+			}
+		}
+		return out
+	case reflect.Struct:
+		out := map[string]any{}
+		typ := value.Type()
+		for i := 0; i < value.NumField(); i++ {
+			field := typ.Field(i)
+			if field.PkgPath != "" {
+				continue
+			}
+			name := field.Name
+			if tag := field.Tag.Get("json"); tag != "" && tag != "-" {
+				name = strings.Split(tag, ",")[0]
+				if name == "" {
+					name = field.Name
+				}
+			}
+			if sensitive(name) {
+				out[name] = "[REDACTED]"
+			} else {
+				out[name] = scrubValue(value.Field(i))
+			}
+		}
+		return out
+	case reflect.Slice, reflect.Array:
+		out := make([]any, value.Len())
+		for i := range out {
+			out[i] = scrubValue(value.Index(i))
+		}
+		return out
+	default:
+		return value.Interface()
+	}
 }
 func caller() string {
 	for depth := 2; depth < 16; depth++ {
-		pc, file, line, ok := runtime.Caller(depth)
+		_, file, line, ok := runtime.Caller(depth)
 		if !ok {
 			break
 		}
 		if strings.HasSuffix(file, "/internal/logging/logging.go") || strings.Contains(file, "/log/slog/") {
-			continue
-		}
-		if fn := runtime.FuncForPC(pc); fn != nil && (strings.HasSuffix(fn.Name(), "(*Monitor).info") || strings.HasSuffix(fn.Name(), "(*Monitor).warn")) {
 			continue
 		}
 		for _, anchor := range []string{"/cmd/", "/internal/"} {
@@ -208,6 +261,12 @@ func (l *Logger) write(level, msg string, attrs []any) {
 	}
 	if err != nil {
 		line = []byte(prefix + ` {"logging_error":"unsupported attribute"}`)
+	}
+	l.mu.Lock()
+	secrets := append([]string(nil), l.secrets...)
+	l.mu.Unlock()
+	for _, secret := range secrets {
+		line = bytes.ReplaceAll(line, []byte(secret), []byte("[REDACTED]"))
 	}
 	line = append(line, '\n')
 	l.mu.Lock()

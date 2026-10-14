@@ -16,7 +16,7 @@ chmod 600 config.yaml
 ./bin/stock-watcher run -config config.yaml
 ```
 
-`sync` 下载并生成报告，不发送消息。`run` 在交易日 18:05（北京时间）生成 T+1 报告；启动晚于计划时间时，允许在下一交易日开盘前补发。`once` 执行一次同样的调度流程。`status` 查看持久投递状态，`retry` 在停止服务并修正权限、签名等永久错误后解除待发送记录的阻塞。改变配置或股池后重启生效，同一数据日不会重复生成推送；下一数据日使用新配置。
+`sync` 下载并生成报告，不发送消息。`run` 在交易日 18:05（北京时间）生成 T+1 报告；启动晚于计划时间时，允许在下一交易日开盘前补发。`once` 执行一次同样的调度流程。`status` 查看按事件和通道保存的投递状态，`retry [channel]` 在停止服务并修正权限、签名等永久错误后解除指定通道或全部通道的阻塞。改变配置或股池后重启生效，同一数据日不会重复生成推送；下一数据日使用新配置。
 
 `leaders.yaml` 保存已核对的 104 个证券代码和名称，可直接添加或删除股票。用户原名单另外 6 个疑似笔误在 `leaders.pending.yaml`，确认前不参与下载与筛选。上海和深圳 A 股支持带市场前缀的代码；名称不会参与自动猜测。维护者应使用已核对的证券代码。`cmd/resolve-pool` 可辅助核对名称，结果须人工检查。
 
@@ -73,7 +73,7 @@ data/                       # 实际位于 Windows 共享盘
 logs/stock-watcher.log       # 服务器上的有限运行日志
 ```
 
-持久数据使用 UTF-8 JSON、ISO 日期和带时区 RFC3339Nano 时间。日线与投递状态仍为 `schema_version: 1`；旧报告为 v1，短线报告为 v2，内嵌 `research` 和计划为 v1。新程序可继续投递已排定的旧报告，不重写历史投递记录；其他未知版本明确拒绝。价格为人民币，`volume_raw` 为供应商原值，单位标记为 `provider_raw`，`data_field` 记录 `qfqday` / `hfqday` / `day`；缺字段、非有限数、版本错误和损坏状态都会报错，不自动清空状态。日线文件包含来源、复权方式、请求截止日和实际最后一根日线日期；可在 Windows 用编辑器直接读取。新旧两组日线缺失或日期不一致时停止报告生成，不会用复权价格替代真实成交价格。
+持久投递账本使用 `schema_version: 2`、UTF-8 JSON、ISO 日期和带时区 RFC3339Nano 时间；旧版 `schema_version: 1` 的单条待发送记录会在读取时迁移，超过投递窗口 30 天的终态事件会清理。价格为人民币，`volume_raw` 为供应商原值，单位标记为 `provider_raw`，`data_field` 记录 `qfqday` / `hfqday` / `day`；缺字段、非有限数、版本错误和损坏状态都会报错，不自动清空状态。日线文件包含来源、复权方式、请求截止日和实际最后一根日线日期；可在 Windows 用编辑器直接读取。
 
 单个进程持有共享文件锁。JSON 文件先写临时文件、fsync，再原子重命名；共享目录内的软链接被拒绝。`require_cifs: false` 仅适合本地测试，生产应保持 `true`。共享盘故障时停止本轮写入；已保存的数据和待发送记录保留。日志和程序本身占用少量服务器磁盘，行情不会保存第二份服务器副本。
 
@@ -86,9 +86,9 @@ FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/...
 FEISHU_SECRET=...
 ```
 
-在 `config.yaml` 将 `feishu.enabled` 设为 `true`。开启签名时，按[飞书官方签名规则](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot)计算 HMAC-SHA256 和 Base64。只有 HTTP 200 且业务码为 0 才确认送达。429、5xx、限流和网络错误持久重试；401/403、签名或关键词错误阻塞待发送记录，需要修正配置并运行 `retry`。日志不输出 webhook、secret 或原始响应。
+新配置在 `notify.channels` 中声明通道，并通过 `webhook_env`、`secret_env` 引用环境变量。旧 `feishu.enabled` 配置仍兼容。开启签名时，按[飞书官方签名规则](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot)计算 HMAC-SHA256 和 Base64。只有 HTTP 200 且业务码为 0 才确认送达。429、5xx、限流和网络错误持久重试；401/403、签名或关键词错误阻塞对应通道，需要修正配置并运行 `retry feishu-main`。日志不输出 webhook、secret 或原始响应。
 
-推送是至少一次投递：请求成功后、写入确认前异常退出可能重复。卡片包含固定事件 ID。过了目标交易日 09:30 的消息不再发送。没有设置有效 webhook 时 `sync` 和报告预览仍可独立使用。
+推送是至少一次投递：请求成功后、写入确认前异常退出可能重复；重启时在途记录会按可能重复处理。卡片包含固定事件 ID。过了目标交易日 09:30 的消息不再发送。`sync` 和报告预览不依赖通道配置；先以 report-only 模式生成报告，之后启用通道可补发同一数据日的未过期报告。
 
 ## 交易日历与数据源
 

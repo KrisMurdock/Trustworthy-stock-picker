@@ -63,3 +63,44 @@ func TestEnvironmentCredentials(t *testing.T) {
 		t.Fatal("accepted empty data dir")
 	}
 }
+
+func TestNotificationChannelEnvironmentReferences(t *testing.T) {
+	t.Setenv("TEST_FEISHU_WEBHOOK", "https://open.feishu.cn/open-apis/bot/v2/hook/test-only-hook")
+	t.Setenv("TEST_FEISHU_SECRET", "test-secret")
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	text := valid + `notify:
+  channels:
+    - name: feishu-main
+      type: feishu
+      enabled: true
+      webhook_env: TEST_FEISHU_WEBHOOK
+      secret_env: TEST_FEISHU_SECRET
+`
+	if err := os.WriteFile(p, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channels := c.NotificationChannels()
+	if len(channels) != 1 || channels[0].Webhook != "https://open.feishu.cn/open-apis/bot/v2/hook/test-only-hook" || channels[0].Secret != "test-secret" {
+		t.Fatalf("unexpected channel credentials: %+v", channels)
+	}
+}
+
+func TestNotificationChannelNamesAndUnknownFields(t *testing.T) {
+	for _, text := range []string{
+		valid + "notify:\n  channels:\n    - name: Bad Name\n      type: feishu\n      enabled: true\n",
+		valid + "notify:\n  channels:\n    - name: one\n      type: feishu\n      enabled: true\n    - name: one\n      type: feishu\n      enabled: true\n",
+		valid + "notify:\n  channels:\n    - name: one\n      type: feishu\n      enabled: true\n      webhook: secret\n",
+	} {
+		p := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(p, []byte(text), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(p); err == nil || strings.Contains(err.Error(), "secret") {
+			t.Fatalf("accepted invalid channel config or leaked value: %v", err)
+		}
+	}
+}

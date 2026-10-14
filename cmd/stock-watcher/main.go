@@ -15,6 +15,7 @@ import (
 	"stock-watcher/internal/logging"
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/monitor"
+	"stock-watcher/internal/notify"
 	"stock-watcher/internal/storage"
 	"stock-watcher/internal/strategy"
 	"syscall"
@@ -31,7 +32,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check|sync|preview|research|plan|run|once|status|retry [-config config.yaml] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check|sync|preview|research|plan|run|once|status|retry [channel] [-config config.yaml] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -46,8 +47,11 @@ func run(args []string) error {
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
-	if f.NArg() > 0 {
+	if f.NArg() > 0 && command != "retry" {
 		return errors.New("unexpected positional arguments")
+	}
+	if command == "retry" && f.NArg() > 1 {
+		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
 	case "check", "sync", "preview", "research", "plan", "run", "once", "status", "retry":
@@ -96,14 +100,21 @@ func run(args []string) error {
 	defer store.Close()
 	source := market.NewClient(config.Duration(c.Timeout))
 	defer source.Close()
-	sender := feishu.NewClient(c.Feishu.Webhook, c.Feishu.Secret, config.Duration(c.Timeout))
-	defer sender.Close()
-	m := monitor.New(c, store, source, sender, log)
+	channels, closeChannels, err := buildChannels(c)
+	if err != nil {
+		return err
+	}
+	defer closeChannels()
+	for _, channel := range c.NotificationChannels() {
+		log.RegisterSecret(channel.Webhook)
+		log.RegisterSecret(channel.Secret)
+	}
+	m := monitor.New(c, store, source, channels, log)
 	cal := calendar.New(c)
 	if _, err := cal.Trading(calendar.Date(time.Now())); err != nil {
 		return err
 	}
-	log.Info("Stock watcher started", "command", command, "version", version, "pool_size", len(c.Stocks), "feishu_enabled", c.Feishu.Enabled)
+	log.Info("Stock watcher started", "command", command, "version", version, "pool_size", len(c.Stocks), "notification_channels", len(channels))
 	printJSON := func(v any) error { return json.NewEncoder(os.Stdout).Encode(v) }
 	switch command {
 	case "check":
@@ -114,7 +125,7 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		return printJSON(map[string]any{"status": "ready", "pool_size": len(c.Stocks), "cifs_required": c.RequireCIFS, "feishu_enabled": c.Feishu.Enabled, "selection_enabled": c.Selection.Enabled, "calendar_through": c.Calendar.ValidThrough})
+		return printJSON(map[string]any{"status": "ready", "pool_size": len(c.Stocks), "cifs_required": c.RequireCIFS, "notification_channels": len(channels), "selection_enabled": c.Selection.Enabled, "calendar_through": c.Calendar.ValidThrough})
 	case "status":
 		s, err := m.Status()
 		if err != nil {
@@ -148,7 +159,11 @@ func run(args []string) error {
 		}
 		return printJSON(r)
 	case "retry":
-		return m.Retry()
+		channel := ""
+		if f.NArg() == 1 {
+			channel = f.Arg(0)
+		}
+		return m.Retry(channel)
 	case "once":
 		return m.Cycle(ctx)
 	case "run":
@@ -160,4 +175,31 @@ func run(args []string) error {
 		return err
 	}
 	return nil
+}
+
+func buildChannels(c config.Config) ([]notify.Channel, func(), error) {
+	specs := c.NotificationChannels()
+	channels := make([]notify.Channel, 0, len(specs))
+	closers := []func(){}
+	for _, spec := range specs {
+		switch spec.Type {
+		case "feishu":
+			if spec.Webhook == "" {
+				return nil, func() {}, errors.New("enabled Feishu channel requires a webhook")
+			}
+			if err := feishu.ValidateWebhook(spec.Webhook); err != nil {
+				return nil, func() {}, errors.New("enabled Feishu channel has an invalid webhook")
+			}
+			client := feishu.NewNamedClient(spec.Name, spec.Webhook, spec.Secret, config.Duration(c.Timeout))
+			channels = append(channels, client)
+			closers = append(closers, client.Close)
+		default:
+			return nil, func() {}, errors.New("unsupported notification channel type")
+		}
+	}
+	return channels, func() {
+		for _, close := range closers {
+			close()
+		}
+	}, nil
 }

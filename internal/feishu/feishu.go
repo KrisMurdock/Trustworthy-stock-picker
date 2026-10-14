@@ -7,44 +7,66 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"stock-watcher/internal/notify"
 	"stock-watcher/internal/selection"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
-type Failure struct {
-	Status int
-	Code   int
-	Kind   string
+const maxPayloadBytes = 20 * 1024
+
+type Failure = notify.DeliveryError
+
+func ValidateWebhook(webhook string) error {
+	u, err := url.Parse(webhook)
+	if err != nil || u.Scheme != "https" || u.Host != "open.feishu.cn" ||
+		!strings.HasPrefix(u.Path, "/open-apis/bot/v2/hook/") ||
+		len(strings.TrimPrefix(u.Path, "/open-apis/bot/v2/hook/")) < 8 ||
+		u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("invalid Feishu webhook")
+	}
+	return nil
 }
 
-func (f *Failure) Error() string {
-	return fmt.Sprintf("Feishu delivery failed (%s, HTTP %d, code %d)", f.Kind, f.Status, f.Code)
-}
-func (f *Failure) Retryable() bool {
-	return f.Status == 0 || f.Status == 429 || f.Status >= 500 || f.Code == 11232 || f.Code == 99991400
-}
 func Sign(timestamp int64, secret string) string {
 	h := hmac.New(sha256.New, []byte(strconv.FormatInt(timestamp, 10)+"\n"+secret))
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 
 type Client struct {
-	HTTP            *http.Client
-	Webhook, Secret string
+	http    *http.Client
+	name    string
+	webhook string
+	secret  string
+	now     func() time.Time
 }
 
 func NewClient(webhook, secret string, timeout time.Duration) *Client {
-	return &Client{HTTP: &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, Webhook: webhook, Secret: secret}
+	return NewNamedClient("feishu-main", webhook, secret, timeout)
 }
-func (c *Client) Close() { c.HTTP.CloseIdleConnections() }
+
+func NewNamedClient(name, webhook, secret string, timeout time.Duration) *Client {
+	if name == "" {
+		name = "feishu-main"
+	}
+	return &Client{
+		http:    &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		name:    name,
+		webhook: webhook,
+		secret:  secret,
+		now:     time.Now,
+	}
+}
+
 func escape(s string) string {
-	r := strings.NewReplacer("<", "〈", ">", "〉", "*", "＊", "[", "［", "]", "］", "\n", " ", "\r", " ")
-	return r.Replace(s)
+	return strings.NewReplacer("<", "〈", ">", "〉", "*", "＊", "[", "［", "]", "］", "\n", " ", "\r", " ").Replace(s)
 }
 
 func tags(values []string) string {
@@ -71,7 +93,18 @@ func tags(values []string) string {
 	return escape(strings.Join(out, "、"))
 }
 
-func Card(r selection.Report) map[string]any {
+func Card(value any) map[string]any {
+	switch value := value.(type) {
+	case notify.Message:
+		return cardPayload(value, renderContent(value))
+	case selection.Report:
+		return selectionCard(value)
+	default:
+		return cardPayload(notify.Message{Version: 1, Title: "Notification"}, "")
+	}
+}
+
+func selectionCard(r selection.Report) map[string]any {
 	lines := []string{fmt.Sprintf("数据日期：%s · T+1：%s", r.AsOf, r.Target), fmt.Sprintf("龙头池 %d 只 · 有效日线 %d 只 · 排除 %d 只", r.PoolSize, r.Eligible, len(r.Excluded)), fmt.Sprintf("规则：%s · 分数 ≥ %d · 最多 %d 只", r.Strategy, r.MinScore, r.TopN)}
 	lines = append(lines, strings.Join(r.Rules, "\n"))
 	if r.Research != nil {
@@ -127,7 +160,7 @@ func Card(r selection.Report) map[string]any {
 	}
 	if len(r.Excluded) > 0 {
 		codes := []string{}
-		for _, s := range r.Excluded[:min(len(r.Excluded), 10)] {
+		for _, s := range r.Excluded[:minInt(len(r.Excluded), 10)] {
 			codes = append(codes, s.Code+" ("+s.Reason+")")
 		}
 		lines = append(lines, "排除："+strings.Join(codes, ", "))
@@ -135,58 +168,201 @@ func Card(r selection.Report) map[string]any {
 	lines = append(lines, "仅为规则筛选结果，不保证次日表现。", "事件 ID："+r.ID)
 	return makeCard("A股龙头池 · T+1 日线筛选", lines)
 }
-func makeCard(title string, lines []string) map[string]any {
-	return map[string]any{"msg_type": "interactive", "card": map[string]any{"header": map[string]any{"template": "blue", "title": map[string]any{"tag": "plain_text", "content": title}}, "elements": []any{map[string]any{"tag": "div", "text": map[string]any{"tag": "lark_md", "content": strings.Join(lines, "\n\n")}}}}}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
-func (c *Client) Send(ctx context.Context, r selection.Report) error {
-	payload := Card(r)
-	if c.Secret != "" {
-		ts := time.Now().Unix()
-		payload["timestamp"] = strconv.FormatInt(ts, 10)
-		payload["sign"] = Sign(ts, c.Secret)
+
+func (c *Client) Name() string { return c.name }
+
+func (c *Client) Close() {
+	if c.http != nil {
+		c.http.CloseIdleConnections()
 	}
-	data, err := json.Marshal(payload)
-	if err != nil || len(data) > 20*1024 {
-		return &Failure{Status: 400, Kind: "payload"}
+}
+
+func renderContent(message notify.Message) string {
+	lines := []string{}
+	for _, section := range message.Sections {
+		if section.Heading != "" {
+			lines = append(lines, section.Heading)
+		}
+		lines = append(lines, section.Lines...)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Webhook, bytes.NewReader(data))
+	return strings.Join(lines, "\n\n")
+}
+
+func makeCard(title string, lines []string) map[string]any {
+	return cardPayload(notify.Message{Version: 1, Title: title, Sections: []notify.Section{{Lines: lines}}}, strings.Join(lines, "\n\n"))
+}
+
+func cardPayload(message notify.Message, content string) map[string]any {
+	title := message.Title
+	if title == "" {
+		title = "Notification"
+	}
+	return map[string]any{
+		"msg_type": "interactive",
+		"card": map[string]any{
+			"header": map[string]any{
+				"template": "blue",
+				"title":    map[string]any{"tag": "plain_text", "content": title},
+			},
+			"elements": []any{
+				map[string]any{
+					"tag":  "div",
+					"text": map[string]any{"tag": "lark_md", "content": content},
+				},
+			},
+		},
+	}
+}
+
+func (c *Client) Send(ctx context.Context, message notify.Message) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	timestamp := int64(0)
+	if c.secret != "" {
+		timestamp = c.now().Unix()
+	}
+	content := renderContent(message)
+	data, err := c.marshal(message, content, timestamp)
 	if err != nil {
-		return &Failure{Status: 400, Kind: "request"}
+		return &notify.DeliveryError{Channel: c.Name(), Kind: notify.Permanent, Reason: "payload_encode"}
+	}
+	if len(data) > maxPayloadBytes {
+		content, data = c.fitPayload(message, timestamp, content)
+		if len(data) > maxPayloadBytes {
+			return &notify.DeliveryError{Channel: c.Name(), Kind: notify.Permanent, Reason: "payload_limit"}
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.webhook, bytes.NewReader(data))
+	if err != nil {
+		return &notify.DeliveryError{Channel: c.Name(), Kind: notify.Permanent, Reason: "request_build"}
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return &Failure{Kind: "network"}
+		return &notify.DeliveryError{Channel: c.Name(), Kind: notify.Retryable, Reason: "network"}
 	}
 	defer resp.Body.Close()
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024+1))
+	if readErr != nil || len(body) > 64*1024 {
+		return &notify.DeliveryError{Channel: c.Name(), Kind: notify.Unknown, Status: resp.StatusCode, Reason: "response_read"}
+	}
 	if resp.StatusCode != http.StatusOK {
-		return &Failure{Status: resp.StatusCode, Kind: "status"}
+		return &notify.DeliveryError{
+			Channel:    c.Name(),
+			Kind:       classifyHTTPStatus(resp.StatusCode),
+			Status:     resp.StatusCode,
+			RetryAfter: retryAfter(resp.Header.Get("Retry-After"), c.now()),
+			Reason:     "http_status",
+		}
 	}
-	data, err = io.ReadAll(io.LimitReader(resp.Body, 64*1024+1))
-	if err != nil || len(data) > 64*1024 {
-		return &Failure{Kind: "response"}
-	}
-	var body struct {
+	var result struct {
 		Code   *int `json:"code"`
 		Legacy *int `json:"StatusCode"`
 	}
-	if json.Unmarshal(data, &body) != nil {
-		return &Failure{Kind: "response"}
+	if json.Unmarshal(body, &result) != nil {
+		return &notify.DeliveryError{Channel: c.Name(), Kind: notify.Unknown, Status: resp.StatusCode, Reason: "response_decode"}
 	}
-	if body.Code != nil {
-		if *body.Code == 0 {
-			return nil
-		}
-		return &Failure{Status: 200, Code: *body.Code, Kind: "rejected"}
+	code := result.Code
+	if code == nil {
+		code = result.Legacy
 	}
-	if body.Legacy != nil {
-		if *body.Legacy == 0 {
-			return nil
-		}
-		return &Failure{Status: 200, Code: *body.Legacy, Kind: "rejected"}
+	if code == nil {
+		return &notify.DeliveryError{Channel: c.Name(), Kind: notify.Unknown, Status: resp.StatusCode, Reason: "missing_result_code"}
 	}
-	return &Failure{Status: 200, Kind: "missing_result_code"}
+	if *code == 0 {
+		return nil
+	}
+	kind := notify.Permanent
+	if *code == 11232 || *code == 99991400 {
+		kind = notify.Retryable
+	}
+	return &notify.DeliveryError{Channel: c.Name(), Kind: kind, Status: resp.StatusCode, Reason: "business_rejected"}
 }
+
+func (c *Client) marshal(message notify.Message, content string, timestamp int64) ([]byte, error) {
+	payload := cardPayload(message, content)
+	if timestamp != 0 {
+		payload["timestamp"] = strconv.FormatInt(timestamp, 10)
+		payload["sign"] = Sign(timestamp, c.secret)
+	}
+	return json.Marshal(payload)
+}
+
+func (c *Client) fitPayload(message notify.Message, timestamp int64, content string) (string, []byte) {
+	base := content
+	suffix := ""
+	if message.EventID != "" {
+		marker := "事件 ID：" + message.EventID
+		if index := strings.Index(base, marker); index >= 0 {
+			base = strings.TrimSpace(base[:index])
+		}
+		suffix = "\n\n" + marker
+	}
+	low, high := 0, len(base)
+	bestContent := ""
+	var bestData []byte
+	for low <= high {
+		mid := (low + high) / 2
+		candidate := truncateUTF8(base, mid) + suffix
+		data, err := c.marshal(message, candidate, timestamp)
+		if err != nil {
+			return "", nil
+		}
+		if len(data) <= maxPayloadBytes {
+			bestContent, bestData = candidate, data
+			low = mid + 1
+		} else {
+			high = mid - 1
+		}
+	}
+	return bestContent, bestData
+}
+
+func truncateUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	s = s[:maxBytes]
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+func classifyHTTPStatus(status int) notify.Kind {
+	switch {
+	case status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500:
+		return notify.Retryable
+	case status == http.StatusUnauthorized || status == http.StatusForbidden || status >= 400:
+		return notify.Permanent
+	default:
+		return notify.Unknown
+	}
+}
+
+func retryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if at, err := http.ParseTime(value); err == nil && at.After(now) {
+		return at.Sub(now)
+	}
+	return 0
+}
+
+var _ notify.Channel = (*Client)(nil)
