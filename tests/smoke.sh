@@ -122,6 +122,9 @@ YAML
     exit 1
   fi
   docker inspect "$CONTAINER_ID" | jq -e '.[0].Config.Env | index("SMOKE_LITERAL=$not_expanded") != null' >/dev/null
+  "${COMPOSE[@]}" exec -T stock-watcher stock-watcher version | cmp - "$FIXTURE/version.txt"
+  "${COMPOSE[@]}" exec -T stock-watcher stock-watcher status -config /app/config.yaml \
+    | tail -n 1 | jq -e '.schema_version == 2' >/dev/null
   "${COMPOSE[@]}" stop --timeout 10 >/dev/null
   test "$(docker inspect -f '{{.State.ExitCode}}' "$CONTAINER_ID")" == 0
   docker logs "$CONTAINER_ID" 2>&1 | grep -q 'Stock watcher stopped'

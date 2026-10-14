@@ -36,14 +36,14 @@ docker compose --env-file docker/.env -f docker/compose.yaml run --rm --no-deps 
 docker compose --env-file docker/.env -f docker/compose.yaml up -d --no-build
 docker compose --env-file docker/.env -f docker/compose.yaml ps
 docker compose --env-file docker/.env -f docker/compose.yaml logs --tail 50
-docker compose --env-file docker/.env -f docker/compose.yaml exec stock-watcher status -config /app/config.yaml
+docker compose --env-file docker/.env -f docker/compose.yaml exec stock-watcher stock-watcher status -config /app/config.yaml
 ```
 
 check 是读写探针与配置检查；服务主命令是 `run`，健康状态应为 healthy。没有对外 HTTP 端口。容器内 /data 直接映射 Windows，/logs 是本地有限滚动日志。
 
 ## 升级、停止与回滚
 
-升级先构建明确 SHA 的镜像并执行 version/check，再停止旧实例，将 docker/.env 的 IMAGE/VERSION 更新为新值，执行 `up -d --no-build --force-recreate`。使用 `docker image inspect --format '{{.Id}}' <image>` 记录实际镜像 ID；`exec stock-watcher version` 核对运行制品。
+升级先构建明确 SHA 的镜像并执行 version/check，再停止旧实例，将 docker/.env 的 IMAGE/VERSION 更新为新值，执行 `up -d --no-build --force-recreate`。使用 `docker image inspect --format '{{.Id}}' <image>` 记录实际镜像 ID；`exec stock-watcher stock-watcher version` 核对运行制品。exec 后第一个 stock-watcher 是服务名，第二个是容器内二进制名。
 
 ```bash
 docker compose --env-file docker/.env -f docker/compose.yaml down
