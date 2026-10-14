@@ -1,25 +1,16 @@
-__pycache__/
-*.py[cod]
-*.egg-info/
-dist/
-build/
-.venv/
-venv/
-.env
-.coverage
-htmlcov/
-.pytest_cache/
-.ruff_cache/
-reasonix.toml
-config.yaml
-positions.yaml
+# Local configuration
+/.env
+/*.env
+/reasonix.toml
+/config.yaml
+/config.runtime.yaml
 
 # Go runtime and remote data
 /data
 /logs/
 /bin/
-/config.runtime.yaml
 *.test
+/coverage.out
 
 # Coding-agent planning artifacts
 /docs/adr/
@@ -27,4 +18,6 @@ positions.yaml
 /docs/superpowers/
 /.scratch/
 /.codegraph/
+/.superpowers/
+/.claude/tdd/
 /CONTEXT.md

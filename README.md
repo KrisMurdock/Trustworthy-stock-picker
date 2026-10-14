@@ -1,6 +1,6 @@
 # stock_watcher
 
-原生 Go 的 A 股龙头股池日线监控。服务器下载历史日线，直接写入 Windows 共享盘；收盘后筛选下一交易日 T+1 的候选股，并通过飞书自定义机器人推送。生产运行不需要 Python。
+原生 Go 的 A 股龙头股池日线监控。服务器下载历史日线，直接写入 Windows 共享盘；收盘后筛选下一交易日 T+1 的候选股，并通过飞书自定义机器人推送。启动、下载、筛选和推送均由 Go 程序执行。
 
 ## 运行
 
@@ -65,7 +65,7 @@ FEISHU_SECRET=...
 
 2026 日历来自[深交所休市通知](https://www.szse.cn/disclosure/notice/general/t20251222_618087.html)。T+1 跳过周末和配置中的节假日；日历覆盖到期会报错，应提前按新年度通知更新。未收盘日期不会用于筛选。
 
-日线直接请求腾讯行情 HTTP 接口，沿用旧项目的数据协议，未调用 AKShare。第三方免费行情接口可能限流或改变协议；HTTP 超时默认 10 秒，每只股票请求之间至少 350 毫秒，错误可见且不会生成假数据。配置修改、旧 TUI 热加载、港美股、持仓、新闻及 AI 群聊不属于新运行时。旧配置会被新格式明确拒绝，应从示例迁移股池、时间与飞书凭证。
+日线直接请求腾讯行情 HTTP 接口，沿用旧项目的数据协议。第三方免费行情接口可能限流或改变协议；HTTP 超时默认 10 秒，每只股票请求之间至少 350 毫秒，错误可见且不会生成假数据。运行配置仅包含股池、日线、筛选、飞书和交易日历，修改后需重启生效；不兼容的配置字段会被明确拒绝。
 
 ## 部署与验证
 
@@ -87,6 +87,22 @@ docker run --rm --cpus=1 --memory=256m \
   stock-watcher:<commit-sha> run -config /app/config.yaml
 ```
 
-`deploy/stock-watcher.service` 是宿主机服务模板；合并并验证目标目录的制品后安装和启用。`./bin/stock-watcher version` 返回构建对应的提交 SHA。服务安装不会自动配置 Windows 开机 SSH 隧道；目前密码登录隧道仍需要保持终端开启，无人值守重连需另行配置专用 SSH 密钥。
+宿主机直接使用 `bin/stock-watcher` 或 systemd 运行，服务模板中的工作目录为 `/root/data/codebase/toys_project/stock_watcher`。确认私有配置与 Windows 挂载可用后安装：
+
+```bash
+sudo install -m 644 deploy/stock-watcher.service /etc/systemd/system/stock-watcher.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now stock-watcher.service
+sudo systemctl status stock-watcher.service
+```
+
+SELinux Enforcing 环境需为程序配置 `bin_t` 文件路径策略。本服务器已经配置该策略；每次重新构建后、启动或重启服务前恢复标签：
+
+```bash
+sudo restorecon -v /root/data/codebase/toys_project/stock_watcher/bin/stock-watcher
+sudo systemctl restart stock-watcher.service
+```
+
+`./bin/stock-watcher version` 返回构建对应的提交 SHA。服务安装不会自动配置 Windows 开机 SSH 隧道；目前密码登录隧道仍需要保持终端开启，无人值守重连需另行配置专用 SSH 密钥。
 
 日志 stdout 和 `logs/stock-watcher.log` 格式一致：`[带时区时间] [LEVEL] [文件:行号] 英文消息 {JSON 属性}`。环境变量 `STOCK_WATCHER_LOG_MAX_MB`（10）、`STOCK_WATCHER_LOG_MAX_DAYS`（7）、`STOCK_WATCHER_LOG_BACKUPS`（10）控制大小、天数、份数轮转及 gzip 压缩；`STOCK_WATCHER_LOG_JSON` 开启整条 JSON，`STOCK_WATCHER_LOG_COLOR` 支持 auto/force/off，文件与 JSON 永无颜色。
