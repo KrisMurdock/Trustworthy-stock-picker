@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Engine = "development_next_day_v4"
+const Engine = "conditional_entry_v5"
 
 type Calendar struct {
 	From     string   `json:"from"`
@@ -30,32 +30,38 @@ type Excluded struct {
 	Reason string `json:"reason"`
 }
 type DataSummary struct {
-	ID         string          `json:"id"`
-	AsOf       string          `json:"as_of"`
-	From       string          `json:"from"`
-	PoolSize   int             `json:"pool_size"`
-	Included   int             `json:"included"`
-	Excluded   []Excluded      `json:"excluded"`
-	Calendar   Calendar        `json:"calendar"`
-	Parameters config.Strategy `json:"parameters"`
-	TopN       int             `json:"top_n"`
+	ID            string          `json:"id"`
+	AsOf          string          `json:"as_of"`
+	From          string          `json:"from"`
+	PoolSize      int             `json:"pool_size"`
+	Included      int             `json:"included"`
+	Excluded      []Excluded      `json:"excluded"`
+	Calendar      Calendar        `json:"calendar"`
+	Parameters    config.Strategy `json:"parameters"`
+	TopN          int             `json:"top_n"`
+	MinuteFrom    string          `json:"minute_from,omitempty"`
+	MinuteThrough string          `json:"minute_through,omitempty"`
+	MinuteStocks  int             `json:"minute_stocks,omitempty"`
 }
 type Snapshot struct {
 	Version int `json:"schema_version"`
 	DataSummary
-	Stocks   []config.Stock   `json:"stocks"`
-	Adjusted []market.History `json:"adjusted"`
-	Raw      []market.History `json:"raw"`
+	Stocks   []config.Stock         `json:"stocks"`
+	Adjusted []market.History       `json:"adjusted"`
+	Raw      []market.History       `json:"raw"`
+	Minutes  []market.MinuteHistory `json:"minutes,omitempty"`
 }
 type Spec struct {
-	Title           string   `json:"title"`
-	Direction       string   `json:"direction"`
-	Hypothesis      string   `json:"hypothesis"`
-	Change          string   `json:"change"`
-	RequireEvidence bool     `json:"require_risk_evidence,omitempty"`
-	MaxUpperWick    *float64 `json:"max_upper_wick,omitempty"`
-	NextDayRule     string   `json:"next_day_rule,omitempty"`
-	Criteria        string   `json:"criteria"`
+	Title           string                  `json:"title"`
+	Direction       string                  `json:"direction"`
+	Hypothesis      string                  `json:"hypothesis"`
+	Change          string                  `json:"change"`
+	RequireEvidence bool                    `json:"require_risk_evidence,omitempty"`
+	MaxUpperWick    *float64                `json:"max_upper_wick,omitempty"`
+	NextDayRule     string                  `json:"next_day_rule,omitempty"`
+	EntryMode       string                  `json:"entry_mode,omitempty"`
+	Range           *strategy.BacktestRange `json:"signal_range,omitempty"`
+	Criteria        string                  `json:"criteria"`
 }
 type Finding struct {
 	Kind     string   `json:"kind"`
@@ -96,6 +102,9 @@ func ValidID(id string) bool {
 	return err == nil && len(b) == 16 && id == hex.EncodeToString(b)
 }
 func Specification(policy string) (Spec, error) {
+	if policy == "conditional-entry" {
+		return Spec{Title: "条件低吸 · 买入日浮盈与次日止盈", Direction: "第二天到价反弹买入，第三天触达净盈利2.5%／3%", Hypothesis: "预先确定低吸区间，在当时已确认的反弹后入场，检验买入日收盘扣成本浮盈为正以及第三天止盈的联合成功率。", Change: "信号日原始收盘价下方0.5%～2%为区间；完成5分钟收盘回到区间且从当时已知日内低点反弹≥0.3%，下一根5分钟开盘含滑点仍在区间才买，最迟14:30；此前5分钟收盘跌破下沿或首次触发后开盘跳出区间则放弃。候选在前一日固定，不按未来触发或盈亏补名额。", Criteria: "每笔净亏损严格<3%；买入日收盘估值扣买入成本、预留卖出税费及滑点后>0，非当日涨幅为正。第三天仅计退出前最高价净触达2.5%／3%，联合成功率争取≥80%，分母为全部入场（含未决与买入日亏损）。至少30笔完成和10个信号日，缺失分钟和未决不按安全处理；不保证未来收盘或实盘收益。未指定区间时保留最新3个分钟交易日；显式区间不声明独立留出，短历史仅固定规则试验。", NextDayRule: "baseline", EntryMode: strategy.ConditionalEntryMode}, nil
+	}
 	if strings.HasPrefix(policy, "next-day-") {
 		return nextDaySpecification(strings.TrimPrefix(policy, "next-day-"))
 	}
@@ -190,6 +199,9 @@ func NewSnapshot(c config.Config, asof string, adjusted, raw []market.History) (
 	return s, nil
 }
 func NewRecord(snapshot Snapshot, spec Spec, parent *Record, version string) (Record, error) {
+	if spec.EntryMode != "" && len(snapshot.Minutes) == 0 {
+		return Record{}, errors.New("conditional entry requires a snapshot with saved five-minute bars; start a new experiment without -parent")
+	}
 	token := make([]byte, 16)
 	if _, err := rand.Read(token); err != nil {
 		return Record{}, err
@@ -209,7 +221,7 @@ func NewRecord(snapshot Snapshot, spec Spec, parent *Record, version string) (Re
 	return r, nil
 }
 func Comparable(a, b Record) bool {
-	return a.Engine == b.Engine && a.CodeVersion == b.CodeVersion && a.Data.ID == b.Data.ID && a.Status == "completed" && b.Status == "completed" && (a.Spec.NextDayRule != "") == (b.Spec.NextDayRule != "")
+	return a.Engine == b.Engine && a.CodeVersion == b.CodeVersion && a.Data.ID == b.Data.ID && a.Status == "completed" && b.Status == "completed" && (a.Spec.NextDayRule != "") == (b.Spec.NextDayRule != "") && a.Spec.EntryMode == b.Spec.EntryMode && sameRange(a.Spec.Range, b.Spec.Range)
 }
 func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Record) error {
 	c := config.Defaults()
@@ -219,7 +231,13 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 	c.Calendar.ValidFrom = snapshot.Calendar.From
 	c.Calendar.ValidThrough = snapshot.Calendar.Through
 	c.Calendar.Holidays = snapshot.Calendar.Holidays
-	x, err := strategy.AnalyzeDevelopment(ctx, c, snapshot.Adjusted, snapshot.Raw, snapshot.AsOf, strategy.EntryPolicy{MaxUpperWick: record.Spec.MaxUpperWick, RequireEvidence: record.Spec.RequireEvidence, NextDayRule: record.Spec.NextDayRule})
+	var x strategy.DevelopmentResult
+	var err error
+	if record.Spec.EntryMode == strategy.ConditionalEntryMode {
+		x, err = strategy.AnalyzeConditional(ctx, c, snapshot.Adjusted, snapshot.Raw, snapshot.Minutes, snapshot.AsOf, record.Spec.Range)
+	} else {
+		x, err = strategy.AnalyzeDevelopment(ctx, c, snapshot.Adjusted, snapshot.Raw, snapshot.AsOf, strategy.EntryPolicy{MaxUpperWick: record.Spec.MaxUpperWick, RequireEvidence: record.Spec.RequireEvidence, NextDayRule: record.Spec.NextDayRule, Range: record.Spec.Range})
+	}
 	if err != nil {
 		return err
 	}
@@ -274,6 +292,11 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 	}
 	result.Findings = append(result.Findings, Finding{"limitation", "样本来自当前股池及成功保存的数据；存在股池选择偏差。日线模拟并非实际成交，单笔统计不等于资金组合收益。", []string{}})
 	record.Verdict = developmentVerdict(*record, parent)
+	if record.Spec.EntryMode != "" {
+		result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("买入日收盘扣成本浮盈为正 %d 笔，不为正 %d 笔，未知 %d 笔；入场路径缺失 %d 条。买入日为正且第三天触达2.5%% / 3%%的联合成功样本 %d / %d，入场分母 %d。", stats.EntryDayPositive, stats.EntryDayNonPositive, stats.EntryDayUnknown, stats.UnknownEntries, stats.Joint25, stats.Joint30, stats.Samples), []string{}})
+		result.Findings = append(result.Findings, Finding{"limitation", "本轮为固定分钟规则试运行。早期分钟日期可能与旧日线留出期重叠，已查看日期不得再声称是旧策略未见样本；后续最终验证须重新冻结新数据。", []string{}})
+		result.Next = append(result.Next, "核对未触发、跌破区间、入场跳价和缺失分钟的原因；买入日亏损保留为失败，不按收盘结果删样本。", "冻结入场规则并积累更多完整分钟交易日，分别检查买入日正浮盈率与两档联合成功率；没有合格证据不发布买入推荐。")
+	}
 	if record.Spec.NextDayRule != "" {
 		if stats.Samples == 0 || stats.HighTouchSamples == 0 {
 			result.Findings = append(result.Findings, Finding{"measured", "没有可核实的次日触达样本，成功率和距 80% 的差距暂不可计算；不能把空仓或未知证据记为 0% 或 100%。", []string{}})
@@ -312,10 +335,22 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 	if len(result.Next) == 0 {
 		result.Next = append(result.Next, "以当前基线为父实验，单独验证上影线 ≤ 0.30 的入选过滤。")
 	}
-	result.Next = append(result.Next, "最终保留区间未计算收益；冻结候选后再单独设计最终验证。")
+	if record.Spec.Range != nil {
+		result.Findings = append(result.Findings, Finding{"limitation", "本轮使用显式信号日期区间 " + record.Spec.Range.From + " 至 " + record.Spec.Range.Through + "，没有声明独立留出区间；已查看区间不能再次作为未见验证集。", []string{}})
+		result.Next = append(result.Next, "候选冻结后使用新的未查看区间进行独立验证；不能把本轮显式回测区间的最高结果当作未来成功率。")
+	} else {
+		result.Next = append(result.Next, "最终保留区间未计算收益；冻结候选后再单独设计最终验证。")
+	}
 	now := time.Now().UTC()
 	record.FinishedAt = &now
 	return nil
+}
+
+func sameRange(a, b *strategy.BacktestRange) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 func ValidateSnapshot(s Snapshot) error {

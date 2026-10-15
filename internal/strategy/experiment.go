@@ -12,13 +12,14 @@ import (
 // ExperimentTrade retains the exact signal features and simulated execution.
 // Selected=false records a rejected original top-N candidate for attribution.
 type ExperimentTrade struct {
-	ID       string   `json:"id"`
-	Code     string   `json:"code"`
-	Date     string   `json:"date"`
-	Rank     int      `json:"rank"`
-	Selected bool     `json:"selected"`
-	Features Features `json:"features"`
-	Outcome  Outcome  `json:"outcome"`
+	ID        string     `json:"id"`
+	Code      string     `json:"code"`
+	Date      string     `json:"date"`
+	Rank      int        `json:"rank"`
+	Selected  bool       `json:"selected"`
+	Features  Features   `json:"features"`
+	Outcome   Outcome    `json:"outcome"`
+	EntryZone *EntryZone `json:"entry_zone,omitempty"`
 }
 type DevelopmentResult struct {
 	Research       Research          `json:"research"`
@@ -30,6 +31,7 @@ type EntryPolicy struct {
 	MaxUpperWick    *float64
 	RequireEvidence bool
 	NextDayRule     string
+	Range           *BacktestRange
 }
 
 type developmentOptions struct {
@@ -37,6 +39,7 @@ type developmentOptions struct {
 	maxUpperWick    *float64
 	requireEvidence bool
 	nextDayRule     string
+	rangeFilter     *BacktestRange
 	trades          []ExperimentTrade
 }
 
@@ -52,6 +55,13 @@ func AnalyzeDevelopment(ctx context.Context, c config.Config, histories, raw []m
 	}
 	if !validNextDayRule(policy.NextDayRule) {
 		return result, errors.New("unknown next-day entry rule")
+	}
+	horizon := c.Strategy.MaxHoldingDays
+	if policy.NextDayRule != "" {
+		horizon = 1
+	}
+	if err := policy.Range.Validate(c, asof, horizon); err != nil {
+		return result, err
 	}
 	data, err := datasets(c, histories, raw, asof)
 	if err != nil {
@@ -76,17 +86,19 @@ func AnalyzeDevelopment(ctx context.Context, c config.Config, histories, raw []m
 		dates = append(dates, date)
 	}
 	sort.Strings(dates)
-	if len(dates) <= c.Strategy.MinTrainingDays+c.Strategy.HoldoutDays+c.Strategy.MaxHoldingDays+1 {
+	if policy.Range == nil && len(dates) <= c.Strategy.MinTrainingDays+c.Strategy.HoldoutDays+c.Strategy.MaxHoldingDays+1 {
 		return result, errors.New("insufficient signal dates for training and a reserved final interval")
 	}
-	result.HoldoutFrom = dates[len(dates)-c.Strategy.HoldoutDays]
-	result.HoldoutThrough = asof
+	if policy.Range == nil {
+		result.HoldoutFrom = dates[len(dates)-c.Strategy.HoldoutDays]
+		result.HoldoutThrough = asof
+	}
 	// Preserve the snapshot's original reserved boundary before shortening the
 	// exit horizon. A shorter horizon must not consume previously held-out dates.
 	if policy.NextDayRule != "" {
 		c.Strategy.MaxHoldingDays = 1
 	}
-	options := &developmentOptions{boundary: result.HoldoutFrom, maxUpperWick: policy.MaxUpperWick, requireEvidence: policy.RequireEvidence, nextDayRule: policy.NextDayRule, trades: []ExperimentTrade{}}
+	options := &developmentOptions{boundary: result.HoldoutFrom, maxUpperWick: policy.MaxUpperWick, requireEvidence: policy.RequireEvidence, nextDayRule: policy.NextDayRule, rangeFilter: policy.Range, trades: []ExperimentTrade{}}
 	x, err := analyze(ctx, c, histories, raw, asof, options)
 	if err != nil {
 		return result, err

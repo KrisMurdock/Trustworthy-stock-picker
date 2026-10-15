@@ -4,24 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/experiment"
 	"stock-watcher/internal/logging"
+	"stock-watcher/internal/market"
 	"stock-watcher/internal/storage"
+	"stock-watcher/internal/strategy"
 	"time"
 )
 
 // The experiment path never constructs market providers or notification clients.
-func runExperiment(ctx context.Context, c config.Config, asof, parentID, policy string, log *logging.Logger) error {
+func runExperiment(ctx context.Context, c config.Config, asof, parentID, policy string, log *logging.Logger, ranges ...*strategy.BacktestRange) error {
 	spec, err := experiment.Specification(policy)
 	if err != nil {
 		return err
 	}
+	if len(ranges) > 0 {
+		spec.Range = ranges[0]
+	}
 	if parentID != "" && !experiment.ValidID(parentID) {
 		return errors.New("invalid parent experiment ID")
 	}
-	if policy != "baseline" && policy != "next-day-baseline" && parentID == "" {
+	if policy != "baseline" && policy != "next-day-baseline" && policy != "conditional-entry" && parentID == "" {
 		return errors.New("a contrast experiment requires -parent")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
@@ -39,6 +45,9 @@ func runExperiment(ctx context.Context, c config.Config, asof, parentID, policy 
 			return err
 		}
 		parent = &p
+		if spec.Range == nil {
+			spec.Range = p.Spec.Range
+		}
 		if asof != "" && asof != p.Data.AsOf {
 			return errors.New("as-of differs from the parent snapshot")
 		}
@@ -71,6 +80,36 @@ func runExperiment(ctx context.Context, c config.Config, asof, parentID, policy 
 		}
 		snapshot, err = experiment.NewSnapshot(c, asof, h, r)
 		if err != nil {
+			return err
+		}
+		if spec.EntryMode != "" {
+			minutes := []market.MinuteHistory{}
+			for _, stock := range snapshot.Stocks {
+				h, readErr := marketDB.LoadMinutes(ctx, stock, 5)
+				if errors.Is(readErr, fs.ErrNotExist) {
+					continue
+				}
+				if readErr != nil {
+					return readErr
+				}
+				minutes = append(minutes, h.MinuteHistory)
+			}
+			snapshot, err = experiment.WithMinutes(snapshot, minutes)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if spec.Range != nil {
+		frozen := c
+		frozen.Calendar.ValidFrom = snapshot.Calendar.From
+		frozen.Calendar.ValidThrough = snapshot.Calendar.Through
+		frozen.Calendar.Holidays = snapshot.Calendar.Holidays
+		horizon := snapshot.Parameters.MaxHoldingDays
+		if spec.NextDayRule != "" {
+			horizon = 1
+		}
+		if err := spec.Range.Validate(frozen, snapshot.AsOf, horizon); err != nil {
 			return err
 		}
 	}

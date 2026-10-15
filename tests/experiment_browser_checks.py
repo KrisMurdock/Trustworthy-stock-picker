@@ -11,17 +11,17 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     page.get_by_role("link", name="策略实验室", exact=True).click()
     expect(page).to_have_title("策略实验室 · Stock Watcher")
     assert urlparse(page.url).path == "/experiments"
-    expect(page.locator(".experiment-item")).to_have_count(3)
+    expect(page.locator(".experiment-item")).to_have_count(4)
     payload = context.request.get(url + "/api/experiments").json()
     records = payload["experiments"]
     child = next(r for r in records if r["spec"].get("max_upper_wick") is not None)
-    parent = next(r for r in records if not r.get("parent_id"))
+    parent = next(r for r in records if not r.get("parent_id") and not r["spec"].get("entry_mode"))
     page.locator(f'.experiment-item[data-id="{child["id"]}"]').click()
     expect(page.locator("#run-title")).to_have_text("上影线过滤 · 单变量对照")
     assert "id=" + child["id"] in page.url
     expect(page.locator("#run-hypothesis")).to_contain_text("30%")
     expect(page.locator("#comparison-note")).to_contain_text("口径一致")
-    expect(page.locator("#comparison-body tr")).to_have_count(25)
+    expect(page.locator("#comparison-body tr")).to_have_count(31)
     expect(page.locator("#run-holdout")).not_to_have_text("待划分")
     expect(page.locator("#run-next")).not_to_be_empty()
     expect(page.locator("#validation-rules")).to_contain_text("最高价触达 2.5%／3% 或以上")
@@ -79,7 +79,7 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
         response = context.request.get(url + "/assets/" + asset)
         assert response.status == 200 and response.headers["cache-control"] == "no-cache"
         assert hashlib.sha256(response.body()).digest() == hashlib.sha256((root / "internal/dashboard/static" / asset).read_bytes()).digest()
-    next_day = next(r for r in records if r["spec"].get("next_day_rule") == "baseline")
+    next_day = next(r for r in records if r["spec"].get("next_day_rule") == "baseline" and not r["spec"].get("entry_mode"))
     page.locator(f'.experiment-item[data-id="{next_day["id"]}"]').click()
     expect(page.locator("#run-title")).to_have_text("次日退出基线")
     expect(page.locator("#next-day-mode")).to_contain_text("次日退出实验")
@@ -100,6 +100,39 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     page.locator("#trade-filter").select_option("selected")
     page.locator(f'.experiment-item[data-id="{child["id"]}"]').click()
     expect(page.locator("#next-day-mode")).to_contain_text("原持仓期限档案")
+    conditional = next(r for r in records if r["spec"].get("entry_mode"))
+    page.locator(f'.experiment-item[data-id="{conditional["id"]}"]').click()
+    expect(page.locator("#run-title")).to_have_text("条件低吸 · 买入日浮盈与次日止盈")
+    expect(page.locator("#entry-mode-description")).to_contain_text("下一根5分钟")
+    expect(page.locator("#run-validation-label")).to_contain_text("未声明独立验证集")
+    actual = context.request.get(url + "/api/experiments?id=" + conditional["id"]).json()
+    stats = actual["current_review"]["stats"]
+    assert stats["samples"] > 0 and stats["entry_day_known"] > 0
+    expect(page.locator("#entry-day-rate")).to_contain_text(f'{stats["entry_day_positive_rate"] * 100:.2f}%')
+    expect(page.locator("#joint-rates")).to_contain_text(f'{stats["joint_2_5_rate"] * 100:.2f}%')
+    page.locator("#trade-filter").select_option("entry-negative")
+    expect(page.locator("#trade-page")).to_contain_text(f'{stats["entry_day_nonpositive"]} 条')
+    page.locator("#trade-filter").select_option("joint25")
+    expect(page.locator("#trade-page")).to_contain_text(f'{stats["joint_2_5_count"]} 条')
+    page.locator("#trade-filter").select_option("selected")
+    page.locator("#trade-body button").first.click()
+    expect(page.locator("#evidence-detail")).to_contain_text("买入区间")
+    expect(page.locator("#evidence-detail")).to_contain_text("买入日收盘净浮盈")
+    interval = actual["spec"]["signal_range"]
+    page.locator("#backtest-from").fill(interval["from"])
+    page.locator("#backtest-through").fill(interval["through"])
+    page.get_by_role("button", name="生成复现命令").click()
+    expect(page.locator("#backtest-command")).to_contain_text("-policy conditional-entry -parent " + conditional["id"])
+    expect(page.locator("#backtest-command")).to_contain_text("-from " + interval["from"] + " -through " + interval["through"])
+    page.locator("#backtest-from").fill("2026-12-31")
+    page.get_by_role("button", name="生成复现命令").click()
+    expect(page.locator("#backtest-command-status")).to_contain_text("顺序正确")
+    expect(page.locator("#backtest-command")).to_be_empty()
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), "conditional page overflow"
+    page.screenshot(path=str(screenshots / f"{kind}-conditional.png"), full_page=True)
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    page.locator(f'.experiment-item[data-id="{child["id"]}"]').click()
     state["injecting"] = True
     pattern = "**/api/experiments"
     for status, message in ((401, "授权"), (403, "授权"), (503, "暂时不可用")):

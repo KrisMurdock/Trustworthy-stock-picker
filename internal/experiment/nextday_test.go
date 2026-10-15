@@ -1,6 +1,9 @@
 package experiment
 
-import "testing"
+import (
+	"stock-watcher/internal/strategy"
+	"testing"
+)
 
 func TestNextDayPoliciesSeparateObservationWindowAndLineage(t *testing.T) {
 	old, _ := Specification("baseline")
@@ -38,5 +41,15 @@ func TestNextDayPoliciesSeparateObservationWindowAndLineage(t *testing.T) {
 	}
 	if _, err := Specification("next-day-typo"); err == nil {
 		t.Fatal("unknown policy accepted")
+	}
+	r.Spec.Range = &strategy.BacktestRange{From: "2026-04-01", Through: "2026-05-01"}
+	child := r
+	child.Spec.Range = &strategy.BacktestRange{From: "2026-04-02", Through: "2026-05-01"}
+	if Comparable(r, child) {
+		t.Fatal("different backtest dates compared")
+	}
+	child.Spec.Range = &strategy.BacktestRange{From: "2026-04-01", Through: "2026-05-01"}
+	if !Comparable(r, child) {
+		t.Fatal("equal ranges not comparable")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"stock-watcher/internal/logging"
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/storage"
+	"stock-watcher/internal/strategy"
 	"testing"
 	"time"
 )
@@ -130,6 +131,23 @@ calendar:
 	if err = runExperiment(ctx, c, "", nextDay.ID, "next-day-low-volatility", logging.Nop()); err != nil {
 		t.Fatal(err)
 	}
+	interval := &strategy.BacktestRange{From: nextDay.Result.Development.Trades[0].Date, Through: nextDay.Result.Development.Trades[5].Date}
+	if err = run([]string{"experiment", "-config", path, "-parent", nextDay.ID, "-policy", "next-day-baseline", "-from", interval.From, "-through", interval.Through}); err != nil {
+		t.Fatal(err)
+	}
+	items, _ = view.List(ctx)
+	ranged, err := view.Get(ctx, items[0].ID)
+	if err != nil || ranged.Spec.Range == nil || *ranged.Spec.Range != *interval || ranged.Result.Development.HoldoutFrom != "" {
+		t.Fatal("requested range not persisted", err)
+	}
+	if err = runExperiment(ctx, c, "", ranged.ID, "next-day-low-volatility", logging.Nop()); err != nil {
+		t.Fatal(err)
+	}
+	items, _ = view.List(ctx)
+	inherited, err := view.Get(ctx, items[0].ID)
+	if err != nil || inherited.Spec.Range == nil || *inherited.Spec.Range != *interval {
+		t.Fatal("child lost parent range", err)
+	}
 	for _, args := range [][]string{
 		{"experiment", "-config", path, "-policy", "unknown"},
 		{"experiment", "-config", path, "-policy", "upper-wick"},
@@ -139,13 +157,18 @@ calendar:
 		{"experiment", "-config", path, "-parent", parent.ID, "-as-of", "2026-01-01"},
 		{"sync", "-config", path, "-policy", "upper-wick"},
 		{"experiment", "-config", path + ".missing"},
+		{"experiment", "-config", path, "-from", "2026-04-01"},
+		{"experiment", "-config", path, "-parent", nextDay.ID, "-from", "2026-05-02", "-through", "2026-05-01"},
+		{"experiment", "-config", path, "-parent", nextDay.ID, "-from", h.AsOf, "-through", h.AsOf},
+		{"experiment", "-config", path, "-parent", nextDay.ID, "-policy", "conditional-entry"},
+		{"sync", "-config", path, "-from", "2026-04-01", "-through", "2026-05-01"},
 	} {
 		if err = run(args); err == nil {
 			t.Fatalf("invalid command accepted: %v", args)
 		}
 	}
 	items, _ = view.List(ctx)
-	if len(items) != 6 {
+	if len(items) != 8 {
 		t.Fatal("validation error created an experiment")
 	}
 }

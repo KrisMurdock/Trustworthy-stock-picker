@@ -38,6 +38,7 @@ type Outcome struct {
 	MAE         float64    `json:"max_adverse_net_pct"`
 	Ambiguous   bool       `json:"ambiguous"`
 	HighTouch   *HighTouch `json:"high_touch,omitempty"`
+	EntryDay    *EntryDay  `json:"entry_day,omitempty"`
 }
 
 func tickUp(p float64) float64   { return math.Ceil(p*100-1e-8) / 100 }
@@ -154,6 +155,7 @@ func Simulate(s config.Strategy, cal *calendar.Calendar, code string, signal mar
 		return out, nil
 	}
 	out.EntryDate = entry.Date
+	out.EntryDay = entryDayValue(s, p, entry.Close, "", "opening_price")
 	out.HighTouch = &HighTouch{Version: 1}
 	out.MAE = math.Min(0, netPct(s, p, entry.Low))
 	previous := entry

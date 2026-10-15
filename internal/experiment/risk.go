@@ -8,10 +8,11 @@ type Review struct {
 	Risk           strategy.LossAssessment `json:"risk"`
 	Stats          strategy.Stats          `json:"stats"`
 	NextDayVerdict string                  `json:"next_day_verdict"`
+	JointVerdict   string                  `json:"joint_verdict"`
 }
 
 func ReviewStats(stats strategy.Stats) *Review {
-	return &Review{Risk: strategy.AssessLoss(stats), Stats: stats, NextDayVerdict: strategy.NextDayVerdict(stats)}
+	return &Review{Risk: strategy.AssessLoss(stats), Stats: stats, NextDayVerdict: strategy.NextDayVerdict(stats), JointVerdict: strategy.JointVerdict(stats)}
 }
 
 func ReviewRecord(r Record) *Review {
@@ -29,6 +30,7 @@ func ReviewRecord(r Record) *Review {
 		if review.Risk.Status != "breached" {
 			review.Risk.Status = "unverified"
 			review.NextDayVerdict = "risk_unverified"
+			review.JointVerdict = "risk_unverified"
 		}
 	}
 	return review
@@ -36,6 +38,9 @@ func ReviewRecord(r Record) *Review {
 
 func developmentVerdict(r Record, parent *Record) string {
 	s := r.Result.Development.Research.Development.TopRanked
+	if r.Spec.EntryMode != "" {
+		return strategy.JointVerdict(s)
+	}
 	if r.Spec.NextDayRule != "" {
 		return strategy.NextDayVerdict(s)
 	}

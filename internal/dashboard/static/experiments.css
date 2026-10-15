@@ -53,3 +53,6 @@
 
 .rule-cards strong { font-size: 18px; color: var(--brand); }
 .rule-cards p { margin-top: 8px; font-size: 12px; color: var(--muted); line-height: 1.7; }
+
+.backtest-command { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; }
+#backtest-settings input, #backtest-settings select { max-width: 100%; }

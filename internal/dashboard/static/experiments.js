@@ -2,9 +2,9 @@
 (() => {
   const $ = id => document.getElementById(id);
   const state = { records: [], current: null, parent: null, baseline: null, id: "", request: 0, page: 0, evidenceRequest: 0 };
-  const verdicts = { below_goal: "次日目标未达到", goal_25_only: "仅 2.5% 档观察达标", goal_observed: "两档观察达标 · 待独立验证", risk_rejected: "风险不达标", risk_unverified: "风险待核实", tradeoff: "收益／周期有取舍", historical: "旧口径结论", baseline: "基线", promising: "开发候选", no_improvement: "未改善", insufficient: "证据不足", not_comparable: "口径不同", pending: "尚无结论" };
+  const verdicts = { entry_day_rejected: "买入日浮盈不达标", entry_day_unverified: "买入日证据待核实", below_goal: "次日目标未达到", goal_25_only: "仅 2.5% 档观察达标", goal_observed: "两档观察达标 · 待独立验证", risk_rejected: "风险不达标", risk_unverified: "风险待核实", tradeoff: "收益／周期有取舍", historical: "旧口径结论", baseline: "基线", promising: "开发候选", no_improvement: "未改善", insufficient: "证据不足", not_comparable: "口径不同", pending: "尚无结论" };
   const statuses = { running: "运行中", completed: "运行成功", failed: "运行失败", canceled: "已取消", interrupted: "运行中断" };
-  const outcomes = { target: "达到目标", stop: "止损", stop_gap: "跳空止损", timeout: "到期退出", unresolved: "无法判定", corporate_action: "除权窗口未决", entry_skipped: "跳过入场", missing_entry_session: "入场日缺失", missing_exit_session: "退出日缺失", cash_insufficient: "预算不足", risk_budget_insufficient: "交易成本已占满亏损额度" };
+  const outcomes = { entry_path_unknown: "买入分钟缺失，路径未知", entry_invalidated: "跌破买入区间，放弃", entry_price_outside_zone: "触发后跳出区间，放弃", entry_not_triggered: "未满足到价反弹，放弃", target: "达到目标", stop: "止损", stop_gap: "跳空止损", timeout: "到期退出", unresolved: "无法判定", corporate_action: "除权窗口未决", entry_skipped: "跳过入场", missing_entry_session: "入场日缺失", missing_exit_session: "退出日缺失", cash_insufficient: "预算不足", risk_budget_insufficient: "交易成本已占满亏损额度" };
   const fmt = (v, digits = 2) => Number.isFinite(v) ? v.toLocaleString("zh-CN", { minimumFractionDigits: digits, maximumFractionDigits: digits }) : "—";
   const timestamp = v => v ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", dateStyle: "short", timeStyle: "short", hour12: false }).format(new Date(v)) : "—";
   const node = (tag, text, cls) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (cls) n.className = cls; return n; };
@@ -22,9 +22,9 @@
     const risk = r.current_review?.risk;
     if (risk?.status === "breached") return "risk_rejected";
     if (risk?.status !== "observed_pass") return "risk_unverified";
-    return r.engine !== "development_next_day_v4" ? "historical" : r.verdict;
+    return r.engine !== "conditional_entry_v5" ? "historical" : r.verdict;
   };
-  const comparable = (a, b) => a?.status === "completed" && b?.status === "completed" && a.data.id === b.data.id && a.engine === b.engine && a.code_version === b.code_version && !!a.spec.next_day_rule === !!b.spec.next_day_rule;
+  const comparable = (a, b) => a?.status === "completed" && b?.status === "completed" && a.data.id === b.data.id && a.engine === b.engine && a.code_version === b.code_version && !!a.spec.next_day_rule === !!b.spec.next_day_rule && (a.spec.entry_mode || "") === (b.spec.entry_mode || "") && (a.spec.signal_range?.from || "") === (b.spec.signal_range?.from || "") && (a.spec.signal_range?.through || "") === (b.spec.signal_range?.through || "");
   function button(label, action, cls = "evidence-link") { const b = node("button", label, cls); b.type = "button"; b.addEventListener("click", action); return b; }
   function badge(label, good = false) { return node("span", label, `tag ${good ? "tag-eligible" : "tag-neutral"}`); }
   async function request(url, signal) {
@@ -104,14 +104,18 @@
     lineage.append(node("strong", `本轮 #${short(r.id)}`));
     text("run-coverage", `${r.data.included} / ${r.data.pool_size} 支`);
     text("run-dates", evaluation?.from ? `${evaluation.from} → ${evaluation.through}` : "尚无有效验证区间");
-    text("run-holdout", dev?.holdout_from ? `${dev.holdout_from} → ${dev.holdout_through}` : "待划分");
+    text("run-validation-label", r.spec.signal_range ? "指定区间 · 未声明独立验证集" : "最终保留区间 · 本轮未评估");
+    text("run-holdout", r.spec.signal_range ? `${r.spec.signal_range.from} → ${r.spec.signal_range.through}（信号日）` : dev?.holdout_from ? `${dev.holdout_from} → ${dev.holdout_through}` : "待划分");
     for (const field of ["direction", "hypothesis", "change", "criteria"]) text(`run-${field}`, r.spec[field]);
     const p = dev?.research?.parameters || r.data.parameters;
+    if (!$("backtest-from").value) $("backtest-from").value = r.spec.signal_range?.from || evaluation?.from || "";
+    if (!$("backtest-through").value) $("backtest-through").value = r.spec.signal_range?.through || evaluation?.through || "";
     $("run-data").replaceChildren(...[
       `日线公共起始边界 ${r.data.from}，截止 ${r.data.as_of}；日历 ${r.data.calendar.from} 至 ${r.data.calendar.through}。实际信号区间还需扣除指标预热、训练与持仓边界。`,
       `每日选择前 ${r.data.top_n} 名；模拟止盈目标 ${fmt(p.target_net_pct)}%，配置止损目标 ${fmt(p.stop_net_pct)}%，买入后最多 ${p.max_holding_days} 个可卖出交易日。当前模型在 3% 硬限额内预留费用、滑点与价格取整；触发价不能保证实际成交价。`,
       `单股参考预算 ${fmt(p.trade_cash)} 元；双边佣金 ${fmt(p.commission_rate * 100, 4)}%，最低佣金 ${fmt(p.min_commission)} 元；过户费 ${fmt(p.transfer_rate * 100, 4)}%，卖出印花税 ${fmt(p.sell_stamp_rate * 100, 4)}%，滑点 ${fmt(p.slippage_rate * 100, 4)}%。`,
-      `开发期使用前复权特征与不复权成交模拟；预留 ${p.holdout_days} 个末段信号日期，跨边界持仓样本剔除。最终区间未参与本轮评价。`,
+      r.spec.signal_range ? `显式回测信号区间 ${r.spec.signal_range.from} 至 ${r.spec.signal_range.through}；指标预热和退出行情另外读取，没有声明独立留出集。` : r.spec.entry_mode ? `固定规则分钟试运行，最近 3 个分钟交易日留出；短历史不能证明 80% 成功率。` : `开发期使用前复权特征与不复权成交模拟；预留 ${p.holdout_days} 个末段信号日期，跨边界持仓样本剔除。最终区间未参与本轮评价。`,
+      r.data.minute_stocks ? `冻结分钟行情 ${r.data.minute_from} 至 ${r.data.minute_through}，${r.data.minute_stocks} 支。` : "此快照没有分钟路径；开盘买入结果不能视作条件低吸的验证。",
       `引擎 ${r.engine} · 代码版本 ${r.code_version}`, `数据快照 ${r.data.id}`
     ].map(x => node("p", x)));
     const reasons = { missing_saved_pair: "缺少已保存的复权/原始行情", invalid_saved_pair: "行情元数据未通过校验", unaligned_saved_pair: "复权与原始日期不一致" };
@@ -119,7 +123,7 @@
     show("run-failure", !!r.error || r.status === "running"); text("run-failure", r.error || "实验正在运行，完成后刷新记录可查看结果。异常退出的任务会在下次本地任务启动时标为中断。");
     show("run-results", !!result && r.status === "completed"); show("risk-review", !!result && r.status === "completed");
     if (!result) return;
-    renderComparison(); renderGroups(); renderTrades(); renderRisk(); renderNextDay();
+    renderComparison(); renderGroups(); renderTrades(); renderRisk(); renderNextDay(); renderEntryDay();
     $("run-findings").replaceChildren(...list(result.findings).map(f => {
       const box = node("div", undefined, "finding"); box.dataset.kind = f.kind;
       box.append(badge({ measured: "计算事实", limitation: "适用局限", hypothesis: "待验证推断" }[f.kind] || f.kind), node("p", f.text));
@@ -139,9 +143,19 @@
     text("risk-original", `档案原结论：${verdicts[r.verdict] || r.verdict}。上方为按当前风险要求重新核对的结果，原实验记录保留。`);
     $("show-breaches").disabled = !list(r.result?.development?.trades).some(breaches);
   }
+  const entryMark = trade => trade.outcome.status !== "corporate_action" && trade.outcome.entry_day?.schema_version === 1 ? trade.outcome.entry_day : null;
+  function renderEntryDay() {
+    const r = state.current, s = stats(r), known = s?.samples > 0 && s.entry_day_known > 0;
+    text("entry-mode-description", r.spec.entry_mode ? r.spec.change : "本轮按开盘价模拟买入；下列数据可评价买入日浮盈，但不能代表到价反弹低吸。旧记录未保存入场信息时显示未知。");
+    text("entry-day-rate", known ? `${fmt(s.entry_day_positive_rate * 100)}% · ${s.entry_day_positive} / ${s.samples}` : "缺少买入日浮盈证据");
+    text("entry-day-failures", `不为正 ${s?.entry_day_nonpositive ?? "未知"} 笔；浮盈未知 ${s?.entry_day_unknown ?? "未知"} 笔；入场路径未知 ${s?.unknown_entry_paths ?? "未知"} 条。`);
+    text("joint-rates", known ? `${fmt(s.joint_2_5_rate * 100)}% / ${fmt(s.joint_3_rate * 100)}%` : "联合成功率待验证");
+    text("joint-counts", known ? `${s.joint_2_5_count} / ${s.samples} 与 ${s.joint_3_count} / ${s.samples}；分母含买入日亏损和未决。` : "不能按当天收盘为正的样本重新缩小分母。");
+    text("joint-verdict", verdicts[r.current_review?.joint_verdict] || "证据待核实");
+  }
   function renderNextDay() {
     const r = state.current, s = stats(r);
-    text("next-day-mode", r.spec.next_day_rule ? "本轮为次日退出实验：首个可卖出日未止损或止盈，按收盘模拟退出。" : "本轮为原持仓期限档案：这里派生次日触达比例，原交易和退出期限保持原样，不能等同于次日退出实验。");
+    text("next-day-mode", r.spec.entry_mode ? "本轮到价反弹买入；以下为第三天触达率，买入日正浮盈及联合成功率见上方。" : r.spec.next_day_rule ? "本轮为次日退出实验：首个可卖出日未止损或止盈，按收盘模拟退出。" : "本轮为原持仓期限档案：这里派生次日触达比例，原交易和退出期限保持原样，不能等同于次日退出实验。");
     for (const [id, key, count] of [["25", "next_day_2_5_rate", "next_day_2_5_count"], ["30", "next_day_3_rate", "next_day_3_count"]]) {
       const known = s?.samples > 0 && s.high_touch_samples > 0 && Number.isFinite(s[key]);
       text(`next-day-${id}`, known ? `${fmt(s[key] * 100)}% · ${s[count]} / ${s.samples}` : "暂无可核实样本");
@@ -154,13 +168,14 @@
   }
   function renderComparison() {
     const r = state.current, same = comparable(r, state.parent), baseSame = comparable(r, state.baseline);
-    text("comparison-note", r.parent_id ? same ? "数据快照、代码版本与评价口径一致，可以逐项比较。先检查 3% 亏损硬条件，再比较最高价触达率与首次触达天数，实际退出收益另列。" : "与父实验的代码或数据口径不同，不展示提升差值；请在相同口径下重跑基线。" : "本轮建立基线，后续实验将在此基础上比较。最终保留区间尚未评价。");
-    const metrics = [["次日确认触达 ≥2.5%（含未决）", "next_day_2_5_rate", 100, "%", 2], ["次日确认触达 ≥3%（含未决）", "next_day_3_rate", 100, "%", 2], ["次日确认触达 2.5% 笔数", "next_day_2_5_count", 1, "", 0], ["次日确认触达 3% 笔数", "next_day_3_count", 1, "", 0], ["完成交易数", "resolved", 1, "", 0], ["入场样本数", "samples", 1, "", 0], ["独立信号日期", "distinct_signal_dates", 1, "", 0], ["平均单笔净收益", "mean_resolved_net_pct", 1, "%", 3], ["盈利比例（已完成）", "resolved_profit_rate", 100, "%", 2], ["模拟止盈成交率（含未决）", "target_rate", 100, "%", 2], ["最差单笔净收益", "worst_resolved_net_pct", 1, "%", 3], ["最差持仓不利变动", "worst_max_adverse_net_pct", 1, "%", 3], ["止损次数", "stops", 1, "", 0], ["未决交易", "unresolved", 1, "", 0], ["跳过入场", "skipped_entries", 1, "", 0], ["净亏损达到或超过 3%", "net_loss_limit_breaches", 1, "", 0], ["实际退出净盈利 ≥2.5%（含未决）", "net_profit_2_5_rate", 100, "%", 2], ["实际退出净盈利 ≥3%（含未决）", "net_profit_3_rate", 100, "%", 2], ["平均持仓（买入后交易日）", "mean_resolved_holding_days", 1, " 天", 2], ["已确认最高价触达 ≥2.5%（含未决）", "high_touch_2_5_rate", 100, "%", 2], ["已确认最高价触达 ≥3%（含未决）", "high_touch_3_rate", 100, "%", 2], ["首次触达 2.5% 平均天数", "mean_first_high_touch_2_5_days", 1, " 天", 2], ["首次触达 3% 平均天数", "mean_first_high_touch_3_days", 1, " 天", 2], ["触达证据缺失 / 未决", "high_touch_unknown", 1, "", 0], ["退出日触达先后顺序不明", "high_touch_order_unknown", 1, "", 0]];
+    text("comparison-note", r.parent_id ? same ? "数据快照、代码版本与评价口径一致，可以逐项比较。先检查 3% 亏损硬条件，再比较最高价触达率与首次触达天数，实际退出收益另列。" : "与父实验的代码或数据口径不同，不展示提升差值；请在相同口径下重跑基线。" : "本轮建立基线，后续实验将在此基础上比较。指定区间请单独核对验证状态。");
+    const metrics = [["买入日收盘扣成本浮盈为正", "entry_day_positive_rate", 100, "%", 2], ["买入日为正且第三天触达 ≥2.5%", "joint_2_5_rate", 100, "%", 2], ["买入日为正且第三天触达 ≥3%", "joint_3_rate", 100, "%", 2], ["买入日浮盈不为正", "entry_day_nonpositive", 1, "", 0], ["买入日浮盈未知", "entry_day_unknown", 1, "", 0], ["入场分钟路径未知", "unknown_entry_paths", 1, "", 0], ["次日确认触达 ≥2.5%（含未决）", "next_day_2_5_rate", 100, "%", 2], ["次日确认触达 ≥3%（含未决）", "next_day_3_rate", 100, "%", 2], ["次日确认触达 2.5% 笔数", "next_day_2_5_count", 1, "", 0], ["次日确认触达 3% 笔数", "next_day_3_count", 1, "", 0], ["完成交易数", "resolved", 1, "", 0], ["入场样本数", "samples", 1, "", 0], ["独立信号日期", "distinct_signal_dates", 1, "", 0], ["平均单笔净收益", "mean_resolved_net_pct", 1, "%", 3], ["盈利比例（已完成）", "resolved_profit_rate", 100, "%", 2], ["模拟止盈成交率（含未决）", "target_rate", 100, "%", 2], ["最差单笔净收益", "worst_resolved_net_pct", 1, "%", 3], ["最差持仓不利变动", "worst_max_adverse_net_pct", 1, "%", 3], ["止损次数", "stops", 1, "", 0], ["未决交易", "unresolved", 1, "", 0], ["跳过入场", "skipped_entries", 1, "", 0], ["净亏损达到或超过 3%", "net_loss_limit_breaches", 1, "", 0], ["实际退出净盈利 ≥2.5%（含未决）", "net_profit_2_5_rate", 100, "%", 2], ["实际退出净盈利 ≥3%（含未决）", "net_profit_3_rate", 100, "%", 2], ["平均持仓（买入后交易日）", "mean_resolved_holding_days", 1, " 天", 2], ["已确认最高价触达 ≥2.5%（含未决）", "high_touch_2_5_rate", 100, "%", 2], ["已确认最高价触达 ≥3%（含未决）", "high_touch_3_rate", 100, "%", 2], ["首次触达 2.5% 平均天数", "mean_first_high_touch_2_5_days", 1, " 天", 2], ["首次触达 3% 平均天数", "mean_first_high_touch_3_days", 1, " 天", 2], ["触达证据缺失 / 未决", "high_touch_unknown", 1, "", 0], ["退出日触达先后顺序不明", "high_touch_order_unknown", 1, "", 0]];
     $("comparison-body").replaceChildren(...metrics.map(([label, key, scale, unit, digits]) => {
       const row = node("tr"); row.append(node("td", label));
       const value = x => {
         const s = stats(x);
         if (!s || (unit && !s.resolved)) return undefined;
+        if ((key.startsWith("joint_") || key === "entry_day_positive_rate") && !s.entry_day_known) return undefined;
         if ((key === "high_touch_2_5_rate" || key === "high_touch_3_rate" || key.startsWith("next_day_")) && !s.high_touch_samples) return undefined;
         if (key === "mean_first_high_touch_2_5_days" && !s.high_touch_2_5_count) return undefined;
         if (key === "mean_first_high_touch_3_days" && !s.high_touch_3_count) return undefined;
@@ -180,14 +195,14 @@
   function emptyRow(id, columns, message) { const row = node("tr"), cell = node("td", message, "muted"); cell.colSpan = columns; row.append(cell); $(id).replaceChildren(row); }
   function renderTrades() {
     const filter = $("trade-filter").value;
-    const trades = list(state.current?.result?.development?.trades).filter(t => filter === "all" || (filter === "selected" && t.selected) || (filter === "rejected" && !t.selected) || (filter === "loss" && t.selected && resolved(t.outcome) && t.outcome.net_pct < 0) || (filter === "breaches" && breaches(t)) || (filter === "next25" && t.selected && touch(t)?.first_2_5_day === 1 && !touch(t).first_2_5_order_unknown) || (filter === "next30" && t.selected && touch(t)?.first_3_day === 1 && !touch(t).first_3_order_unknown) || (filter === "touch25" && t.selected && touch(t)?.first_2_5_day > 0 && !touch(t).first_2_5_order_unknown) || (filter === "touch30" && t.selected && touch(t)?.first_3_day > 0 && !touch(t).first_3_order_unknown));
+    const trades = list(state.current?.result?.development?.trades).filter(t => filter === "all" || (filter === "selected" && t.selected) || (filter === "rejected" && !t.selected) || (filter === "loss" && t.selected && resolved(t.outcome) && t.outcome.net_pct < 0) || (filter === "breaches" && breaches(t)) || (filter === "entry-negative" && t.selected && entryMark(t) && entryMark(t).close_net_pct <= 0) || (filter === "joint25" && t.selected && entryMark(t)?.close_net_pct > 0 && touch(t)?.first_2_5_day === 1 && !touch(t).first_2_5_order_unknown) || (filter === "joint30" && t.selected && entryMark(t)?.close_net_pct > 0 && touch(t)?.first_3_day === 1 && !touch(t).first_3_order_unknown) || (filter === "next25" && t.selected && touch(t)?.first_2_5_day === 1 && !touch(t).first_2_5_order_unknown) || (filter === "next30" && t.selected && touch(t)?.first_3_day === 1 && !touch(t).first_3_order_unknown) || (filter === "touch25" && t.selected && touch(t)?.first_2_5_day > 0 && !touch(t).first_2_5_order_unknown) || (filter === "touch30" && t.selected && touch(t)?.first_3_day > 0 && !touch(t).first_3_order_unknown));
     const pages = Math.max(1, Math.ceil(trades.length / 20)); state.page = Math.min(state.page, pages - 1);
     $("trade-body").replaceChildren(...trades.slice(state.page * 20, state.page * 20 + 20).map(t => {
       const tr = node("tr"); tr.dataset.trade = t.id;
-      tr.append(node("td", `${t.date} · ${t.code}`), node("td", t.selected ? outcomes[t.outcome.status] || t.outcome.status : "被本轮过滤"), node("td", resolved(t.outcome) ? `${fmt(t.outcome.net_pct, 3)}%` : "—"), node("td", touch(t) ? `${fmt(touch(t).max_net_pct, 3)}%` : "未记录 / 待核实"), node("td", touchDays(touch(t))), node("td", `${fmt(t.features.upper_wick_ratio * 100)}%`));
+      tr.append(node("td", `${t.date} · ${t.code}`), node("td", t.selected ? outcomes[t.outcome.status] || t.outcome.status : "被本轮过滤"), node("td", entryMark(t) ? `${fmt(entryMark(t).close_net_pct, 3)}%` : "未知"), node("td", resolved(t.outcome) ? `${fmt(t.outcome.net_pct, 3)}%` : "—"), node("td", touch(t) ? `${fmt(touch(t).max_net_pct, 3)}%` : "未记录 / 待核实"), node("td", touchDays(touch(t))), node("td", `${fmt(t.features.upper_wick_ratio * 100)}%`));
       const cell = node("td"); cell.append(button("查看 K 线", () => evidence(t))); tr.append(cell); return tr;
     }));
-    if (!trades.length) emptyRow("trade-body", 7, "当前筛选条件下没有交易记录。");
+    if (!trades.length) emptyRow("trade-body", 8, "当前筛选条件下没有交易记录。");
     text("trade-page", `${trades.length} 条 · ${state.page + 1} / ${pages} 页`); $("trade-prev").disabled = state.page === 0; $("trade-next").disabled = state.page === pages - 1;
   }
   function svg(tag, attrs, value) { const n = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); if (value !== undefined) n.textContent = value; return n; }
@@ -214,9 +229,19 @@
       $("evidence-chart").replaceChildren(plot);
       text("evidence-status", `不复权 · ${data.source} · 红涨绿跌 · 阴影为信号日`);
       const o = trade.outcome, h = touch(trade);
-      text("evidence-detail", `模拟入场 ${o.entry_date || "未入场"}，退出 ${o.exit_date || "未确定"}；${outcomes[o.status] || o.status}。${resolved(o) ? `净收益 ${fmt(o.net_pct, 3)}%，退出价 ${fmt(o.exit_price)}。` : "结果未决，不计入已完成交易收益。"}最高价净收益 ${h ? fmt(h.max_net_pct, 3) + "%" : "未记录 / 待核实"}；首次触达 2.5% / 3%：${touchDays(h)}（买入后交易日）。价格触达不要求收盘达标，也不等于实际成交。信号上影线 ${fmt(trade.features.upper_wick_ratio * 100)}%，ATR ${fmt(trade.features.atr14_pct)}%。`);
+      const mark = entryMark(trade), zone = trade.entry_zone;
+      text("evidence-detail", `买入区间 ${zone ? `${fmt(zone.lower)}～${fmt(zone.upper)} 元，反弹 ≥${fmt(zone.rebound_pct)}%` : "开盘买入"}；成交 ${mark ? `${fmt(mark.fill_price)} 元 / ${mark.entry_at || o.entry_date}，买入日收盘净浮盈 ${fmt(mark.close_net_pct, 3)}%` : "入场浮盈信息未知"}。模拟入场 ${o.entry_date || "未入场"}，退出 ${o.exit_date || "未确定"}；${outcomes[o.status] || o.status}。${resolved(o) ? `净收益 ${fmt(o.net_pct, 3)}%，退出价 ${fmt(o.exit_price)}。` : "结果未决，不计入已完成交易收益。"}最高价净收益 ${h ? fmt(h.max_net_pct, 3) + "%" : "未记录 / 待核实"}；首次触达 2.5% / 3%：${touchDays(h)}（买入后交易日）。价格触达不要求收盘达标，也不等于实际成交。信号上影线 ${fmt(trade.features.upper_wick_ratio * 100)}%，ATR ${fmt(trade.features.atr14_pct)}%。`);
     } catch (e) { if (sequence === state.evidenceRequest && e.name !== "AbortError") { text("evidence-status", e.message); $("evidence-chart").replaceChildren(button("重试证据", () => evidence(trade))); } }
   }
+  $("backtest-settings").addEventListener("submit", event => {
+    event.preventDefault();
+    const from = $("backtest-from").value, through = $("backtest-through").value, policy = $("backtest-policy").value, r = state.current;
+    text("backtest-command", "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(through) || from > through) { text("backtest-command-status", "请填写有效且顺序正确的信号起止日期。"); return; }
+    const frozen = r && (policy !== "conditional-entry" || r.data.minute_stocks > 0);
+    text("backtest-command", `./bin/stock-watcher experiment -config config.yaml -policy ${policy}${frozen ? ` -parent ${r.id}` : ""} -from ${from} -through ${through}`);
+    text("backtest-command-status", frozen ? "复用当前快照；明确指定信号区间。区间变化时不展示父实验提升差值。" : "创建包含所需行情的新快照；条件低吸需要已保存的5分钟路径，缺失时不会假设最低价成交。");
+  });
   $("show-breaches").addEventListener("click", () => { $("trade-filter").value = "breaches"; state.page = 0; renderTrades(); $("trade-section").scrollIntoView({ block: "start" }); });
   $("refresh-experiments").addEventListener("click", refresh); $("lab-retry").addEventListener("click", refresh); $("detail-retry").addEventListener("click", () => select(state.id));
   $("experiment-search").addEventListener("input", renderList); $("experiment-filter").addEventListener("change", renderList);

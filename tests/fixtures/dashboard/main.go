@@ -190,7 +190,53 @@ func seedExperiments(root string) error {
 		}
 		parent = &r
 	}
-	return nil
+	minutes := []market.MinuteHistory{}
+	for _, h := range raw {
+		m := market.MinuteHistory{Version: 1, Code: h.Code, Name: h.Name, Source: "tencent", Period: 5, BasePeriod: 5, Adjust: "none", VolumeUnit: "provider_raw", FetchedAt: at.Add(16 * time.Hour)}
+		for _, b := range h.Bars[len(h.Bars)-13:] {
+			day, _ := time.ParseInLocation("2006-01-02", b.Date, market.Shanghai)
+			for i := 0; i < 48; i++ {
+				minute := 575 + i*5
+				if i >= 24 {
+					minute = 785 + (i-24)*5
+				}
+				bar := market.MinuteBar{End: day.Add(time.Duration(minute) * time.Minute), Open: b.Open, Close: b.Open, High: b.Open, Low: b.Open, Volume: 100, Final: true}
+				if i == 0 {
+					bar.Low = b.Low
+					bar.High = b.High
+					bar.Close = b.Low + .75*(b.Open-b.Low)
+				}
+				if i == 1 {
+					bar.Open = b.Low + .75*(b.Open-b.Low)
+					bar.Low = bar.Open
+				}
+				if i == 47 {
+					bar.Close = b.Close
+					bar.High = max(bar.High, b.Close)
+					bar.Low = min(bar.Low, b.Close)
+				}
+				m.Bars = append(m.Bars, bar)
+			}
+		}
+		minutes = append(minutes, m)
+	}
+	snapshot, err = experiment.WithMinutes(snapshot, minutes)
+	if err != nil {
+		return err
+	}
+	spec, _ := experiment.Specification("conditional-entry")
+	spec.Range = &strategy.BacktestRange{From: raw[0].Bars[len(raw[0].Bars)-14].Date, Through: raw[0].Bars[len(raw[0].Bars)-5].Date}
+	r, err := experiment.NewRecord(snapshot, spec, nil, "fixture-v1")
+	if err != nil {
+		return err
+	}
+	if err = db.Start(ctx, snapshot, r); err != nil {
+		return err
+	}
+	if err = experiment.Evaluate(ctx, snapshot, &r, nil); err != nil {
+		return err
+	}
+	return db.Finish(ctx, r)
 }
 
 func seedMinutes(db *storage.MarketDB, stock config.Stock) error {
