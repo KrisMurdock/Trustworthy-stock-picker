@@ -66,6 +66,7 @@
         if (response.status === 504) throw new Error("服务读取行情数据超时，请稍后重试。");
         if (payload?.error === "market data is temporarily unavailable") throw new Error("行情数据暂时不可用，请稍后重试。");
         if (payload?.error === "history not found") throw new Error("该股票本次暂无通过校验的日线，请查看股池中的数据缺失原因，等待下次同步。");
+        if (payload?.error === "minute history not found") throw new Error("该股票暂无分钟数据，请等待分钟同步完成。");
         if (payload?.error === "report not found") throw new Error("所选日期的报告不存在，请刷新快照后重试。");
         throw new Error(typeof payload?.error === "string" ? payload.error : `请求失败（HTTP ${response.status}）`);
       }

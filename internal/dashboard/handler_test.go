@@ -264,3 +264,59 @@ func TestHistoryPriceBasis(t *testing.T) {
 		}
 	}
 }
+
+func (s *testReader) LoadMinutes(ctx context.Context, stock config.Stock, period int) (storage.MinuteSnapshot, error) {
+	_, err := s.LoadDashboard(ctx, nil, "")
+	return storage.MinuteSnapshot{MinuteHistory: market.MinuteHistory{Version: 1, Code: stock.Code, Period: period, BasePeriod: 5, Adjust: "none", Source: "tencent", Bars: []market.MinuteBar{}}}, err
+}
+func TestIntradayReadOnlyValidationAndErrors(t *testing.T) {
+	c := config.Defaults()
+	c.Stocks = []config.Stock{{Code: "sz000001", Name: "测试"}}
+	reader := &testReader{}
+	h := newHandler(c, reader, nil)
+	for _, query := range []string{"", "?code=sz000001", "?code=sz000001&period=1", "?code=sz000001&period=05", "?code=sz000001&period=5&period=15", "?code=sz000001&period=5&adjust=qfq", "?code=sz000001&period=5&bad=%ZZ"} {
+		if w := request(t, h, "GET", "/api/intraday"+query); w.Code != 400 {
+			t.Fatal(query, w.Code)
+		}
+	}
+	for _, period := range []string{"5", "15", "30", "60"} {
+		w := request(t, h, "GET", "/api/intraday?code=sz000001&period="+period)
+		if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" || !strings.Contains(w.Body.String(), `"base_period_minutes":5`) {
+			t.Fatal(w)
+		}
+	}
+	if w := request(t, h, "GET", "/api/intraday?code=sh600519&period=5"); w.Code != 404 {
+		t.Fatal(w.Code)
+	}
+	if w := request(t, h, "POST", "/api/intraday?code=sz000001&period=5"); w.Code != 405 {
+		t.Fatal(w.Code)
+	}
+	for _, tc := range []struct {
+		err    error
+		status int
+	}{{fs.ErrNotExist, 404}, {errors.New("token=private-secret"), 503}} {
+		reader.err = tc.err
+		w := request(t, h, "GET", "/api/intraday?code=sz000001&period=5")
+		if w.Code != tc.status || strings.Contains(w.Body.String(), "private-secret") {
+			t.Fatal(w)
+		}
+	}
+	reader.wait = true
+	for _, cancelNow := range []bool{false, true} {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		if cancelNow {
+			cancel()
+		}
+		r := httptest.NewRequest("GET", "/api/intraday?code=sz000001&period=5", nil).WithContext(ctx)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		cancel()
+		want := 504
+		if cancelNow {
+			want = 503
+		}
+		if w.Code != want {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+}

@@ -63,6 +63,7 @@ def fixture(directory, empty, partial=False):
     (directory / "leaders.yaml").write_text(POOL)
     config = (ROOT / "config.yaml.example").read_text()
     config = config.replace("require_cifs: true", "require_cifs: false")
+    config = config.replace("intraday:\n  enabled: true", "intraday:\n  enabled: false")
     config = config.replace("request_timeout: 10s", "request_timeout: 1s")
     # All other upstreams must remain disabled: BaoStock uses TCP and bypasses HTTPS_PROXY.
     config = config.replace("providers: [tencent, baostock, tushare, eastmoney]", "providers: [tencent]")
@@ -529,6 +530,89 @@ def error_checks(page, url, state):
     state["injecting"] = False
 
 
+def minute_checks(page, url, state, args):
+    page.locator("#chart-stock").select_option("sz000001")
+    page.locator("#chart-range").select_option("0")
+    assert page.locator('#chart-period option[value="1"]').count() == 0
+    for period in (5, 15, 30, 60):
+        data = page.context.request.get(f"{url}/api/intraday?code=sz000001&period={period}").json()
+        assert data["base_period_minutes"] == 5 and data["adjust"] == "none"
+        assert data["sync"]["calibrated_date"] == "2026-10-13"
+        assert data["bars"][-1]["final"] is False
+        with page.expect_response(lambda r: f"/api/intraday?code=sz000001&period={period}" in r.url and r.status == 200):
+            page.locator("#chart-period").select_option(str(period))
+        expect(page.get_by_test_id("kline-candle")).to_have_count(len(data["bars"]))
+        expect(page.get_by_test_id("kline-volume")).to_have_count(len(data["bars"]))
+        expect(page.locator("#chart-title")).to_contain_text(f"{period} 分钟 K")
+        expect(page.locator("#chart-adjust")).to_be_disabled()
+        expect(page.locator("#chart-adjust")).to_have_value("none")
+        expect(page.locator("#chart-detail")).to_contain_text("形成中")
+        expect(page.locator("#chart-plot .chart-forming")).to_have_count(1)
+        expect(page.locator("#chart-sync-note")).to_contain_text("2026-10-13")
+        expect(page.locator("#chart-meta")).to_contain_text("不复权")
+        for n in (5, 10, 20):
+            average = sum(b["close"] for b in data["bars"][-n:]) / n
+            shown = float(page.locator(f"#chart-ma{n}").inner_text().split()[1])
+            assert abs(shown - average) <= 0.005001, (period, n, shown, average)
+    kind = "container" if args.image else "native"
+    page.locator("#stock-chart").screenshot(path=str(ROOT / ".scratch/dashboard-verification" / f"{kind}-minutes.png"))
+    page.set_viewport_size({"width":390,"height":844})
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+    expect(page.locator("#chart-period")).to_be_visible()
+    page.set_viewport_size({"width":1440,"height":1000})
+    # Minute history is visible even when the stock has no usable daily data.
+    page.locator("#chart-stock").select_option("sz000002")
+    expect(page.locator("#chart-detail")).to_contain_text("11.50")
+    expect(page.locator("#chart-error")).to_be_hidden()
+    state["injecting"] = True
+    page.locator("#chart-stock").select_option("sh600519")
+    expect(page.locator("#chart-error")).to_contain_text("暂无分钟数据")
+    expect(page.get_by_test_id("kline-candle")).to_have_count(0)
+    pattern="**/api/intraday?*"
+    for sync_status, message in (("failed", "同步失败"), ("stale", "延迟"), ("partial", "缺口")):
+        payload = {**data, "sync": {**data["sync"], "status": sync_status}}
+        page.route(pattern, lambda route, *, payload=payload: route.fulfill(status=200,content_type="application/json",body=json.dumps(payload)))
+        page.locator("#chart-stock").select_option("sz000001")
+        expect(page.locator("#chart-sync-note")).to_contain_text(message)
+        expect(page.get_by_test_id("kline-candle")).to_have_count(len(data["bars"]))
+        page.unroute(pattern)
+    for payload, message in (({**data,"bars":[]},"暂无该周期"),({**data,"period_minutes":1},"分钟数据不完整")):
+        page.route(pattern, lambda route, *, payload=payload: route.fulfill(status=200,content_type="application/json",body=json.dumps(payload)))
+        page.locator("#chart-stock").select_option("sz000001")
+        expect(page.locator("#chart-error")).to_contain_text(message)
+        expect(page.get_by_test_id("kline-candle")).to_have_count(0)
+        page.unroute(pattern)
+    for status, message in ((403,"授权"),(503,"暂时不可用")):
+        page.route(pattern,lambda route,*,status=status:route.fulfill(status=status,content_type="application/json",body='{"error":"market data is temporarily unavailable"}'))
+        page.locator("#chart-stock").select_option("sz000001")
+        expect(page.locator("#chart-error")).to_contain_text(message)
+        expect(page.get_by_test_id("kline-candle")).to_have_count(0)
+        page.unroute(pattern)
+        page.locator("#chart-retry").click()
+        expect(page.locator("#chart-detail")).to_contain_text("11.50")
+    with stalled_endpoint() as stalled_url:
+        page.route(pattern,lambda route:route.continue_(url=stalled_url))
+        page.locator("#chart-period").select_option("5")
+        expect(page.locator("#chart-error")).to_contain_text("超时",timeout=15000)
+        expect(page.get_by_test_id("kline-candle")).to_have_count(0)
+        page.unroute(pattern)
+    page.locator("#chart-retry").click()
+    expect(page.locator("#chart-detail")).to_contain_text("11.50")
+    with stalled_endpoint() as stalled_url:
+        page.route("**/api/intraday?*period=15",lambda route:route.continue_(url=stalled_url))
+        page.locator("#chart-period").select_option("15")
+        expect(page.locator("#chart-loading")).to_be_visible()
+        page.locator("#chart-period").select_option("day")
+        expect(page.locator("#chart-detail")).to_contain_text("10.25")
+        page.unroute("**/api/intraday?*period=15")
+    expect(page.locator("#chart-adjust")).to_be_enabled()
+    expect(page.locator("#chart-adjust")).to_have_value("qfq")
+    for query, status in (("code=sz000001&period=1",400),("code=sz000001&period=05",400),("code=sz000001&period=5&adjust=qfq",400),("code=sh600000&period=5",404)):
+        assert page.context.request.get(url+"/api/intraday?"+query).status==status
+    assert page.context.request.post(url+"/api/intraday?code=sz000001&period=5").status==405
+    state["injecting"] = False
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", nargs="?", default=str(ROOT / "bin" / "stock-watcher"))
@@ -553,13 +637,14 @@ def main():
             # Switching stock/report intentionally cancels the preceding fetch.
             # DOM assertions below verify the selected result wins the race.
             def network_failure(request):
-                canceled_selection = request.failure == "net::ERR_ABORTED" and urlparse(request.url).path in ("/api/history", "/api/reports", "/api/experiments", "/api/experiment-history")
+                canceled_selection = request.failure == "net::ERR_ABORTED" and urlparse(request.url).path in ("/api/history", "/api/reports", "/api/experiments", "/api/experiment-history", "/api/intraday")
                 if not state["injecting"] and not canceled_selection:
                     problems.append(f"network: {request.url} {request.failure}")
             page.on("requestfailed", network_failure)
             with service(args) as (url, directory, env):
                 populated_checks(context, page, url, args, directory, env)
                 chart_checks(page, url, state, args)
+                minute_checks(page, url, state, args)
                 experiment_checks(context, page, url, ROOT, args, state, stalled_endpoint)
                 calculator_checks(context, page, url, ROOT, args, state, stalled_endpoint)
                 error_checks(page, url, state)
@@ -605,7 +690,7 @@ def main():
         artifact = hashlib.sha256(Path(args.binary).read_bytes()).hexdigest()
     print(json.dumps({"result": "passed", "mode": "container" if args.image else "native", "artifact": artifact,
                       "identity": "anonymous (no application authentication)",
-                      "checks": "experiments/lineage/comparison/snapshot-evidence/empty/errors/cancel/raw-2700-bars/price-basis-switch/cancel/mismatched-basis/raw-missing/synced-filter/candles/volume/MA/stock-switch/isolation/partial-coverage/snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/read-only API/gateway-403/503/timeout/recovery/empty/calculator/initial/add/holdings/net-target/validation/offline/no-account-upload/model-load-failure/SIGTERM"}, ensure_ascii=False))
+                      "checks": "minute-5-15-30-60/forming/calibrated/status/independent-daily/volume-MA/experiments/lineage/comparison/snapshot-evidence/empty/errors/cancel/raw-2700-bars/price-basis-switch/cancel/mismatched-basis/raw-missing/synced-filter/candles/volume/MA/stock-switch/isolation/partial-coverage/snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/read-only API/gateway-403/503/timeout/recovery/empty/calculator/initial/add/holdings/net-target/validation/offline/no-account-upload/model-load-failure/SIGTERM"}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

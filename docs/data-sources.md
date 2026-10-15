@@ -51,3 +51,13 @@ Token 仅从指定环境变量读取。未配置时跳过 Tushare；若它是唯
 - [BaoStock 官方发行包](https://pypi.org/project/baostock/0.9.4/)：TCP 协议参考官方客户端 `loginout.py`、`history.py`、`socketutil.py`，未引入 Python 运行时。
 - [Tushare HTTP 调用](https://tushare.pro/document/1?doc_id=40)、[daily](https://tushare.pro/document/2?doc_id=27)、[adj_factor](https://tushare.pro/document/2?doc_id=28)。前后复权的接口权限与账户额度以官方说明为准。
 - [AKShare 东方财富客户端源码](https://github.com/akfamily/akshare/blob/main/akshare/stock_feature/stock_hist_em.py)：Go 客户端按同一上游协议实现，实际来源命名为东方财富。
+
+## 分钟数据
+
+分钟路径与本页的日线回退链独立。首版通过 Go 直接访问腾讯 `appstock/app/kline/mkline`，请求 `m5`；15/30/60 分钟从原始 5 分钟线按沪深交易时段聚合。没有调用 Python、BaoStock 日后发布数据或 Tushare 付费分钟权限来冒充实时回退。腾讯分钟接口不可用时保存失败状态，保留已保存数据，并在下一轮重试；目前没有备用分钟源。
+
+原始价格不复权；时间为 Asia/Shanghai 的周期结束时刻，当前形成中的一根允许保存并明确标注，后续轮询覆盖更新。校验代码、顺序、唯一时间、交易时段、OHLC、有限数值和成交量；不补造缺根、不跨午休聚合、不拼接其他来源。日线的来源顺序与成交量换算不套用到分钟数据。
+
+分钟路径复用 `request_timeout`，使用单独的 `intraday.request_interval` 限速；每股每轮一次请求，最多 `intraday.workers` 个并发，取消会中断网络、排队和数据库写入。HTTP 403/429、超时或无效响应只记录稳定错误原因，不输出原始响应；有效但落后的数据标为 stale，缺根或最后一根待确认标为 partial，均不计作盘后校准成功。供应商返回较旧窗口不会删除本地已观察到的更新 K 线。
+
+默认盘中 1 分钟轮询、15:10 全日校准，非交易时段失败/不完整股票每 5 分钟重试。初次/校准最多请求 640 根，盘中请求 64 根；超出历史窗口的缺口不能靠该接口补齐。盘后校准要求当前交易日完整的 48 根已完成 5 分钟线，停牌或上游缺根股票会保持未完成状态。分钟同步成功不代表日线推荐覆盖率满足要求。

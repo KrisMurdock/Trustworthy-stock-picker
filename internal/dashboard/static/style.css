@@ -209,3 +209,5 @@ section { scroll-margin-top: 20px; }
   .chart-controls select { max-width: 180px; }
   .chart-detail, .chart-legend { padding-left: 16px; padding-right: 16px; }
 }
+
+.chart-forming .chart-candle { stroke-dasharray: 3 2; fill-opacity: .35; }

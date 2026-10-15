@@ -47,3 +47,11 @@ CI 不具备 Windows 挂载；真实 CIFS 需要在服务器上人工验收：�
 `make sources-smoke` 用本地 HTTP/TCP fixture 启动真实 Go CLI，覆盖腾讯失败后回退 BaoStock/Tushare、Tushare 权限/限流后回退东方财富、复权与原始量入库、缺 Token、全源失败保留已有数据与凭证脱敏。容器模式运行 `python3 tests/sources_smoke.py --image stock-watcher:<SHA>`；Linux 上使用 host 网络访问回环 mock 服务，运行制品、命令和环境变量与生产一致，数据目录为临时普通目录。测试不读取私有配置、不访问行情公网或飞书。
 
 `go test -race ./internal/market ./internal/monitor ./internal/storage ./internal/config` 补充分页、取消、超时、缺字段、数据覆盖校验、来源切换完整回补和成交量换算。`make dashboard-smoke` 验证浏览器中来源与成交量单位，使用混合腾讯/BaoStock fixture；前端测试配置强制只启用腾讯，并使用关闭的 HTTPS 代理，防止新 TCP 数据源在测试中访问公网。
+
+## 分钟采集与图表
+
+`make intraday-smoke` 以真实 Go CLI 对接本地 HTTP fixture，验证 schema 2 → 3 迁移、5 分钟落库及四周期 API、日线接口失败时分钟仍继续采集、403/超时保留数据、SIGTERM 和写锁释放。容器使用 `python3 tests/intraday_smoke.py --image stock-watcher:<SHA>` 运行同一断言，生产 entrypoint、只读根目录、资源限制及临时数据挂载；Linux host 网络仅用于访问回环 mock。
+
+Go 测试覆盖形成中更新、OHLC/时间校验、午休边界、缺根不补造、滞后窗口保留较新数据、校准修订与重启去重、过期日历、配置错误、单股隔离、取消与存储失联。已有日线和报告在迁移后可重读，空库初始化、只读连接写入拒绝与 CIFS 类型限制另有断言。
+
+`dashboard-smoke` 在同一个 Chromium 中增加四周期切换、真实 SVG 蜡烛/成交量/MA 数值、形成中状态、校准日期、只有分钟数据的股票、移动布局、无数据/403/503/超时/取消与恢复。固定图表 fixture 关闭分钟轮询避免被网络失败状态覆盖；采集调度由 intraday-smoke 独立验证。应用无账号体系，匿名只读成功、POST 405 与网关 403 分别验证，不虚构普通用户/管理员角色。

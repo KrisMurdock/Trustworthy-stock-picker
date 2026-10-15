@@ -48,6 +48,11 @@ func seed(root string, empty, partial bool) error {
 		{Code: "sh600519", Name: "测试消费", Sector: "消费"},
 		{Code: "sz000002", Name: "测试缺失", Sector: "地产"},
 	}
+	for _, stock := range []config.Stock{stocks[0], stocks[2]} {
+		if err := seedMinutes(db, stock); err != nil {
+			return err
+		}
+	}
 	for _, day := range []string{"2026-10-12", "2026-10-13"} {
 		at, err := time.ParseInLocation("2006-01-02", day, market.Shanghai)
 		if err != nil {
@@ -186,4 +191,30 @@ func seedExperiments(root string) error {
 		parent = &r
 	}
 	return nil
+}
+
+func seedMinutes(db *storage.MarketDB, stock config.Stock) error {
+	at := time.Date(2026, 10, 13, 15, 10, 0, 0, market.Shanghai)
+	h := market.MinuteHistory{Version: 1, Code: stock.Code, Name: stock.Name, Source: "tencent", Period: 5, BasePeriod: 5, Adjust: "none", VolumeUnit: "provider_raw", FetchedAt: at}
+	for day := at.AddDate(0, 0, -11); !day.After(at); day = day.AddDate(0, 0, 1) {
+		if day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
+			continue
+		}
+		for _, start := range []int{570, 780} {
+			for n := start + 5; n <= start+120; n += 5 {
+				end := time.Date(day.Year(), day.Month(), day.Day(), n/60, n%60, 0, 0, market.Shanghai)
+				h.Bars = append(h.Bars, market.MinuteBar{End: end, Open: 10, High: 12, Low: 9, Close: 11, Volume: 100, Final: true})
+			}
+		}
+	}
+	if err := db.SaveMinutes(context.Background(), stock, h.Bars[len(h.Bars)-1].End, at, &h, "ok", "", true); err != nil {
+		return err
+	}
+	h.Bars = nil
+	h.FetchedAt = time.Date(2026, 10, 14, 10, 1, 0, 0, market.Shanghai)
+	for n := 575; n <= 605; n += 5 {
+		end := time.Date(2026, 10, 14, n/60, n%60, 0, 0, market.Shanghai)
+		h.Bars = append(h.Bars, market.MinuteBar{End: end, Open: 10, High: 12, Low: 9, Close: 11.5, Volume: 200, Final: end.Before(h.FetchedAt)})
+	}
+	return db.SaveMinutes(context.Background(), stock, h.Bars[len(h.Bars)-1].End, h.FetchedAt, &h, "ok", "", false)
 }

@@ -16,6 +16,7 @@ import (
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/selection"
 	"stock-watcher/internal/storage"
+	"strconv"
 	"time"
 )
 
@@ -28,6 +29,7 @@ type snapshotReader interface {
 	LoadDashboardHistory(context.Context, config.Stock, string) (market.History, error)
 	LoadDashboard(context.Context, []config.Stock, string) (storage.DashboardSnapshot, error)
 	LoadDashboardReport(context.Context, string) (selection.Report, error)
+	LoadMinutes(context.Context, config.Stock, int) (storage.MinuteSnapshot, error)
 }
 
 type experimentReader interface {
@@ -123,6 +125,40 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		history, err := h.db.LoadDashboardHistory(ctx, stock, adjust)
 		if errors.Is(err, fs.ErrNotExist) {
 			writeError(w, r, http.StatusNotFound, "history not found")
+			return
+		}
+		if err != nil {
+			h.readError(w, r, ctx, err)
+			return
+		}
+		writeJSON(w, r, http.StatusOK, history)
+	case "/api/intraday":
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil || len(values) != 2 || len(values["code"]) != 1 || len(values["period"]) != 1 {
+			writeError(w, r, http.StatusBadRequest, "one code and period are required")
+			return
+		}
+		period, err := strconv.Atoi(values.Get("period"))
+		if err != nil || !market.MinutePeriod(period) || strconv.Itoa(period) != values.Get("period") {
+			writeError(w, r, http.StatusBadRequest, "period must be 5, 15, 30 or 60")
+			return
+		}
+		var stock config.Stock
+		for _, candidate := range h.stocks {
+			if candidate.Code == values.Get("code") {
+				stock = candidate
+				break
+			}
+		}
+		if stock.Code == "" {
+			writeError(w, r, http.StatusNotFound, "stock not in pool")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+		defer cancel()
+		history, err := h.db.LoadMinutes(ctx, stock, period)
+		if errors.Is(err, fs.ErrNotExist) {
+			writeError(w, r, http.StatusNotFound, "minute history not found")
 			return
 		}
 		if err != nil {
