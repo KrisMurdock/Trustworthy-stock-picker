@@ -174,3 +174,5 @@ MACD沿用EMA12/26、DEA为DIF的EMA9，初值使用对应窗口SMA；柱值为2
 首轮真实数据结果见[次日触达实验记录](experiments-next-day.md)：包含9组完整对照、超限归因和未验证的下一轮方向。
 
 条件入场、显式回测区间的耗时、复现与失败证据见[条件低吸首轮记录](experiments-conditional-entry.md)。
+
+RSI、MACD、布林线及组合的8组同区间对照见[指标实验记录](experiments-indicators.md)。
