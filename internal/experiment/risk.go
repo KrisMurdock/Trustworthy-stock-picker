@@ -5,24 +5,30 @@ import "stock-watcher/internal/strategy"
 // Review is a read-time assessment under today's acceptance policy. It is not
 // written over the archived verdict, hypothesis or simulated executions.
 type Review struct {
-	Risk  strategy.LossAssessment `json:"risk"`
-	Stats strategy.Stats          `json:"stats"`
+	Risk           strategy.LossAssessment `json:"risk"`
+	Stats          strategy.Stats          `json:"stats"`
+	NextDayVerdict string                  `json:"next_day_verdict"`
 }
 
 func ReviewStats(stats strategy.Stats) *Review {
-	return &Review{Risk: strategy.AssessLoss(stats), Stats: stats}
+	return &Review{Risk: strategy.AssessLoss(stats), Stats: stats, NextDayVerdict: strategy.NextDayVerdict(stats)}
 }
 
 func ReviewRecord(r Record) *Review {
 	if r.Status != "completed" || r.Result == nil {
 		return nil
 	}
-	stats := strategy.SummarizeExperimentTrades(r.Result.Development.Trades, r.Data.Parameters)
+	parameters := r.Data.Parameters
+	if r.Spec.NextDayRule != "" {
+		parameters.MaxHoldingDays = 1
+	}
+	stats := strategy.SummarizeExperimentTrades(r.Result.Development.Trades, parameters)
 	review := ReviewStats(stats)
 	saved := r.Result.Development.Research.Development.TopRanked
 	if stats.Samples != saved.Samples || stats.Resolved != saved.Resolved || stats.Unresolved != saved.Unresolved || stats.SkippedEntries != saved.SkippedEntries {
 		if review.Risk.Status != "breached" {
 			review.Risk.Status = "unverified"
+			review.NextDayVerdict = "risk_unverified"
 		}
 	}
 	return review
@@ -30,6 +36,9 @@ func ReviewRecord(r Record) *Review {
 
 func developmentVerdict(r Record, parent *Record) string {
 	s := r.Result.Development.Research.Development.TopRanked
+	if r.Spec.NextDayRule != "" {
+		return strategy.NextDayVerdict(s)
+	}
 	switch strategy.AssessLoss(s).Status {
 	case "breached":
 		return "risk_rejected"

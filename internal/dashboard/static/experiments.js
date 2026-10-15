@@ -2,7 +2,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const state = { records: [], current: null, parent: null, baseline: null, id: "", request: 0, page: 0, evidenceRequest: 0 };
-  const verdicts = { risk_rejected: "风险不达标", risk_unverified: "风险待核实", tradeoff: "收益／周期有取舍", historical: "旧口径结论", baseline: "基线", promising: "开发候选", no_improvement: "未改善", insufficient: "证据不足", not_comparable: "口径不同", pending: "尚无结论" };
+  const verdicts = { below_goal: "次日目标未达到", goal_25_only: "仅 2.5% 档观察达标", goal_observed: "两档观察达标 · 待独立验证", risk_rejected: "风险不达标", risk_unverified: "风险待核实", tradeoff: "收益／周期有取舍", historical: "旧口径结论", baseline: "基线", promising: "开发候选", no_improvement: "未改善", insufficient: "证据不足", not_comparable: "口径不同", pending: "尚无结论" };
   const statuses = { running: "运行中", completed: "运行成功", failed: "运行失败", canceled: "已取消", interrupted: "运行中断" };
   const outcomes = { target: "达到目标", stop: "止损", stop_gap: "跳空止损", timeout: "到期退出", unresolved: "无法判定", corporate_action: "除权窗口未决", entry_skipped: "跳过入场", missing_entry_session: "入场日缺失", missing_exit_session: "退出日缺失", cash_insufficient: "预算不足", risk_budget_insufficient: "交易成本已占满亏损额度" };
   const fmt = (v, digits = 2) => Number.isFinite(v) ? v.toLocaleString("zh-CN", { minimumFractionDigits: digits, maximumFractionDigits: digits }) : "—";
@@ -22,9 +22,9 @@
     const risk = r.current_review?.risk;
     if (risk?.status === "breached") return "risk_rejected";
     if (risk?.status !== "observed_pass") return "risk_unverified";
-    return r.engine !== "development_high_touch_v3" ? "historical" : r.verdict;
+    return r.engine !== "development_next_day_v4" ? "historical" : r.verdict;
   };
-  const comparable = (a, b) => a?.status === "completed" && b?.status === "completed" && a.data.id === b.data.id && a.engine === b.engine && a.code_version === b.code_version;
+  const comparable = (a, b) => a?.status === "completed" && b?.status === "completed" && a.data.id === b.data.id && a.engine === b.engine && a.code_version === b.code_version && !!a.spec.next_day_rule === !!b.spec.next_day_rule;
   function button(label, action, cls = "evidence-link") { const b = node("button", label, cls); b.type = "button"; b.addEventListener("click", action); return b; }
   function badge(label, good = false) { return node("span", label, `tag ${good ? "tag-eligible" : "tag-neutral"}`); }
   async function request(url, signal) {
@@ -106,7 +106,7 @@
     text("run-dates", evaluation?.from ? `${evaluation.from} → ${evaluation.through}` : "尚无有效验证区间");
     text("run-holdout", dev?.holdout_from ? `${dev.holdout_from} → ${dev.holdout_through}` : "待划分");
     for (const field of ["direction", "hypothesis", "change", "criteria"]) text(`run-${field}`, r.spec[field]);
-    const p = r.data.parameters;
+    const p = dev?.research?.parameters || r.data.parameters;
     $("run-data").replaceChildren(...[
       `日线公共起始边界 ${r.data.from}，截止 ${r.data.as_of}；日历 ${r.data.calendar.from} 至 ${r.data.calendar.through}。实际信号区间还需扣除指标预热、训练与持仓边界。`,
       `每日选择前 ${r.data.top_n} 名；模拟止盈目标 ${fmt(p.target_net_pct)}%，配置止损目标 ${fmt(p.stop_net_pct)}%，买入后最多 ${p.max_holding_days} 个可卖出交易日。当前模型在 3% 硬限额内预留费用、滑点与价格取整；触发价不能保证实际成交价。`,
@@ -119,7 +119,7 @@
     show("run-failure", !!r.error || r.status === "running"); text("run-failure", r.error || "实验正在运行，完成后刷新记录可查看结果。异常退出的任务会在下次本地任务启动时标为中断。");
     show("run-results", !!result && r.status === "completed"); show("risk-review", !!result && r.status === "completed");
     if (!result) return;
-    renderComparison(); renderGroups(); renderTrades(); renderRisk();
+    renderComparison(); renderGroups(); renderTrades(); renderRisk(); renderNextDay();
     $("run-findings").replaceChildren(...list(result.findings).map(f => {
       const box = node("div", undefined, "finding"); box.dataset.kind = f.kind;
       box.append(badge({ measured: "计算事实", limitation: "适用局限", hypothesis: "待验证推断" }[f.kind] || f.kind), node("p", f.text));
@@ -139,16 +139,29 @@
     text("risk-original", `档案原结论：${verdicts[r.verdict] || r.verdict}。上方为按当前风险要求重新核对的结果，原实验记录保留。`);
     $("show-breaches").disabled = !list(r.result?.development?.trades).some(breaches);
   }
+  function renderNextDay() {
+    const r = state.current, s = stats(r);
+    text("next-day-mode", r.spec.next_day_rule ? "本轮为次日退出实验：首个可卖出日未止损或止盈，按收盘模拟退出。" : "本轮为原持仓期限档案：这里派生次日触达比例，原交易和退出期限保持原样，不能等同于次日退出实验。");
+    for (const [id, key, count] of [["25", "next_day_2_5_rate", "next_day_2_5_count"], ["30", "next_day_3_rate", "next_day_3_count"]]) {
+      const known = s?.samples > 0 && s.high_touch_samples > 0 && Number.isFinite(s[key]);
+      text(`next-day-${id}`, known ? `${fmt(s[key] * 100)}% · ${s[count]} / ${s.samples}` : "暂无可核实样本");
+      const gap = known ? 80 - s[key] * 100 : 0;
+      text(`next-day-${id}-gap`, known ? gap > 0 ? `距 80% 还差 ${fmt(gap)} 个百分点` : "观察比例已达 80%，继续核对风险、样本量及独立验证" : "无入场或缺少触达证据，不能记为 0% 或 100%。");
+    }
+    const verdict = r.current_review?.next_day_verdict;
+    text("next-day-verdict", verdicts[verdict] || "证据待核实");
+    text("next-day-evidence", `已完成 ${s?.resolved ?? "未知"} 笔 / ${s?.distinct_signal_dates ?? "未知"} 个信号日；至少需要 30 笔 / 10 日。超限 ${s?.net_loss_limit_breaches ?? "未知"} 笔，未决 ${s?.unresolved ?? "未知"} 笔。`);
+  }
   function renderComparison() {
     const r = state.current, same = comparable(r, state.parent), baseSame = comparable(r, state.baseline);
     text("comparison-note", r.parent_id ? same ? "数据快照、代码版本与评价口径一致，可以逐项比较。先检查 3% 亏损硬条件，再比较最高价触达率与首次触达天数，实际退出收益另列。" : "与父实验的代码或数据口径不同，不展示提升差值；请在相同口径下重跑基线。" : "本轮建立基线，后续实验将在此基础上比较。最终保留区间尚未评价。");
-    const metrics = [["完成交易数", "resolved", 1, "", 0], ["入场样本数", "samples", 1, "", 0], ["独立信号日期", "distinct_signal_dates", 1, "", 0], ["平均单笔净收益", "mean_resolved_net_pct", 1, "%", 3], ["盈利比例（已完成）", "resolved_profit_rate", 100, "%", 2], ["模拟止盈成交率（含未决）", "target_rate", 100, "%", 2], ["最差单笔净收益", "worst_resolved_net_pct", 1, "%", 3], ["最差持仓不利变动", "worst_max_adverse_net_pct", 1, "%", 3], ["止损次数", "stops", 1, "", 0], ["未决交易", "unresolved", 1, "", 0], ["跳过入场", "skipped_entries", 1, "", 0], ["净亏损达到或超过 3%", "net_loss_limit_breaches", 1, "", 0], ["实际退出净盈利 ≥2.5%（含未决）", "net_profit_2_5_rate", 100, "%", 2], ["实际退出净盈利 ≥3%（含未决）", "net_profit_3_rate", 100, "%", 2], ["平均持仓（买入后交易日）", "mean_resolved_holding_days", 1, " 天", 2], ["已确认最高价触达 ≥2.5%（含未决）", "high_touch_2_5_rate", 100, "%", 2], ["已确认最高价触达 ≥3%（含未决）", "high_touch_3_rate", 100, "%", 2], ["首次触达 2.5% 平均天数", "mean_first_high_touch_2_5_days", 1, " 天", 2], ["首次触达 3% 平均天数", "mean_first_high_touch_3_days", 1, " 天", 2], ["触达证据缺失 / 未决", "high_touch_unknown", 1, "", 0], ["退出日触达先后顺序不明", "high_touch_order_unknown", 1, "", 0]];
+    const metrics = [["次日确认触达 ≥2.5%（含未决）", "next_day_2_5_rate", 100, "%", 2], ["次日确认触达 ≥3%（含未决）", "next_day_3_rate", 100, "%", 2], ["次日确认触达 2.5% 笔数", "next_day_2_5_count", 1, "", 0], ["次日确认触达 3% 笔数", "next_day_3_count", 1, "", 0], ["完成交易数", "resolved", 1, "", 0], ["入场样本数", "samples", 1, "", 0], ["独立信号日期", "distinct_signal_dates", 1, "", 0], ["平均单笔净收益", "mean_resolved_net_pct", 1, "%", 3], ["盈利比例（已完成）", "resolved_profit_rate", 100, "%", 2], ["模拟止盈成交率（含未决）", "target_rate", 100, "%", 2], ["最差单笔净收益", "worst_resolved_net_pct", 1, "%", 3], ["最差持仓不利变动", "worst_max_adverse_net_pct", 1, "%", 3], ["止损次数", "stops", 1, "", 0], ["未决交易", "unresolved", 1, "", 0], ["跳过入场", "skipped_entries", 1, "", 0], ["净亏损达到或超过 3%", "net_loss_limit_breaches", 1, "", 0], ["实际退出净盈利 ≥2.5%（含未决）", "net_profit_2_5_rate", 100, "%", 2], ["实际退出净盈利 ≥3%（含未决）", "net_profit_3_rate", 100, "%", 2], ["平均持仓（买入后交易日）", "mean_resolved_holding_days", 1, " 天", 2], ["已确认最高价触达 ≥2.5%（含未决）", "high_touch_2_5_rate", 100, "%", 2], ["已确认最高价触达 ≥3%（含未决）", "high_touch_3_rate", 100, "%", 2], ["首次触达 2.5% 平均天数", "mean_first_high_touch_2_5_days", 1, " 天", 2], ["首次触达 3% 平均天数", "mean_first_high_touch_3_days", 1, " 天", 2], ["触达证据缺失 / 未决", "high_touch_unknown", 1, "", 0], ["退出日触达先后顺序不明", "high_touch_order_unknown", 1, "", 0]];
     $("comparison-body").replaceChildren(...metrics.map(([label, key, scale, unit, digits]) => {
       const row = node("tr"); row.append(node("td", label));
       const value = x => {
         const s = stats(x);
         if (!s || (unit && !s.resolved)) return undefined;
-        if ((key === "high_touch_2_5_rate" || key === "high_touch_3_rate") && !s.high_touch_samples) return undefined;
+        if ((key === "high_touch_2_5_rate" || key === "high_touch_3_rate" || key.startsWith("next_day_")) && !s.high_touch_samples) return undefined;
         if (key === "mean_first_high_touch_2_5_days" && !s.high_touch_2_5_count) return undefined;
         if (key === "mean_first_high_touch_3_days" && !s.high_touch_3_count) return undefined;
         return s[key] * scale;
@@ -167,7 +180,7 @@
   function emptyRow(id, columns, message) { const row = node("tr"), cell = node("td", message, "muted"); cell.colSpan = columns; row.append(cell); $(id).replaceChildren(row); }
   function renderTrades() {
     const filter = $("trade-filter").value;
-    const trades = list(state.current?.result?.development?.trades).filter(t => filter === "all" || (filter === "selected" && t.selected) || (filter === "rejected" && !t.selected) || (filter === "loss" && t.selected && resolved(t.outcome) && t.outcome.net_pct < 0) || (filter === "breaches" && breaches(t)) || (filter === "touch25" && t.selected && touch(t)?.first_2_5_day > 0 && !touch(t).first_2_5_order_unknown) || (filter === "touch30" && t.selected && touch(t)?.first_3_day > 0 && !touch(t).first_3_order_unknown));
+    const trades = list(state.current?.result?.development?.trades).filter(t => filter === "all" || (filter === "selected" && t.selected) || (filter === "rejected" && !t.selected) || (filter === "loss" && t.selected && resolved(t.outcome) && t.outcome.net_pct < 0) || (filter === "breaches" && breaches(t)) || (filter === "next25" && t.selected && touch(t)?.first_2_5_day === 1 && !touch(t).first_2_5_order_unknown) || (filter === "next30" && t.selected && touch(t)?.first_3_day === 1 && !touch(t).first_3_order_unknown) || (filter === "touch25" && t.selected && touch(t)?.first_2_5_day > 0 && !touch(t).first_2_5_order_unknown) || (filter === "touch30" && t.selected && touch(t)?.first_3_day > 0 && !touch(t).first_3_order_unknown));
     const pages = Math.max(1, Math.ceil(trades.length / 20)); state.page = Math.min(state.page, pages - 1);
     $("trade-body").replaceChildren(...trades.slice(state.page * 20, state.page * 20 + 20).map(t => {
       const tr = node("tr"); tr.dataset.trade = t.id;

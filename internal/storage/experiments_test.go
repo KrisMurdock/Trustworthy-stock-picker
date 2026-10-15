@@ -201,3 +201,37 @@ func TestExperimentEmptyRecoveryAndUnsafeFiles(t *testing.T) {
 		t.Fatal("CIFS requirement bypassed")
 	}
 }
+
+func TestNextDayBaselineCanReuseFrozenLegacySnapshot(t *testing.T) {
+	ctx := context.Background()
+	db, err := OpenExperiments(ctx, t.TempDir(), false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	snapshot, parent := experimentFixture(t)
+	if err := db.Start(ctx, snapshot, parent); err != nil {
+		t.Fatal(err)
+	}
+	parent.Status = "completed"
+	if err := db.Finish(ctx, parent); err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := experiment.Specification("next-day-baseline")
+	child, err := experiment.NewRecord(snapshot, spec, &parent, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := child
+	forged.BaselineID = parent.ID
+	if db.Start(ctx, snapshot, forged) == nil {
+		t.Fatal("accepted old root for a new next-day baseline")
+	}
+	if err := db.Start(ctx, snapshot, child); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.Get(ctx, child.ID)
+	if err != nil || got.BaselineID != got.ID || got.ParentID != parent.ID {
+		t.Fatal("new baseline lineage not persisted", err)
+	}
+}

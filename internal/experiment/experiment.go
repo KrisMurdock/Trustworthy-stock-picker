@@ -13,10 +13,11 @@ import (
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/strategy"
+	"strings"
 	"time"
 )
 
-const Engine = "development_high_touch_v3"
+const Engine = "development_next_day_v4"
 
 type Calendar struct {
 	From     string   `json:"from"`
@@ -53,6 +54,7 @@ type Spec struct {
 	Change          string   `json:"change"`
 	RequireEvidence bool     `json:"require_risk_evidence,omitempty"`
 	MaxUpperWick    *float64 `json:"max_upper_wick,omitempty"`
+	NextDayRule     string   `json:"next_day_rule,omitempty"`
 	Criteria        string   `json:"criteria"`
 }
 type Finding struct {
@@ -94,6 +96,9 @@ func ValidID(id string) bool {
 	return err == nil && len(b) == 16 && id == hex.EncodeToString(b)
 }
 func Specification(policy string) (Spec, error) {
+	if strings.HasPrefix(policy, "next-day-") {
+		return nextDaySpecification(strings.TrimPrefix(policy, "next-day-"))
+	}
 	s := Spec{Direction: "建立基线", Title: "现有机会排序 · 开发期基线", Hypothesis: "测量现有机会排序在同一数据快照上的目标触达、实际退出收益、风险与样本覆盖，作为后续对照。", Change: "沿用现有机会评分与证据规则，每个信号日选择前 N 名。", Criteria: "硬条件：每笔扣费后净亏损严格低于实际投入的 3%，等于 3% 也否决；未决交易不能视为达标。至少 30 笔完成交易、10 个信号日后，按可卖出持仓窗口内最高价扣除成本及滑点是否触达 2.5%／3% 验证盈利机会，不要求收盘价达标；触达率越高、首次触达天数越短越好。日内先止损还是先触达不明时单独标记且不计触达成功，触达不等于实际成交。实际退出平均净收益须为正；软指标相互退让时标为取舍，不抵消风险超限。仅作开发候选，最终区间未验证。"}
 	if policy == "baseline" {
 		return s, nil
@@ -197,11 +202,14 @@ func NewRecord(snapshot Snapshot, spec Spec, parent *Record, version string) (Re
 		}
 		r.ParentID = parent.ID
 		r.BaselineID = parent.BaselineID
+		if spec.NextDayRule == "baseline" && parent.Spec.NextDayRule == "" {
+			r.BaselineID = r.ID
+		}
 	}
 	return r, nil
 }
 func Comparable(a, b Record) bool {
-	return a.Engine == b.Engine && a.CodeVersion == b.CodeVersion && a.Data.ID == b.Data.ID && a.Status == "completed" && b.Status == "completed"
+	return a.Engine == b.Engine && a.CodeVersion == b.CodeVersion && a.Data.ID == b.Data.ID && a.Status == "completed" && b.Status == "completed" && (a.Spec.NextDayRule != "") == (b.Spec.NextDayRule != "")
 }
 func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Record) error {
 	c := config.Defaults()
@@ -211,7 +219,7 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 	c.Calendar.ValidFrom = snapshot.Calendar.From
 	c.Calendar.ValidThrough = snapshot.Calendar.Through
 	c.Calendar.Holidays = snapshot.Calendar.Holidays
-	x, err := strategy.AnalyzeDevelopment(ctx, c, snapshot.Adjusted, snapshot.Raw, snapshot.AsOf, strategy.EntryPolicy{MaxUpperWick: record.Spec.MaxUpperWick, RequireEvidence: record.Spec.RequireEvidence})
+	x, err := strategy.AnalyzeDevelopment(ctx, c, snapshot.Adjusted, snapshot.Raw, snapshot.AsOf, strategy.EntryPolicy{MaxUpperWick: record.Spec.MaxUpperWick, RequireEvidence: record.Spec.RequireEvidence, NextDayRule: record.Spec.NextDayRule})
 	if err != nil {
 		return err
 	}
@@ -240,7 +248,7 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 		for k[split] != '/' {
 			split++
 		}
-		result.Groups = append(result.Groups, Group{k[:split], k[split+1:], strategy.SummarizeExperimentTrades(groups[k], c.Strategy)})
+		result.Groups = append(result.Groups, Group{k[:split], k[split+1:], strategy.SummarizeExperimentTrades(groups[k], x.Research.Parameters)})
 	}
 	stats := x.Research.Development.TopRanked
 	record.Result = result
@@ -266,6 +274,14 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 	}
 	result.Findings = append(result.Findings, Finding{"limitation", "样本来自当前股池及成功保存的数据；存在股池选择偏差。日线模拟并非实际成交，单笔统计不等于资金组合收益。", []string{}})
 	record.Verdict = developmentVerdict(*record, parent)
+	if record.Spec.NextDayRule != "" {
+		if stats.Samples == 0 || stats.HighTouchSamples == 0 {
+			result.Findings = append(result.Findings, Finding{"measured", "没有可核实的次日触达样本，成功率和距 80% 的差距暂不可计算；不能把空仓或未知证据记为 0% 或 100%。", []string{}})
+		} else {
+			result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("次日确认触达净盈利 2.5%%：%d / %d（%.2f%%）；3%%：%d / %d（%.2f%%）。相对 80%% 目标分别差 %.2f / %.2f 个百分点；全部入场（含未决）为分母，买入日及更晚交易日不计成功。", stats.NextDay25, stats.Samples, stats.NextDay25Rate*100, stats.NextDay30, stats.Samples, stats.NextDay30Rate*100, (strategy.NextDayGoalRate-stats.NextDay25Rate)*100, (strategy.NextDayGoalRate-stats.NextDay30Rate)*100), []string{}})
+		}
+		result.Next = append(result.Next, "分别核对次日未触达、跳空超限和日内顺序不明样本；只用信号日前已知特征提出下一轮规则，不按未来收益剔除交易。", "80% 是观察成功率目标；开发数据筛选过的最优规则仍需冻结后独立验证，不能把多轮挑选后的最高值当作未来胜率。")
+	}
 	switch record.Verdict {
 	case "risk_rejected":
 		result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("%d 笔完成交易净亏损达到或超过投入的 3%%，本轮风险不达标；平均收益不能抵消超限。", stats.LossBreaches), evidence})

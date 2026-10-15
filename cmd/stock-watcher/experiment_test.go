@@ -119,9 +119,22 @@ calendar:
 	if string(original) != string(b) {
 		t.Fatal("parent changed after child runs")
 	}
+	if err = runExperiment(ctx, c, "", parent.ID, "next-day-baseline", logging.Nop()); err != nil {
+		t.Fatal(err)
+	}
+	items, _ = view.List(ctx)
+	nextDay, err := view.Get(ctx, items[0].ID)
+	if err != nil || nextDay.BaselineID != nextDay.ID || nextDay.Result.Development.Research.Parameters.MaxHoldingDays != 1 || nextDay.Data.Parameters.MaxHoldingDays != 5 || nextDay.Result.Development.HoldoutFrom != parent.Result.Development.HoldoutFrom {
+		t.Fatal("next-day CLI did not preserve snapshot and boundary", err)
+	}
+	if err = runExperiment(ctx, c, "", nextDay.ID, "next-day-low-volatility", logging.Nop()); err != nil {
+		t.Fatal(err)
+	}
 	for _, args := range [][]string{
 		{"experiment", "-config", path, "-policy", "unknown"},
 		{"experiment", "-config", path, "-policy", "upper-wick"},
+		{"experiment", "-config", path, "-policy", "next-day-low-volatility"},
+		{"experiment", "-config", path, "-policy", "next-day-typo"},
 		{"experiment", "-config", path, "-parent", "invalid"},
 		{"experiment", "-config", path, "-parent", parent.ID, "-as-of", "2026-01-01"},
 		{"sync", "-config", path, "-policy", "upper-wick"},
@@ -132,7 +145,7 @@ calendar:
 		}
 	}
 	items, _ = view.List(ctx)
-	if len(items) != 4 {
+	if len(items) != 6 {
 		t.Fatal("validation error created an experiment")
 	}
 }

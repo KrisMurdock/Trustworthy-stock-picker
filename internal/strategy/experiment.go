@@ -29,12 +29,14 @@ type DevelopmentResult struct {
 type EntryPolicy struct {
 	MaxUpperWick    *float64
 	RequireEvidence bool
+	NextDayRule     string
 }
 
 type developmentOptions struct {
 	boundary        string
 	maxUpperWick    *float64
 	requireEvidence bool
+	nextDayRule     string
 	trades          []ExperimentTrade
 }
 
@@ -47,6 +49,9 @@ func AnalyzeDevelopment(ctx context.Context, c config.Config, histories, raw []m
 	}
 	if policy.MaxUpperWick != nil && !(*policy.MaxUpperWick >= 0 && *policy.MaxUpperWick <= 1) {
 		return result, errors.New("upper wick threshold must be between zero and one")
+	}
+	if !validNextDayRule(policy.NextDayRule) {
+		return result, errors.New("unknown next-day entry rule")
 	}
 	data, err := datasets(c, histories, raw, asof)
 	if err != nil {
@@ -76,7 +81,12 @@ func AnalyzeDevelopment(ctx context.Context, c config.Config, histories, raw []m
 	}
 	result.HoldoutFrom = dates[len(dates)-c.Strategy.HoldoutDays]
 	result.HoldoutThrough = asof
-	options := &developmentOptions{boundary: result.HoldoutFrom, maxUpperWick: policy.MaxUpperWick, requireEvidence: policy.RequireEvidence, trades: []ExperimentTrade{}}
+	// Preserve the snapshot's original reserved boundary before shortening the
+	// exit horizon. A shorter horizon must not consume previously held-out dates.
+	if policy.NextDayRule != "" {
+		c.Strategy.MaxHoldingDays = 1
+	}
+	options := &developmentOptions{boundary: result.HoldoutFrom, maxUpperWick: policy.MaxUpperWick, requireEvidence: policy.RequireEvidence, nextDayRule: policy.NextDayRule, trades: []ExperimentTrade{}}
 	x, err := analyze(ctx, c, histories, raw, asof, options)
 	if err != nil {
 		return result, err

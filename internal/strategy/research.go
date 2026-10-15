@@ -61,6 +61,10 @@ type Stats struct {
 	HighTouch25Days    float64         `json:"mean_first_high_touch_2_5_days"`
 	HighTouch30Days    float64         `json:"mean_first_high_touch_3_days"`
 	HighTouchAmbiguous int             `json:"high_touch_order_unknown"`
+	NextDay25          int             `json:"next_day_2_5_count"`
+	NextDay30          int             `json:"next_day_3_count"`
+	NextDay25Rate      float64         `json:"next_day_2_5_rate"`
+	NextDay30Rate      float64         `json:"next_day_3_rate"`
 	Touch25DaySum      int             `json:"-"`
 	Touch30DaySum      int             `json:"-"`
 	MAESum             float64         `json:"-"`
@@ -154,10 +158,16 @@ func add(s *Stats, sample Sample, out Outcome) {
 		if h.Day25 > 0 && !h.Day25Unknown {
 			s.HighTouch25++
 			s.Touch25DaySum += h.Day25
+			if h.Day25 == 1 {
+				s.NextDay25++
+			}
 		}
 		if h.Day30 > 0 && !h.Day30Unknown {
 			s.HighTouch30++
 			s.Touch30DaySum += h.Day30
+			if h.Day30 == 1 {
+				s.NextDay30++
+			}
 		}
 		if h.Ambiguous {
 			s.HighTouchAmbiguous++
@@ -203,6 +213,8 @@ func finalize(s Stats) Stats {
 	}
 	s.Dates = len(s.DateSet)
 	if s.Samples > 0 {
+		s.NextDay25Rate = float64(s.NextDay25) / float64(s.Samples)
+		s.NextDay30Rate = float64(s.NextDay30) / float64(s.Samples)
 		s.HighTouch25Rate = float64(s.HighTouch25) / float64(s.Samples)
 		s.HighTouch30Rate = float64(s.HighTouch30) / float64(s.Samples)
 		s.Profit25Rate = float64(s.Profit25) / float64(s.Samples)
@@ -624,6 +636,7 @@ func evaluateFiltered(ctx context.Context, samples []Sample, dates []string, s c
 			add(&e.PoolBaseline, sample, out)
 			allowed := experiment == nil || experiment.maxUpperWick == nil || x.Features.UpperWick <= *experiment.maxUpperWick
 			allowed = allowed && (experiment == nil || !experiment.requireEvidence || x.Recommended)
+			allowed = allowed && (experiment == nil || matchesNextDay(experiment.nextDayRule, x.Features))
 			selected := allowed && picked < topN
 			if selected {
 				add(&e.TopRanked, sample, out)

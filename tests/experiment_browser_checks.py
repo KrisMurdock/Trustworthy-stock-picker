@@ -11,17 +11,17 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     page.get_by_role("link", name="策略实验室", exact=True).click()
     expect(page).to_have_title("策略实验室 · Stock Watcher")
     assert urlparse(page.url).path == "/experiments"
-    expect(page.locator(".experiment-item")).to_have_count(2)
+    expect(page.locator(".experiment-item")).to_have_count(3)
     payload = context.request.get(url + "/api/experiments").json()
     records = payload["experiments"]
-    child = next(r for r in records if r.get("parent_id"))
+    child = next(r for r in records if r["spec"].get("max_upper_wick") is not None)
     parent = next(r for r in records if not r.get("parent_id"))
     page.locator(f'.experiment-item[data-id="{child["id"]}"]').click()
     expect(page.locator("#run-title")).to_have_text("上影线过滤 · 单变量对照")
     assert "id=" + child["id"] in page.url
     expect(page.locator("#run-hypothesis")).to_contain_text("30%")
     expect(page.locator("#comparison-note")).to_contain_text("口径一致")
-    expect(page.locator("#comparison-body tr")).to_have_count(21)
+    expect(page.locator("#comparison-body tr")).to_have_count(25)
     expect(page.locator("#run-holdout")).not_to_have_text("待划分")
     expect(page.locator("#run-next")).not_to_be_empty()
     expect(page.locator("#validation-rules")).to_contain_text("最高价触达 2.5%／3% 或以上")
@@ -79,6 +79,27 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
         response = context.request.get(url + "/assets/" + asset)
         assert response.status == 200 and response.headers["cache-control"] == "no-cache"
         assert hashlib.sha256(response.body()).digest() == hashlib.sha256((root / "internal/dashboard/static" / asset).read_bytes()).digest()
+    next_day = next(r for r in records if r["spec"].get("next_day_rule") == "baseline")
+    page.locator(f'.experiment-item[data-id="{next_day["id"]}"]').click()
+    expect(page.locator("#run-title")).to_have_text("次日退出基线")
+    expect(page.locator("#next-day-mode")).to_contain_text("次日退出实验")
+    expect(page.locator("#next-day-title")).to_contain_text("≥80%")
+    expect(page.locator("#comparison-note")).to_contain_text("口径不同")
+    actual = context.request.get(url + "/api/experiments?id=" + next_day["id"]).json()
+    stats = actual["current_review"]["stats"]
+    assert actual["result"]["development"]["research"]["parameters"]["max_holding_days"] == 1
+    for short, count, rate in (("25", "next_day_2_5_count", "next_day_2_5_rate"), ("30", "next_day_3_count", "next_day_3_rate")):
+        expect(page.locator("#next-day-" + short)).to_contain_text(f'{stats[rate] * 100:.2f}%')
+        expect(page.locator("#next-day-" + short)).to_contain_text(f'{stats[count]} / {stats["samples"]}')
+        page.locator("#trade-filter").select_option("next" + short)
+        expect(page.locator("#trade-page")).to_contain_text(f'{stats[count]} 条')
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), "next-day page overflow"
+    page.screenshot(path=str(screenshots / f"{kind}-next-day.png"), full_page=True)
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    page.locator("#trade-filter").select_option("selected")
+    page.locator(f'.experiment-item[data-id="{child["id"]}"]').click()
+    expect(page.locator("#next-day-mode")).to_contain_text("原持仓期限档案")
     state["injecting"] = True
     pattern = "**/api/experiments"
     for status, message in ((401, "授权"), (403, "授权"), (503, "暂时不可用")):
@@ -144,12 +165,17 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     expect(row).to_contain_text("-2.800%")
     expect(row).to_contain_text("3.200%")
     expect(row).to_contain_text("顺序不明")
+    page.locator("#trade-filter").select_option("next30")
+    expect(page.locator(f'#trade-body tr[data-trade="{sample["id"]}"]')).to_have_count(0)
+    page.locator("#trade-filter").select_option("selected")
     row.get_by_role("button", name="查看 K 线").click()
     expect(page.locator("#evidence-detail")).to_contain_text("价格触达不要求收盘达标")
     expect(page.locator("#evidence-detail")).to_contain_text("首次触达 2.5% / 3%：1（顺序不明） / 1（顺序不明）")
     page.unroute(detail_pattern)
     no_signals = json.loads(json.dumps(detail))
     no_signals["current_review"]["risk"].update(status="unverified", resolved=0)
+    no_signals["current_review"]["stats"].update(samples=0, resolved=0, high_touch_samples=0)
+    no_signals["current_review"]["next_day_verdict"] = "risk_unverified"
     no_signals["result"]["groups"] = []
     no_signals["result"]["development"]["trades"] = []
     page.route(detail_pattern, lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps(no_signals)))
@@ -157,6 +183,8 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     expect(page.locator("#group-body")).to_contain_text("没有入选信号")
     expect(page.locator("#trade-body")).to_contain_text("没有交易记录")
     expect(page.locator("#trade-next")).to_be_disabled()
+    expect(page.locator("#next-day-25")).to_contain_text("暂无可核实样本")
+    expect(page.locator("#next-day-verdict")).to_contain_text("风险待核实")
     page.unroute(detail_pattern)
     failed = dict(detail)
     failed.update(status="failed", verdict="pending", result=None, error="实验数据不足，未生成结果。")

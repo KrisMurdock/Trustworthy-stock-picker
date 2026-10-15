@@ -173,7 +173,7 @@ func seedExperiments(root string) error {
 		return err
 	}
 	var parent *experiment.Record
-	for _, policy := range []string{"baseline", "upper-wick"} {
+	for _, policy := range []string{"baseline", "upper-wick", "next-day-baseline"} {
 		spec, _ := experiment.Specification(policy)
 		r, err := experiment.NewRecord(snapshot, spec, parent, "fixture-v1")
 		if err != nil {

@@ -21,7 +21,7 @@ func runExperiment(ctx context.Context, c config.Config, asof, parentID, policy 
 	if parentID != "" && !experiment.ValidID(parentID) {
 		return errors.New("invalid parent experiment ID")
 	}
-	if policy != "baseline" && parentID == "" {
+	if policy != "baseline" && policy != "next-day-baseline" && parentID == "" {
 		return errors.New("a contrast experiment requires -parent")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
