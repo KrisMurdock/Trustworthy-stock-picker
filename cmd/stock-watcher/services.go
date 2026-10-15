@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"stock-watcher/internal/logging"
+	"strconv"
 	"time"
 )
 
@@ -33,7 +34,12 @@ func runServices(ctx context.Context, address string, handler http.Handler, moni
 	served := make(chan error, 1)
 	monitored := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
-	logger.Info("Dashboard listening", "url", "http://"+listener.Addr().String())
+	addressInfo := listener.Addr().(*net.TCPAddr)
+	url := dashboardURL(addressInfo)
+	logger.Info("Dashboard ready at "+url, "url", url, "listen", addressInfo.String())
+	if addressInfo.IP.IsLoopback() {
+		logger.Info("Dashboard accepts server-local connections; use SSH port forwarding for remote access")
+	}
 	go func() { monitored <- monitor(ctx) }()
 
 	var result error
@@ -63,6 +69,20 @@ func runServices(ctx context.Context, address string, handler http.Handler, moni
 	}
 	logger.Info("Dashboard stopped")
 	return result
+}
+
+// Wildcard addresses describe a listener, not a browser destination. Advertise
+// the matching loopback address; the listener itself is logged separately.
+func dashboardURL(address *net.TCPAddr) string {
+	ip := address.IP
+	if ip.IsUnspecified() {
+		if ip.To4() != nil {
+			ip = net.IPv4(127, 0, 0, 1)
+		} else {
+			ip = net.IPv6loopback
+		}
+	}
+	return "http://" + net.JoinHostPort(ip.String(), strconv.Itoa(address.Port)) + "/"
 }
 
 type httpLogWriter struct{ logger *logging.Logger }
