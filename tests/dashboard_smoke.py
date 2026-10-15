@@ -7,12 +7,14 @@ test service are used. Pass --image IMAGE to exercise the published container.
 
 import argparse
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 import glob
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import socket
 import subprocess
@@ -21,6 +23,7 @@ import tempfile
 import threading
 import time
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -68,8 +71,13 @@ def fixture(directory, empty, partial=False):
     # All other upstreams must remain disabled: BaoStock uses TCP and bypasses HTTPS_PROXY.
     config = config.replace("providers: [tencent, baostock, tushare, eastmoney]", "providers: [tencent]")
     config = config.replace("poll_interval: 5m", "poll_interval: 1h")
-    config = config.replace("valid_from: '2026-01-01'", "valid_from: '2020-01-01'")
-    config = config.replace("valid_through: '2026-12-31'", "valid_through: '2099-12-31'")
+    # Freeze saved-data UI fixtures. Even a failed refresh saves a sync status.
+    # A mock calendar with no recent completed session blocks background writes
+    # while allowing the real CLI to start. Collector behavior is tested separately.
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    closed = "".join(f"    - '{today - timedelta(days=i)}'\n" for i in range(-1, 40))
+    config = re.sub(r"(?ms)^calendar:\n.*?(?=^\S|\Z)",
+                    "calendar:\n  valid_from: '2020-01-01'\n  valid_through: '2099-12-31'\n  holidays:\n" + closed, config)
     (directory / "config.yaml").write_text(config)
     args = ["go", "run", "./tests/fixtures/dashboard", "-data", str(directory / "data")]
     if empty:
@@ -531,6 +539,9 @@ def error_checks(page, url, state):
 
 
 def minute_checks(page, url, state, args):
+    # The preceding chart checks hover historical candles. A DOM redraw under
+    # that pointer can select an old bar before the latest-bar assertion.
+    page.mouse.move(0, 0)
     page.locator("#chart-stock").select_option("sz000001")
     page.locator("#chart-range").select_option("0")
     assert page.locator('#chart-period option[value="1"]').count() == 0
