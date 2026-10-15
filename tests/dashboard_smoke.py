@@ -16,12 +16,17 @@ from pathlib import Path
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 from urllib.parse import urlparse
 
 from playwright.sync_api import expect, sync_playwright
+
+# Test helpers should not leave generated files in the checkout.
+sys.dont_write_bytecode = True
+from calculator_browser_checks import calculator_checks
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -374,6 +379,7 @@ def main():
             page.on("requestfailed", lambda request: problems.append(f"network: {request.url} {request.failure}") if not state["injecting"] else None)
             with service(args) as (url, directory, env):
                 populated_checks(context, page, url, args, directory, env)
+                calculator_checks(context, page, url, ROOT, args, state, stalled_endpoint)
                 error_checks(page, url, state)
                 page.goto("about:blank")
             with service(args, empty=True) as (url, _, _):
@@ -383,6 +389,11 @@ def main():
                 expect(page.get_by_test_id("empty-state")).to_be_visible()
                 expect(page.get_by_test_id("stock-row")).to_have_count(3)
                 expect(page.get_by_test_id("ranking-empty-state")).to_be_visible()
+                page.get_by_role("link", name="仓位计算", exact=True).click()
+                expect(page.get_by_role("button", name="计算仓位", exact=True)).to_be_enabled()
+                page.get_by_role("button", name="载入 215 股示例").click()
+                page.get_by_role("button", name="计算仓位", exact=True).click()
+                expect(page.locator('[data-result="target_price"]')).to_have_text("48.61 元")
                 page.goto("about:blank")
             assert not problems, "Unexpected browser errors: " + json.dumps(problems, ensure_ascii=False)
             context.close()
@@ -394,7 +405,7 @@ def main():
         artifact = hashlib.sha256(Path(args.binary).read_bytes()).hexdigest()
     print(json.dumps({"result": "passed", "mode": "container" if args.image else "native", "artifact": artifact,
                       "identity": "anonymous (no application authentication)",
-                      "checks": "snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/read-only API/gateway-403/503/timeout/recovery/empty/SIGTERM"}, ensure_ascii=False))
+                      "checks": "snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/read-only API/gateway-403/503/timeout/recovery/empty/calculator/initial/add/holdings/net-target/validation/offline/no-account-upload/model-load-failure/SIGTERM"}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

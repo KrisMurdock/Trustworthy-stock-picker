@@ -1,0 +1,71 @@
+.calculator-page { max-width: 1380px; }
+.calculator-page .intro { max-width: none; }
+.calculator-nav a[aria-current] { color: var(--brand); font-weight: 650; }
+.calculator-layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); align-items: start; gap: 26px; }
+.calculator-layout form, .calculator-layout aside { min-width: 0; }
+.calculator-layout fieldset { padding: 0; margin: 0; min-width: 0; border: 0; }
+.calculator-panel { margin-bottom: 18px; overflow: hidden; }
+.calculator-panel .panel-heading { padding: 22px 24px 18px; align-items: flex-start; }
+.calculator-panel .panel-heading .button { margin-top: 6px; }
+.calculator-panel h2 { font-size: 20px; }
+.fields-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 20px; padding: 0 24px 20px; }
+.calculator-layout fieldset.fields-grid { padding: 0 24px 20px; }
+.field { display: flex; flex-direction: column; gap: 7px; font-size: 12px; color: var(--muted); min-width: 0; }
+.field input, .field select { width: 100%; min-width: 0; min-height: 42px; border: 1px solid #c9d5d3; background: var(--surface); border-radius: 6px; padding: 9px 10px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.field input::placeholder { color: #79878c; font-size: 11px; }
+.field input[aria-invalid=true] { border-color: var(--rise); background: #fff8f7; }
+.field-help { margin: 0 24px 22px; color: var(--muted); font-size: 12px; line-height: 1.8; }
+.mode-switch { display: flex; flex-wrap: wrap; gap: 22px; margin: 0 24px 24px; }
+.mode-switch label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.mode-switch input { accent-color: var(--brand); width: 17px; height: 17px; }
+#holding-fields { margin: 0 24px 20px; }
+#holding-fields .field-help { margin: 12px 0 0; }
+.holding-row { border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 12px; background: #fafbf9; }
+.holding-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.holding-heading strong { font-size: 12px; }
+.holding-heading .button { min-height: 30px; padding: 4px 10px; }
+.holding-row .fields-grid { padding: 0; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.trading-rules { border-top: 1px solid var(--line); }
+.trading-rules summary { padding: 16px 24px; color: var(--brand); cursor: pointer; font-size: 13px; }
+.trading-rules summary:focus-visible { outline: 3px solid #63a4b4; outline-offset: -4px; }
+.calculator-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 18px 0 24px; }
+.calculator-actions .button { min-height: 44px; padding-left: 24px; padding-right: 24px; }
+.calculator-actions p { width: 100%; color: var(--muted); font-size: 11px; margin-top: 4px; }
+.calculator-results { position: sticky; top: 20px; }
+.result-empty { padding: 24px; color: var(--muted); line-height: 1.9; min-height: 180px; }
+.result-budget { margin: 0 24px 24px; padding: 19px; background: var(--brand-light); border: 1px solid #dbe7e5; border-radius: 8px; }
+.result-budget span { color: var(--brand); font-size: 12px; }
+.result-budget strong { display: block; font-size: 32px; font-weight: 600; margin: 6px 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.result-budget p { font-size: 11px; color: var(--muted); }
+.order-result { margin: 0 24px 20px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+.order-result h3, #position-results h3 { font-size: 14px; margin: 0 0 12px; }
+.order-result .order-quantity { font-size: 25px; font-weight: 600; margin-bottom: 8px; overflow-wrap: anywhere; }
+.order-result p { color: var(--muted); font-size: 12px; line-height: 1.8; }
+.order-result .blocked { color: #916221; }
+.result-values { margin: 0; }
+.result-values div { display: flex; align-items: baseline; justify-content: space-between; gap: 18px; padding: 9px 0; border-bottom: 1px dashed var(--line); font-size: 12px; }
+.result-values dt { color: var(--muted); flex: 1; }
+.result-values dd { text-align: right; margin: 0; font-weight: 550; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; max-width: 60%; }
+.result-values .target-value { color: var(--brand); font-size: 20px; }
+#position-results { margin: 0 24px 24px; }
+.result-notes { background: #fafbf9; border-top: 1px solid var(--line); padding: 18px 24px; font-size: 11px; color: var(--muted); }
+.result-notes strong { font-size: 12px; color: var(--ink); }
+.result-notes ul { padding-left: 17px; margin-bottom: 0; }
+.result-notes li + li { margin-top: 7px; }
+.model-note { color: var(--muted); font-size: 12px; padding: 0 4px; line-height: 1.8; }
+.model-note strong { display: block; margin-bottom: 5px; color: var(--ink); }
+@media (max-width: 1000px) { .calculator-layout { grid-template-columns: minmax(0,1fr); gap: 8px; } .calculator-results { position: static; } }
+@media (max-width: 760px) {
+  .calculator-page .page-heading { flex-direction: column; }
+  .calculator-nav a:first-child { display: block; }
+  .calculator-panel .panel-heading { padding: 18px 16px; gap: 8px; }
+  .calculator-panel h2 { font-size: 18px; }
+  .calculator-panel .panel-heading .button { font-size: 10px; padding: 7px 9px; }
+  .fields-grid, .calculator-layout fieldset.fields-grid { padding: 0 16px 18px; gap: 16px 12px; }
+  .field input, .field select { font-size: 16px; }
+  .field-help, .mode-switch { margin-left: 16px; margin-right: 16px; }
+  #holding-fields { margin-left: 16px; margin-right: 16px; }
+  .holding-row .fields-grid { grid-template-columns: minmax(0, 1fr); }
+  .trading-rules summary { padding: 16px; }
+  .result-budget, .order-result, #position-results { margin-left: 16px; margin-right: 16px; }
+}

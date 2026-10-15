@@ -41,6 +41,7 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.6; strok
 .brand-caption { display: block; color: var(--muted); font-size: 11px; letter-spacing: 1px; margin-top: 2px; }
 .header-nav { display: flex; gap: 28px; margin-left: 24px; font-size: 13px; color: var(--muted); }
 .header-nav a:hover { color: var(--brand); }
+@media (max-width: 540px) { .header-inner { flex-wrap: wrap; } .header-inner .header-nav { width: 100%; margin-left: 0; justify-content: space-between; } }
 .market-label { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .page { width: 100%; max-width: 1440px; margin: 0 auto; padding: 38px 40px 0; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 33px; }

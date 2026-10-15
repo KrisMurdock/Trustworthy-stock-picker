@@ -4,6 +4,8 @@
 
 `bash tests/run_test.sh` 在临时仓库内用 mock systemctl/ps 和 CLI 验证 `make run`：同仓库同配置时按“构建、配置校验、停止后台、启动前台”的顺序执行；构建/校验失败保留后台，停止失败或仍有 PID 时不启动前台。不同配置/仓库不停止服务；服务查询拒绝/超时、缺配置、dotenv 加载和 make dry-run 均有断言。该回归检查包含在 `make smoke` / `make ci` 中。
 
+`python3 tests/strategy_model_test.py` 使用 Node.js 20+ 运行网页计算模型，与原脚本对照 55 组有效情景，并验证 22 组无效输入。金额取整、风险/现金/费用限制、多个持仓批次与固定止盈金额都必须一致。该检查已接入 `make smoke` / `make ci`，因此本地 CI 需要 Python 3 和 Node；生产 Go 镜像不需要这些运行时。
+
 看板使用真实 Chromium 验证，先安装 Python Playwright 及其 Chromium，再执行：
 
 ```bash
@@ -16,6 +18,8 @@ python3 tests/dashboard_smoke.py --image stock-watcher:dashboard-test
 可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 或 `--browser` 指定已安装的 Chromium。测试以真实 `stock-watcher run` 启动看板与调度循环，容器模式使用生产 entrypoint、只读根目录、8080 容器端口和本机随机端口映射。所有测试数据通过 `tests/fixtures/dashboard` 调用生产 SQLite 初始化和快照事务写入：三个池内股票、两个有行情、一个缺失，以及 v1/v2 两日排名报告。测试禁止行情客户端通过外网请求，使用关闭的本地代理模拟上游故障；凭证关闭。测试覆盖 DOM、URL、页面标题、控制台与网络、资产版本及缓存策略、全池查询和排序、历史排名、新日报自动跟随和明确选择历史后的保持、移动布局、空数据库、网关 403/接口 503 与浏览器超时后的恢复、只读 API 和 SIGTERM。原生模式另验缺失配置无法启动。
 
 浏览器测试仅使用一个浏览器并串行运行有数据/空数据库场景；结束删除临时目录、进程与容器。桌面和移动截图保存在被 Git 忽略的 `.scratch/dashboard-verification/`，标准输出记录本地二进制 SHA-256 或所测镜像 ID。当前看板没有账号或角色体系，预期允许匿名读取；不存在普通用户和管理员界面，不能将匿名浏览器验证表述为角色权限验证。测试不连接真实部署 URL，本地通过仍需要部署后重新检查。
+
+同一浏览器还运行 `calculator_browser_checks.py`：从看板进入 `/calculator`，验证 215 股案例、底仓及加仓上限、固定净利润、多批持仓、错误提示与焦点、清空和过期结果隐藏；断言计算期间无网络请求、无浏览器存储，断网仍可计算，空数据库仍可使用。模块资源注入 403/503 与真实连接停滞以验证加载失败、10 秒超时和重载恢复；直接核对计算器 JS/CSS 内容与缓存头，保存桌面/移动截图。两种运行模式都执行这些断言。
 
 `go test -race ./internal/monitor ./internal/config` 验证启动全池同步与分析、缓存强制刷新、盘中/收盘/周末/节假日、时区与过期窗口、跨收盘重试、同步失败不发送旧缓存、飞书失败只重试投递、同日内容变化去重、新通道、v1 已送达日期迁移和取消。Run 循环测试使用虚拟时间推进重试，不真实等待几分钟。凭证文件测试覆盖相对路径、环境变量优先级、显式清空、缺失/错误文件和错误脱敏；CLI 冒烟另验文件读取与非 root 权限拒绝。
 

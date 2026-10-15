@@ -90,6 +90,14 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, r, http.StatusOK, report)
 	case "/":
 		h.asset(w, r, "index.html", "text/html; charset=utf-8")
+	case "/calculator":
+		h.asset(w, r, "calculator.html", "text/html; charset=utf-8")
+	case "/assets/calculator.js", "/assets/strategy-model.js":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, r.URL.Path[len("/assets/"):], "text/javascript; charset=utf-8")
+	case "/assets/calculator.css":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "calculator.css", "text/css; charset=utf-8")
 	case "/assets/app.js":
 		w.Header().Set("Cache-Control", "no-cache")
 		h.asset(w, r, "app.js", "text/javascript; charset=utf-8")

@@ -82,6 +82,12 @@ func TestDashboardRoutingAndSecurityHeaders(t *testing.T) {
 		status                           int
 	}{
 		{"GET", "/", "text/html", "no-store", 200},
+		{"GET", "/calculator", "text/html", "no-store", 200},
+		{"HEAD", "/calculator", "text/html", "no-store", 200},
+		{"POST", "/calculator", "application/json", "no-store", 405},
+		{"GET", "/assets/calculator.js", "text/javascript", "no-cache", 200},
+		{"GET", "/assets/strategy-model.js", "text/javascript", "no-cache", 200},
+		{"GET", "/assets/calculator.css", "text/css", "no-cache", 200},
 		{"GET", "/assets/app.js", "text/javascript", "no-cache", 200},
 		{"GET", "/assets/style.css", "text/css", "no-cache", 200},
 		{"GET", "/healthz", "application/json", "no-store", 200},

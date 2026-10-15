@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#164d59">
+  <meta name="description" content="按账户资金和亏损预算，测算底仓、加仓与净止盈价格。">
+  <title>仓位计算 · Stock Watcher</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/assets/calculator.css">
+  <script src="/assets/calculator.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳转至仓位计算</a>
+  <header class="site-header"><div class="header-inner">
+    <a class="brand" href="/" aria-label="Stock Watcher 股池观察首页">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M6 24V15m10 9V8m10 16V4"/><path d="m5 12 10-7 8 5 5-7"/></svg></span>
+      <span><strong>STOCK WATCHER</strong><span class="brand-caption">把每日变化，看得更清楚</span></span>
+    </a>
+    <nav class="header-nav calculator-nav" aria-label="主导航"><a href="/">股池观察</a><a href="/calculator" aria-current="page">仓位计算</a></nav>
+    <span class="market-label">A 股 · 策略试验</span>
+  </div></header>
+  <main id="main-content" class="page calculator-page">
+    <section class="page-heading"><div><p class="eyebrow">PLAN YOUR POSITION</p><h1>仓位计算<span class="heading-dot">.</span></h1><p class="intro">先确定能承担的亏损，再安排每一笔投入。</p></div><span class="tag tag-neutral">仅在本页计算 · 不上传账户金额</span></section>
+    <div id="calculator-loading" class="notice notice-info" role="status"><div><strong>正在载入计算器</strong><p>若长时间未加载，请刷新页面或检查网络。</p></div><button class="button button-secondary" id="reload-calculator" type="button">重新加载</button></div>
+    <noscript><p class="notice notice-error">请启用 JavaScript 后使用仓位计算。</p></noscript>
+    <div class="calculator-layout">
+      <form id="strategy-form" autocomplete="off" novalidate>
+        <fieldset id="calculator-controls" disabled>
+          <legend class="sr-only">仓位策略参数</legend>
+          <section class="panel calculator-panel">
+            <div class="panel-heading"><div><p class="eyebrow">01 / CAPITAL & RISK</p><h2>资金与风险</h2></div><button id="load-example" class="button button-secondary" type="button">载入 215 股示例</button></div>
+            <div class="fields-grid">
+              <label class="field">账户总资产（元）<input name="account" inputmode="decimal" placeholder="现金 + 持仓当前市值" required aria-describedby="capital-help"></label>
+              <label class="field">当前可用现金（元）<input name="cash" inputmode="decimal" placeholder="已扣历史买入支出" required aria-describedby="capital-help"></label>
+              <label class="field">单股投入上限（元）<input name="budget" inputmode="decimal" placeholder="累计成交金额，不含费用" required></label>
+              <label class="field">最大亏损金额（元）<input name="max_loss" inputmode="decimal" placeholder="底仓与加仓共用" required></label>
+              <label class="field">账户风险比例（%）<input name="risk_pct" inputmode="decimal" value="0.5" required></label>
+              <label class="field">策略止损触发价（元）<input name="stop" inputmode="decimal" placeholder="买入逻辑失效时的退出价" required></label>
+            </div>
+            <p id="capital-help" class="field-help">风险预算取「最大亏损金额」与「账户总资产 × 风险比例」的较小值。可用现金无需再扣历史买入金额。</p>
+          </section>
+          <section class="panel calculator-panel">
+            <div class="panel-heading"><div><p class="eyebrow">02 / ENTRY & ADDITIONS</p><h2>底仓与加仓</h2></div></div>
+            <div class="mode-switch" role="group" aria-label="建仓方式">
+              <label><input type="radio" name="mode" value="initial" checked> 首次建仓</label>
+              <label><input type="radio" name="mode" value="holding"> 已有持仓</label>
+            </div>
+            <fieldset id="initial-fields" class="fields-grid"><legend class="sr-only">首次建仓参数</legend>
+              <label class="field">首次买入价（元）<input name="entry" inputmode="decimal" required></label>
+              <label class="field">底仓风险分配（%）<input name="initial_risk_pct" inputmode="decimal" value="50" required></label>
+            </fieldset>
+            <fieldset id="holding-fields" hidden disabled><legend class="sr-only">历史买入批次</legend>
+              <div id="holdings"></div>
+              <button id="add-holding" class="button button-secondary" type="button">＋ 添加持仓批次</button>
+              <p class="field-help">填写已成交的价格、股数及已付费用。支持多批买入，最多 100 批。</p>
+            </fieldset>
+            <div class="fields-grid"><label class="field">计划加仓价（元，可选）<input name="add_price" inputmode="decimal" placeholder="留空则只分析底仓或现有持仓"></label></div>
+            <p class="field-help">底仓分配的是风险额度，资金比例会随止损距离变化。加仓只使用剩余风险，不自动扩大亏损预算。</p>
+          </section>
+          <section class="panel calculator-panel">
+            <div class="panel-heading"><div><p class="eyebrow">03 / EXIT & COSTS</p><h2>止盈与交易成本</h2></div></div>
+            <div class="fields-grid">
+              <div class="field"><label for="target-mode">止盈方式</label><select id="target-mode" name="target_mode"><option value="pct">按净收益率</option><option value="profit">按净利润金额</option></select></div>
+              <label class="field" id="target-pct-field">净止盈收益率（%）<input name="target_pct" inputmode="decimal" value="3" required></label>
+              <label class="field" id="target-profit-field" hidden>净止盈金额（元）<input name="target_profit" inputmode="decimal" disabled required></label>
+              <label class="field">新增每笔买入费用（元）<input name="buy_fee" inputmode="decimal" value="0" required></label>
+              <label class="field">全部卖出费用（元，含税）<input name="sell_fee" inputmode="decimal" value="0" required></label>
+              <label class="field">每股滑点预留（元）<input name="slippage" inputmode="decimal" value="0" required></label>
+            </div>
+            <p class="field-help">3% 以实际买入支出（含买入费用）为分母。费用按固定金额估算，零值不计费；请根据券商实际费用填写。</p>
+            <details class="trading-rules"><summary>交易单位与报价规则</summary><div class="fields-grid">
+              <label class="field">最小买入股数<input name="min_shares" inputmode="numeric" value="200" required></label>
+              <label class="field">股数步长<input name="lot_step" inputmode="numeric" value="1" required></label>
+              <label class="field">报价单位（元）<input name="tick" inputmode="decimal" value="0.01" required></label>
+            </div><p class="field-help">默认按科创板买入规则：200 股起、按 1 股递增。主板通常填写 100 / 100；请核对实际交易规则。</p></details>
+          </section>
+          <div id="form-error" class="notice notice-error" role="alert" hidden></div>
+          <div class="calculator-actions"><button class="button button-primary" type="submit">计算仓位</button><button class="button button-secondary" type="reset">清空重填</button><p>参数仅保留在当前页面，刷新后清空。</p></div>
+        </fieldset>
+      </form>
+      <aside class="calculator-results" aria-labelledby="results-title">
+        <div class="panel calculator-panel result-panel">
+          <div class="panel-heading"><div><p class="eyebrow">YOUR SCENARIO</p><h2 id="results-title">测算结果</h2></div><span id="result-tag" class="tag tag-neutral">等待输入</span></div>
+          <p id="result-empty" class="result-empty">填写资金、止损和买入计划后，查看风险预算、可买股数与离场价格。也可以先载入示例。</p>
+          <div id="strategy-results" hidden>
+            <p id="result-status" class="field-help" role="status" aria-live="polite"></p>
+            <div class="result-budget"><span>整笔风险预算</span><strong id="risk-budget"></strong><p>底仓和加仓共用，不随买入次数增加。</p></div>
+            <div id="order-results"></div>
+            <section id="position-results" hidden><h3>测算后持仓</h3><dl id="position-values" class="result-values"></dl></section>
+            <div class="result-notes"><strong>使用边界</strong><ul id="result-warnings"></ul></div>
+          </div>
+        </div>
+        <div class="model-note"><strong>价格边界 ≠ 成交保证</strong><p>资金止损边界只是亏损预算对应的价格，不能替代策略失效价。T+1、跳空和无法成交可能使损失超出预算。</p></div>
+      </aside>
+    </div>
+    <footer class="site-footer"><span>STOCK WATCHER <span class="footer-separator">/</span> 每笔有预算，进退有依据</span><span>现金买股 · 分批买入 · 最后全部卖出</span></footer>
+  </main>
+</body>
+</html>
