@@ -132,10 +132,7 @@ func (x *ExperimentDB) Start(ctx context.Context, snapshot experiment.Snapshot, 
 		if err != nil {
 			return err
 		}
-		baselineID := parent.BaselineID
-		if record.Spec.NextDayRule == "baseline" && parent.Spec.NextDayRule == "" {
-			baselineID = record.ID
-		}
+		baselineID := experiment.BaselineFor(record, parent)
 		if parent.Status != "completed" || parent.Data.ID != snapshot.ID || record.BaselineID != baselineID {
 			return errors.New("invalid experiment parent")
 		}

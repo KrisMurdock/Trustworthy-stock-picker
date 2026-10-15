@@ -235,3 +235,67 @@ func TestNextDayBaselineCanReuseFrozenLegacySnapshot(t *testing.T) {
 		t.Fatal("new baseline lineage not persisted", err)
 	}
 }
+
+func TestConditionalEngineBaselineAndIndicatorChildLineage(t *testing.T) {
+	ctx := context.Background()
+	db, err := OpenExperiments(ctx, t.TempDir(), false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	snapshot, _ := experimentFixture(t)
+	h := snapshot.Raw[0]
+	at, _ := time.ParseInLocation("2006-01-02 15:00", h.AsOf+" 15:00", market.Shanghai)
+	minutes := market.MinuteHistory{Version: 1, Code: h.Code, Source: "tencent", Period: 5, BasePeriod: 5, Adjust: "none", VolumeUnit: "provider_raw", FetchedAt: at,
+		Bars: []market.MinuteBar{{End: at, Open: 10, High: 11, Low: 9, Close: 10, Volume: 100, Final: true}}}
+	snapshot, err = experiment.WithMinutes(snapshot, []market.MinuteHistory{minutes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := experiment.Specification("conditional-entry")
+	old, err := experiment.NewRecord(snapshot, spec, nil, "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old.Engine = "conditional_entry_v5"
+	if err = db.Start(ctx, snapshot, old); err != nil {
+		t.Fatal(err)
+	}
+	old.Status = "completed"
+	if err = db.Finish(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	base, err := experiment.NewRecord(snapshot, spec, &old, "current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := base
+	forged.BaselineID = old.ID
+	if db.Start(ctx, snapshot, forged) == nil {
+		t.Fatal("old engine root reused")
+	}
+	if err = db.Start(ctx, snapshot, base); err != nil {
+		t.Fatal(err)
+	}
+	base.Status = "completed"
+	if err = db.Finish(ctx, base); err != nil {
+		t.Fatal(err)
+	}
+	spec, _ = experiment.Specification("conditional-rsi")
+	child, err := experiment.NewRecord(snapshot, spec, &base, "current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged = child
+	forged.BaselineID = child.ID
+	if db.Start(ctx, snapshot, forged) == nil {
+		t.Fatal("filtered child forged an independent baseline")
+	}
+	if err = db.Start(ctx, snapshot, child); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.Get(ctx, child.ID)
+	if err != nil || got.Spec.SignalRule != "rsi" || got.BaselineID != base.ID {
+		t.Fatal("indicator lineage lost", err)
+	}
+}

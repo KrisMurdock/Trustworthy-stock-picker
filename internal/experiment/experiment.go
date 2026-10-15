@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Engine = "conditional_entry_v5"
+const Engine = "indicator_selection_v6"
 
 type Calendar struct {
 	From     string   `json:"from"`
@@ -60,6 +60,7 @@ type Spec struct {
 	MaxUpperWick    *float64                `json:"max_upper_wick,omitempty"`
 	NextDayRule     string                  `json:"next_day_rule,omitempty"`
 	EntryMode       string                  `json:"entry_mode,omitempty"`
+	SignalRule      string                  `json:"signal_rule,omitempty"`
 	Range           *strategy.BacktestRange `json:"signal_range,omitempty"`
 	Criteria        string                  `json:"criteria"`
 }
@@ -103,7 +104,10 @@ func ValidID(id string) bool {
 }
 func Specification(policy string) (Spec, error) {
 	if policy == "conditional-entry" {
-		return Spec{Title: "条件低吸 · 买入日浮盈与次日止盈", Direction: "第二天到价反弹买入，第三天触达净盈利2.5%／3%", Hypothesis: "预先确定低吸区间，在当时已确认的反弹后入场，检验买入日收盘扣成本浮盈为正以及第三天止盈的联合成功率。", Change: "信号日原始收盘价下方0.5%～2%为区间；完成5分钟收盘回到区间且从当时已知日内低点反弹≥0.3%，下一根5分钟开盘含滑点仍在区间才买，最迟14:30；此前5分钟收盘跌破下沿或首次触发后开盘跳出区间则放弃。候选在前一日固定，不按未来触发或盈亏补名额。", Criteria: "每笔净亏损严格<3%；买入日收盘估值扣买入成本、预留卖出税费及滑点后>0，非当日涨幅为正。第三天仅计退出前最高价净触达2.5%／3%，联合成功率争取≥80%，分母为全部入场（含未决与买入日亏损）。至少30笔完成和10个信号日，缺失分钟和未决不按安全处理；不保证未来收盘或实盘收益。未指定区间时保留最新3个分钟交易日；显式区间不声明独立留出，短历史仅固定规则试验。", NextDayRule: "baseline", EntryMode: strategy.ConditionalEntryMode}, nil
+		return conditionalSpecification("")
+	}
+	if strings.HasPrefix(policy, "conditional-") {
+		return conditionalSpecification(strings.TrimPrefix(policy, "conditional-"))
 	}
 	if strings.HasPrefix(policy, "next-day-") {
 		return nextDaySpecification(strings.TrimPrefix(policy, "next-day-"))
@@ -213,13 +217,24 @@ func NewRecord(snapshot Snapshot, spec Spec, parent *Record, version string) (Re
 			return r, errors.New("parent must be a completed experiment on the same snapshot")
 		}
 		r.ParentID = parent.ID
-		r.BaselineID = parent.BaselineID
-		if spec.NextDayRule == "baseline" && parent.Spec.NextDayRule == "" {
-			r.BaselineID = r.ID
-		}
+		r.BaselineID = BaselineFor(r, *parent)
 	}
 	return r, nil
 }
+
+// BaselineFor keeps a new execution/engine baseline separate while preserving
+// the parent snapshot and provenance. Storage uses this same lineage contract.
+func BaselineFor(record, parent Record) string {
+	if record.Spec.NextDayRule == "baseline" && parent.Spec.NextDayRule == "" {
+		return record.ID
+	}
+	if record.Spec.EntryMode == strategy.ConditionalEntryMode && record.Spec.SignalRule == "" &&
+		(parent.Engine != record.Engine || parent.CodeVersion != record.CodeVersion || parent.Spec.EntryMode != record.Spec.EntryMode || parent.Spec.SignalRule != "" || !sameRange(record.Spec.Range, parent.Spec.Range)) {
+		return record.ID
+	}
+	return parent.BaselineID
+}
+
 func Comparable(a, b Record) bool {
 	return a.Engine == b.Engine && a.CodeVersion == b.CodeVersion && a.Data.ID == b.Data.ID && a.Status == "completed" && b.Status == "completed" && (a.Spec.NextDayRule != "") == (b.Spec.NextDayRule != "") && a.Spec.EntryMode == b.Spec.EntryMode && sameRange(a.Spec.Range, b.Spec.Range)
 }
@@ -234,7 +249,7 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 	var x strategy.DevelopmentResult
 	var err error
 	if record.Spec.EntryMode == strategy.ConditionalEntryMode {
-		x, err = strategy.AnalyzeConditional(ctx, c, snapshot.Adjusted, snapshot.Raw, snapshot.Minutes, snapshot.AsOf, record.Spec.Range)
+		x, err = strategy.AnalyzeConditional(ctx, c, snapshot.Adjusted, snapshot.Raw, snapshot.Minutes, snapshot.AsOf, record.Spec.Range, record.Spec.SignalRule)
 	} else {
 		x, err = strategy.AnalyzeDevelopment(ctx, c, snapshot.Adjusted, snapshot.Raw, snapshot.AsOf, strategy.EntryPolicy{MaxUpperWick: record.Spec.MaxUpperWick, RequireEvidence: record.Spec.RequireEvidence, NextDayRule: record.Spec.NextDayRule, Range: record.Spec.Range})
 	}
@@ -293,6 +308,9 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 	result.Findings = append(result.Findings, Finding{"limitation", "样本来自当前股池及成功保存的数据；存在股池选择偏差。日线模拟并非实际成交，单笔统计不等于资金组合收益。", []string{}})
 	record.Verdict = developmentVerdict(*record, parent)
 	if record.Spec.EntryMode != "" {
+		if selection := x.Selection; selection != nil {
+			result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("信号日候选 %d 条，指标规则通过 %d 条，预先选入 %d 条；原排序前N中被过滤 %d 条。未触发不按次日行情补选。", selection.Candidates, selection.Eligible, selection.Selected, selection.FilteredOriginalTop), []string{}})
+		}
 		result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("买入日收盘扣成本浮盈为正 %d 笔，不为正 %d 笔，未知 %d 笔；入场路径缺失 %d 条。买入日为正且第三天触达2.5%% / 3%%的联合成功样本 %d / %d，入场分母 %d。", stats.EntryDayPositive, stats.EntryDayNonPositive, stats.EntryDayUnknown, stats.UnknownEntries, stats.Joint25, stats.Joint30, stats.Samples), []string{}})
 		result.Findings = append(result.Findings, Finding{"limitation", "本轮为固定分钟规则试运行。早期分钟日期可能与旧日线留出期重叠，已查看日期不得再声称是旧策略未见样本；后续最终验证须重新冻结新数据。", []string{}})
 		result.Next = append(result.Next, "核对未触发、跌破区间、入场跳价和缺失分钟的原因；买入日亏损保留为失败，不按收盘结果删样本。", "冻结入场规则并积累更多完整分钟交易日，分别检查买入日正浮盈率与两档联合成功率；没有合格证据不发布买入推荐。")
@@ -327,7 +345,10 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 		result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("相对父实验：平均净收益变化 %+.4f 个百分点，入场样本变化 %+d，最差单笔变化 %+.4f 个百分点，平均持有天数变化 %+.2f。", stats.MeanNet-before.MeanNet, stats.Samples-before.Samples, stats.WorstNet-before.WorstNet, stats.MeanDays-before.MeanDays), []string{}})
 		result.Next = append(result.Next, "检查按月、行业与个股分组，确认差异是否集中在少数日期或股票；未验证前不继续收紧阈值。")
 	}
-	if record.Spec.RequireEvidence {
+	if record.Spec.SignalRule != "" {
+		result.Findings = append(result.Findings, Finding{"limitation", "RSI、MACD和布林线都是同一价格历史的变换，组合满足不代表独立证据或未来成功概率；同时核对样本覆盖和遗漏的机会。", []string{}})
+		result.Next = append(result.Next, "在固定区间内与无过滤基线对照：收益变化来自指标过滤还是样本减少；保持参数冻结，积累新交易日后再验证稳定性。")
+	} else if record.Spec.RequireEvidence {
 		result.Findings = append(result.Findings, Finding{"hypothesis", "后续可单独检验入场前的波动、跳空频率与流动性是否能够识别超限风险；本轮尚未验证这些解释。", evidence})
 	} else {
 		result.Findings = append(result.Findings, Finding{"hypothesis", "可在后续独立实验中检查上影线过滤是否受波动水平影响；本轮尚未验证该解释。", evidence})

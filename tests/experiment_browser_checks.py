@@ -11,7 +11,7 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     page.get_by_role("link", name="策略实验室", exact=True).click()
     expect(page).to_have_title("策略实验室 · Stock Watcher")
     assert urlparse(page.url).path == "/experiments"
-    expect(page.locator(".experiment-item")).to_have_count(4)
+    expect(page.locator(".experiment-item")).to_have_count(5)
     payload = context.request.get(url + "/api/experiments").json()
     records = payload["experiments"]
     child = next(r for r in records if r["spec"].get("max_upper_wick") is not None)
@@ -100,7 +100,7 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     page.locator("#trade-filter").select_option("selected")
     page.locator(f'.experiment-item[data-id="{child["id"]}"]').click()
     expect(page.locator("#next-day-mode")).to_contain_text("原持仓期限档案")
-    conditional = next(r for r in records if r["spec"].get("entry_mode"))
+    conditional = next(r for r in records if r["spec"].get("entry_mode") and not r["spec"].get("signal_rule"))
     page.locator(f'.experiment-item[data-id="{conditional["id"]}"]').click()
     expect(page.locator("#run-title")).to_have_text("条件低吸 · 买入日浮盈与次日止盈")
     expect(page.locator("#entry-mode-description")).to_contain_text("下一根5分钟")
@@ -118,12 +118,24 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     page.locator("#trade-body button").first.click()
     expect(page.locator("#evidence-detail")).to_contain_text("买入区间")
     expect(page.locator("#evidence-detail")).to_contain_text("买入日收盘净浮盈")
+    expect(page.locator("#evidence-indicators")).to_contain_text("RSI14")
+    expect(page.locator("#evidence-indicators")).to_contain_text("MACD DIF")
+    expect(page.locator("#evidence-indicators")).to_contain_text("布林线(20,2)")
+    first = actual["result"]["development"]["trades"][0]
+    band = first["features"]["signal_indicators"]["bollinger"]
+    expect(page.locator("#evidence-indicators")).to_contain_text(f'中轨 {band["middle"]:.4f}')
+    selection = actual["result"]["development"]["signal_selection"]
+    expect(page.locator("#signal-selection-summary")).to_contain_text(f'候选 {selection["candidates"]} 条')
     interval = actual["spec"]["signal_range"]
     page.locator("#backtest-from").fill(interval["from"])
     page.locator("#backtest-through").fill(interval["through"])
     page.get_by_role("button", name="生成复现命令").click()
     expect(page.locator("#backtest-command")).to_contain_text("-policy conditional-entry -parent " + conditional["id"])
     expect(page.locator("#backtest-command")).to_contain_text("-from " + interval["from"] + " -through " + interval["through"])
+    for rule in ["rsi", "macd", "bollinger", "confluence", "all-three", "guard", "confluence-guard"]:
+        page.locator("#backtest-policy").select_option("conditional-" + rule)
+        page.get_by_role("button", name="生成复现命令").click()
+        expect(page.locator("#backtest-command")).to_contain_text("-policy conditional-" + rule + " -parent " + conditional["id"])
     page.locator("#backtest-from").fill("2026-12-31")
     page.get_by_role("button", name="生成复现命令").click()
     expect(page.locator("#backtest-command-status")).to_contain_text("顺序正确")
@@ -132,7 +144,22 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), "conditional page overflow"
     page.screenshot(path=str(screenshots / f"{kind}-conditional.png"), full_page=True)
     page.set_viewport_size({"width": 1440, "height": 1000})
+    indicator = next(r for r in records if r["spec"].get("signal_rule") == "guard")
+    page.locator(f'.experiment-item[data-id="{indicator["id"]}"]').click()
+    expect(page.locator("#run-title")).to_have_text("条件低吸 · 波动与量能约束")
+    expect(page.locator("#comparison-note")).to_contain_text("口径一致")
+    expect(page.locator("#backtest-command")).to_be_empty()
+    expect(page.locator("#backtest-policy")).to_have_value("conditional-guard")
+    page.locator("#trade-filter").select_option("rejected")
+    page.locator("#trade-body button").first.click()
+    expect(page.locator("#evidence-detail")).to_contain_text("信号日指标过滤")
+    expect(page.locator("#evidence-indicators")).to_contain_text("布林线(20,2)")
     page.locator(f'.experiment-item[data-id="{child["id"]}"]').click()
+    page.locator("#backtest-from").fill(interval["from"])
+    page.locator("#backtest-policy").select_option("conditional-macd")
+    page.get_by_role("button", name="生成复现命令").click()
+    expect(page.locator("#backtest-command")).to_be_empty()
+    expect(page.locator("#backtest-command-status")).to_contain_text("含分钟数据")
     state["injecting"] = True
     pattern = "**/api/experiments"
     for status, message in ((401, "授权"), (403, "授权"), (503, "暂时不可用")):

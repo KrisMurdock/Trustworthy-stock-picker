@@ -151,7 +151,7 @@ func TestExplicitRangeFiltersSignalsAndRetainsWarmup(t *testing.T) {
 	}
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := AnalyzeConditional(canceled, config.Defaults(), nil, nil, nil, "2026-10-15", nil); err != context.Canceled {
+	if _, err := AnalyzeConditional(canceled, config.Defaults(), nil, nil, nil, "2026-10-15", nil, ""); err != context.Canceled {
 		t.Fatal("cancel ignored")
 	}
 }
@@ -167,7 +167,7 @@ func TestConditionalHoldoutIsPurgedAndUnknownTopPickIsNotReplaced(t *testing.T) 
 		h[0].Bars[i], raw[0].Bars[i] = rawDay(bars), rawDay(bars)
 		m.Bars = append(m.Bars, bars...)
 	}
-	x, err := AnalyzeConditional(context.Background(), c, h, raw, []market.MinuteHistory{m}, h[0].AsOf, nil)
+	x, err := AnalyzeConditional(context.Background(), c, h, raw, []market.MinuteHistory{m}, h[0].AsOf, nil, "")
 	if err != nil || len(x.Trades) == 0 || x.HoldoutFrom != h[0].Bars[len(h[0].Bars)-3].Date {
 		t.Fatalf("missing reserved sessions: %+v %v", x, err)
 	}
@@ -184,7 +184,7 @@ func TestConditionalHoldoutIsPurgedAndUnknownTopPickIsNotReplaced(t *testing.T) 
 	for i := len(m.Bars) - 144; i < len(m.Bars); i++ {
 		m.Bars[i].High++
 	}
-	again, err := AnalyzeConditional(context.Background(), c, h, raw, []market.MinuteHistory{m}, h[0].AsOf, nil)
+	again, err := AnalyzeConditional(context.Background(), c, h, raw, []market.MinuteHistory{m}, h[0].AsOf, nil, "")
 	after, _ := json.Marshal(again)
 	if err != nil || string(before) != string(after) {
 		t.Fatalf("holdout prices changed development results: %v", err)
@@ -194,7 +194,7 @@ func TestConditionalHoldoutIsPurgedAndUnknownTopPickIsNotReplaced(t *testing.T) 
 	h2, r2 := h[0], raw[0]
 	h2.Code, r2.Code, m.Code = "sz000002", "sz000002", "sz000002"
 	c.Stocks = append(c.Stocks, config.Stock{Code: "sz000002", Name: h2.Name})
-	x, err = AnalyzeConditional(context.Background(), c, append(h, h2), append(raw, r2), []market.MinuteHistory{m}, h[0].AsOf, nil)
+	x, err = AnalyzeConditional(context.Background(), c, append(h, h2), append(raw, r2), []market.MinuteHistory{m}, h[0].AsOf, nil, "")
 	if err != nil || len(x.Trades) == 0 || x.Research.Development.TopRanked.UnknownEntries != len(x.Trades) {
 		t.Fatalf("unknown minute paths were excluded: %+v %v", x.Research.Development, err)
 	}

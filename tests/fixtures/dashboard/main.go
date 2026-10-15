@@ -236,7 +236,22 @@ func seedExperiments(root string) error {
 	if err = experiment.Evaluate(ctx, snapshot, &r, nil); err != nil {
 		return err
 	}
-	return db.Finish(ctx, r)
+	if err = db.Finish(ctx, r); err != nil {
+		return err
+	}
+	contrast, _ := experiment.Specification("conditional-guard")
+	contrast.Range = spec.Range
+	child, err := experiment.NewRecord(snapshot, contrast, &r, "fixture-v1")
+	if err != nil {
+		return err
+	}
+	if err = db.Start(ctx, snapshot, child); err != nil {
+		return err
+	}
+	if err = experiment.Evaluate(ctx, snapshot, &child, &r); err != nil {
+		return err
+	}
+	return db.Finish(ctx, child)
 }
 
 func seedMinutes(db *storage.MarketDB, stock config.Stock) error {
