@@ -70,3 +70,40 @@ func TestServicesPropagateMonitorFailure(t *testing.T) {
 		t.Fatalf("monitor error lost: %v", err)
 	}
 }
+
+func TestIndependentMonitorsStartAndJoin(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan struct{}, 2)
+	stopped := make(chan struct{}, 2)
+	done := make(chan error, 1)
+	runner := func(ctx context.Context) error {
+		started <- struct{}{}
+		<-ctx.Done()
+		stopped <- struct{}{}
+		return ctx.Err()
+	}
+	go func() { done <- runMonitors(ctx, runner, runner) }()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("one monitor blocked another")
+		}
+	}
+	cancel()
+	select {
+	case e := <-done:
+		if !errors.Is(e, context.Canceled) || len(stopped) != 2 {
+			t.Fatal("did not join all monitors", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shutdown blocked")
+	}
+	<-stopped
+	<-stopped
+	want := errors.New("storage unavailable")
+	if e := runMonitors(context.Background(), runner, func(context.Context) error { return want }); !errors.Is(e, want) {
+		t.Fatal("fatal cause lost", e)
+	}
+}

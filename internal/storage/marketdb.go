@@ -20,12 +20,13 @@ import (
 )
 
 const marketDBName = "market.db"
-const marketSchemaVersion = 2
+const marketSchemaVersion = 3
 
 type MarketDB struct {
-	db       *sql.DB
-	root     string
-	writable bool
+	db          *sql.DB
+	root        string
+	writable    bool
+	requireCIFS bool
 }
 
 type sqlReader interface {
@@ -106,7 +107,7 @@ func openMarket(root string, requireCIFS bool, writable, create bool) (*MarketDB
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	m := &MarketDB{db: db, root: root, writable: writable}
+	m := &MarketDB{db: db, root: root, writable: writable, requireCIFS: requireCIFS}
 	if err := m.configure(); err != nil {
 		db.Close()
 		return nil, err
@@ -182,7 +183,7 @@ func (m *MarketDB) configure() error {
 func verifySchema(reader sqlReader) error {
 	rows, err := reader.QueryContext(context.Background(), `
 		SELECT name FROM sqlite_master
-		WHERE type='table' AND name IN ('stock', 'daily_bar', 'stock_sync', 'sync_run', 'selection_run', 'selection_result')
+		WHERE type='table' AND name IN ('stock', 'daily_bar', 'stock_sync', 'sync_run', 'selection_run', 'selection_result', 'intraday_bar', 'intraday_sync')
 	`)
 	if err != nil {
 		return errors.New("cannot inspect market database schema")
@@ -196,7 +197,7 @@ func verifySchema(reader sqlReader) error {
 		}
 		found[name] = true
 	}
-	if err := rows.Err(); err != nil || len(found) != 6 {
+	if err := rows.Err(); err != nil || len(found) != 8 {
 		return errors.New("market database schema is incomplete")
 	}
 	return nil
@@ -273,10 +274,8 @@ func (m *MarketDB) initSchema() error {
 	if err != nil {
 		return errors.New("cannot initialize market database")
 	}
-	if version == 0 {
-		if _, err := m.db.Exec(fmt.Sprintf("PRAGMA user_version=%d", marketSchemaVersion)); err != nil {
-			return errors.New("cannot set market database version")
-		}
+	if version == 0 || version == 2 {
+		return m.initMinuteSchema()
 	}
 	return nil
 }

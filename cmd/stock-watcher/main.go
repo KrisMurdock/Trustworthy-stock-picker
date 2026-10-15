@@ -13,6 +13,7 @@ import (
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/dashboard"
 	"stock-watcher/internal/feishu"
+	"stock-watcher/internal/intraday"
 	"stock-watcher/internal/logging"
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/monitor"
@@ -33,7 +34,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check-config|init|check|sync|preview|research|experiment|plan|run|once|status|retry [channel] [-config config.yaml] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check-config|init|check|sync|sync-intraday|preview|research|experiment|plan|run|once|status|retry [channel] [-config config.yaml] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -57,7 +58,7 @@ func run(args []string) error {
 		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
-	case "check-config", "init", "check", "sync", "preview", "research", "experiment", "plan", "run", "once", "status", "retry":
+	case "check-config", "init", "check", "sync", "sync-intraday", "preview", "research", "experiment", "plan", "run", "once", "status", "retry":
 	default:
 		return errors.New("unknown command")
 	}
@@ -137,6 +138,25 @@ func run(args []string) error {
 	if command == "check" && !marketDB.HasDatabase() {
 		return errors.New("market database is not initialized; run stock-watcher init")
 	}
+	if command == "sync-intraday" {
+		if !c.Intraday.Enabled {
+			return errors.New("intraday synchronization is disabled")
+		}
+		client := market.NewMinuteClient(c)
+		defer client.Close()
+		r, err := intraday.New(c, store, marketDB, client, log).Sync(ctx, time.Now())
+		if err != nil {
+			return err
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(r); err != nil {
+			return err
+		}
+		if r.Failed > 0 {
+			return errors.New("intraday synchronization has failed or incomplete stocks")
+		}
+		return nil
+	}
+
 	source, err := market.NewSources(c, log)
 	if err != nil {
 		return err
@@ -209,11 +229,18 @@ func run(args []string) error {
 	case "once":
 		return m.Cycle(ctx)
 	case "run":
+		monitorRun := m.Run
+		if c.Intraday.Enabled {
+			client := market.NewMinuteClient(c)
+			defer client.Close()
+			minuteMonitor := intraday.New(c, store, marketDB, client, log)
+			monitorRun = func(ctx context.Context) error { return runMonitors(ctx, m.Run, minuteMonitor.Run) }
+		}
 		var err error
 		if c.Web.Enabled {
-			err = runServices(ctx, c.Web.Listen, dashboard.NewHandler(c, marketDB, log), m.Run, log)
+			err = runServices(ctx, c.Web.Listen, dashboard.NewHandler(c, marketDB, log), monitorRun, log)
 		} else {
-			err = m.Run(ctx)
+			err = monitorRun(ctx)
 		}
 		if errors.Is(err, context.Canceled) {
 			log.Info("Stock watcher stopped")

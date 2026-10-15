@@ -6,6 +6,15 @@ pool_file: leaders.yaml
 poll_interval: 5m
 request_timeout: 10s
 
+# Independent minute loop in run; native Tencent 5m, aggregated into 15/30/60m.
+intraday:
+  enabled: true
+  poll_interval: 1m # Per-stock minimum; bounded concurrency and provider latency affect actual cadence.
+  request_interval: 350ms # Global spacing between minute requests; minimum 350ms.
+  workers: 3
+  calibration_at: '15:10' # Asia/Shanghai; one successful full-session reconciliation per stock/day.
+  # tencent_endpoint: https://proxy.finance.qq.com/ifzqgtimg/appstock/app/kline/mkline
+
 # Go-native clients, tried in this order; no Python SDK or AKTools service.
 market:
   providers: [tencent, baostock, tushare, eastmoney]

@@ -25,6 +25,7 @@ type Stock struct {
 }
 
 type Config struct {
+	Intraday     Intraday `yaml:"intraday"`
 	Market       Market   `yaml:"market"`
 	Strategy     Strategy `yaml:"strategy"`
 	Version      int      `yaml:"schema_version"`
@@ -92,6 +93,7 @@ func Defaults() Config {
 	c := Config{Version: 1, DataDir: "data", RequireCIFS: true, PollInterval: "5m", Timeout: "10s"}
 	c.Strategy = DefaultStrategy()
 	c.Market = DefaultMarket()
+	c.Intraday = DefaultIntraday()
 	c.Web.Enabled = true
 	c.Web.Listen = "127.0.0.1:8080"
 	c.Daily.RunAt = "18:05"
@@ -209,6 +211,9 @@ func Load(path string) (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if err := c.Intraday.Validate(); err != nil {
+		return err
+	}
 	if err := c.Market.Validate(); err != nil {
 		return err
 	}

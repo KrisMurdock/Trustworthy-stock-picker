@@ -12,6 +12,26 @@ import (
 	"time"
 )
 
+// runMonitors starts independent ingestion loops and joins all of them before
+// returning, so neither can outlive the storage lock or shared database.
+func runMonitors(ctx context.Context, runners ...func(context.Context) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan error, len(runners))
+	for _, run := range runners {
+		go func() { results <- run(ctx) }()
+	}
+	var result error
+	for i := 0; i < len(runners); i++ {
+		err := <-results
+		if result == nil || errors.Is(result, context.Canceled) {
+			result = err
+		}
+		cancel()
+	}
+	return result
+}
+
 // runServices binds the dashboard before starting synchronization, and owns both
 // lifetimes so a failed listener never leaves an invisible background monitor.
 func runServices(ctx context.Context, address string, handler http.Handler, monitor func(context.Context) error, logger *logging.Logger) error {
