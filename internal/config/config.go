@@ -102,7 +102,7 @@ func Defaults() Config {
 	c.Selection.RSIMax = 80
 	c.Selection.MinDayChange = -3
 	c.Selection.MaxDayChange = 7
-	c.Sync.MinCoveragePct = 95
+	c.Sync.MinCoveragePct = 100
 	c.Sync.IncrementalBars = 5
 	return c
 }
@@ -275,8 +275,8 @@ func (c Config) Validate() error {
 	if err != nil || clock.Hour() < 16 {
 		return errors.New("daily.run_at must be HH:MM at or after 16:00")
 	}
-	if c.Daily.HistoryDays < 90 || c.Daily.HistoryDays > 730 {
-		return errors.New("daily.history_days must be 90 to 730 calendar days")
+	if c.Daily.HistoryDays < 90 || c.Daily.HistoryDays > 7300 {
+		return errors.New("daily.history_days must be 90 to 7300 calendar days (sync retains at least ten calendar years)")
 	}
 	switch c.Daily.Adjust {
 	case "none", "qfq", "hfq":

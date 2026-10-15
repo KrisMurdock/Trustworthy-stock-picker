@@ -219,9 +219,8 @@ func (m *Monitor) writeState(state State) error {
 	return m.Store.Write("state/delivery.json", state)
 }
 
-// Sync downloads every pool entry before publishing any report. Isolated stocks
-// are recorded as exclusions; transient source and storage failures abort the
-// run without changing the previous published snapshot.
+// Sync downloads every pool entry before publishing any report. Any incomplete
+// stock blocks publication without changing the previous published snapshot.
 func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, error) {
 	var report selection.Report
 	ok, err := m.Calendar.Trading(asof)
@@ -237,7 +236,9 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 		return report, err
 	}
 	end, _ := time.Parse("2006-01-02", asof)
-	start := end.AddDate(0, 0, -m.Config.Daily.HistoryDays).Format("2006-01-02")
+	start := historyStart(end, m.Config.Daily.HistoryDays)
+	analysisStart := end.AddDate(0, 0, -m.Config.Daily.HistoryDays).Format("2006-01-02")
+	m.Log.Info("Daily history synchronization started", "as_of", asof, "history_start", start, "stocks", len(m.Config.Stocks))
 	histories := make([]market.History, 0, len(m.Config.Stocks))
 	raw := make([]market.History, 0, len(m.Config.Stocks))
 	items := make([]storage.SyncItem, 0, len(m.Config.Stocks))
@@ -250,7 +251,11 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 		if err := m.Store.Check(); err != nil {
 			return report, err
 		}
-		history, err := m.fetchHistory(ctx, stock, start, asof, m.Config.Daily.Adjust)
+		adjustedStart := analysisStart
+		if m.Config.Daily.Adjust == "none" {
+			adjustedStart = start
+		}
+		history, err := m.fetchHistory(ctx, stock, adjustedStart, asof, m.Config.Daily.Adjust)
 		if err != nil {
 			if market.IsIsolatable(err) {
 				items = append(items, storage.SyncItem{Stock: stock, Status: "isolated", Reason: syncReason(err)})
@@ -259,14 +264,14 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 			}
 			return m.failSync(ctx, run, fmt.Errorf("download failed for %s: %w", stock.Code, err))
 		}
-		if err := validateHistory(m.Calendar, stock, history, start, asof); err != nil {
+		if err := validateHistory(m.Calendar, stock, history, adjustedStart, asof); err != nil {
 			items = append(items, storage.SyncItem{Stock: stock, Status: "isolated", Reason: syncReason(err)})
 			m.Log.Warn("Daily stock isolated", "code", stock.Code, "adjust", history.Adjust, "reason", syncReason(err))
 			continue
 		}
 		histories = append(histories, history)
 		item := storage.SyncItem{Stock: stock, Adjusted: &history, Status: "ok"}
-		if m.Config.Strategy.Enabled {
+		if m.Config.Daily.Adjust != "none" {
 			select {
 			case <-ctx.Done():
 				return report, ctx.Err()
@@ -293,6 +298,8 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 			}
 			raw = append(raw, r)
 			item.Raw = &r
+		} else {
+			raw = append(raw, history)
 		}
 		items = append(items, item)
 		if (i+1)%10 == 0 {
@@ -308,16 +315,13 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 			}
 		}
 	}
-	coverage := float64(len(histories)) / float64(len(m.Config.Stocks)) * 100
-	if m.Config.Strategy.Enabled {
-		coverage = float64(len(raw)) / float64(len(m.Config.Stocks)) * 100
-	}
+	coverage := float64(len(raw)) / float64(len(m.Config.Stocks)) * 100
 	run.CoveragePct = coverage
 	run.FinishedAt = m.Now()
-	if coverage < m.Config.Sync.MinCoveragePct {
-		return m.failSync(ctx, run, fmt.Errorf("sync coverage %.2f%% is below %.2f%%", coverage, m.Config.Sync.MinCoveragePct))
+	if len(histories) != len(m.Config.Stocks) || len(raw) != len(m.Config.Stocks) {
+		return m.failSync(ctx, run, fmt.Errorf("sync coverage %.2f%% is below required 100%%; every stock must have complete history", coverage))
 	}
-	report, err = selection.BuildWithExecution(ctx, m.Config, histories, raw, asof, target, m.Now())
+	report, err = m.buildReport(ctx, histories, raw, asof, target)
 	if err != nil {
 		return m.failSync(ctx, run, err)
 	}
@@ -355,31 +359,46 @@ func (m *Monitor) loadPreviousHistory(ctx context.Context, code, adjust, asof st
 	return market.History{}, fs.ErrNotExist
 }
 
+func historyStart(end time.Time, days int) string {
+	start := end.AddDate(-10, 0, 0)
+	if start.Month() != end.Month() {
+		// Clamp Feb 29 to Feb 28 instead of normalizing it into March.
+		start = start.AddDate(0, 0, -1)
+	}
+	if configured := end.AddDate(0, 0, -days); configured.Before(start) {
+		start = configured
+	}
+	return start.Format("2006-01-02")
+}
+
 func (m *Monitor) fetchHistory(ctx context.Context, stock config.Stock, start, asof, adjust string) (market.History, error) {
-	count := 640
-	var previous market.History
-	hasPrevious := false
-	if adjust == "none" && m.Market != nil && m.Market.HasDatabase() {
-		if candidate, err := m.loadPreviousHistory(ctx, stock.Code, adjust, asof); err == nil && len(candidate.Bars) > 0 {
-			previous = candidate
-			hasPrevious = true
-			count = m.Config.Sync.IncrementalBars
+	if stock.ListedFrom > start {
+		start = stock.ListedFrom
+	}
+	if start > asof {
+		return market.History{}, &market.DataError{Reason: "listed_from is after requested session"}
+	}
+	if source, ok := m.Source.(WindowSource); ok && adjust == "none" && m.Market != nil && m.Market.HasDatabase() {
+		previous, err := m.loadPreviousHistory(ctx, stock.Code, adjust, asof)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return market.History{}, err
+		}
+		// A pre-upgrade short window must be backfilled before incremental sync
+		// can be used. A shared session also detects outages longer than count.
+		if err == nil && len(previous.Bars) > 0 && previous.Bars[0].Date <= start {
+			recent, err := source.FetchWindow(ctx, stock, start, asof, adjust, m.Config.Sync.IncrementalBars)
+			if err != nil {
+				return market.History{}, err
+			}
+			if len(recent.Bars) > 0 && recent.Bars[0].Date <= previous.Bars[len(previous.Bars)-1].Date {
+				merged := mergeHistory(previous, recent, stock, start, asof)
+				if validateHistory(m.Calendar, stock, merged, start, asof) == nil {
+					return merged, nil
+				}
+			}
 		}
 	}
-	var (
-		history market.History
-		err     error
-	)
-	if source, ok := m.Source.(WindowSource); ok {
-		history, err = source.FetchWindow(ctx, stock, start, asof, adjust, count)
-	} else {
-		history, err = m.Source.Fetch(ctx, stock, start, asof, adjust)
-	}
-	if err != nil || !hasPrevious || count == 640 {
-		return history, err
-	}
-	history = mergeHistory(previous, history, stock, start, asof)
-	return history, nil
+	return m.Source.Fetch(ctx, stock, start, asof, adjust)
 }
 
 func mergeHistory(previous, recent market.History, stock config.Stock, start, asof string) market.History {
@@ -396,13 +415,18 @@ func mergeHistory(previous, recent market.History, stock config.Stock, start, as
 	}
 	sort.Strings(dates)
 	bars := make([]market.Bar, 0, len(dates))
+	var anchor *market.Bar
 	for _, date := range dates {
+		if date < start {
+			bar := byDate[date]
+			anchor = &bar
+		}
 		if date >= start && date <= asof {
 			bars = append(bars, byDate[date])
 		}
 	}
-	if len(bars) > 640 {
-		bars = bars[len(bars)-640:]
+	if anchor != nil && (len(bars) == 0 || bars[0].Date != start) {
+		bars = append([]market.Bar{*anchor}, bars...)
 	}
 	recent.Code = stock.Code
 	if stock.Name != "" {
@@ -452,11 +476,16 @@ func validateHistory(cal *calendar.Calendar, stock config.Stock, history market.
 		return &market.DataError{Reason: "qfq_adjustment_missing"}
 	}
 	windowStart := start
-	if cal.ValidFrom() > windowStart {
-		windowStart = cal.ValidFrom()
-	}
 	if stock.ListedFrom != "" && stock.ListedFrom > windowStart {
 		windowStart = stock.ListedFrom
+	}
+	// Do not let a calendar covering only the current year disguise a short
+	// history as a complete decade. The preceding session is a boundary anchor.
+	if history.Adjust == "none" && windowStart < cal.ValidFrom() && history.Bars[0].Date > windowStart {
+		return &market.DataError{Reason: "historical_coverage_incomplete"}
+	}
+	if cal.ValidFrom() > windowStart {
+		windowStart = cal.ValidFrom()
 	}
 	expected, err := cal.TradingDays(windowStart, asof)
 	if err != nil {
@@ -490,7 +519,7 @@ func (m *Monitor) PreviewContext(ctx context.Context, asof string) (selection.Re
 	if m.Market != nil && m.Market.HasDatabase() {
 		histories, raw, err := m.Market.LoadHistoriesPair(ctx, m.Config.Stocks, asof, m.Config.Daily.Adjust, m.Config.Strategy.Enabled)
 		if err == nil {
-			return selection.BuildWithExecution(ctx, m.Config, histories, raw, asof, mustNext(m.Calendar, asof), m.Now())
+			return m.buildReport(ctx, histories, raw, asof, mustNext(m.Calendar, asof))
 		}
 		return selection.Report{}, err
 	}
@@ -517,7 +546,27 @@ func (m *Monitor) PreviewContext(ctx context.Context, asof string) (selection.Re
 	if err != nil {
 		return selection.Report{}, err
 	}
-	return selection.BuildWithExecution(ctx, m.Config, histories, raw, asof, target, m.Now())
+	return m.buildReport(ctx, histories, raw, asof, target)
+}
+
+func (m *Monitor) buildReport(ctx context.Context, histories, raw []market.History, asof, target string) (selection.Report, error) {
+	end, err := time.Parse("2006-01-02", asof)
+	if err != nil {
+		return selection.Report{}, err
+	}
+	start := end.AddDate(0, 0, -m.Config.Daily.HistoryDays).Format("2006-01-02")
+	// Raw archival history is longer than the adjusted analysis window. Clip
+	// copies for analysis so strategy alignment and persisted data stay intact.
+	window := func(histories []market.History) []market.History {
+		out := make([]market.History, len(histories))
+		for i, h := range histories {
+			first := sort.Search(len(h.Bars), func(i int) bool { return h.Bars[i].Date >= start })
+			h.Bars = h.Bars[first:]
+			out[i] = h
+		}
+		return out
+	}
+	return selection.BuildWithExecution(ctx, m.Config, window(histories), window(raw), asof, target, m.Now())
 }
 
 func mustNext(cal *calendar.Calendar, asof string) string {

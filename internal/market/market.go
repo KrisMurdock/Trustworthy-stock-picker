@@ -19,6 +19,10 @@ import (
 
 var Shanghai = time.FixedZone("Asia/Shanghai", 8*60*60)
 
+// MaxHistoryBars accommodates twenty years of daily sessions. The provider's
+// separate 640-row limit applies to each HTTP request, not the stored history.
+const MaxHistoryBars = 6000
+
 type Bar struct {
 	Date   string  `json:"date"`
 	Open   float64 `json:"open"`
@@ -54,7 +58,7 @@ func (h History) Validate() error {
 	if h.DataField != "day" && (h.Adjust == "none" || h.DataField != h.Adjust+"day") {
 		return errors.New("mismatched history adjustment field")
 	}
-	if len(h.Bars) == 0 || len(h.Bars) > 640 {
+	if len(h.Bars) == 0 || len(h.Bars) > MaxHistoryBars {
 		return errors.New("invalid history bar count")
 	}
 	previous := ""
@@ -117,9 +121,54 @@ func NewClient(timeout time.Duration) *Client {
 }
 func (c *Client) Close() { c.HTTP.CloseIdleConnections() }
 
-// Fetch replaces the full adjusted window; merging qfq data from different base dates is unsafe.
+// Fetch replaces the full adjusted window; merging qfq data from different
+// fetches is unsafe. Long windows are paged backwards with a shared boundary
+// bar, which must agree in every page before any history can be returned.
 func (c *Client) Fetch(ctx context.Context, stock config.Stock, start, end, adjust string) (History, error) {
-	return c.FetchWindow(ctx, stock, start, end, adjust, 640)
+	first, startErr := time.Parse("2006-01-02", start)
+	last, endErr := time.Parse("2006-01-02", end)
+	if startErr != nil || endErr != nil || last.Sub(first) <= 640*24*time.Hour {
+		return c.FetchWindow(ctx, stock, start, end, adjust, 640)
+	}
+	// A preceding session proves coverage when start falls on a market holiday.
+	// Retain that one bar in the stored history instead of guessing holidays or
+	// interpreting the provider's truncated history as a stock's listing date.
+	probeStart := first.AddDate(0, 0, -31).Format("2006-01-02")
+	history, err := c.FetchWindow(ctx, stock, probeStart, end, adjust, 640)
+	if err != nil {
+		return History{}, err
+	}
+	for history.Bars[0].Date > start {
+		timer := time.NewTimer(350 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return History{}, ctx.Err()
+		case <-timer.C:
+		}
+		boundary := history.Bars[0]
+		page, err := c.FetchWindow(ctx, stock, probeStart, boundary.Date, adjust, 640)
+		if err != nil {
+			return History{}, fmt.Errorf("historical page ending %s: %w", boundary.Date, err)
+		}
+		if page.DataField != history.DataField || page.Bars[len(page.Bars)-1] != boundary {
+			return History{}, &DataError{Reason: "historical page overlap or adjustment mismatch"}
+		}
+		if page.Bars[0].Date >= boundary.Date {
+			return History{}, &DataError{Reason: "historical coverage incomplete; verify listed_from for newer stocks"}
+		}
+		if len(history.Bars)+len(page.Bars)-1 > MaxHistoryBars {
+			return History{}, &DataError{Reason: "historical window exceeds size limit"}
+		}
+		history.Bars = append(page.Bars[:len(page.Bars)-1], history.Bars...)
+	}
+	// Keep the closest boundary anchor and the entire requested window.
+	i := sort.Search(len(history.Bars), func(i int) bool { return history.Bars[i].Date >= start })
+	if i == len(history.Bars) || history.Bars[i].Date != start {
+		i--
+	}
+	history.Bars = history.Bars[i:]
+	return history, nil
 }
 
 func (c *Client) FetchWindow(ctx context.Context, stock config.Stock, start, end, adjust string, count int) (History, error) {
@@ -216,7 +265,7 @@ func parseWithLimit(code string, body []byte, start, end, adjust string, count i
 	// also the protocol used by the legacy stock_zh_a_hist_tx adapter. Record the
 	// actual field in History rather than disguising this provider behavior.
 	// Tencent can append today's live bar to the requested 640 historical rows.
-	// Permit that one response row, but keep the persisted window capped at 640.
+	// Permit that one response row, but keep each parsed page capped at count.
 	if json.Unmarshal(stock[key], &rows) != nil || len(rows) == 0 || len(rows) > count+1 {
 		return nil, "", errors.New("missing requested daily adjustment data")
 	}

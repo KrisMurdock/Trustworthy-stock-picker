@@ -31,8 +31,9 @@ func TestStartupHTTPPipeline(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, _, _ := fixture(t)
-			m.Config.Stocks = append(m.Config.Stocks, config.Stock{Code: "sh600000", Name: "第二只"})
+			m.Config.Stocks = append(m.Config.Stocks, config.Stock{Code: "sh600000", Name: "第二只", ListedFrom: "2026-07-15"})
 			m.Config.Strategy.Enabled = true
+			m.Config.Daily.Adjust = "qfq"
 			m.Now = func() time.Time { return time.Date(2026, 10, 13, 17, 0, 0, 0, market.Shanghai) }
 			var downloads, posts atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -3,7 +3,6 @@ package monitor
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/market"
@@ -71,11 +70,12 @@ func fixture(t *testing.T) (*Monitor, *fakeSource, *fakeChannel) {
 	t.Helper()
 	c := config.Defaults()
 	c.RequireCIFS = false
-	c.Stocks = []config.Stock{{Code: "sz000001", Name: "测试股票"}}
+	c.Stocks = []config.Stock{{Code: "sz000001", Name: "测试股票", ListedFrom: "2026-07-15"}}
 	c.Calendar.ValidFrom = "2026-01-01"
 	c.Calendar.ValidThrough = "2026-12-31"
 	c.Selection.Enabled = true
 	c.Daily.HistoryDays = 90
+	c.Daily.Adjust = "none"
 	c.Notify.Channels = []config.NotifyChannel{{Name: "fake-main", Type: "feishu", Enabled: true}}
 	store, err := storage.Open(t.TempDir(), false)
 	if err != nil {
@@ -205,14 +205,10 @@ func TestCorruptStateAndBeforeClose(t *testing.T) {
 	}
 }
 
-func TestSQLiteSyncIsAtomicAndIsolatesPermanentStockFailure(t *testing.T) {
-	m, source, channel := fixture(t)
-	m.Config.Stocks = make([]config.Stock, 20)
-	for i := range m.Config.Stocks {
-		m.Config.Stocks[i] = config.Stock{Code: "sz" + fmt.Sprintf("%06d", i+1), Name: "测试"}
-	}
-	m.Config.Sync.MinCoveragePct = 95
-	m.Config.Notify.Channels = nil
+func TestSQLiteSyncRequiresEveryStockEvenWithLegacyCoverageThreshold(t *testing.T) {
+	m, source, _ := fixture(t)
+	m.Config.Stocks = append(m.Config.Stocks, config.Stock{Code: "sh600000", Name: "第二只", ListedFrom: "2026-07-15"})
+	m.Config.Sync.MinCoveragePct = 50
 	marketDB, err := storage.InitMarket(t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
@@ -221,22 +217,12 @@ func TestSQLiteSyncIsAtomicAndIsolatesPermanentStockFailure(t *testing.T) {
 	t.Cleanup(func() { m.Market.Close() })
 	source.err = &market.Failure{Status: 403, Kind: "status"}
 	source.failCode = m.Config.Stocks[0].Code
-	report, err := m.Sync(context.Background(), "2026-10-13")
-	if err != nil {
-		t.Fatal(err)
+	if _, err := m.Sync(context.Background(), "2026-10-13"); err == nil || !strings.Contains(err.Error(), "100%") {
+		t.Fatalf("partial pool accepted: %v", err)
 	}
-	if report.Eligible != 19 || len(report.Excluded) != 1 {
-		t.Fatalf("isolated stock was not excluded: eligible=%d excluded=%+v", report.Eligible, report.Excluded)
+	if _, err := m.Market.LoadReport(context.Background(), "2026-10-13"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("partial report published: %v", err)
 	}
-	var legacy selection.Report
-	if err := m.Store.Read("reports/2026-10-13.json", &legacy); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatal("SQLite sync wrote legacy JSON report")
-	}
-	stored, err := m.Market.LoadReport(context.Background(), "2026-10-13")
-	if err != nil || stored.ID != report.ID {
-		t.Fatalf("SQLite report missing: %v %+v", err, stored)
-	}
-	_ = channel
 }
 
 func TestSQLiteSyncDoesNotPublishBelowCoverageThreshold(t *testing.T) {
@@ -315,6 +301,7 @@ func TestMergeHistoryRespectsRequestedAsOf(t *testing.T) {
 func TestStrategySyncRawResearchPersistenceAndRetry(t *testing.T) {
 	m, source, sender := fixture(t)
 	m.Config.Strategy.Enabled = true
+	m.Config.Daily.Adjust = "qfq"
 	sender.err = &notify.DeliveryError{Status: 503, Kind: notify.Retryable, Reason: "status"}
 	if err := m.Cycle(context.Background()); err == nil {
 		t.Fatal("expected failed notification")
@@ -353,6 +340,7 @@ func TestStrategySyncRawResearchPersistenceAndRetry(t *testing.T) {
 func TestRawFailureDoesNotPublishAnAdjustedOnlyReport(t *testing.T) {
 	m, source, sender := fixture(t)
 	m.Config.Strategy.Enabled = true
+	m.Config.Daily.Adjust = "qfq"
 	source.err, source.failAdjust = errors.New("raw source unavailable"), "none"
 	if err := m.Cycle(context.Background()); err == nil || source.calls != 2 || sender.calls != 0 {
 		t.Fatal("missing raw prices did not block the whole report")

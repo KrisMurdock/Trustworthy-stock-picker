@@ -13,7 +13,7 @@ web:
 
 daily:
   run_at: '18:05'  # Asia/Shanghai, completed sessions only
-  history_days: 365
+  history_days: 365 # Analysis window; raw daily history always retains at least ten calendar years.
   adjust: qfq
 
 selection:
@@ -27,7 +27,7 @@ selection:
   max_day_change_pct: 7
 
 sync:
-  min_coverage_pct: 95
+  min_coverage_pct: 100 # Every stock must have complete history.
   incremental_bars: 5
 
 # Set enabled=true to replace legacy filtering with full-pool short-horizon ranking.

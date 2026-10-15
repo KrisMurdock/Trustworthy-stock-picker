@@ -79,8 +79,9 @@ func (f channelFunc) Send(ctx context.Context, message notify.Message) error {
 func TestRunRefreshesWholePoolBeforeSendingAndDoesNotRedownloadOnDeliveryRetry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m, source, _ := fixture(t)
-		m.Config.Stocks = append(m.Config.Stocks, config.Stock{Code: "sh600000", Name: "第二只"})
+		m.Config.Stocks = append(m.Config.Stocks, config.Stock{Code: "sh600000", Name: "第二只", ListedFrom: "2026-07-15"})
 		m.Config.Strategy.Enabled = true
+		m.Config.Daily.Adjust = "qfq"
 		if _, err := m.Sync(context.Background(), "2026-10-13"); err != nil {
 			t.Fatal(err)
 		}
@@ -216,7 +217,8 @@ func TestStartupRefreshPreservesDeliveryForChangedReport(t *testing.T) {
 func TestStartupDoesNotPublishPartialRawPool(t *testing.T) {
 	m, source, channel := fixture(t)
 	m.Config.Strategy.Enabled = true
-	m.Config.Stocks = append(m.Config.Stocks, config.Stock{Code: "sh600000", Name: "第二只"})
+	m.Config.Daily.Adjust = "qfq"
+	m.Config.Stocks = append(m.Config.Stocks, config.Stock{Code: "sh600000", Name: "第二只", ListedFrom: "2026-07-15"})
 	m.Source = sourceFunc(func(ctx context.Context, s config.Stock, a, b, adjust string) (market.History, error) {
 		if s.Code == "sh600000" && adjust == "none" {
 			return market.History{}, errors.New("second stock unavailable")

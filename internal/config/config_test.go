@@ -21,6 +21,10 @@ func TestLoadValidation(t *testing.T) {
 		name, text string
 		ok         bool
 	}{
+		{"ten_years", valid + "daily:\n  history_days: 3650\n", true},
+		{"legacy_history", valid + "daily:\n  history_days: 365\n", true},
+		{"twenty_years", valid + "daily:\n  history_days: 7300\n", true},
+		{"history_too_long", valid + "daily:\n  history_days: 7301\n", false},
 		{"valid", valid, true}, {"unknown", valid + "python_command: secret\n", false}, {"version", strings.Replace(valid, "schema_version: 1", "schema_version: 2", 1), false},
 		{"duplicate", strings.Replace(valid, "calendar:", "  - code: sz000001\ncalendar:", 1), false}, {"hk", strings.Replace(valid, "sz000001", "hk00700", 1), false}, {"bad_time", valid + "daily:\n  run_at: '14:00'\n", false},
 		{"missing_webhook", valid + "selection:\n  enabled: true\nfeishu:\n  enabled: true\n", false}, {"multidocument", valid + "---\nstocks: []\n", false},
@@ -108,7 +112,7 @@ func TestNotificationChannelNamesAndUnknownFields(t *testing.T) {
 
 func TestSyncDefaultsAndValidation(t *testing.T) {
 	c := Defaults()
-	if c.Sync.MinCoveragePct != 95 || c.Sync.IncrementalBars != 5 {
+	if c.Sync.MinCoveragePct != 100 || c.Sync.IncrementalBars != 5 {
 		t.Fatalf("unexpected sync defaults: %+v", c.Sync)
 	}
 	c.Sync.MinCoveragePct = 101
