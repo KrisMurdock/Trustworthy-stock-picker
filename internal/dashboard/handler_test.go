@@ -191,7 +191,7 @@ func TestHistoryReadOnlyPoolScopeAndErrors(t *testing.T) {
 	c.Stocks = []config.Stock{{Code: "sz000001", Name: "测试银行"}}
 	reader := &testReader{}
 	h := newHandler(c, reader, nil)
-	for _, query := range []string{"", "?code=", "?code=sz000001&code=sh600519", "?code=sz000001&adjust=none", "?code=%ZZ"} {
+	for _, query := range []string{"", "?code=", "?code=sz000001&code=sh600519", "?code=%ZZ", "?code=sz000001&adjust=", "?code=sz000001&adjust=none&adjust=qfq", "?code=sz000001&adjust=hfq", "?code=sz000001&other=none"} {
 		if w := request(t, h, "GET", "/api/history"+query); w.Code != 400 {
 			t.Fatalf("invalid query accepted: %s %d", query, w.Code)
 		}
@@ -232,5 +232,35 @@ func TestHistoryReadOnlyPoolScopeAndErrors(t *testing.T) {
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/history?code=sz000001", nil).WithContext(ctx))
 	if w.Code != 504 {
 		t.Fatalf("history cancellation: %d", w.Code)
+	}
+}
+
+func TestHistoryPriceBasis(t *testing.T) {
+	for _, configured := range []string{"qfq", "hfq", "none"} {
+		c := config.Defaults()
+		c.Daily.Adjust = configured
+		c.Stocks = []config.Stock{{Code: "sz000001", Name: "测试银行"}}
+		h := newHandler(c, &testReader{}, nil)
+		for _, basis := range []string{"", "qfq", "hfq", "none", "raw"} {
+			query := "/api/history?code=sz000001"
+			if basis != "" {
+				query += "&adjust=" + basis
+			}
+			w := request(t, h, "GET", query)
+			if basis != "" && basis != configured && basis != "none" {
+				if w.Code != 400 {
+					t.Fatalf("unsupported basis %s with %s: %d", basis, configured, w.Code)
+				}
+				continue
+			}
+			want := basis
+			if want == "" {
+				want = configured
+			}
+			var history market.History
+			if err := json.Unmarshal(w.Body.Bytes(), &history); err != nil || w.Code != 200 || history.Adjust != want {
+				t.Fatalf("basis %s with %s: %d %s %v", basis, configured, w.Code, w.Body, err)
+			}
+		}
 	}
 }

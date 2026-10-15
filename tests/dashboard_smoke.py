@@ -264,6 +264,22 @@ def populated_checks(context, page, url, args, directory, env):
     expect(page.get_by_test_id("stock-row")).to_have_count(1)
     assert stock_codes(page) == ["sh600519"]
     page.get_by_test_id("pool-filter").select_option(index=0)
+    page.locator("#view-synced").click()
+    assert page.url == url + "/#stock-pool"
+    expect(page.locator("#data-filter")).to_have_value("available")
+    expect(page.get_by_test_id("stock-row")).to_have_count(2)
+    assert "sz000002" not in stock_codes(page)
+    search.fill("银行")
+    assert stock_codes(page) == ["sz000001"]
+    page.locator("#data-filter").select_option("missing")
+    expect(page.get_by_test_id("stock-empty-state")).to_be_visible()
+    page.locator("#clear-filters").click()
+    expect(page.locator("#data-filter")).to_have_value("")
+    expect(search).to_have_value("")
+    expect(page.get_by_test_id("stock-row")).to_have_count(3)
+    page.locator("#data-filter").select_option("missing")
+    assert stock_codes(page) == ["sz000002"]
+    page.locator("#data-filter").select_option("")
     page.get_by_test_id("stock-sort").select_option("close")
     expect(page.get_by_test_id("stock-row")).to_have_count(3)
     before = stock_codes(page)
@@ -299,7 +315,7 @@ def populated_checks(context, page, url, args, directory, env):
         assert missing_config.returncode == 1, "missing config must fail before serving"
 
 
-def chart_checks(page, url, state):
+def chart_checks(page, url, state, args):
     history = page.context.request.get(url + "/api/history?code=sz000001").json()
     assert len(history["bars"]) == 80 and history["adjust"] == "qfq"
     expect(page.locator("#chart-stock")).to_have_value("sz000001")
@@ -327,6 +343,41 @@ def chart_checks(page, url, state):
     expect(page.get_by_test_id("kline-candle")).to_have_count(80)
     page.locator("#chart-range").select_option("60")
     expect(page.locator("#chart-detail")).to_contain_text(LATEST)
+    page.get_by_role("link", name="个股 K 线", exact=True).click()
+    assert page.url == url + "/#stock-chart"
+    raw = page.context.request.get(url + "/api/history?code=sz000001&adjust=none").json()
+    assert raw["adjust"] == "none" and len(raw["bars"]) == 2700 and raw["bars"][0]["date"] < "2016-10-13"
+    assert raw["bars"][-1]["close"] != history["bars"][-1]["close"]
+    with page.expect_response(lambda r: "/api/history?code=sz000001&adjust=none" in r.url and r.status == 200):
+        page.locator("#chart-adjust").select_option("none")
+    expect(page.locator("#chart-detail")).to_contain_text("20.50")
+    expect(page.locator("#chart-meta")).to_contain_text(raw["bars"][0]["date"])
+    expect(page.locator("#chart-meta")).to_contain_text("2700 根已保存日线")
+    expect(page.locator("#chart-basis-note")).to_contain_text("除权除息")
+    page.locator("#chart-range").select_option("250")
+    expect(page.get_by_test_id("kline-candle")).to_have_count(250)
+    page.locator("#chart-range").select_option("0")
+    expect(page.get_by_test_id("kline-candle")).to_have_count(2700)
+    assert page.get_by_test_id("kline-candle").last.evaluate("e => e.getBoundingClientRect().width") > 4
+    assert page.locator("#chart-plot").evaluate("e => e.scrollLeft > 0")
+    kind = "container" if args.image else "native"
+    page.locator("#stock-chart").screenshot(path=str(ROOT / ".scratch/dashboard-verification" / f"{kind}-raw-history.png"))
+    page.locator("#chart-day").focus()
+    page.locator("#chart-day").fill("0")
+    expect(page.locator("#chart-detail")).to_contain_text(raw["bars"][0]["date"])
+    assert page.locator("#chart-plot").evaluate("e => e.scrollLeft === 0")
+    page.set_viewport_size({"width": 390, "height": 844})
+    expect(page.locator("#chart-adjust")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "long archive overflows mobile page"
+    page.locator("#stock-chart").screenshot(path=str(ROOT / ".scratch/dashboard-verification" / f"{kind}-raw-mobile.png"))
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    page.get_by_test_id("refresh-button").click()
+    expect(page.locator("#chart-adjust")).to_have_value("none")
+    expect(page.get_by_test_id("kline-candle")).to_have_count(2700)
+    page.locator("#chart-adjust").select_option("qfq")
+    expect(page.get_by_test_id("kline-candle")).to_have_count(80)
+    expect(page.locator("#chart-detail")).to_contain_text("10.25")
+    page.locator("#chart-range").select_option("60")
     page.get_by_test_id("stock-row").filter(has_text="测试消费").get_by_role("button").click()
     expect(page.locator("#chart-stock")).to_have_value("sh600519")
     expect(page.locator("#chart-detail")).to_contain_text("198.00")
@@ -368,7 +419,25 @@ def chart_checks(page, url, state):
         page.locator("#chart-stock").select_option("sz000001")
         expect(page.locator("#chart-detail")).to_contain_text("10.25")
         page.unroute(delayed)
+    raw_pattern = "**/api/history?code=sz000001&adjust=none"
+    for status, payload, message in ((404, {"error": "history not found"}, "暂无通过校验"), (200, history, "日线数据不完整")):
+        page.route(raw_pattern, lambda route, *, status=status, payload=payload: route.fulfill(status=status, content_type="application/json", body=json.dumps(payload)))
+        page.locator("#chart-adjust").select_option("none")
+        expect(page.locator("#chart-error")).to_contain_text(message)
+        expect(page.get_by_test_id("kline-candle")).to_have_count(0)
+        page.unroute(raw_pattern)
+        page.locator("#chart-adjust").select_option("qfq")
+        expect(page.locator("#chart-detail")).to_contain_text("10.25")
     expect(page.locator("#chart-title")).to_contain_text("测试银行")
+    # Changing price basis cancels an older response for the same stock too.
+    with stalled_endpoint() as stalled_url:
+        delayed = "**/api/history?code=sz000001&adjust=none"
+        page.route(delayed, lambda route: route.continue_(url=stalled_url))
+        page.locator("#chart-adjust").select_option("none")
+        expect(page.locator("#chart-loading")).to_be_visible()
+        page.locator("#chart-adjust").select_option("qfq")
+        expect(page.locator("#chart-detail")).to_contain_text("10.25")
+        page.unroute(delayed)
     page.route(pattern, lambda route: route.abort())
     page.locator("#chart-stock").select_option("sh600519")
     expect(page.locator("#chart-error")).to_be_visible()
@@ -467,7 +536,7 @@ def main():
             page.on("requestfailed", network_failure)
             with service(args) as (url, directory, env):
                 populated_checks(context, page, url, args, directory, env)
-                chart_checks(page, url, state)
+                chart_checks(page, url, state, args)
                 calculator_checks(context, page, url, ROOT, args, state, stalled_endpoint)
                 error_checks(page, url, state)
                 page.goto("about:blank")
@@ -495,6 +564,9 @@ def main():
                 expect(page.get_by_test_id("ranking-row")).to_have_count(0)
                 expect(page.get_by_test_id("empty-state")).to_be_hidden()
                 expect(page.get_by_test_id("ranking-empty-state")).to_be_visible()
+                page.locator("#chart-adjust").select_option("none")
+                expect(page.locator("#chart-meta")).to_contain_text("2700 根已保存日线")
+                expect(page.locator("#chart-detail")).to_contain_text("20.50")
                 page.goto("about:blank")
             assert not problems, "Unexpected browser errors: " + json.dumps(problems, ensure_ascii=False)
             context.close()
@@ -506,7 +578,7 @@ def main():
         artifact = hashlib.sha256(Path(args.binary).read_bytes()).hexdigest()
     print(json.dumps({"result": "passed", "mode": "container" if args.image else "native", "artifact": artifact,
                       "identity": "anonymous (no application authentication)",
-                      "checks": "candles/volume/MA/stock-switch/isolation/partial-coverage/snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/read-only API/gateway-403/503/timeout/recovery/empty/calculator/initial/add/holdings/net-target/validation/offline/no-account-upload/model-load-failure/SIGTERM"}, ensure_ascii=False))
+                      "checks": "raw-2700-bars/price-basis-switch/cancel/mismatched-basis/raw-missing/synced-filter/candles/volume/MA/stock-switch/isolation/partial-coverage/snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/read-only API/gateway-403/503/timeout/recovery/empty/calculator/initial/add/holdings/net-target/validation/offline/no-account-upload/model-load-failure/SIGTERM"}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

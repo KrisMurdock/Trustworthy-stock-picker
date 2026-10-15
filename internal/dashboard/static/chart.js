@@ -10,11 +10,23 @@ window.StockChart = class {
     this.byId = (id) => document.getElementById(id);
     this.byId("chart-stock").addEventListener("change", (event) => this.select(event.target.value));
     this.byId("chart-range").addEventListener("change", () => this.draw());
+    this.byId("chart-adjust").addEventListener("change", () => this.select(this.code));
     this.byId("chart-retry").addEventListener("click", () => this.select(this.code, false, true));
-    this.byId("chart-day").addEventListener("input", (event) => this.inspect(Number(event.target.value)));
+    this.byId("chart-day").addEventListener("input", (event) => this.inspect(Number(event.target.value), true));
   }
-  update(stocks) {
+  update(stocks, adjust) {
     this.stocks = stocks;
+    if (this.configuredAdjust !== adjust) {
+      this.configuredAdjust = adjust;
+      const basis = this.byId("chart-adjust");
+      basis.replaceChildren();
+      for (const value of [...new Set([adjust, "none"])]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = { qfq: "前复权 · 分析窗口", hfq: "后复权 · 分析窗口", none: "不复权 · 原始历史" }[value];
+        basis.append(option);
+      }
+    }
     const select = this.byId("chart-stock");
     select.replaceChildren();
     for (const stock of stocks) {
@@ -32,6 +44,10 @@ window.StockChart = class {
     const sequence = ++this.sequence;
     this.controller = new AbortController();
     this.code = code;
+    const adjust = this.byId("chart-adjust").value;
+    this.byId("chart-basis-note").textContent = adjust === "none"
+      ? "原始历史展示本地已保存的不复权价格；除权除息可能形成跳空，实际覆盖范围以日期为准。"
+      : "复权日线展示当前分析窗口。查看本地长期历史，请切换为「不复权 · 原始历史」。";
     this.history = null;
     this.byId("chart-stock").value = code;
     this.byId("chart-title").textContent = `${stock.name || code} · 日 K`;
@@ -41,7 +57,7 @@ window.StockChart = class {
     this.byId("chart-error").hidden = true;
     this.byId("chart-loading").hidden = false;
     if (scroll) this.byId("stock-chart").scrollIntoView({ block: "start", behavior: "smooth" });
-    if (!stock.bar && !force) {
+    if (!stock.bar && !force && adjust === this.configuredAdjust) {
       this.byId("chart-loading").hidden = true;
       this.byId("chart-meta").textContent = `${code} · 暂无可展示的日线`;
       this.byId("chart-error-message").textContent = "该股票本次暂无通过校验的日线，请查看股池中的数据缺失原因，等待下次同步。";
@@ -49,9 +65,10 @@ window.StockChart = class {
       return;
     }
     try {
-      const history = await this.requestJSON(`/api/history?code=${encodeURIComponent(code)}`, this.controller.signal);
+      const basisQuery = adjust === this.configuredAdjust ? "" : `&adjust=${encodeURIComponent(adjust)}`;
+      const history = await this.requestJSON(`/api/history?code=${encodeURIComponent(code)}${basisQuery}`, this.controller.signal);
       if (sequence !== this.sequence) return;
-      if (history?.schema_version !== 1 || history.code !== code || !Array.isArray(history.bars) || !history.bars.length ||
+      if (history?.schema_version !== 1 || history.code !== code || history.adjust !== adjust || !Array.isArray(history.bars) || !history.bars.length ||
           !history.bars.every((bar, i, bars) => /^\d{4}-\d{2}-\d{2}$/.test(bar.date) && (!i || bars[i - 1].date < bar.date) &&
             [bar.open, bar.high, bar.low, bar.close, bar.volume_raw].every(Number.isFinite) && bar.low > 0 && bar.volume_raw >= 0 &&
             bar.high >= Math.max(bar.open, bar.close) && bar.low <= Math.min(bar.open, bar.close))) {
@@ -65,9 +82,9 @@ window.StockChart = class {
         }
         return point;
       });
-      const adjust = { qfq: "前复权", hfq: "后复权", none: "不复权" }[history.adjust] || history.adjust;
+      const basisLabel = { qfq: "前复权", hfq: "后复权", none: "不复权" }[history.adjust];
       const last = history.bars.at(-1).date;
-      this.byId("chart-meta").textContent = `${code} · ${adjust} · 末根日线 ${last} · 截止 ${history.as_of} · ${history.bars.length} 根已保存日线`;
+      this.byId("chart-meta").textContent = `${code} · ${basisLabel} · ${history.bars[0].date} 至 ${last} · 截止 ${history.as_of} · ${history.bars.length} 根已保存日线`;
       this.byId("chart-body").hidden = false;
       this.draw();
     } catch (error) {
@@ -96,10 +113,13 @@ window.StockChart = class {
     const pad = Math.max((high - low) * .08, high * .001);
     const min = low - pad, max = high + pad;
     const maxVolume = Math.max(1, ...points.map((bar) => bar.volume));
-    const width = 960, left = 72, right = 16, plotWidth = width - left - right, step = plotWidth / points.length;
+    const width = Math.max(960, points.length * 8 + 88), left = 72, right = 16, plotWidth = width - left - right, step = plotWidth / points.length;
     const x = (i) => left + (i + .5) * step;
     const y = (price) => 22 + (max - price) / (max - min) * 258;
-    const svg = this.svg("svg", { viewBox: "0 0 960 420", role: "img", "aria-label": `${this.history.name || this.code} 日K、成交量及 MA5/10/20`, "data-testid": "kline-svg" });
+    const svg = this.svg("svg", { viewBox: `0 0 ${width} 420`, role: "img", "aria-label": `${this.history.name || this.code} 日K、成交量及 MA5/10/20`, "data-testid": "kline-svg" });
+    // Keep long archives readable instead of squeezing thousands of candles into
+    // one viewport. The date slider also moves the selected candle into view.
+    if (width > 960) svg.style.width = `${width}px`;
     svg.append(this.svg("title", {}, `${points[0].date} 至 ${points.at(-1).date}，共 ${points.length} 根日 K；红涨绿跌`));
     for (let i = 0; i <= 4; i++) {
       const price = min + (max - min) * i / 4;
@@ -137,15 +157,23 @@ window.StockChart = class {
     const slider = this.byId("chart-day");
     slider.max = points.length - 1;
     this.cursorX = x;
-    this.inspect(points.length - 1);
+    this.inspect(points.length - 1, true);
   }
-  inspect(index) {
+  inspect(index, reveal = false) {
     const bar = this.visible?.[index];
     if (!bar) return;
     this.byId("chart-day").value = index;
     this.byId("chart-day").setAttribute("aria-valuetext", `${bar.date}，收盘 ${this.format(bar.close)}`);
     this.cursor.setAttribute("x1", this.cursorX(index));
     this.cursor.setAttribute("x2", this.cursorX(index));
+    if (reveal) {
+      const plot = this.byId("chart-plot");
+      const svg = this.cursor.ownerSVGElement;
+      const position = this.cursorX(index) * svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
+      if (position < plot.scrollLeft + 72 || position > plot.scrollLeft + plot.clientWidth - 24) {
+        plot.scrollLeft = Math.max(0, position - plot.clientWidth / 2);
+      }
+    }
     this.byId("chart-detail").textContent = `${bar.date}　开 ${this.format(bar.open)}　高 ${this.format(bar.high)}　低 ${this.format(bar.low)}　收 ${this.format(bar.close)}　量 ${this.format(bar.volume)}`;
     for (const period of [5, 10, 20]) this.byId(`chart-ma${period}`).textContent = `MA${period} ${this.format(bar[`ma${period}`])}`;
   }

@@ -177,6 +177,8 @@ section { scroll-margin-top: 20px; }
 /* Daily candle chart shares the dashboard palette and stays inside its panel. */
 .stock-link { border: 0; background: none; padding: 0; text-align: left; cursor: pointer; }
 .stock-link:hover { color: var(--brand); text-decoration: underline; }
+.summary-link { display: inline-block; margin-top: 10px; color: var(--brand); font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+.chart-basis-note { padding: 0 24px 12px; color: var(--muted); font-size: 12px; }
 .tag-available { background: var(--brand-light); color: var(--brand); }
 .chart-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
 .chart-controls select { min-height: 38px; max-width: 220px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 6px; }

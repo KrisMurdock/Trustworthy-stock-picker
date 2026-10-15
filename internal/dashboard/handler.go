@@ -79,9 +79,23 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/history":
 		values, err := url.ParseQuery(r.URL.RawQuery)
 		codes := values["code"]
-		if err != nil || len(values) != 1 || len(codes) != 1 || codes[0] == "" {
+		if err != nil || len(codes) != 1 || codes[0] == "" {
 			writeError(w, r, http.StatusBadRequest, "one stock code is required")
 			return
+		}
+		adjust := h.adjust
+		if choices, present := values["adjust"]; present {
+			if len(choices) != 1 || choices[0] == "" || (choices[0] != h.adjust && choices[0] != "none") {
+				writeError(w, r, http.StatusBadRequest, "adjust must be the configured price basis or none")
+				return
+			}
+			adjust = choices[0]
+		}
+		for key := range values {
+			if key != "code" && key != "adjust" {
+				writeError(w, r, http.StatusBadRequest, "unsupported history parameter")
+				return
+			}
 		}
 		var stock config.Stock
 		for _, candidate := range h.stocks {
@@ -96,7 +110,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 		defer cancel()
-		history, err := h.db.LoadDashboardHistory(ctx, stock, h.adjust)
+		history, err := h.db.LoadDashboardHistory(ctx, stock, adjust)
 		if errors.Is(err, fs.ErrNotExist) {
 			writeError(w, r, http.StatusNotFound, "history not found")
 			return

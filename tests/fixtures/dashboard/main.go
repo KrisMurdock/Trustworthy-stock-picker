@@ -48,9 +48,13 @@ func seed(root string, empty, partial bool) error {
 		at = at.Add(19 * time.Hour)
 		items := []storage.SyncItem{}
 		for i, stock := range stocks[:2] {
-			adjusted := history(stock, day, at, i)
-			raw := adjusted
+			adjusted := history(stock, day, at, i, 80)
+			raw := history(stock, day, at, i, 2700)
 			raw.Adjust, raw.DataField = "none", "day"
+			for j := range raw.Bars {
+				bar := &raw.Bars[j]
+				bar.Open, bar.Close, bar.High, bar.Low = bar.Open*2, bar.Close*2, bar.High*2, bar.Low*2
+			}
 			items = append(items, storage.SyncItem{Stock: stock, Adjusted: &adjusted, Raw: &raw, Status: "ok"})
 		}
 		items = append(items, storage.SyncItem{Stock: stocks[2], Status: "isolated", Reason: "missing_data"})
@@ -84,9 +88,9 @@ func seed(root string, empty, partial bool) error {
 	return nil
 }
 
-func history(stock config.Stock, day string, at time.Time, index int) market.History {
+func history(stock config.Stock, day string, at time.Time, index, count int) market.History {
 	var bars []market.Bar
-	for date := at; len(bars) < 80; date = date.AddDate(0, 0, -1) {
+	for date := at; len(bars) < count; date = date.AddDate(0, 0, -1) {
 		if date.Weekday() == time.Saturday || date.Weekday() == time.Sunday {
 			continue
 		}

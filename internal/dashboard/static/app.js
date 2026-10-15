@@ -150,7 +150,8 @@
     const stocks = list(state.data.stocks);
     const query = byId("stock-search").value.trim().toLocaleLowerCase();
     const sector = byId("pool-filter").value;
-    const visible = stocks.filter((stock) => (!query || `${stock.name || ""} ${stock.code || ""}`.toLocaleLowerCase().includes(query)) && (!sector || (stock.sector || "未分类") === sector)).sort(compareStocks);
+    const status = byId("data-filter").value;
+    const visible = stocks.filter((stock) => (!query || `${stock.name || ""} ${stock.code || ""}`.toLocaleLowerCase().includes(query)) && (!sector || (stock.sector || "未分类") === sector) && (!status || (status === "available" ? !!stock.bar : !stock.bar))).sort(compareStocks);
     const fragment = document.createDocumentFragment();
     for (const stock of visible) {
       const row = el("tr");
@@ -308,7 +309,7 @@
       renderSummary(data);
       updateSectorOptions(data.stocks);
       renderStocks();
-      chart.update(data.stocks);
+      chart.update(data.stocks, data.adjust);
       updateReportDates(data);
       show("dashboard-content", true);
       show("error-state", false);
@@ -336,9 +337,17 @@
   });
   byId("stock-search").addEventListener("input", renderStocks);
   byId("pool-filter").addEventListener("change", renderStocks);
+  byId("data-filter").addEventListener("change", renderStocks);
+  byId("view-synced").addEventListener("click", () => {
+    byId("stock-search").value = "";
+    byId("pool-filter").value = "";
+    byId("data-filter").value = "available";
+    renderStocks();
+    byId("stock-search").focus({ preventScroll: true });
+  });
   byId("stock-sort").addEventListener("change", (event) => { state.sort = event.target.value; state.direction = ["code", "name"].includes(state.sort) ? 1 : -1; renderStocks(); });
   byId("sort-direction").addEventListener("click", () => { state.direction *= -1; renderStocks(); });
-  byId("clear-filters").addEventListener("click", () => { byId("stock-search").value = ""; byId("pool-filter").value = ""; renderStocks(); byId("stock-search").focus(); });
+  byId("clear-filters").addEventListener("click", () => { byId("stock-search").value = ""; byId("pool-filter").value = ""; byId("data-filter").value = ""; renderStocks(); byId("stock-search").focus(); });
   for (const button of document.querySelectorAll("[data-column]")) button.addEventListener("click", () => {
     const field = button.dataset.column;
     state.direction = state.sort === field ? -state.direction : field === "code" ? 1 : -1;
