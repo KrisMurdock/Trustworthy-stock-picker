@@ -106,7 +106,7 @@ calendar:
         mount="/fixture" if args.image else str(root)
         def command(verb, service=False):
             if args.image:
-                prefix=["docker","run","--rm","--network","host","--read-only","--cpus","1","--memory","256m","--pids-limit","64","--cap-drop","ALL","--security-opt","no-new-privileges:true","--mount",f"type=bind,src={root},dst=/fixture","-e","STOCK_WATCHER_LOG_DIR=/fixture/logs","-e","STOCK_WATCHER_LOG_COLOR=off"]
+                prefix=["docker","run","--rm","--network","host","--read-only","--cpus","1","--memory","256m","--pids-limit","64","--cap-drop","ALL","--security-opt","no-new-privileges:true","--mount",f"type=bind,src={root},dst=/fixture","-e","STOCK_WATCHER_DATA_DIR=/fixture/data","-e",f"STOCK_WATCHER_WEB_ADDR=127.0.0.1:{port}","-e","STOCK_WATCHER_LOG_DIR=/fixture/logs","-e","STOCK_WATCHER_LOG_COLOR=off"]
                 if service: prefix += ["--name",name]
                 prefix += [args.image]
             else: prefix=[args.binary]
