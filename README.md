@@ -86,11 +86,25 @@ chmod 600 config.yaml
 
 监听地址可通过 `web.listen` 或 `STOCK_WATCHER_WEB_ADDR` 设置，例如 `STOCK_WATCHER_WEB_ADDR=127.0.0.1:8088 make run`；`web.enabled: false` 关闭网页。默认仅本机可访问。容器内部监听 8080，Compose 默认映射到宿主机 `127.0.0.1:8080`，其他端口可设置 `STOCK_WATCHER_WEB_BIND`。远程访问需受控网络或已有认证反向代理；代理应保留根路径、`/api/` 和 `/assets/`。
 
+## 策略实验室
+
+网页导航中的「策略实验室」（`/experiments`）保存每轮实验的方向、假设、规则变化、判断条件、验证效果、缺点证据和下一步问题。可沿父子关系查看迭代，并比较根基线、父实验和本轮；按月份、行业和个股拆分表现，点击样本查看本次实验固定的原始 K 线。
+
+```bash
+./bin/stock-watcher experiment -config config.yaml -policy baseline
+./bin/stock-watcher experiment -config config.yaml -parent <基线完整ID> -policy upper-wick
+```
+
+首版对照是上影线占比不超过 30% 的单变量过滤。实验只读取已保存的行情，不下载、不推送；网页只读，本地命令将记录与固定数据快照写入独立的 `experiments.db`。完成的记录不可覆盖，每次重跑产生新 ID，子实验沿用父实验的快照与参数。
+
+评价仅使用开发期滚动验证，最终保留区间不计算收益。当前有十年不复权数据，并不意味着已有十年可用的复权特征和交易日历；页面显示实际参与范围及缺失股票。开发结果不自动替换日常选股规则。使用方法、指标口径和限制见[实验档案说明](docs/experiments.md)。
+
 ## Windows 文件
 
 ```text
 data/                       # 实际位于 Windows 共享盘
   market.db                 # SQLite 主数据文件；首次部署由 init 显式创建
+  experiments.db            # 首次本地实验创建；固定输入及不可覆盖的实验记录
   state/delivery.json
   .stock-watcher.lock
 logs/stock-watcher.log       # 服务器上的有限运行日志

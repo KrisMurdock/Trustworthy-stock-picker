@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"stock-watcher/internal/config"
+	"stock-watcher/internal/experiment"
 	"stock-watcher/internal/logging"
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/selection"
@@ -29,11 +30,18 @@ type snapshotReader interface {
 	LoadDashboardReport(context.Context, string) (selection.Report, error)
 }
 
+type experimentReader interface {
+	List(context.Context) ([]experiment.Record, error)
+	Get(context.Context, string) (experiment.Record, error)
+	History(context.Context, string, string, string) (market.History, error)
+}
+
 type handler struct {
-	stocks []config.Stock
-	adjust string
-	db     snapshotReader
-	log    *logging.Logger
+	experiments experimentReader
+	stocks      []config.Stock
+	adjust      string
+	db          snapshotReader
+	log         *logging.Logger
 }
 
 // NewHandler exposes only public market snapshots. It never starts synchronization
@@ -46,7 +54,7 @@ func newHandler(c config.Config, db snapshotReader, log *logging.Logger) http.Ha
 	if log == nil {
 		log = logging.Nop()
 	}
-	return &handler{stocks: append([]config.Stock(nil), c.Stocks...), adjust: c.Daily.Adjust, db: db, log: log}
+	return &handler{experiments: storage.ExperimentView{Root: c.DataDir, RequireCIFS: c.RequireCIFS}, stocks: append([]config.Stock(nil), c.Stocks...), adjust: c.Daily.Adjust, db: db, log: log}
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +84,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, r, http.StatusOK, snapshot)
+	case "/api/experiments", "/api/experiment-history":
+		h.serveExperiments(w, r)
 	case "/api/history":
 		values, err := url.ParseQuery(r.URL.RawQuery)
 		codes := values["code"]
@@ -136,6 +146,14 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, r, http.StatusOK, report)
 	case "/":
 		h.asset(w, r, "index.html", "text/html; charset=utf-8")
+	case "/experiments":
+		h.asset(w, r, "experiments.html", "text/html; charset=utf-8")
+	case "/assets/experiments.js":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "experiments.js", "text/javascript; charset=utf-8")
+	case "/assets/experiments.css":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "experiments.css", "text/css; charset=utf-8")
 	case "/calculator":
 		h.asset(w, r, "calculator.html", "text/html; charset=utf-8")
 	case "/assets/calculator.js", "/assets/strategy-model.js":

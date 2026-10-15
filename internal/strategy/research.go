@@ -321,6 +321,10 @@ func datasets(c config.Config, histories, raw []market.History, asof string) ([]
 // Analyze never evaluates a historical signal using labels ending on or after that signal.
 // The latest holdout block freezes its evidence at the block boundary.
 func Analyze(ctx context.Context, c config.Config, histories, raw []market.History, asof string) (Result, error) {
+	return analyze(ctx, c, histories, raw, asof, nil)
+}
+
+func analyze(ctx context.Context, c config.Config, histories, raw []market.History, asof string, experiment *developmentOptions) (Result, error) {
 	result := Result{Ranking: []Candidate{}, Excluded: map[string]string{}}
 	data, err := datasets(c, histories, raw, asof)
 	if err != nil {
@@ -399,6 +403,9 @@ func Analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 				continue
 			}
 			future := r.Bars[i+1 : i+s.MaxHoldingDays+2]
+			if experiment != nil && future[len(future)-1].Date >= experiment.boundary {
+				continue // Never calculate outcomes touching the reserved final interval.
+			}
 			factor := h.Bars[i].Close / r.Bars[i].Close
 			corporate := false
 			for j := i + 1; j <= i+s.MaxHoldingDays+1; j++ {
@@ -433,6 +440,22 @@ func Analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 	for i := range samples {
 		samples[i].Features.Relative5 = samples[i].Features.Return5 - means[samples[i].Date]/float64(counts[samples[i].Date])
 		samples[i].Rules = Matches(samples[i].Features)
+	}
+	if experiment != nil {
+		dates := []string{}
+		seen := map[string]bool{}
+		for _, sample := range samples {
+			if !seen[sample.Date] {
+				dates = append(dates, sample.Date)
+				seen[sample.Date] = true
+			}
+		}
+		sort.Strings(dates)
+		research.Development = evaluateFiltered(ctx, samples, dates, s, "", c.Selection.TopN, experiment)
+		research.SampleCount = len(samples)
+		research.Limitations = append(research.Limitations, "Development experiment only; final holdout outcomes have not been evaluated.")
+		result.Research = research
+		return result, ctx.Err()
 	}
 	mean := 0.0
 	for _, x := range latest {
@@ -504,6 +527,10 @@ func Analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 }
 
 func evaluate(ctx context.Context, samples []Sample, dates []string, s config.Strategy, frozen string, topN int) Evaluation {
+	return evaluateFiltered(ctx, samples, dates, s, frozen, topN, nil)
+}
+
+func evaluateFiltered(ctx context.Context, samples []Sample, dates []string, s config.Strategy, frozen string, topN int, experiment *developmentOptions) Evaluation {
 	e := Evaluation{Method: "purged_walk_forward", TopRanked: Stats{Rule: "top_ranked", Target: s.TargetNetPct, Horizon: s.MaxHoldingDays}, Recommended: Stats{Rule: "recommended", Target: s.TargetNetPct, Horizon: s.MaxHoldingDays}, PoolBaseline: Stats{Rule: "pool_baseline", Target: s.TargetNetPct, Horizon: s.MaxHoldingDays}, LegacyTrend: Stats{Rule: "legacy_trend", Target: s.TargetNetPct, Horizon: s.MaxHoldingDays}}
 	var frozenStats []Stats
 	if frozen != "" {
@@ -537,15 +564,21 @@ func evaluate(ctx context.Context, samples []Sample, dates []string, s config.St
 			ranked = append(ranked, rank(sample.Code, "", sample.Features, stats, s))
 		}
 		sortRank(ranked)
-		recommended := 0
+		recommended, picked := 0, 0
 		for i, x := range ranked {
 			sample := byCode[x.Code]
 			out := sample.Outcomes[key(s.TargetNetPct, s.MaxHoldingDays)]
 			add(&e.PoolBaseline, sample, out)
-			if i < topN {
+			allowed := experiment == nil || experiment.maxUpperWick == nil || x.Features.UpperWick <= *experiment.maxUpperWick
+			selected := allowed && picked < topN
+			if selected {
 				add(&e.TopRanked, sample, out)
+				picked++
 			}
-			if x.Recommended && recommended < topN {
+			if experiment != nil && (selected || i < topN) {
+				experiment.trades = append(experiment.trades, ExperimentTrade{ID: sample.Date + "/" + x.Code, Code: x.Code, Date: sample.Date, Rank: i + 1, Selected: selected, Features: sample.Features, Outcome: out})
+			}
+			if allowed && x.Recommended && recommended < topN {
 				add(&e.Recommended, sample, out)
 				recommended++
 			}

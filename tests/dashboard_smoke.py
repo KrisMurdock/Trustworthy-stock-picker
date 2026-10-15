@@ -27,6 +27,7 @@ from playwright.sync_api import expect, sync_playwright
 # Test helpers should not leave generated files in the checkout.
 sys.dont_write_bytecode = True
 from calculator_browser_checks import calculator_checks
+from experiment_browser_checks import experiment_checks
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -552,13 +553,14 @@ def main():
             # Switching stock/report intentionally cancels the preceding fetch.
             # DOM assertions below verify the selected result wins the race.
             def network_failure(request):
-                canceled_selection = request.failure == "net::ERR_ABORTED" and urlparse(request.url).path in ("/api/history", "/api/reports")
+                canceled_selection = request.failure == "net::ERR_ABORTED" and urlparse(request.url).path in ("/api/history", "/api/reports", "/api/experiments", "/api/experiment-history")
                 if not state["injecting"] and not canceled_selection:
                     problems.append(f"network: {request.url} {request.failure}")
             page.on("requestfailed", network_failure)
             with service(args) as (url, directory, env):
                 populated_checks(context, page, url, args, directory, env)
                 chart_checks(page, url, state, args)
+                experiment_checks(context, page, url, ROOT, args, state, stalled_endpoint)
                 calculator_checks(context, page, url, ROOT, args, state, stalled_endpoint)
                 error_checks(page, url, state)
                 page.goto("about:blank")
@@ -569,6 +571,9 @@ def main():
                 expect(page.get_by_test_id("empty-state")).to_be_visible()
                 expect(page.get_by_test_id("stock-row")).to_have_count(3)
                 expect(page.get_by_test_id("ranking-empty-state")).to_be_visible()
+                page.get_by_role("link", name="策略实验室", exact=True).click()
+                expect(page.locator("#lab-empty")).to_be_visible()
+                expect(page.locator("#lab-workspace")).to_be_hidden()
                 page.get_by_role("link", name="仓位计算", exact=True).click()
                 expect(page.get_by_role("button", name="计算仓位", exact=True)).to_be_enabled()
                 page.get_by_role("button", name="载入 215 股示例").click()
@@ -600,7 +605,7 @@ def main():
         artifact = hashlib.sha256(Path(args.binary).read_bytes()).hexdigest()
     print(json.dumps({"result": "passed", "mode": "container" if args.image else "native", "artifact": artifact,
                       "identity": "anonymous (no application authentication)",
-                      "checks": "raw-2700-bars/price-basis-switch/cancel/mismatched-basis/raw-missing/synced-filter/candles/volume/MA/stock-switch/isolation/partial-coverage/snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/read-only API/gateway-403/503/timeout/recovery/empty/calculator/initial/add/holdings/net-target/validation/offline/no-account-upload/model-load-failure/SIGTERM"}, ensure_ascii=False))
+                      "checks": "experiments/lineage/comparison/snapshot-evidence/empty/errors/cancel/raw-2700-bars/price-basis-switch/cancel/mismatched-basis/raw-missing/synced-filter/candles/volume/MA/stock-switch/isolation/partial-coverage/snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/read-only API/gateway-403/503/timeout/recovery/empty/calculator/initial/add/holdings/net-target/validation/offline/no-account-upload/model-load-failure/SIGTERM"}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

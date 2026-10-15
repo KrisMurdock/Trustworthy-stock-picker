@@ -6,8 +6,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"stock-watcher/internal/config"
+	"stock-watcher/internal/experiment"
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/selection"
 	"stock-watcher/internal/storage"
@@ -23,6 +25,12 @@ func main() {
 	if err := seed(*root, *empty, *partial); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if !*empty {
+		if err := seedExperiments(*root); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	}
 }
 
@@ -114,4 +122,68 @@ func history(stock config.Stock, day string, at time.Time, index, count int) mar
 		bars[left], bars[right] = bars[right], bars[left]
 	}
 	return market.History{Version: 1, Code: stock.Code, Name: stock.Name, Source: "tencent", Adjust: "qfq", DataField: "qfqday", VolumeUnit: "provider_raw", AsOf: day, FetchedAt: at, Bars: bars}
+}
+
+func seedExperiments(root string) error {
+	ctx := context.Background()
+	db, err := storage.OpenExperiments(ctx, root, false, true)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	c := config.Defaults()
+	c.Calendar.ValidFrom = "2025-01-01"
+	c.Calendar.ValidThrough = "2026-12-31"
+	c.Stocks = []config.Stock{{Code: "sz000001", Name: "测试银行", Sector: "银行"}, {Code: "sh600519", Name: "测试消费", Sector: "消费"}, {Code: "sz000002", Name: "测试缺失", Sector: "地产"}}
+	at, _ := time.Parse("2006-01-02", "2026-10-13")
+	adjusted, raw := []market.History{}, []market.History{}
+	for index, stock := range c.Stocks[:2] {
+		h := history(stock, "2026-10-13", at, index, 240)
+		for i := range h.Bars {
+			p := 20 + float64(i)*.04 + .2*math.Sin(float64(i)*.4)
+			b := &h.Bars[i]
+			b.Open = p * .995
+			b.Close = p
+			b.Low = p * .99
+			b.High = p * 1.003
+			if index == 0 {
+				b.High = p * 1.03
+			}
+		}
+		r := h
+		r.Adjust, r.DataField = "none", "day"
+		r.Bars = append([]market.Bar(nil), h.Bars...)
+		for i := range r.Bars {
+			b := &r.Bars[i]
+			b.Open *= 2
+			b.High *= 2
+			b.Low *= 2
+			b.Close *= 2
+		}
+		adjusted = append(adjusted, h)
+		raw = append(raw, r)
+	}
+	snapshot, err := experiment.NewSnapshot(c, "2026-10-13", adjusted, raw)
+	if err != nil {
+		return err
+	}
+	var parent *experiment.Record
+	for _, policy := range []string{"baseline", "upper-wick"} {
+		spec, _ := experiment.Specification(policy)
+		r, err := experiment.NewRecord(snapshot, spec, parent, "fixture-v1")
+		if err != nil {
+			return err
+		}
+		if err = db.Start(ctx, snapshot, r); err != nil {
+			return err
+		}
+		if err = experiment.Evaluate(ctx, snapshot, &r, parent); err != nil {
+			return err
+		}
+		if err = db.Finish(ctx, r); err != nil {
+			return err
+		}
+		parent = &r
+	}
+	return nil
 }

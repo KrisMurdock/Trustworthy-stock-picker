@@ -33,7 +33,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check-config|init|check|sync|preview|research|plan|run|once|status|retry [channel] [-config config.yaml] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check-config|init|check|sync|preview|research|experiment|plan|run|once|status|retry [channel] [-config config.yaml] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -42,8 +42,10 @@ func run(args []string) error {
 	}
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
 	path := f.String("config", "config.yaml", "configuration file")
-	asof := f.String("as-of", "", "completed data date (sync/preview/research only)")
+	asof := f.String("as-of", "", "completed data date (sync/preview/research/experiment only)")
 	code := f.String("code", "", "stock code (plan only)")
+	parent := f.String("parent", "", "parent experiment ID (experiment only)")
+	policy := f.String("policy", "baseline", "baseline or upper-wick (experiment only)")
 	entry := f.Float64("entry-price", 0, "actual buy fill price (plan only)")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
@@ -55,15 +57,18 @@ func run(args []string) error {
 		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
-	case "check-config", "init", "check", "sync", "preview", "research", "plan", "run", "once", "status", "retry":
+	case "check-config", "init", "check", "sync", "preview", "research", "experiment", "plan", "run", "once", "status", "retry":
 	default:
 		return errors.New("unknown command")
 	}
-	if *asof != "" && command != "sync" && command != "preview" && command != "research" {
-		return errors.New("as-of is supported by sync, preview and research only")
+	if *asof != "" && command != "sync" && command != "preview" && command != "research" && command != "experiment" {
+		return errors.New("as-of is supported by sync, preview, research and experiment only")
 	}
 	if command != "plan" && (*code != "" || *entry != 0) {
 		return errors.New("trade price flags require the plan command")
+	}
+	if command != "experiment" && (*parent != "" || *policy != "baseline") {
+		return errors.New("experiment flags require the experiment command")
 	}
 	c, err := config.Load(*path)
 	if err != nil {
@@ -106,6 +111,9 @@ func run(args []string) error {
 	defer log.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if command == "experiment" {
+		return runExperiment(ctx, c, *asof, *parent, *policy, log)
+	}
 	openStore := storage.Open
 	readOnly := false
 	if command == "status" || command == "preview" || command == "research" || command == "check" {
