@@ -15,6 +15,28 @@ import (
 
 const response = `{"code":0,"data":{"sz000001":{"qfqday":[["2026-10-13","10","11","12","9","100"],["2026-10-14","11","12","13","10","200"]],"qt":{"sz000001":["51","平安银行"]}}}}`
 
+func TestCurrentSessionUsesLatestWindowAndFiltersFutureBars(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(r.URL.Query().Get("param"), ",")
+		rows := [][]string{{"2026-10-13", "10", "10", "11", "9", "100"}, {"2026-10-14", "10", "10", "11", "9", "100"}}
+		if parts[3] == "" {
+			rows = append(rows, []string{"2026-10-15", "10", "10", "11", "9", "100"})
+		}
+		json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"sz000001": map[string]any{"qfqday": rows}}})
+	}))
+	defer srv.Close()
+	c := NewClient(time.Second)
+	c.Endpoint = srv.URL
+	c.Now = func() time.Time { return time.Date(2026, 10, 15, 16, 0, 0, 0, Shanghai) }
+	defer c.Close()
+	for _, end := range []string{"2026-10-15", "2026-10-14"} {
+		h, err := c.FetchWindow(context.Background(), config.Stock{Code: "sz000001"}, "2026-10-01", end, "qfq", 2)
+		if err != nil || len(h.Bars) != 2 || h.Bars[len(h.Bars)-1].Date != end {
+			t.Fatalf("wrong final bar for %s: %+v %v", end, h.Bars, err)
+		}
+	}
+}
+
 func TestParserRejectsWrongAdjustmentAndIncomplete(t *testing.T) {
 	b, name, err := Parse("sz000001", []byte(response), "2026-01-01", "2026-10-13", "qfq")
 	if err != nil || len(b) != 1 || b[0].Close != 11 || name != "平安银行" {

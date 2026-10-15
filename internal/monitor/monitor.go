@@ -255,9 +255,9 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 		}
 		history, err := m.fetchHistory(ctx, stock, adjustedStart, asof, m.Config.Daily.Adjust)
 		if err != nil {
-			if market.IsIsolatable(err) {
+			if market.IsProviderFailure(err) {
 				items = append(items, storage.SyncItem{Stock: stock, Status: "isolated", Reason: syncReason(err)})
-				m.Log.Warn("Daily stock isolated", "code", stock.Code, "adjust", m.Config.Daily.Adjust, "reason", syncReason(err))
+				m.Log.Warn("Daily stock isolated", "code", stock.Code, "adjust", m.Config.Daily.Adjust, "reason", syncReason(err), "completed", i+1, "total", len(m.Config.Stocks))
 				continue
 			}
 			return m.failSync(ctx, run, fmt.Errorf("download failed for %s: %w", stock.Code, err))
@@ -278,9 +278,9 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 			r, err := m.fetchHistory(ctx, stock, start, asof, "none")
 			if err != nil {
 				histories = histories[:len(histories)-1]
-				if market.IsIsolatable(err) {
+				if market.IsProviderFailure(err) {
 					items = append(items, storage.SyncItem{Stock: stock, Status: "isolated", Reason: syncReason(err)})
-					m.Log.Warn("Daily stock isolated", "code", stock.Code, "adjust", "none", "reason", syncReason(err))
+					m.Log.Warn("Daily stock isolated", "code", stock.Code, "adjust", "none", "reason", syncReason(err), "completed", i+1, "total", len(m.Config.Stocks))
 					continue
 				}
 				return m.failSync(ctx, run, fmt.Errorf("raw download failed for %s: %w", stock.Code, err))

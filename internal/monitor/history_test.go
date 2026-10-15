@@ -163,7 +163,16 @@ func TestTenYearHTTPBackfillSQLiteAndIncrementalRecovery(t *testing.T) {
 	if _, err := m.Sync(ctx, "2026-12-16"); err == nil {
 		t.Fatal("partial paginated failure accepted")
 	}
-	assertStored("2026-11-16", "2016-11-16")
+	// The failed stock is now recorded as isolated for the new run. Its old
+	// history remains available by date, but must not appear current on the UI.
+	retained, err := m.Market.LoadHistories(ctx, []config.Stock{stock}, "2026-11-16", "none")
+	if err != nil || len(retained) != 1 || len(retained[0].Bars) < 2500 || retained[0].Bars[0].Date != "2016-11-16" || retained[0].Bars[len(retained[0].Bars)-1].Date != "2026-11-16" {
+		t.Fatalf("failed run discarded historical data: %v", err)
+	}
+	view, err := m.Market.LoadDashboard(ctx, m.Config.Stocks, "none")
+	if err != nil || view.Summary.Available != 0 || view.LatestSync.ErrorKind != "coverage" {
+		t.Fatalf("failed stock presented as current: %+v %v", view, err)
+	}
 	if _, err := m.Market.LoadReport(ctx, "2026-12-16"); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("failed run published: %v", err)
 	}

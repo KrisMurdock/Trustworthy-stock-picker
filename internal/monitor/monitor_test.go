@@ -221,7 +221,7 @@ func TestSQLiteSyncPublishesAtConfiguredCoverageThreshold(t *testing.T) {
 	}
 	m.Market = marketDB
 	t.Cleanup(func() { m.Market.Close() })
-	source.err = &market.Failure{Status: 403, Kind: "status"}
+	source.err = &market.Failure{Status: 503, Kind: "status"}
 	source.failCode = m.Config.Stocks[0].Code
 	report, err := m.Sync(context.Background(), "2026-10-13")
 	if err != nil || report.Eligible != 19 {

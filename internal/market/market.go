@@ -123,9 +123,26 @@ func IsIsolatable(err error) bool {
 	return errors.As(err, &dataErr)
 }
 
+// IsProviderFailure distinguishes a stock's exhausted data providers from
+// cancellation and shared-storage failures. Retryability controls later retries;
+// it must not prevent the rest of the pool from being synchronized this round.
+func IsProviderFailure(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var aggregate *sourceFailures
+	if errors.As(err, &aggregate) {
+		return len(aggregate.failures) > 0
+	}
+	var failure *Failure
+	var invalid *DataError
+	return errors.As(err, &failure) || errors.As(err, &invalid)
+}
+
 type Client struct {
 	HTTP     *http.Client
 	Endpoint string
+	Now      func() time.Time
 	pacer    requestPacer
 }
 
@@ -210,7 +227,18 @@ func (c *Client) FetchWindow(ctx context.Context, stock config.Stock, start, end
 		return h, errors.New("invalid daily count")
 	}
 	query := u.Query()
-	query.Set("param", strings.Join([]string{stock.Code, "day", start, end, strconv.Itoa(count), suffix}, ","))
+	now := time.Now()
+	if c.Now != nil {
+		now = c.Now()
+	}
+	// Tencent's dated historical endpoint can lag the current close. The latest
+	// window includes that session; parsing still enforces the requested end.
+	latest := end == now.In(Shanghai).Format("2006-01-02")
+	queryEnd := end
+	if latest {
+		queryEnd = ""
+	}
+	query.Set("param", strings.Join([]string{stock.Code, "day", start, queryEnd, strconv.Itoa(count), suffix}, ","))
 	u.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -238,7 +266,7 @@ func (c *Client) FetchWindow(ctx context.Context, stock config.Stock, start, end
 	if err != nil || len(body) > 2<<20 {
 		return h, &Failure{Kind: "body"}
 	}
-	bars, name, err := ParseWithLimit(stock.Code, body, start, end, adjust, count)
+	bars, name, err := parseWindow(stock.Code, body, start, end, adjust, count, latest)
 	if err != nil {
 		return h, &DataError{Reason: err.Error()}
 	}
@@ -263,6 +291,10 @@ func ParseWithLimit(code string, body []byte, start, end, adjust string, count i
 }
 
 func parseWithLimit(code string, body []byte, start, end, adjust string, count int) ([]Bar, string, error) {
+	return parseWindow(code, body, start, end, adjust, count, false)
+}
+
+func parseWindow(code string, body []byte, start, end, adjust string, count int, latest bool) ([]Bar, string, error) {
 	var envelope struct {
 		Code *int                       `json:"code"`
 		Data map[string]json.RawMessage `json:"data"`
@@ -333,7 +365,10 @@ func parseWithLimit(code string, body []byte, start, end, adjust string, count i
 		return nil, "", errors.New("no daily data in requested window")
 	}
 	if len(bars) > count {
-		return nil, "", errors.New("daily data window exceeds size limit")
+		if !latest || len(bars) != count+1 || bars[len(bars)-1].Date != end {
+			return nil, "", errors.New("daily data window exceeds size limit")
+		}
+		bars = bars[1:]
 	}
 	return bars, name, nil
 }

@@ -3,6 +3,8 @@ package monitor
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +12,51 @@ import (
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/storage"
 )
+
+func TestPoolContinuesAfterTemporaryProviderFailure(t *testing.T) {
+	for _, adjust := range []string{"qfq", "none"} {
+		t.Run(adjust, func(t *testing.T) {
+			m, _, channel := fixture(t)
+			m.Config.Daily.Adjust = "qfq"
+			m.Config.Stocks = append(m.Config.Stocks, config.Stock{Code: "sz000002", Name: "后续股票", ListedFrom: "2026-07-15"})
+			db, err := storage.InitMarket(t.TempDir(), false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			m.Market = db
+			first := &fakeSource{err: &market.DataError{Reason: "stale_or_suspended"}, failCode: "sz000001", failAdjust: adjust}
+			second := &fakeSource{err: &market.Failure{Kind: "network"}, failCode: "sz000001", failAdjust: adjust}
+			m.Source = &market.Sources{Providers: []market.Provider{{Name: "tencent", Source: first}, {Name: "eastmoney", Source: second}}}
+			_, err = m.Sync(context.Background(), "2026-10-13")
+			if err == nil || !strings.Contains(err.Error(), "coverage 50.00%") {
+				t.Fatalf("whole pool was not attempted: %v", err)
+			}
+			for _, kind := range []string{"qfq", "none"} {
+				h, err := db.LoadLatestHistory(context.Background(), "sz000002", kind, "2026-10-13")
+				if err != nil || h.AsOf != "2026-10-13" {
+					t.Fatalf("valid later stock was not saved: %s %v", kind, err)
+				}
+			}
+			if _, err := db.LoadReport(context.Background(), "2026-10-13"); !errors.Is(err, fs.ErrNotExist) || channel.calls != 0 {
+				t.Fatal("coverage gate was bypassed")
+			}
+		})
+	}
+}
+
+func TestPoolStopsOnCancellationAndStorageFailure(t *testing.T) {
+	for _, failure := range []error{context.Canceled, context.DeadlineExceeded, errors.New("shared storage unavailable")} {
+		m, source, _ := fixture(t)
+		m.Config.Stocks = append(m.Config.Stocks, config.Stock{Code: "sz000002", Name: "后续股票"})
+		source.err = failure
+		m.Source = &market.Sources{Providers: []market.Provider{{Name: "tencent", Source: source}}}
+		_, err := m.Sync(context.Background(), "2026-10-13")
+		if !errors.Is(err, failure) || source.calls != 1 {
+			t.Fatalf("global failure did not stop sync: %v calls=%d", err, source.calls)
+		}
+	}
+}
 
 type namedTestSource struct {
 	base          *fakeSource
