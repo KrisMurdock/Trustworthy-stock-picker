@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -21,6 +22,91 @@ func TestLedgerEnqueueAndIndependentChannelStates(t *testing.T) {
 	due := ledger.Due(now.Add(3 * time.Minute))
 	if len(due) != 1 || due[0].Channel != "b" {
 		t.Fatalf("unexpected due deliveries: %+v", due)
+	}
+}
+
+func TestLedgerEnqueueAndValidateSupportsMessageVersions(t *testing.T) {
+	now := time.Date(2026, 10, 13, 19, 0, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
+	for _, test := range []struct {
+		name    string
+		version int
+	}{
+		{name: "v1", version: 1},
+		{name: "v2", version: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			message := Message{Version: test.version, EventID: "event", Title: "title", ExpiresAt: now.Add(time.Hour)}
+			ledger := NewLedger()
+			if err := ledger.Enqueue("2026-10-13", message, []string{"a"}); err != nil {
+				t.Fatalf("enqueue message version %d: %v", test.version, err)
+			}
+			if ledger.Version != 2 {
+				t.Fatalf("ledger schema version = %d, want 2", ledger.Version)
+			}
+			if err := ledger.Validate(); err != nil {
+				t.Fatalf("validate message version %d: %v", test.version, err)
+			}
+		})
+	}
+}
+
+func TestLedgerRejectsUnsupportedMessageVersions(t *testing.T) {
+	now := time.Date(2026, 10, 13, 19, 0, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
+	for _, test := range []struct {
+		name    string
+		version int
+	}{
+		{name: "version_0", version: 0},
+		{name: "version_3", version: 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			message := Message{Version: test.version, EventID: "event", ExpiresAt: now.Add(time.Hour)}
+			ledger := NewLedger()
+			if err := ledger.Enqueue("2026-10-13", message, []string{"a"}); err == nil {
+				t.Fatalf("enqueue accepted unsupported message version %d", test.version)
+			}
+
+			persisted := NewLedger()
+			persisted.Events[message.EventID] = Event{
+				AsOf:      "2026-10-13",
+				ExpiresAt: message.ExpiresAt,
+				Message:   message,
+				Channels:  map[string]ChannelState{"a": {Status: Pending}},
+			}
+			if err := persisted.Validate(); err == nil {
+				t.Fatalf("validate accepted unsupported message version %d", test.version)
+			}
+		})
+	}
+}
+
+func TestSectionPreservesStructuredFieldsAndLegacyLines(t *testing.T) {
+	input := []byte(`{"heading":"指标","lines":["旧格式文本"],"fields":[{"label":"收盘","value":"10.25"}],"optional":true}`)
+	var section Section
+	if err := json.Unmarshal(input, &section); err != nil {
+		t.Fatalf("unmarshal section: %v", err)
+	}
+	encoded, err := json.Marshal(section)
+	if err != nil {
+		t.Fatalf("marshal section: %v", err)
+	}
+	var got struct {
+		Heading string `json:"heading"`
+		Lines   []string
+		Fields  []struct {
+			Label string `json:"label"`
+			Value string `json:"value"`
+		} `json:"fields"`
+		Optional bool `json:"optional"`
+	}
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatalf("unmarshal encoded section: %v", err)
+	}
+	if got.Heading != "指标" || len(got.Lines) != 1 || got.Lines[0] != "旧格式文本" {
+		t.Fatalf("legacy section content changed during round trip: %+v", got)
+	}
+	if len(got.Fields) != 1 || got.Fields[0].Label != "收盘" || got.Fields[0].Value != "10.25" || !got.Optional {
+		t.Fatalf("structured section content was not preserved: %+v", got)
 	}
 }
 

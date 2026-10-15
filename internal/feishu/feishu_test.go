@@ -7,10 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"stock-watcher/internal/config"
 	"stock-watcher/internal/notify"
-	"stock-watcher/internal/selection"
-	"stock-watcher/internal/strategy"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,31 +21,80 @@ func TestOfficialSignatureAlgorithm(t *testing.T) {
 	}
 }
 
-func TestRankingCardReportsNetCostsWatchOnlyAndReferencePrices(t *testing.T) {
-	r := selection.Report{Version: 2, AsOf: "2026-10-13", Target: "2026-10-14", Strategy: "short_horizon_v1", PoolSize: 104, Research: &strategy.Research{Parameters: config.DefaultStrategy()}, Ranking: []strategy.Candidate{{Rank: 1, Code: "sz000001", Name: "测试", Score: 40, Reasons: []string{"strong_close"}, Risks: []string{"insufficient_or_unprofitable_evidence"}, Plan: &strategy.Plan{EntryPrice: 10, Target25: 10.3, Target30: 10.35, StopPrice: 9.7}}}}
-	data, err := json.Marshal(Card(r))
+func TestStructuredCardRendersFieldsAndEventID(t *testing.T) {
+	payload := Card(notify.Message{
+		Version: 2,
+		EventID: "event-v2",
+		Title:   "title",
+		Sections: []notify.Section{
+			{Heading: "摘要", Fields: []notify.Field{{Label: "日期", Value: "2026-10-13"}, {Label: "状态", Value: "有推荐"}}},
+			{Heading: "第 1 名 · sz000001 测试", Fields: []notify.Field{{Label: "机会分", Value: "82.5"}, {Label: "风险", Value: "上影线较长"}}},
+		},
+	})
+	data, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{"净收益口径", "仅为观察排名", "0.0100%", "参考买入", "以实际买入", "不等于未来获利概率", "收盘接近日内高位", "历史样本或收益未达门槛"} {
-		if !strings.Contains(string(data), text) {
-			t.Fatalf("card missing %s", text)
+	var envelope map[string]any
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	card, ok := envelope["card"].(map[string]any)
+	if !ok {
+		t.Fatalf("card missing from payload: %s", data)
+	}
+	elements, ok := card["elements"].([]any)
+	if !ok {
+		t.Fatalf("elements missing from card: %s", data)
+	}
+	fieldCount := 0
+	foundEventID := false
+	for _, rawElement := range elements {
+		element, ok := rawElement.(map[string]any)
+		if !ok {
+			continue
+		}
+		fields, _ := element["fields"].([]any)
+		for _, rawField := range fields {
+			field, _ := rawField.(map[string]any)
+			text, _ := field["text"].(map[string]any)
+			if field["is_short"] != true || text["tag"] != "lark_md" {
+				t.Fatalf("field is not rendered as a short lark markdown field: %+v", field)
+			}
+			fieldCount++
+		}
+		notes, _ := element["elements"].([]any)
+		for _, rawNote := range notes {
+			note, _ := rawNote.(map[string]any)
+			if note["tag"] == "plain_text" && strings.Contains(note["content"].(string), "event-v2") {
+				foundEventID = true
+			}
 		}
 	}
-	if strings.Contains(string(data), "分数 ≥ 0") {
-		t.Fatal("legacy threshold in strategy card")
+	if fieldCount != 4 || !foundEventID {
+		t.Fatalf("structured card missing fields or event id: fields=%d event=%v payload=%s", fieldCount, foundEventID, data)
 	}
 }
 
-func TestRankingCardShowsSelectedStocksOutsideWatchTopFive(t *testing.T) {
-	r := selection.Report{Version: 2, SelectionEnabled: true, Research: &strategy.Research{Parameters: config.DefaultStrategy()}}
-	for i := 0; i < 6; i++ {
-		r.Ranking = append(r.Ranking, strategy.Candidate{Rank: i + 1, Code: "sz00000" + strconv.Itoa(i), Name: "测试", Score: float64(90 - i), Recommended: i == 5})
+func TestVersionOneCardKeepsLegacyMarkdownRendering(t *testing.T) {
+	payload := Card(notify.Message{
+		Version:  1,
+		EventID:  "event-v1",
+		Title:    "title",
+		Sections: []notify.Section{{Heading: "heading", Lines: []string{"first", "second", "事件 ID：event-v1"}}},
+	})
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
 	}
-	r.Selected = []selection.Candidate{{Code: r.Ranking[5].Code, Ranking: &r.Ranking[5]}}
-	data, _ := json.Marshal(Card(r))
-	if !strings.Contains(string(data), "sz000005") || !strings.Contains(string(data), "规则通过") {
-		t.Fatal("watch-only leaders hid the selected stock")
+	text := string(data)
+	for _, want := range []string{"lark_md", "heading", "first", "second", "event-v1"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("legacy card missing %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "\"fields\"") {
+		t.Fatalf("version one card changed layout: %s", text)
 	}
 }
 func TestDeliveryAcknowledgementAndPermissions(t *testing.T) {
@@ -137,6 +183,89 @@ func TestOversizedCardIsTrimmedBeforeRequest(t *testing.T) {
 	})
 	if err != nil || calls != 1 || received > maxPayloadBytes {
 		t.Fatalf("oversized payload was not trimmed: err=%v calls=%d bytes=%d", err, calls, received)
+	}
+}
+
+func TestOversizedStructuredCardDropsOptionalSectionsAndPreservesSummary(t *testing.T) {
+	var received []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		received, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.Write([]byte("{\"code\":0}"))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "", time.Second)
+	defer c.Close()
+	err := c.Send(context.Background(), notify.Message{
+		Version: 2,
+		EventID: "event-structured",
+		Title:   "title",
+		Sections: []notify.Section{
+			{Heading: "摘要", Fields: []notify.Field{{Label: "状态", Value: "保留摘要"}}},
+			{Heading: "首选股票", Optional: true, Fields: []notify.Field{{Label: "名称", Value: "保留候选"}}},
+			{Heading: "长尾股票", Optional: true, Fields: []notify.Field{{Label: "详情", Value: strings.Repeat("长", 30000)}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("oversized structured card was not trimmed: %v", err)
+	}
+	if len(received) == 0 || len(received) > maxPayloadBytes {
+		t.Fatalf("unexpected structured payload size %d", len(received))
+	}
+	text := string(received)
+	for _, want := range []string{"保留摘要", "保留候选", "event-structured"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("trimmed card lost %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "长尾股票") || strings.Contains(text, strings.Repeat("长", 100)) {
+		t.Fatalf("trimmed card retained oversized optional section: size=%d", len(received))
+	}
+}
+
+func TestOversizedMandatoryStructuredCardFailsBeforeRequest(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Write([]byte("{\"code\":0}"))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "", time.Second)
+	defer c.Close()
+	err := c.Send(context.Background(), notify.Message{
+		Version: 2,
+		EventID: "core-event",
+		Title:   "title",
+		Sections: []notify.Section{{
+			Heading: "摘要",
+			Fields:  []notify.Field{{Label: "必要字段", Value: strings.Repeat("x", maxPayloadBytes)}},
+		}},
+	})
+	var failure *notify.DeliveryError
+	if !errors.As(err, &failure) || failure.Kind != notify.Permanent || failure.Reason != "payload_limit" || calls != 0 {
+		t.Fatalf("mandatory oversized card should fail before request: err=%v calls=%d", err, calls)
+	}
+}
+
+func TestWebhookTimeoutIsRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		_, _ = w.Write([]byte("{\"code\":0}"))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "", 10*time.Millisecond)
+	defer c.Close()
+	err := c.Send(context.Background(), notify.Message{
+		Version:  2,
+		EventID:  "timeout-event",
+		Sections: []notify.Section{{Fields: []notify.Field{{Label: "状态", Value: "测试"}}}},
+	})
+	var failure *notify.DeliveryError
+	if !errors.As(err, &failure) || failure.Kind != notify.Retryable {
+		t.Fatalf("timeout should be retryable, got %v", err)
 	}
 }
 

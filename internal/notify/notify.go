@@ -16,9 +16,16 @@ type Message struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
+type Field struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
 type Section struct {
-	Heading string   `json:"heading,omitempty"`
-	Lines   []string `json:"lines"`
+	Heading  string   `json:"heading,omitempty"`
+	Lines    []string `json:"lines"`
+	Fields   []Field  `json:"fields,omitempty"`
+	Optional bool     `json:"optional,omitempty"`
 }
 
 type Kind string
@@ -130,7 +137,7 @@ func (l *Ledger) Enqueue(asof string, message Message, channels []string) error 
 	if l.Version != 2 {
 		return errors.New("unsupported delivery ledger version")
 	}
-	if message.Version != 1 || message.EventID == "" || asof == "" || message.ExpiresAt.IsZero() {
+	if !supportedMessageVersion(message.Version) || message.EventID == "" || asof == "" || message.ExpiresAt.IsZero() {
 		return errors.New("invalid notification message")
 	}
 	if l.Events == nil {
@@ -320,7 +327,7 @@ func (l Ledger) Validate() error {
 		return errors.New("unsupported delivery ledger version")
 	}
 	for eventID, event := range l.Events {
-		if eventID == "" || event.AsOf == "" || event.Message.Version != 1 || event.Message.EventID != eventID || event.ExpiresAt.IsZero() || len(event.Channels) == 0 {
+		if eventID == "" || event.AsOf == "" || !supportedMessageVersion(event.Message.Version) || event.Message.EventID != eventID || event.ExpiresAt.IsZero() || len(event.Channels) == 0 {
 			return errors.New("invalid persisted delivery ledger")
 		}
 		if _, err := time.Parse("2006-01-02", event.AsOf); err != nil {
@@ -341,6 +348,10 @@ func (l Ledger) Validate() error {
 		}
 	}
 	return nil
+}
+
+func supportedMessageVersion(version int) bool {
+	return version == 1 || version == 2
 }
 
 func (l *Ledger) channelState(eventID, channel string) (ChannelState, error) {

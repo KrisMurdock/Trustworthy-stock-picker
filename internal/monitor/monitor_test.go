@@ -325,7 +325,7 @@ func TestStrategySyncRawResearchPersistenceAndRetry(t *testing.T) {
 	for _, candidate := range state.Events {
 		event = candidate
 	}
-	if event.Message.Version != 1 {
+	if event.Message.Version != 2 {
 		t.Fatalf("new report message was not persisted: %+v", event.Message)
 	}
 	preview, err := m.Preview("2026-10-13")
