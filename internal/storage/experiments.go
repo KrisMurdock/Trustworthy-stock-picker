@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"stock-watcher/internal/experiment"
 	"stock-watcher/internal/market"
+	"stock-watcher/internal/strategy"
 	"syscall"
 	"time"
 )
@@ -205,19 +206,27 @@ func (x *ExperimentDB) List(ctx context.Context) ([]experiment.Record, error) {
 	if x.db == nil {
 		return out, nil
 	}
-	rows, err := x.db.QueryContext(ctx, "SELECT summary FROM experiment_run ORDER BY created_at DESC,id DESC LIMIT 200")
+	rows, err := x.db.QueryContext(ctx, "SELECT summary, json_extract(payload, '$.result.development.research.development.top_ranked') FROM experiment_run ORDER BY created_at DESC,id DESC LIMIT 200")
 	if err != nil {
 		return nil, errors.New("cannot list experiments")
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var b []byte
+		var statsJSON sql.NullString
 		var r experiment.Record
-		if err = rows.Scan(&b); err != nil {
+		if err = rows.Scan(&b, &statsJSON); err != nil {
 			return nil, err
 		}
 		if len(b) > 32<<20 || json.Unmarshal(b, &r) != nil || r.Version != 1 || !experiment.ValidID(r.ID) {
 			return nil, errors.New("invalid stored experiment")
+		}
+		if r.Status == "completed" && statsJSON.Valid {
+			var stats strategy.Stats
+			if err = json.Unmarshal([]byte(statsJSON.String), &stats); err != nil {
+				return nil, errors.New("invalid stored experiment statistics")
+			}
+			r.Review = experiment.ReviewStats(stats)
 		}
 		out = append(out, r)
 	}
@@ -325,7 +334,11 @@ func (v ExperimentView) Get(ctx context.Context, id string) (experiment.Record, 
 		return experiment.Record{}, err
 	}
 	defer db.Close()
-	return db.Get(ctx, id)
+	r, err := db.Get(ctx, id)
+	if err == nil {
+		r.Review = experiment.ReviewRecord(r)
+	}
+	return r, err
 }
 func (v ExperimentView) History(ctx context.Context, id, code, date string) (market.History, error) {
 	db, err := OpenExperiments(ctx, v.Root, v.RequireCIFS, false)

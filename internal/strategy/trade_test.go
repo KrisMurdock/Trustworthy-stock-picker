@@ -38,8 +38,8 @@ func TestNetTargetsIncludeMinimumCommissionTaxAndTick(t *testing.T) {
 	if netPct(s, p, p.Target30-0.01) >= 3 {
 		t.Fatal("target was not the minimum qualifying tick")
 	}
-	if netPct(s, p, p.StopPrice) > -3 {
-		t.Fatal("net stop did not include costs")
+	if BreachesLossLimit(netPct(s, p, tickDown(p.StopPrice*(1-s.SlippageRate)))) {
+		t.Fatal("modeled stop breached the inclusive-cost loss constraint")
 	}
 	s.TradeCash = 10000
 	if _, err := NewPlan(s, "sh688981", 100); err == nil {
@@ -62,7 +62,7 @@ func TestStopWinsAmbiguousBarsAndGapsExceedStop(t *testing.T) {
 	future[1].High = 10.8
 	future[1].Low = 9.5
 	out, err := Simulate(s, cal, "sz000001", signal, future, 5)
-	if err != nil || out.Status != "stop" || !out.Ambiguous || out.NetPct > -3 {
+	if err != nil || out.Status != "stop" || !out.Ambiguous || BreachesLossLimit(out.NetPct) {
 		t.Fatalf("ambiguous order wrong %+v %v", out, err)
 	}
 	future[1].Open = 9.5
@@ -72,6 +72,40 @@ func TestStopWinsAmbiguousBarsAndGapsExceedStop(t *testing.T) {
 	out, err = Simulate(s, cal, "sz000001", signal, future, 5)
 	if err != nil || out.Status != "stop_gap" || out.NetPct > -5 {
 		t.Fatalf("gap filled at fictitious stop %+v %v", out, err)
+	}
+}
+
+func TestStopTriggerReservesCostsSlippageAndTick(t *testing.T) {
+	for _, fill := range []float64{1, 3.17, 10, 47.05, 100, 823.19} {
+		for _, slip := range []float64{0, .0005, .01} {
+			s := config.DefaultStrategy()
+			s.TradeCash = 200000
+			s.SlippageRate = slip
+			for _, goal := range []float64{-2, -3, -10} {
+				s.StopNetPct = goal
+				p, err := NewPlan(s, "sz000001", fill)
+				// At a 1-yuan price, two price ticks plus slippage leave
+				// no room for a stricter 2% stop after fees.
+				if fill == 1 && slip > 0 && goal == -2 {
+					if err != ErrStopBuffer {
+						t.Fatal("accepted an impossible below-entry stop", err)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatalf("fill=%f slip=%f goal=%f: %v", fill, slip, goal, err)
+				}
+				net := netPct(s, p, tickDown(p.StopPrice*(1-slip)))
+				if BreachesLossLimit(net) || net <= math.Max(goal, -3)+1e-9 || p.StopNetPct != net || p.StopPrice >= p.EntryPrice {
+					t.Fatalf("unsafe modeled stop: %+v net=%f", p, net)
+				}
+			}
+		}
+	}
+	s := config.DefaultStrategy()
+	s.CommissionRate, s.TransferRate, s.SellStampRate = .01, .01, .01
+	if _, err := NewPlan(s, "sz000001", 10); err != ErrStopBuffer {
+		t.Fatal("accepted fees that already consume the loss budget", err)
 	}
 }
 func TestTargetTouchDoesNotProveFillAndLockedLimitCensors(t *testing.T) {

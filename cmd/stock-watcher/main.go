@@ -46,7 +46,7 @@ func run(args []string) error {
 	asof := f.String("as-of", "", "completed data date (sync/preview/research/experiment only)")
 	code := f.String("code", "", "stock code (plan only)")
 	parent := f.String("parent", "", "parent experiment ID (experiment only)")
-	policy := f.String("policy", "baseline", "baseline or upper-wick (experiment only)")
+	policy := f.String("policy", "baseline", "baseline, upper-wick or risk-qualified (experiment only)")
 	entry := f.Float64("entry-price", 0, "actual buy fill price (plan only)")
 	if err := f.Parse(args[1:]); err != nil {
 		return err

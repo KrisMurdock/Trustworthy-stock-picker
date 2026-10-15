@@ -137,6 +137,11 @@ func TestFrozenEvaluationDoesNotLearnLaterHoldoutOutcomes(t *testing.T) {
 	if before.Recommended.Samples != 2 {
 		t.Fatalf("holdout training changed after a later loss: %+v", before.Recommended)
 	}
+	policy := &developmentOptions{requireEvidence: true}
+	strict := evaluateFiltered(context.Background(), samples, dates, s, boundary, 1, policy)
+	if strict.TopRanked.Samples != 2 || strict.TopRanked.LossBreaches != 2 {
+		t.Fatal("risk-qualified policy used future losses to remove historically qualified entries")
+	}
 	// Without frozen evidence this extreme first holdout loss would disable the rule.
 	samples[len(samples)-2].Outcomes[key(3, 5)] = Outcome{Status: "target", EntryDate: boundary, NetPct: 3, HoldingDays: 1}
 	after := evaluate(context.Background(), samples, dates, s, boundary, 1)

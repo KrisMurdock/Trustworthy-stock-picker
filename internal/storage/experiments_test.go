@@ -9,9 +9,55 @@ import (
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/experiment"
 	"stock-watcher/internal/market"
+	"stock-watcher/internal/strategy"
 	"testing"
 	"time"
 )
+
+func TestLegacyExperimentReviewDoesNotRewriteArchive(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	db, err := OpenExperiments(ctx, root, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	snapshot, r := experimentFixture(t)
+	r.Engine = "development_top_n_v1"
+	if err = db.Start(ctx, snapshot, r); err != nil {
+		t.Fatal(err)
+	}
+	r.Status, r.Verdict = "completed", "promising"
+	r.Result = &experiment.Results{Development: strategy.DevelopmentResult{
+		Research: strategy.Research{Development: strategy.Evaluation{TopRanked: strategy.Stats{Samples: 2, Resolved: 1, Unresolved: 1, WorstNet: -3.2}}},
+		Trades: []strategy.ExperimentTrade{
+			{ID: "loss", Selected: true, Date: "2026-01-05", Outcome: strategy.Outcome{EntryDate: "2026-01-06", ExitDate: "2026-01-07", Status: "stop_gap", NetPct: -3.2}},
+			{ID: "censored", Selected: true, Date: "2026-01-05", Outcome: strategy.Outcome{EntryDate: "2026-01-06", ExitDate: "2026-01-07", Status: "corporate_action", NetPct: -90}},
+		},
+	}}
+	if err = db.Finish(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	var before, after []byte
+	if err = db.db.QueryRowContext(ctx, "SELECT payload FROM experiment_run WHERE id=?", r.ID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	view := ExperimentView{Root: root}
+	items, err := view.List(ctx)
+	if err != nil || len(items) != 1 || items[0].Review == nil || items[0].Review.Risk.Status != "breached" || items[0].Review.Risk.ExactCount {
+		t.Fatal("legacy summary treated as safe", err, items)
+	}
+	got, err := view.Get(ctx, r.ID)
+	if err != nil || got.Verdict != "promising" || got.Review == nil || got.Review.Risk.Breaches != 1 || !got.Review.Risk.ExactCount || got.Review.Risk.Unresolved != 1 || got.Review.Stats.WorstNet != -3.2 {
+		t.Fatal("incorrect current review", err, got.Review)
+	}
+	if err = db.db.QueryRowContext(ctx, "SELECT payload FROM experiment_run WHERE id=?", r.ID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("read-time review rewrote archived evidence")
+	}
+}
 
 func experimentFixture(t *testing.T) (experiment.Snapshot, experiment.Record) {
 	t.Helper()

@@ -169,6 +169,8 @@ func BuildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 	r := Report{Version: 2, AsOf: asof, Target: target, GeneratedAt: now.In(market.Shanghai), Strategy: "short_horizon_v1", SelectionEnabled: c.Selection.Enabled, Adjust: c.Daily.Adjust, TopN: c.Selection.TopN, PoolSize: len(c.Stocks), Eligible: len(result.Ranking), Ranking: result.Ranking, Research: &result.Research, Selected: []Candidate{}, Excluded: []Excluded{}, Filtered: []Excluded{}, Rules: []string{
 		fmt.Sprintf("次日开盘模拟买入；净止盈 %.1f%% / 净止损 %.1f%%", c.Strategy.TargetNetPct, c.Strategy.StopNetPct),
 		fmt.Sprintf("买入当日不卖出；买入后第 %d 个交易日收盘到期退出", c.Strategy.MaxHoldingDays),
+		"历史验收硬条件：单笔扣费后净亏损严格低于投入的3%，超限或未决不通过；止损触发价不保证实盘成交价",
+		"实验软目标：可卖出持仓窗口内最高价扣除成本与滑点后触达2.5%或3%，首次触达越快越好；收盘回落不取消触达，触达不等于实际成交",
 		"机会分结合价量特征和已完成历史交易；不足证据不推荐；参考卖价需按实际买入成本重算",
 	}}
 	for _, stock := range c.Stocks {

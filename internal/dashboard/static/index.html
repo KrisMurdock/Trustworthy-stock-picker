@@ -64,6 +64,7 @@
 
         <section id="rankings" class="panel" aria-labelledby="ranking-title">
           <div class="panel-heading"><div><p class="eyebrow">DAILY RANKING</p><h2 id="ranking-title">日推排名 <span id="ranking-count" class="count-tag">—</span></h2><p id="ranking-description" class="section-description">查看已保存的每日机会排名与推荐依据。</p></div><div class="date-control"><label for="report-date-select">报告日期</label><select id="report-date-select" data-testid="report-date-select" disabled><option value="">暂无报告</option></select></div></div>
+          <div class="notice notice-info report-notice" id="strategy-validation-note"><div><strong>当前实验目标：亏损先过关，最高价触达越快越好</strong><p>单笔扣费后净亏损严格低于投入的 3%；盈利机会按可卖出持仓窗口的最高价触达 2.5%／3% 验证，不要求收盘达标。历史报告保留原口径，触达不代表实际成交。</p><a href="/experiments#validation-rules">查看完整规则与逐笔实验依据 →</a></div></div>
           <div id="report-meta" class="report-meta" hidden></div>
           <div id="report-notice" class="notice notice-info report-notice" hidden></div>
           <div id="report-loading" class="section-empty" role="status" hidden><span class="spinner" aria-hidden="true"></span><p>正在读取历史报告…</p></div>

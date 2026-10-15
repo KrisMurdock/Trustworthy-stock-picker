@@ -9,7 +9,7 @@ import (
 func TestDevelopmentReservesFinalDatesAndPurgesBoundary(t *testing.T) {
 	c, h, r := researchFixture()
 	ctx := context.Background()
-	baseline, err := AnalyzeDevelopment(ctx, c, h, r, h[0].AsOf, nil)
+	baseline, err := AnalyzeDevelopment(ctx, c, h, r, h[0].AsOf, EntryPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestDevelopmentReservesFinalDatesAndPurgesBoundary(t *testing.T) {
 			r[0].Bars[i] = h[0].Bars[i]
 		}
 	}
-	after, err := AnalyzeDevelopment(ctx, c, h, r, h[0].AsOf, nil)
+	after, err := AnalyzeDevelopment(ctx, c, h, r, h[0].AsOf, EntryPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,12 +42,12 @@ func TestDevelopmentReservesFinalDatesAndPurgesBoundary(t *testing.T) {
 }
 func TestDevelopmentFilterChangesEntriesNotBaseline(t *testing.T) {
 	c, h, r := researchFixture()
-	a, err := AnalyzeDevelopment(context.Background(), c, h, r, h[0].AsOf, nil)
+	a, err := AnalyzeDevelopment(context.Background(), c, h, r, h[0].AsOf, EntryPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	threshold := 0.0
-	b, err := AnalyzeDevelopment(context.Background(), c, h, r, h[0].AsOf, &threshold)
+	b, err := AnalyzeDevelopment(context.Background(), c, h, r, h[0].AsOf, EntryPolicy{MaxUpperWick: &threshold})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,11 +64,37 @@ func TestDevelopmentFilterChangesEntriesNotBaseline(t *testing.T) {
 	}
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err = AnalyzeDevelopment(canceled, c, h, r, h[0].AsOf, nil); err != context.Canceled {
+	if _, err = AnalyzeDevelopment(canceled, c, h, r, h[0].AsOf, EntryPolicy{}); err != context.Canceled {
 		t.Fatal("cancellation ignored")
 	}
 	c.Strategy.HoldoutDays = 120
-	if _, err = AnalyzeDevelopment(context.Background(), c, h, r, h[0].AsOf, nil); err == nil {
+	if _, err = AnalyzeDevelopment(context.Background(), c, h, r, h[0].AsOf, EntryPolicy{}); err == nil {
 		t.Fatal("insufficient data accepted")
+	}
+}
+
+func TestDevelopmentRiskPolicyRequiresHistoricalEvidence(t *testing.T) {
+	c, h, raw := researchFixture()
+	c.Strategy.MinEvidence = 10000
+	baseline, err := AnalyzeDevelopment(context.Background(), c, h, raw, h[0].AsOf, EntryPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	filtered, err := AnalyzeDevelopment(context.Background(), c, h, raw, h[0].AsOf, EntryPolicy{RequireEvidence: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if baseline.Research.Development.TopRanked.Samples == 0 || filtered.Research.Development.TopRanked.Samples != 0 || len(filtered.Trades) == 0 {
+		t.Fatal("insufficient evidence must prevent entry but retain candidate evidence")
+	}
+	for _, trade := range filtered.Trades {
+		if trade.Selected {
+			t.Fatal("selected an entry without enough historical evidence")
+		}
+	}
+	a, _ := json.Marshal(baseline.Research.Development.PoolBaseline)
+	b, _ := json.Marshal(filtered.Research.Development.PoolBaseline)
+	if string(a) != string(b) || AssessLoss(filtered.Research.Development.TopRanked).Status != "unverified" {
+		t.Fatal("filter changed baseline or empty evidence passed risk acceptance")
 	}
 }

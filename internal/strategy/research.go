@@ -26,31 +26,48 @@ type Sample struct {
 	Outcomes map[string]Outcome
 }
 type Stats struct {
-	Rule           string          `json:"rule"`
-	Target         float64         `json:"target_net_pct"`
-	Horizon        int             `json:"holding_days"`
-	Samples        int             `json:"samples"`
-	Dates          int             `json:"distinct_signal_dates"`
-	Resolved       int             `json:"resolved"`
-	Targets        int             `json:"targets"`
-	Stops          int             `json:"stops"`
-	Timeouts       int             `json:"timeouts"`
-	Unresolved     int             `json:"unresolved"`
-	HitRate        float64         `json:"target_rate"`
-	LowerBound     float64         `json:"target_rate_lower_bound"`
-	MeanNet        float64         `json:"mean_resolved_net_pct"`
-	MeanDays       float64         `json:"mean_resolved_holding_days"`
-	WorstNet       float64         `json:"worst_resolved_net_pct"`
-	MeanMAE        float64         `json:"mean_max_adverse_net_pct"`
-	WorstMAE       float64         `json:"worst_max_adverse_net_pct"`
-	ProfitRate     float64         `json:"resolved_profit_rate"`
-	Ambiguous      int             `json:"ambiguous_trades"`
-	SkippedEntries int             `json:"skipped_entries"`
-	MAESum         float64         `json:"-"`
-	Profits        int             `json:"-"`
-	NetSum         float64         `json:"-"`
-	DaySum         int             `json:"-"`
-	DateSet        map[string]bool `json:"-"`
+	Rule               string          `json:"rule"`
+	Target             float64         `json:"target_net_pct"`
+	Horizon            int             `json:"holding_days"`
+	Samples            int             `json:"samples"`
+	Dates              int             `json:"distinct_signal_dates"`
+	Resolved           int             `json:"resolved"`
+	Targets            int             `json:"targets"`
+	Stops              int             `json:"stops"`
+	Timeouts           int             `json:"timeouts"`
+	Unresolved         int             `json:"unresolved"`
+	HitRate            float64         `json:"target_rate"`
+	LowerBound         float64         `json:"target_rate_lower_bound"`
+	MeanNet            float64         `json:"mean_resolved_net_pct"`
+	MeanDays           float64         `json:"mean_resolved_holding_days"`
+	WorstNet           float64         `json:"worst_resolved_net_pct"`
+	MeanMAE            float64         `json:"mean_max_adverse_net_pct"`
+	WorstMAE           float64         `json:"worst_max_adverse_net_pct"`
+	ProfitRate         float64         `json:"resolved_profit_rate"`
+	Ambiguous          int             `json:"ambiguous_trades"`
+	SkippedEntries     int             `json:"skipped_entries"`
+	LossLimitPct       float64         `json:"net_loss_limit_pct,omitempty"`
+	LossBreaches       int             `json:"net_loss_limit_breaches"`
+	Profit25           int             `json:"net_profit_2_5_count"`
+	Profit30           int             `json:"net_profit_3_count"`
+	Profit25Rate       float64         `json:"net_profit_2_5_rate"`
+	Profit30Rate       float64         `json:"net_profit_3_rate"`
+	HighTouchSamples   int             `json:"high_touch_samples"`
+	HighTouchUnknown   int             `json:"high_touch_unknown"`
+	HighTouch25        int             `json:"high_touch_2_5_count"`
+	HighTouch30        int             `json:"high_touch_3_count"`
+	HighTouch25Rate    float64         `json:"high_touch_2_5_rate"`
+	HighTouch30Rate    float64         `json:"high_touch_3_rate"`
+	HighTouch25Days    float64         `json:"mean_first_high_touch_2_5_days"`
+	HighTouch30Days    float64         `json:"mean_first_high_touch_3_days"`
+	HighTouchAmbiguous int             `json:"high_touch_order_unknown"`
+	Touch25DaySum      int             `json:"-"`
+	Touch30DaySum      int             `json:"-"`
+	MAESum             float64         `json:"-"`
+	Profits            int             `json:"-"`
+	NetSum             float64         `json:"-"`
+	DaySum             int             `json:"-"`
+	DateSet            map[string]bool `json:"-"`
 }
 type Evaluation struct {
 	Method       string `json:"method"`
@@ -117,9 +134,6 @@ func horizons(s config.Strategy) []int {
 	sort.Ints(out)
 	return out
 }
-func finished(out Outcome) bool {
-	return out.Status == "target" || out.Status == "stop" || out.Status == "stop_gap" || out.Status == "timeout"
-}
 func add(s *Stats, sample Sample, out Outcome) {
 	if out.EntryDate == "" {
 		s.SkippedEntries++
@@ -130,14 +144,37 @@ func add(s *Stats, sample Sample, out Outcome) {
 		s.DateSet = map[string]bool{}
 	}
 	s.DateSet[sample.Date] = true
-	if !finished(out) {
+	if !ResolvedOutcome(out) {
 		s.Unresolved++
 		return
 	}
 	s.Resolved++
+	if h := out.HighTouch; h != nil && h.Version == 1 && h.ObservedDays > 0 {
+		s.HighTouchSamples++
+		if h.Day25 > 0 && !h.Day25Unknown {
+			s.HighTouch25++
+			s.Touch25DaySum += h.Day25
+		}
+		if h.Day30 > 0 && !h.Day30Unknown {
+			s.HighTouch30++
+			s.Touch30DaySum += h.Day30
+		}
+		if h.Ambiguous {
+			s.HighTouchAmbiguous++
+		}
+	}
 	s.NetSum += out.NetPct
 	s.DaySum += out.HoldingDays
 	s.WorstNet = math.Min(s.WorstNet, out.NetPct)
+	if BreachesLossLimit(out.NetPct) {
+		s.LossBreaches++
+	}
+	if out.NetPct >= 2.5 {
+		s.Profit25++
+	}
+	if out.NetPct >= 3 {
+		s.Profit30++
+	}
 	s.MAESum += out.MAE
 	s.WorstMAE = math.Min(s.WorstMAE, out.MAE)
 	if out.NetPct > 0 {
@@ -156,8 +193,20 @@ func add(s *Stats, sample Sample, out Outcome) {
 	}
 }
 func finalize(s Stats) Stats {
+	s.LossLimitPct = MaxTradeLossPct
+	s.HighTouchUnknown = s.Samples - s.HighTouchSamples
+	if s.HighTouch25 > 0 {
+		s.HighTouch25Days = float64(s.Touch25DaySum) / float64(s.HighTouch25)
+	}
+	if s.HighTouch30 > 0 {
+		s.HighTouch30Days = float64(s.Touch30DaySum) / float64(s.HighTouch30)
+	}
 	s.Dates = len(s.DateSet)
 	if s.Samples > 0 {
+		s.HighTouch25Rate = float64(s.HighTouch25) / float64(s.Samples)
+		s.HighTouch30Rate = float64(s.HighTouch30) / float64(s.Samples)
+		s.Profit25Rate = float64(s.Profit25) / float64(s.Samples)
+		s.Profit30Rate = float64(s.Profit30) / float64(s.Samples)
 		n, p, z := float64(s.Samples), float64(s.Targets)/float64(s.Samples), 1.96
 		s.HitRate = p
 		// Cross-stock and overlapping observations are correlated. Cap effective n at dates.
@@ -211,6 +260,10 @@ func rank(code, name string, f Features, stats []Stats, s config.Strategy) Candi
 			continue
 		}
 		x := find(stats, rule, s.TargetNetPct, s.MaxHoldingDays)
+		if x.LossBreaches > 0 || BreachesLossLimit(x.WorstNet) {
+			c.Risks = append(c.Risks, "historical_net_loss_limit_breached")
+			continue
+		}
 		if x.Samples < s.MinEvidence || x.Dates < s.MinTrainingDays || x.Unresolved > 0 || x.MeanNet <= 0 || x.HitRate <= baseline.HitRate {
 			continue
 		}
@@ -515,7 +568,7 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 		return result, err
 	}
 	hold := research.Holdout
-	research.ValidationPassed = hold.Method == "frozen_holdout" && hold.Recommended.Samples >= 30 && hold.Recommended.Dates >= 10 && hold.Recommended.Unresolved == 0 && hold.Recommended.MeanNet > 0 && hold.Recommended.HitRate > hold.PoolBaseline.HitRate && hold.Recommended.MeanNet > hold.PoolBaseline.MeanNet
+	research.ValidationPassed = hold.Method == "frozen_holdout" && hold.Recommended.Samples >= 30 && hold.Recommended.Dates >= 10 && AssessLoss(hold.Recommended).Status == "observed_pass" && hold.Recommended.MeanNet > 0 && hold.Recommended.HitRate > hold.PoolBaseline.HitRate && hold.Recommended.MeanNet > hold.PoolBaseline.MeanNet
 	if !research.ValidationPassed {
 		for i := range result.Ranking {
 			result.Ranking[i].Recommended = false
@@ -570,6 +623,7 @@ func evaluateFiltered(ctx context.Context, samples []Sample, dates []string, s c
 			out := sample.Outcomes[key(s.TargetNetPct, s.MaxHoldingDays)]
 			add(&e.PoolBaseline, sample, out)
 			allowed := experiment == nil || experiment.maxUpperWick == nil || x.Features.UpperWick <= *experiment.maxUpperWick
+			allowed = allowed && (experiment == nil || !experiment.requireEvidence || x.Recommended)
 			selected := allowed && picked < topN
 			if selected {
 				add(&e.TopRanked, sample, out)

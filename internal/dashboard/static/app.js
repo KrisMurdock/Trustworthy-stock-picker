@@ -9,7 +9,7 @@
     missing_data: "尚无行情数据", invalid_or_stale_data: "数据无效或已过期", no_history: "暂无历史数据",
     stale_or_suspended: "数据滞后或停牌", no_trading_volume: "当日无成交量", insufficient_or_invalid_history: "历史数据不足或无效",
     special_treatment: "风险警示股票", no_bullish_alignment: "均线未形成多头排列", insufficient_volume_or_macd: "量能或 MACD 未达条件",
-    overheat_or_weakness: "过热或趋势偏弱", score_below_threshold: "趋势分未达门槛", strategy_evidence_or_risk_gate: "历史证据或风险条件未达标",
+    historical_net_loss_limit_breached: "历史规则存在净亏损达到或超过3%的样本", overheat_or_weakness: "过热或趋势偏弱", score_below_threshold: "趋势分未达门槛", strategy_evidence_or_risk_gate: "历史证据或风险条件未达标",
     rising_ma20: "20 日均线向上", stronger_than_pool: "近 5 日强于股池", strong_close: "收盘处于当日高位",
     insufficient_or_unprofitable_evidence: "历史证据不足或收益未达标", extended_price: "短期涨幅较大", large_daily_range: "日内波动较大",
     upper_wick: "上影线较长", cash_insufficient: "参考资金不足", holdout_validation_not_passed: "独立样本验证未通过",

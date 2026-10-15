@@ -26,20 +26,26 @@ type DevelopmentResult struct {
 	HoldoutFrom    string            `json:"holdout_from"`
 	HoldoutThrough string            `json:"holdout_through"`
 }
+type EntryPolicy struct {
+	MaxUpperWick    *float64
+	RequireEvidence bool
+}
+
 type developmentOptions struct {
-	boundary     string
-	maxUpperWick *float64
-	trades       []ExperimentTrade
+	boundary        string
+	maxUpperWick    *float64
+	requireEvidence bool
+	trades          []ExperimentTrade
 }
 
 // AnalyzeDevelopment never evaluates the final reserved interval. The policy
 // only filters eligible top-N entries; training and baselines stay identical.
-func AnalyzeDevelopment(ctx context.Context, c config.Config, histories, raw []market.History, asof string, maxUpperWick *float64) (DevelopmentResult, error) {
+func AnalyzeDevelopment(ctx context.Context, c config.Config, histories, raw []market.History, asof string, policy EntryPolicy) (DevelopmentResult, error) {
 	result := DevelopmentResult{Trades: []ExperimentTrade{}}
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if maxUpperWick != nil && !(*maxUpperWick >= 0 && *maxUpperWick <= 1) {
+	if policy.MaxUpperWick != nil && !(*policy.MaxUpperWick >= 0 && *policy.MaxUpperWick <= 1) {
 		return result, errors.New("upper wick threshold must be between zero and one")
 	}
 	data, err := datasets(c, histories, raw, asof)
@@ -70,7 +76,7 @@ func AnalyzeDevelopment(ctx context.Context, c config.Config, histories, raw []m
 	}
 	result.HoldoutFrom = dates[len(dates)-c.Strategy.HoldoutDays]
 	result.HoldoutThrough = asof
-	options := &developmentOptions{boundary: result.HoldoutFrom, maxUpperWick: maxUpperWick, trades: []ExperimentTrade{}}
+	options := &developmentOptions{boundary: result.HoldoutFrom, maxUpperWick: policy.MaxUpperWick, requireEvidence: policy.RequireEvidence, trades: []ExperimentTrade{}}
 	x, err := analyze(ctx, c, histories, raw, asof, options)
 	if err != nil {
 		return result, err

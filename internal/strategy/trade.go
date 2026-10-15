@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+var ErrStopBuffer = errors.New("fees, slippage and price ticks leave no stop buffer below entry")
+
 type Plan struct {
 	Version       int     `json:"schema_version"`
 	EntryPrice    float64 `json:"reference_entry_price"`
@@ -19,19 +21,23 @@ type Plan struct {
 	Target30      float64 `json:"target_net_3_price"`
 	TakeProfit    float64 `json:"take_profit_price"`
 	StopPrice     float64 `json:"stop_price"`
+	LossLimitPct  float64 `json:"net_loss_limit_pct"`
+	StopNetPct    float64 `json:"modeled_stop_net_pct"`
+	StopGoalPct   float64 `json:"effective_stop_goal_net_pct"`
 	ReferenceOnly bool    `json:"reference_only"`
 }
 
 type Outcome struct {
-	Status      string  `json:"status"`
-	EntryDate   string  `json:"entry_date,omitempty"`
-	ExitDate    string  `json:"exit_date,omitempty"`
-	ExitPrice   float64 `json:"exit_price,omitempty"`
-	NetPct      float64 `json:"net_pct"`
-	HoldingDays int     `json:"holding_days"`
-	MFE         float64 `json:"max_favorable_net_pct"`
-	MAE         float64 `json:"max_adverse_net_pct"`
-	Ambiguous   bool    `json:"ambiguous"`
+	Status      string     `json:"status"`
+	EntryDate   string     `json:"entry_date,omitempty"`
+	ExitDate    string     `json:"exit_date,omitempty"`
+	ExitPrice   float64    `json:"exit_price,omitempty"`
+	NetPct      float64    `json:"net_pct"`
+	HoldingDays int        `json:"holding_days"`
+	MFE         float64    `json:"max_favorable_net_pct"`
+	MAE         float64    `json:"max_adverse_net_pct"`
+	Ambiguous   bool       `json:"ambiguous"`
+	HighTouch   *HighTouch `json:"high_touch,omitempty"`
 }
 
 func tickUp(p float64) float64   { return math.Ceil(p*100-1e-8) / 100 }
@@ -85,7 +91,18 @@ func NewPlan(s config.Strategy, code string, fill float64) (Plan, error) {
 	p.Target25 = tickUp(priceFor(2.5))
 	p.Target30 = tickUp(priceFor(3))
 	p.TakeProfit = tickUp(priceFor(s.TargetNetPct))
-	p.StopPrice = tickDown(priceFor(s.StopNetPct))
+	// Move the trigger up to fund both sell-side slippage and the price tick.
+	// A looser legacy stop cannot relax the current per-trade risk constraint.
+	p.LossLimitPct = MaxTradeLossPct
+	p.StopGoalPct = math.Max(s.StopNetPct, -MaxTradeLossPct)
+	p.StopPrice = tickUp(priceFor(p.StopGoalPct) / (1 - s.SlippageRate))
+	for netPct(s, p, tickDown(p.StopPrice*(1-s.SlippageRate))) <= p.StopGoalPct+1e-9 {
+		p.StopPrice = tickUp(p.StopPrice + .01)
+	}
+	p.StopNetPct = netPct(s, p, tickDown(p.StopPrice*(1-s.SlippageRate)))
+	if p.StopPrice >= p.EntryPrice {
+		return Plan{}, ErrStopBuffer
+	}
 	return p, nil
 }
 
@@ -127,6 +144,9 @@ func Simulate(s config.Strategy, cal *calendar.Calendar, code string, signal mar
 	p, err := NewPlan(s, code, tickUp(entry.Open*(1+s.SlippageRate)))
 	if err != nil {
 		out.Status = "cash_insufficient"
+		if errors.Is(err, ErrStopBuffer) {
+			out.Status = "risk_budget_insufficient"
+		}
 		return out, nil
 	}
 	if p.EntryPrice > entry.High+0.005 {
@@ -134,6 +154,7 @@ func Simulate(s config.Strategy, cal *calendar.Calendar, code string, signal mar
 		return out, nil
 	}
 	out.EntryDate = entry.Date
+	out.HighTouch = &HighTouch{Version: 1}
 	out.MAE = math.Min(0, netPct(s, p, entry.Low))
 	previous := entry
 	for day := 1; day <= horizon; day++ {
@@ -177,11 +198,22 @@ func Simulate(s config.Strategy, cal *calendar.Calendar, code string, signal mar
 		case day == horizon:
 			exitPrice, reason = marketFill(b.Close), "timeout"
 		}
+		// An exit at the open precedes the rest of the daily bar. Otherwise
+		// retain the day's high and explicitly mark unknown intraday ordering.
+		high := b.High
+		if reason == "stop_gap" || (reason == "target" && b.Open >= p.TakeProfit) {
+			high = b.Open
+		}
+		out.HighTouch.observe(day, netPct(s, p, tickDown(high*(1-s.SlippageRate))))
 		if reason != "" {
 			out.Status = reason
 			out.ExitDate = b.Date
 			out.ExitPrice = exitPrice
 			out.NetPct = netPct(s, p, exitPrice)
+			intradayExit := reason == "stop" || (reason == "target" && b.Open < p.TakeProfit)
+			out.HighTouch.Day25Unknown = intradayExit && out.HighTouch.Day25 == day && out.NetPct < 2.5
+			out.HighTouch.Day30Unknown = intradayExit && out.HighTouch.Day30 == day && out.NetPct < 3
+			out.HighTouch.Ambiguous = out.HighTouch.Day25Unknown || out.HighTouch.Day30Unknown
 			return out, nil
 		}
 		previous = b

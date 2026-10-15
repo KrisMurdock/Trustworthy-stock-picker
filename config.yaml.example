@@ -57,7 +57,7 @@ strategy:
   schema_version: 1
   enabled: false
   target_net_pct: 3       # also measures 2.5%; allowed targets: 2.5 or 3
-  stop_net_pct: -3
+  stop_net_pct: -3        # strict net-loss cap <3%; trigger reserves fees/slippage/ticks, gaps can exceed
   max_holding_days: 5     # trading days AFTER buying, earliest sale on day 1
   trade_cash: 20000       # inclusive of buy fees; replace with actual per-stock budget
   commission_rate: 0.0001 # user: 万一, charged on both sides
