@@ -40,7 +40,7 @@
     return node;
   };
   const list = (values) => Array.isArray(values) ? values : [];
-  const volume = (stock) => stock.bar?.volume_raw ?? stock.bar?.volume;
+  const volume = (stock) => stock.bar?.volume_shares ?? stock.bar?.volume_raw ?? stock.bar?.volume;
   function formattedVolume(value) {
     if (!isNumber(value)) return "—";
     if (Math.abs(value) >= 100000000) return number(value / 100000000, 2) + " 亿";
@@ -96,7 +96,7 @@
     const adjustLabels = { qfq: "前复权", hfq: "后复权", none: "不复权" };
     const adjust = adjustLabels[data.adjust] || data.adjust || "—";
     setText("snapshot-adjust", `价格口径：${adjust}`);
-    setText("stocks-footer", `${data.as_of || "等待同步"} · ${adjust}日线 · 成交量使用数据源原始单位`);
+    setText("stocks-footer", `${data.as_of || "等待同步"} · ${adjust}日线 · 成交量已统一换算为股`);
     show("market-notice", !!data.as_of && !data.report_current);
     setText("market-notice", `当前行情尚无对应推荐报告。${data.report ? `下方保留 ${data.report.as_of} 的历史报告，请以报告日期为准。` : "达到覆盖率及策略条件后才会生成推荐。"}`);
     const sync = data.latest_sync;
@@ -161,7 +161,7 @@
       const change = stock.change_pct;
       row.append(el("td", `numeric ${isNumber(change) ? change > 0 ? "rise" : change < 0 ? "fall" : "muted" : "muted"}`, isNumber(change) ? `${change > 0 ? "+" : ""}${number(change, 2)}%` : "—"));
       const volumeCell = el("td", "numeric", formattedVolume(volume(stock)));
-      if (isNumber(volume(stock))) volumeCell.title = `${number(volume(stock), 2)}（数据源原始单位）`;
+      if (isNumber(volume(stock))) volumeCell.title = `${number(volume(stock), 2)}（${isNumber(stock.bar?.volume_shares) ? "股" : "数据源原始单位"}）`;
       row.append(volumeCell);
       for (const field of ["ma5", "ma10", "ma20", "rsi14", "volume_ratio", "score"]) row.append(el("td", `numeric${field === "score" ? " score-value" : ""}`, number(stock.metrics?.[field], field === "score" ? 0 : 2)));
       const statusCell = el("td");

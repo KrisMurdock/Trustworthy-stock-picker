@@ -40,3 +40,8 @@ CLI 冒烟在临时目录使用测试配置，关闭通知，容器禁用网络�
 CI 不具备 Windows 挂载；真实 CIFS 需要在服务器上人工验收：在共享盘新建独立临时子目录，将测试配置 `require_cifs` 保持 true，关闭全部通知；用 Compose 的 HOST_DATA 指向该目录，运行 version/check/status。启动隔离实例验证 healthy、SIGTERM 退出，并删除该实例与临时文件。不得把测试实例指向正式写入目录，或发送真实群消息。
 
 发布前检查包内 `sha256sum -c SHA256SUMS`、二进制 version 与 COMMIT 一致。部署后按 docs/deployment.md 对实际实例再次验收；本地通过不能替代部署结果。
+# 多源行情
+
+`make sources-smoke` 用本地 HTTP/TCP fixture 启动真实 Go CLI，覆盖腾讯失败后回退 BaoStock/Tushare、Tushare 权限/限流后回退东方财富、复权与原始量入库、缺 Token、全源失败保留已有数据与凭证脱敏。容器模式运行 `python3 tests/sources_smoke.py --image stock-watcher:<SHA>`；Linux 上使用 host 网络访问回环 mock 服务，运行制品、命令和环境变量与生产一致，数据目录为临时普通目录。测试不读取私有配置、不访问行情公网或飞书。
+
+`go test -race ./internal/market ./internal/monitor ./internal/storage ./internal/config` 补充分页、取消、超时、缺字段、数据覆盖校验、来源切换完整回补和成交量换算。`make dashboard-smoke` 验证浏览器中来源与成交量单位，使用混合腾讯/BaoStock fixture；前端测试配置强制只启用腾讯，并使用关闭的 HTTPS 代理，防止新 TCP 数据源在测试中访问公网。

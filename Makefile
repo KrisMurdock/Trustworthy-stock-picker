@@ -5,7 +5,7 @@ CONFIG ?= config.yaml
 BUILD_GOARCH ?= amd64
 .DEFAULT_GOAL := help
 
-.PHONY: help fmt-check test vet build run check status smoke dashboard-smoke docker-dashboard-smoke ci package image docker-build docker-smoke clean
+.PHONY: help fmt-check test vet build run check status smoke sources-smoke dashboard-smoke docker-dashboard-smoke ci package image docker-build docker-smoke clean
 
 help:
 	@printf '%s\n' 'make build / run / check / status  构建与本地运行（CONFIG=config.yaml）' 'make run                        同时启动监控与网页 http://127.0.0.1:8080' 'make ci                         格式、静态检查、竞态测试、CLI 冒烟、发布包' 'make image / docker-smoke       构建镜像 / 验证容器（IMAGE、VERSION 可覆盖）' 'make package                   Linux 发布包（BUILD_GOARCH=amd64 或 arm64）' 'make clean                     清理 bin 和 .builds'
@@ -40,6 +40,9 @@ smoke: build
 
 dashboard-smoke: build
 	python3 tests/dashboard_smoke.py "$(CURDIR)/bin/stock-watcher"
+
+sources-smoke: build
+	python3 tests/sources_smoke.py "$(CURDIR)/bin/stock-watcher"
 
 docker-dashboard-smoke: image
 	python3 tests/dashboard_smoke.py --image "$(IMAGE)"

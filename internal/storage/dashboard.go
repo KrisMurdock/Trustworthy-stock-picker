@@ -38,6 +38,7 @@ type DashboardSummary struct {
 }
 
 type DashboardStock struct {
+	Source    string              `json:"source"`
 	Code      string              `json:"code"`
 	Name      string              `json:"name"`
 	Sector    string              `json:"sector"`
@@ -50,12 +51,13 @@ type DashboardStock struct {
 }
 
 type DashboardBar struct {
-	Date   string  `json:"date"`
-	Open   float64 `json:"open"`
-	High   float64 `json:"high"`
-	Low    float64 `json:"low"`
-	Close  float64 `json:"close"`
-	Volume float64 `json:"volume"` // Provider raw volume, matching the persisted history.
+	VolumeShares float64 `json:"volume_shares"`
+	Date         string  `json:"date"`
+	Open         float64 `json:"open"`
+	High         float64 `json:"high"`
+	Low          float64 `json:"low"`
+	Close        float64 `json:"close"`
+	Volume       float64 `json:"volume"` // Provider raw volume, matching the persisted history.
 }
 
 type DashboardSync struct {
@@ -224,7 +226,8 @@ func readDashboardStock(ctx context.Context, reader sqlReader, stock config.Stoc
 		return row, dashboardReadError(ctx)
 	}
 	last := history.Bars[len(history.Bars)-1]
-	row.Bar = &DashboardBar{Date: last.Date, Open: last.Open, High: last.High, Low: last.Low, Close: last.Close, Volume: last.Volume}
+	row.Source = history.Source
+	row.Bar = &DashboardBar{Date: last.Date, Open: last.Open, High: last.High, Low: last.Low, Close: last.Close, Volume: last.Volume, VolumeShares: market.ProviderVolumeShares(history.Source, history.Code, last.Volume)}
 	row.LastDate, row.Status, row.Reason = last.Date, "available", ""
 	if report.Version > 0 {
 		row.Status = "eligible"

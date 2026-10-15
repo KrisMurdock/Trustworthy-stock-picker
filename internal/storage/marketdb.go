@@ -436,7 +436,7 @@ func insertHistory(ctx context.Context, tx *sql.Tx, h market.History) error {
 				volume_raw=excluded.volume_raw, volume_shares=excluded.volume_shares,
 				data_field=excluded.data_field, source=excluded.source
 		`, h.Code, h.Adjust, bar.Date, open, close, high, low, bar.Volume,
-			int64(math.Round(market.VolumeShares(h.Code, bar.Volume))), h.DataField, h.Source); err != nil {
+			int64(math.Round(market.ProviderVolumeShares(h.Source, h.Code, bar.Volume))), h.DataField, h.Source); err != nil {
 			return errors.New("cannot persist daily history")
 		}
 	}
@@ -618,7 +618,7 @@ func loadHistory(ctx context.Context, reader sqlReader, stock config.Stock, asof
 	h = market.History{Version: 1, Code: stock.Code, Name: stock.Name, Source: source, Adjust: adjust,
 		DataField: dataField, VolumeUnit: "provider_raw", AsOf: asof, FetchedAt: parsed}
 	rows, err := reader.QueryContext(ctx, `
-		SELECT trade_date, open_micros, close_micros, high_micros, low_micros, volume_raw
+		SELECT trade_date, open_micros, close_micros, high_micros, low_micros, volume_raw, source, data_field
 		FROM daily_bar WHERE code=? AND adjust=? AND trade_date>=? AND trade_date<=? ORDER BY trade_date
 	`, stock.Code, adjust, windowStart, asof)
 	if err != nil {
@@ -629,8 +629,12 @@ func loadHistory(ctx context.Context, reader sqlReader, stock config.Stock, asof
 		var date string
 		var open, close, high, low int64
 		var volume float64
-		if err := rows.Scan(&date, &open, &close, &high, &low, &volume); err != nil {
+		var barSource, barField string
+		if err := rows.Scan(&date, &open, &close, &high, &low, &volume, &barSource, &barField); err != nil {
 			return h, errors.New("cannot decode daily history")
+		}
+		if barSource != source || barField != dataField {
+			return h, errors.New("stored daily history contains inconsistent sources or adjustment fields")
 		}
 		h.Bars = append(h.Bars, market.Bar{Date: date, Open: float64(open) / 1_000_000, Close: float64(close) / 1_000_000,
 			High: float64(high) / 1_000_000, Low: float64(low) / 1_000_000, Volume: volume})

@@ -46,7 +46,7 @@ type History struct {
 
 // Validate protects the same contract when JSON is read back from Windows.
 func (h History) Validate() error {
-	if h.Version != 1 || !config.ValidCode(h.Code) || h.Name == "" || h.Source != "tencent" || h.VolumeUnit != "provider_raw" || h.FetchedAt.IsZero() {
+	if h.Version != 1 || !config.ValidCode(h.Code) || h.Name == "" || !validSource(h.Source) || h.VolumeUnit != "provider_raw" || h.FetchedAt.IsZero() {
 		return errors.New("missing or unsupported history metadata")
 	}
 	if _, err := time.Parse("2006-01-02", h.AsOf); err != nil {
@@ -80,6 +80,14 @@ func (h History) Validate() error {
 	return nil
 }
 
+func validSource(source string) bool {
+	switch source {
+	case "tencent", "baostock", "tushare", "eastmoney":
+		return true
+	}
+	return false
+}
+
 type Failure struct {
 	Status int
 	Kind   string
@@ -103,6 +111,10 @@ type DataError struct {
 func (e *DataError) Error() string { return "daily data rejected: " + e.Reason }
 
 func IsIsolatable(err error) bool {
+	var aggregate *sourceFailures
+	if errors.As(err, &aggregate) {
+		return aggregate.isolatable()
+	}
 	var failure *Failure
 	if errors.As(err, &failure) {
 		return !failure.Retryable()
@@ -114,6 +126,7 @@ func IsIsolatable(err error) bool {
 type Client struct {
 	HTTP     *http.Client
 	Endpoint string
+	pacer    requestPacer
 }
 
 func NewClient(timeout time.Duration) *Client {
@@ -204,6 +217,9 @@ func (c *Client) FetchWindow(ctx context.Context, stock config.Stock, start, end
 		return h, &Failure{Kind: "request"}
 	}
 	req.Header.Set("User-Agent", "stock-watcher/1.0")
+	if err := c.pacer.wait(ctx); err != nil {
+		return h, err
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {

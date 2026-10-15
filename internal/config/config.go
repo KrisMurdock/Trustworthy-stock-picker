@@ -25,6 +25,7 @@ type Stock struct {
 }
 
 type Config struct {
+	Market       Market   `yaml:"market"`
 	Strategy     Strategy `yaml:"strategy"`
 	Version      int      `yaml:"schema_version"`
 	DataDir      string   `yaml:"data_dir"`
@@ -90,6 +91,7 @@ func ValidCode(s string) bool { return stockCode.MatchString(s) }
 func Defaults() Config {
 	c := Config{Version: 1, DataDir: "data", RequireCIFS: true, PollInterval: "5m", Timeout: "10s"}
 	c.Strategy = DefaultStrategy()
+	c.Market = DefaultMarket()
 	c.Web.Enabled = true
 	c.Web.Listen = "127.0.0.1:8080"
 	c.Daily.RunAt = "18:05"
@@ -202,10 +204,14 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, errors.New("invalid data directory")
 	}
+	c.Market.loadCredentials()
 	return c, c.Validate()
 }
 
 func (c Config) Validate() error {
+	if err := c.Market.Validate(); err != nil {
+		return err
+	}
 	if c.Web.Enabled {
 		host, port, err := net.SplitHostPort(c.Web.Listen)
 		n, portErr := strconv.Atoi(port)

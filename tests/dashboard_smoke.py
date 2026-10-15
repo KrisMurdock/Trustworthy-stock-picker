@@ -63,6 +63,8 @@ def fixture(directory, empty, partial=False):
     config = (ROOT / "config.yaml.example").read_text()
     config = config.replace("require_cifs: true", "require_cifs: false")
     config = config.replace("request_timeout: 10s", "request_timeout: 1s")
+    # All other upstreams must remain disabled: BaoStock uses TCP and bypasses HTTPS_PROXY.
+    config = config.replace("providers: [tencent, baostock, tushare, eastmoney]", "providers: [tencent]")
     config = config.replace("poll_interval: 5m", "poll_interval: 1h")
     config = config.replace("valid_from: '2026-01-01'", "valid_from: '2020-01-01'")
     config = config.replace("valid_through: '2026-12-31'", "valid_through: '2099-12-31'")
@@ -319,6 +321,14 @@ def chart_checks(page, url, state, args):
     history = page.context.request.get(url + "/api/history?code=sz000001").json()
     assert len(history["bars"]) == 80 and history["adjust"] == "qfq"
     expect(page.locator("#chart-stock")).to_have_value("sz000001")
+    expect(page.locator("#chart-meta")).to_contain_text("腾讯")
+    expect(page.locator("#chart-meta")).to_contain_text("成交量单位：手")
+    snapshot = page.context.request.get(url + "/api/dashboard").json()
+    for stock in snapshot["stocks"]:
+        if stock["bar"]:
+            scale = 1 if stock["source"] == "baostock" else 100
+            assert stock["bar"]["volume_shares"] == stock["bar"]["volume"] * scale
+    expect(page.locator('#stock-body td[title$="（股）"]')).to_have_count(2)
     expect(page.get_by_test_id("kline-candle")).to_have_count(60)
     expect(page.get_by_test_id("kline-volume")).to_have_count(60)
     for period in (5, 10, 20):
@@ -380,8 +390,20 @@ def chart_checks(page, url, state, args):
     page.locator("#chart-range").select_option("60")
     page.get_by_test_id("stock-row").filter(has_text="测试消费").get_by_role("button").click()
     expect(page.locator("#chart-stock")).to_have_value("sh600519")
+    expect(page.locator("#chart-meta")).to_contain_text("BaoStock")
+    expect(page.locator("#chart-meta")).to_contain_text("成交量单位：股")
     expect(page.locator("#chart-detail")).to_contain_text("198.00")
     expect(page.locator("#chart-plot .chart-fall .chart-candle")).to_have_count(60)
+    for source, label in (("tushare", "Tushare"), ("eastmoney", "东方财富")):
+        page.route("**/api/history?code=sz000001", lambda route, *, source=source: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps({**history, "source": source})))
+        page.locator("#chart-stock").select_option("sz000001")
+        expect(page.locator("#chart-meta")).to_contain_text(label)
+        expect(page.locator("#chart-meta")).to_contain_text("成交量单位：手")
+        expect(page.get_by_test_id("kline-candle")).to_have_count(60)
+        page.unroute("**/api/history?code=sz000001")
+        page.locator("#chart-stock").select_option("sh600519")
+        expect(page.locator("#chart-meta")).to_contain_text("BaoStock")
     page.locator("#chart-stock").select_option("sz000002")
     expect(page.locator("#chart-error")).to_contain_text("暂无通过校验")
     expect(page.get_by_test_id("kline-candle")).to_have_count(0)

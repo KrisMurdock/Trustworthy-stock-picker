@@ -83,8 +83,10 @@ window.StockChart = class {
         return point;
       });
       const basisLabel = { qfq: "前复权", hfq: "后复权", none: "不复权" }[history.adjust];
+      const source = { tencent: "腾讯", baostock: "BaoStock", tushare: "Tushare", eastmoney: "东方财富" }[history.source] || history.source;
+      const volumeUnit = history.source === "baostock" || (history.source === "tencent" && code.startsWith("sh68")) ? "股" : "手";
       const last = history.bars.at(-1).date;
-      this.byId("chart-meta").textContent = `${code} · ${basisLabel} · ${history.bars[0].date} 至 ${last} · 截止 ${history.as_of} · ${history.bars.length} 根已保存日线`;
+      this.byId("chart-meta").textContent = `${code} · ${source} · ${basisLabel} · 成交量单位：${volumeUnit} · ${history.bars[0].date} 至 ${last} · 截止 ${history.as_of} · ${history.bars.length} 根已保存日线`;
       this.byId("chart-body").hidden = false;
       this.draw();
     } catch (error) {

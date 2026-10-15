@@ -17,9 +17,7 @@ import (
 	"time"
 )
 
-type Source interface {
-	Fetch(context.Context, config.Stock, string, string, string) (market.History, error)
-}
+type Source = market.Source
 
 type WindowSource interface {
 	FetchWindow(context.Context, config.Stock, string, string, string, int) (market.History, error)
@@ -386,7 +384,27 @@ func (m *Monitor) fetchHistory(ctx context.Context, stock config.Stock, start, a
 	if start > asof {
 		return market.History{}, &market.DataError{Reason: "listed_from is after requested session"}
 	}
-	if source, ok := m.Source.(WindowSource); ok && adjust == "none" && m.Market != nil && m.Market.HasDatabase() {
+	fetch := func(source market.Source) (market.History, error) {
+		h, err := m.fetchHistoryFrom(ctx, source, stock, start, asof, adjust)
+		if err == nil {
+			if h.Code != stock.Code || h.Adjust != adjust {
+				err = &market.DataError{Reason: "history_request_mismatch"}
+			} else {
+				err = validateHistory(m.Calendar, stock, h, start, asof)
+			}
+		}
+		return h, err
+	}
+	if sources, ok := m.Source.(interface {
+		Attempt(context.Context, config.Stock, string, func(market.Source) (market.History, error)) (market.History, error)
+	}); ok {
+		return sources.Attempt(ctx, stock, adjust, fetch)
+	}
+	return fetch(m.Source)
+}
+
+func (m *Monitor) fetchHistoryFrom(ctx context.Context, provider Source, stock config.Stock, start, asof, adjust string) (market.History, error) {
+	if source, ok := provider.(WindowSource); ok && adjust == "none" && m.Market != nil && m.Market.HasDatabase() {
 		previous, err := m.loadPreviousHistory(ctx, stock.Code, adjust, asof)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return market.History{}, err
@@ -398,7 +416,7 @@ func (m *Monitor) fetchHistory(ctx context.Context, stock config.Stock, start, a
 			if err != nil {
 				return market.History{}, err
 			}
-			if len(recent.Bars) > 0 && recent.Bars[0].Date <= previous.Bars[len(previous.Bars)-1].Date {
+			if compatibleIncrement(previous, recent) {
 				merged := mergeHistory(previous, recent, stock, start, asof)
 				if validateHistory(m.Calendar, stock, merged, start, asof) == nil {
 					return merged, nil
@@ -406,7 +424,27 @@ func (m *Monitor) fetchHistory(ctx context.Context, stock config.Stock, start, a
 			}
 		}
 	}
-	return m.Source.Fetch(ctx, stock, start, asof, adjust)
+	return provider.Fetch(ctx, stock, start, asof, adjust)
+}
+
+func compatibleIncrement(previous, recent market.History) bool {
+	if previous.Source != recent.Source || previous.Code != recent.Code || previous.Adjust != recent.Adjust || previous.VolumeUnit != recent.VolumeUnit || previous.DataField != recent.DataField || len(previous.Bars) == 0 || len(recent.Bars) == 0 {
+		return false
+	}
+	old := make(map[string]market.Bar, len(previous.Bars))
+	for _, bar := range previous.Bars {
+		old[bar.Date] = bar
+	}
+	overlap := false
+	for _, bar := range recent.Bars {
+		if earlier, ok := old[bar.Date]; ok {
+			if bar != earlier {
+				return false
+			}
+			overlap = true
+		}
+	}
+	return overlap
 }
 
 func mergeHistory(previous, recent market.History, stock config.Stock, start, asof string) market.History {

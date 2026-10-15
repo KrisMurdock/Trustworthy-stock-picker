@@ -50,6 +50,9 @@ func seed(root string, empty, partial bool) error {
 		for i, stock := range stocks[:2] {
 			adjusted := history(stock, day, at, i, 80)
 			raw := history(stock, day, at, i, 2700)
+			if i == 1 {
+				adjusted.Source, raw.Source = "baostock", "baostock"
+			}
 			raw.Adjust, raw.DataField = "none", "day"
 			for j := range raw.Bars {
 				bar := &raw.Bars[j]

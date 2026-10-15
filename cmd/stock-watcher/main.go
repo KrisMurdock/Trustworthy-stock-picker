@@ -129,7 +129,10 @@ func run(args []string) error {
 	if command == "check" && !marketDB.HasDatabase() {
 		return errors.New("market database is not initialized; run stock-watcher init")
 	}
-	source := market.NewClient(config.Duration(c.Timeout))
+	source, err := market.NewSources(c, log)
+	if err != nil {
+		return err
+	}
 	defer source.Close()
 	channels, closeChannels, err := buildChannels(c)
 	if err != nil {
@@ -156,7 +159,7 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		return printJSON(map[string]any{"status": "ready", "pool_size": len(c.Stocks), "cifs_required": c.RequireCIFS, "notification_channels": len(channels), "selection_enabled": c.Selection.Enabled, "calendar_through": c.Calendar.ValidThrough})
+		return printJSON(map[string]any{"status": "ready", "pool_size": len(c.Stocks), "cifs_required": c.RequireCIFS, "notification_channels": len(channels), "selection_enabled": c.Selection.Enabled, "calendar_through": c.Calendar.ValidThrough, "market_sources": source.Names()})
 	case "status":
 		s, err := m.Status()
 		if err != nil {
