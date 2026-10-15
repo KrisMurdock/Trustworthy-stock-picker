@@ -139,3 +139,5 @@
 验证入口：`make test`、`make vet`、`make dashboard-smoke`、`make docker-dashboard-smoke`。浏览器冒烟使用同一 `run` 启动模式和真实 SQLite，小数据集配合阻断的行情上游，覆盖空库、运行结果、父子导航、对比、冻结 K 线、移动端、网关拒绝、异常、超时与取消；不访问真实行情或通知服务。
 
 首轮真实数据结果见[次日触达实验记录](experiments-next-day.md)：包含9组完整对照、超限归因和未验证的下一轮方向。
+
+条件入场、显式回测区间的耗时、复现与失败证据见[条件低吸首轮记录](experiments-conditional-entry.md)。
