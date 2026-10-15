@@ -8,22 +8,24 @@ import (
 	"io/fs"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/indicators"
+	"stock-watcher/internal/market"
 	"stock-watcher/internal/selection"
 	"time"
 )
 
-// DashboardSnapshot contains only published market data, never delivery state or configuration secrets.
+// DashboardSnapshot contains validated market data and independently published reports, never secrets.
 type DashboardSnapshot struct {
-	Version     int               `json:"schema_version"`
-	AsOf        string            `json:"as_of"`
-	Target      string            `json:"target_trading_date"`
-	GeneratedAt *time.Time        `json:"generated_at"`
-	Adjust      string            `json:"adjust"`
-	Summary     DashboardSummary  `json:"summary"`
-	Stocks      []DashboardStock  `json:"stocks"`
-	Report      *selection.Report `json:"report"`
-	LatestSync  *DashboardSync    `json:"latest_sync"`
-	Dates       []string          `json:"dates"`
+	ReportCurrent bool              `json:"report_current"`
+	Version       int               `json:"schema_version"`
+	AsOf          string            `json:"as_of"`
+	Target        string            `json:"target_trading_date"`
+	GeneratedAt   *time.Time        `json:"generated_at"`
+	Adjust        string            `json:"adjust"`
+	Summary       DashboardSummary  `json:"summary"`
+	Stocks        []DashboardStock  `json:"stocks"`
+	Report        *selection.Report `json:"report"`
+	LatestSync    *DashboardSync    `json:"latest_sync"`
+	Dates         []string          `json:"dates"`
 }
 
 type DashboardSummary struct {
@@ -64,9 +66,8 @@ type DashboardSync struct {
 	ErrorKind   string    `json:"error_kind"`
 }
 
-// LoadDashboard reads the report, its market window, and run status in one read-only
-// transaction. Daily windows are replaced during sync, so only the latest report
-// can be combined with bars; historical ranking is read via LoadDashboardReport.
+// LoadDashboard reads market windows and published reports in one transaction.
+// A coverage failure may save newer market data without publishing a new report.
 func (m *MarketDB) LoadDashboard(ctx context.Context, stocks []config.Stock, adjust string) (DashboardSnapshot, error) {
 	out := DashboardSnapshot{Version: 1, Adjust: adjust, Stocks: make([]DashboardStock, 0, len(stocks)), Dates: []string{}}
 	out.Summary.PoolSize, out.Summary.Missing = len(stocks), len(stocks)
@@ -120,10 +121,40 @@ func (m *MarketDB) LoadDashboard(ctx context.Context, stocks []config.Stock, adj
 		if err != nil {
 			return out, err
 		}
-		out.Report, out.AsOf, out.Target, out.GeneratedAt, out.Adjust = &report, report.AsOf, report.Target, &report.GeneratedAt, report.Adjust
-		out.Summary.Eligible, out.Summary.Selected = report.Eligible, len(report.Selected)
+		out.Report = &report
+	}
+	var latest sql.NullString
+	if err := tx.QueryRowContext(ctx, "SELECT MAX(as_of) FROM stock_sync WHERE adjust=?", adjust).Scan(&latest); err != nil {
+		return out, dashboardReadError(ctx)
+	}
+	out.AsOf = latest.String
+	marketReport := selection.Report{AsOf: out.AsOf, Adjust: adjust}
+	var dataRunStatus string
+	err = tx.QueryRowContext(ctx, `SELECT status FROM sync_run WHERE as_of=? AND (status='published' OR error_kind='coverage')
+		ORDER BY julianday(finished_at) DESC, rowid DESC LIMIT 1`, out.AsOf).Scan(&dataRunStatus)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return out, dashboardReadError(ctx)
+	}
+	out.ReportCurrent = out.Report != nil && out.Report.AsOf == out.AsOf && out.Report.Adjust == adjust && dataRunStatus == "published"
+	if out.ReportCurrent {
+		marketReport = *out.Report
+		out.Target = out.Report.Target
+		out.Summary.Eligible, out.Summary.Selected = out.Report.Eligible, len(out.Report.Selected)
+	}
+	if out.AsOf != "" {
+		var fetched sql.NullString
+		if err := tx.QueryRowContext(ctx, "SELECT MAX(fetched_at) FROM stock_sync WHERE adjust=? AND as_of=? AND status='ok'", adjust, out.AsOf).Scan(&fetched); err != nil {
+			return out, dashboardReadError(ctx)
+		}
+		if fetched.Valid {
+			at, err := time.Parse(time.RFC3339Nano, fetched.String)
+			if err != nil {
+				return out, dashboardReadError(ctx)
+			}
+			out.GeneratedAt = &at
+		}
 		for i, stock := range stocks {
-			row, err := readDashboardStock(ctx, tx, stock, report)
+			row, err := readDashboardStock(ctx, tx, stock, marketReport)
 			if err != nil {
 				return out, err
 			}
@@ -194,7 +225,10 @@ func readDashboardStock(ctx context.Context, reader sqlReader, stock config.Stoc
 	}
 	last := history.Bars[len(history.Bars)-1]
 	row.Bar = &DashboardBar{Date: last.Date, Open: last.Open, High: last.High, Low: last.Low, Close: last.Close, Volume: last.Volume}
-	row.LastDate, row.Status, row.Reason = last.Date, "eligible", ""
+	row.LastDate, row.Status, row.Reason = last.Date, "available", ""
+	if report.Version > 0 {
+		row.Status = "eligible"
+	}
 	if len(history.Bars) > 1 {
 		change := (last.Close/history.Bars[len(history.Bars)-2].Close - 1) * 100
 		row.ChangePct = &change
@@ -254,4 +288,47 @@ func dashboardReadError(ctx context.Context) error {
 		return err
 	}
 	return errors.New("cannot read dashboard snapshot")
+}
+
+// LoadDashboardHistory returns only the latest validated window for the configured
+// adjustment. Do not splice historical qfq windows or fall back across isolation.
+func (m *MarketDB) LoadDashboardHistory(ctx context.Context, stock config.Stock, adjust string) (market.History, error) {
+	var empty market.History
+	if err := ctx.Err(); err != nil {
+		return empty, err
+	}
+	if m == nil || m.db == nil {
+		return empty, fs.ErrNotExist
+	}
+	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return empty, dashboardReadError(ctx)
+	}
+	defer tx.Rollback()
+	var asof sql.NullString
+	if err := tx.QueryRowContext(ctx, "SELECT MAX(as_of) FROM stock_sync WHERE adjust=?", adjust).Scan(&asof); err != nil {
+		return empty, dashboardReadError(ctx)
+	}
+	if !asof.Valid {
+		return empty, fs.ErrNotExist
+	}
+	if stock.Name == "" {
+		if err := tx.QueryRowContext(ctx, "SELECT name FROM stock WHERE code=?", stock.Code).Scan(&stock.Name); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return empty, fs.ErrNotExist
+			}
+			return empty, dashboardReadError(ctx)
+		}
+	}
+	history, err := loadHistory(ctx, tx, stock, asof.String, adjust)
+	if errors.Is(err, fs.ErrNotExist) {
+		return empty, fs.ErrNotExist
+	}
+	if err != nil {
+		return empty, dashboardReadError(ctx)
+	}
+	if err := tx.Commit(); err != nil {
+		return empty, dashboardReadError(ctx)
+	}
+	return history, nil
 }

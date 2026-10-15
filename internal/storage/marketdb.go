@@ -296,6 +296,17 @@ func (m *MarketDB) Path() string {
 }
 
 func (m *MarketDB) CommitSnapshot(ctx context.Context, run SyncRun, items []SyncItem, report selection.Report) error {
+	return m.commitMarket(ctx, run, items, report.Adjust, &report)
+}
+
+// CommitMarketData saves validated windows and a failed coverage run atomically,
+// without creating or replacing any selection report.
+func (m *MarketDB) CommitMarketData(ctx context.Context, run SyncRun, items []SyncItem, adjust string) error {
+	run.Status, run.ErrorKind = "failed", "coverage"
+	return m.commitMarket(ctx, run, items, adjust, nil)
+}
+
+func (m *MarketDB) commitMarket(ctx context.Context, run SyncRun, items []SyncItem, adjust string, report *selection.Report) error {
 	if m == nil || !m.writable {
 		return errors.New("market database is read-only")
 	}
@@ -346,10 +357,6 @@ func (m *MarketDB) CommitSnapshot(ctx context.Context, run SyncRun, items []Sync
 				}
 			}
 		} else {
-			adjust := "qfq"
-			if report.Version == 1 && report.Adjust != "" {
-				adjust = report.Adjust
-			}
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO stock_sync(code, adjust, as_of, status, reason)
 				VALUES(?, ?, ?, ?, ?)
@@ -358,6 +365,17 @@ func (m *MarketDB) CommitSnapshot(ctx context.Context, run SyncRun, items []Sync
 				return rollback(errors.New("cannot persist isolated sync status"))
 			}
 		}
+	}
+	if report == nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO sync_run(id, as_of, started_at, finished_at, status, coverage_pct, error_kind)
+			VALUES(?, ?, ?, ?, ?, ?, ?)`, run.ID, run.AsOf, run.StartedAt.UTC().Format(time.RFC3339Nano),
+			run.FinishedAt.UTC().Format(time.RFC3339Nano), run.Status, run.CoveragePct, run.ErrorKind); err != nil {
+			return rollback(errors.New("cannot persist market data run"))
+		}
+		if err := tx.Commit(); err != nil {
+			return errors.New("cannot commit market data")
+		}
+		return nil
 	}
 	reportJSON, err := json.Marshal(report)
 	if err != nil {
@@ -379,7 +397,7 @@ func (m *MarketDB) CommitSnapshot(ctx context.Context, run SyncRun, items []Sync
 	if _, err := tx.ExecContext(ctx, "DELETE FROM selection_result WHERE as_of=?", report.AsOf); err != nil {
 		return rollback(errors.New("cannot replace selection results"))
 	}
-	if err := insertSelectionResults(ctx, tx, report); err != nil {
+	if err := insertSelectionResults(ctx, tx, *report); err != nil {
 		return rollback(err)
 	}
 	if err := tx.Commit(); err != nil {

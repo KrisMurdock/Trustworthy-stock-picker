@@ -8,6 +8,7 @@
     <title>股池观察 · Stock Watcher</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/assets/style.css">
+    <script src="/assets/chart.js" defer></script>
     <script src="/assets/app.js" defer></script>
   </head>
   <body>
@@ -42,7 +43,21 @@
             <article class="summary-card summary-coverage"><div class="card-label"><span>数据覆盖率</span><span class="card-symbol" aria-hidden="true">◉</span></div><p class="card-value"><span id="coverage-value">—</span><small>%</small></p><progress id="coverage-progress" max="100" value="0" aria-label="股池数据覆盖率"></progress></article>
           </div>
           <div class="snapshot-meta"><span class="sync-label"><span id="sync-dot" class="status-dot" aria-hidden="true"></span><span id="sync-status">等待同步</span></span><span id="snapshot-generated">快照生成：—</span><span id="snapshot-adjust">价格口径：—</span><span id="snapshot-target">目标交易日：—</span></div>
+          <div id="market-notice" class="notice notice-info" role="status" hidden></div>
           <div id="empty-state" class="notice notice-info" role="status" data-testid="empty-state" hidden><div><strong>等待首次同步</strong><p>尚无可展示的日线快照。首次同步完成后，这里会显示行情、摘要和排名；下方仍保留全部股池股票。</p></div></div>
+        </section>
+
+        <section id="stock-chart" class="panel" aria-labelledby="chart-title">
+          <div class="panel-heading"><div><p class="eyebrow">DAILY PRICE &amp; VOLUME</p><h2 id="chart-title">个股日 K</h2><p id="chart-meta" class="section-description">选择股票查看已保存的日线。</p></div><div class="chart-controls"><label for="chart-stock">股票</label><select id="chart-stock" aria-label="K线股票"></select><label for="chart-range">范围</label><select id="chart-range" aria-label="K线范围"><option value="60">最近 60 根</option><option value="120">最近 120 根</option><option value="0">全部已保存</option></select></div></div>
+          <div id="chart-loading" class="section-empty" role="status" hidden>正在读取日线…</div>
+          <div id="chart-error" class="notice notice-error report-notice" role="status" hidden><p id="chart-error-message"></p><button id="chart-retry" type="button" class="button button-secondary">重试日线</button></div>
+          <div id="chart-body" hidden>
+            <p id="chart-detail" class="chart-detail" aria-live="polite"></p>
+            <div class="chart-legend"><span id="chart-ma5" class="chart-ma5"></span><span id="chart-ma10" class="chart-ma10"></span><span id="chart-ma20" class="chart-ma20"></span><span>红涨 · 绿跌（收盘与开盘比较）</span></div>
+            <div id="chart-plot" class="chart-scroll" tabindex="0" role="region" aria-label="日K图，可横向滚动"></div>
+            <div class="chart-date-control"><label for="chart-day">查看交易日</label><input type="range" id="chart-day" min="0" max="0" value="0" aria-label="查看K线交易日"></div>
+          </div>
+          <div class="panel-footer"><span>日线 · 非实时行情 · 均线按已保存交易日计算</span><span>点击股票名称可切换 · 悬停或拖动查看每日价格</span></div>
         </section>
 
         <section id="rankings" class="panel" aria-labelledby="ranking-title">

@@ -102,7 +102,7 @@ func Defaults() Config {
 	c.Selection.RSIMax = 80
 	c.Selection.MinDayChange = -3
 	c.Selection.MaxDayChange = 7
-	c.Sync.MinCoveragePct = 100
+	c.Sync.MinCoveragePct = 95
 	c.Sync.IncrementalBars = 5
 	return c
 }

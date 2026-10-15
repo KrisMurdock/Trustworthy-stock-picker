@@ -219,8 +219,8 @@ func (m *Monitor) writeState(state State) error {
 	return m.Store.Write("state/delivery.json", state)
 }
 
-// Sync downloads every pool entry before publishing any report. Any incomplete
-// stock blocks publication without changing the previous published snapshot.
+// Sync downloads the entire pool and validates each stock before publication.
+// Valid histories remain viewable if the recommendation coverage gate fails.
 func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, error) {
 	var report selection.Report
 	ok, err := m.Calendar.Trading(asof)
@@ -318,8 +318,16 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 	coverage := float64(len(raw)) / float64(len(m.Config.Stocks)) * 100
 	run.CoveragePct = coverage
 	run.FinishedAt = m.Now()
-	if len(histories) != len(m.Config.Stocks) || len(raw) != len(m.Config.Stocks) {
-		return m.failSync(ctx, run, fmt.Errorf("sync coverage %.2f%% is below required 100%%; every stock must have complete history", coverage))
+	if coverage < m.Config.Sync.MinCoveragePct {
+		coverageErr := fmt.Errorf("sync coverage %.2f%% is below %.2f%%", coverage, m.Config.Sync.MinCoveragePct)
+		if m.Market != nil && m.Market.HasDatabase() {
+			if err := m.Market.CommitMarketData(ctx, run, items, m.Config.Daily.Adjust); err != nil {
+				return report, err
+			}
+			m.Log.Warn("Valid market data saved; recommendation coverage gate not met", "as_of", asof, "coverage_pct", coverage, "valid_stocks", len(histories))
+			return report, coverageErr
+		}
+		return m.failSync(ctx, run, coverageErr)
 	}
 	report, err = m.buildReport(ctx, histories, raw, asof, target)
 	if err != nil {

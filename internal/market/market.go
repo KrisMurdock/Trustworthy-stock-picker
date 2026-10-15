@@ -216,6 +216,9 @@ func (c *Client) FetchWindow(ctx context.Context, stock config.Stock, start, end
 		return h, &Failure{Status: resp.StatusCode, Kind: "status"}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, (2<<20)+1))
+	if ctx.Err() != nil {
+		return h, ctx.Err()
+	}
 	if err != nil || len(body) > 2<<20 {
 		return h, &Failure{Kind: "body"}
 	}

@@ -125,6 +125,10 @@ func TestTenYearHTTPBackfillSQLiteAndIncrementalRecovery(t *testing.T) {
 		if len(h.Bars) < 2500 || h.Bars[0].Date != first || h.Bars[len(h.Bars)-1].Date != asof {
 			t.Fatalf("persisted history truncated: first=%s last=%s count=%d", h.Bars[0].Date, h.Bars[len(h.Bars)-1].Date, len(h.Bars))
 		}
+		chart, err := m.Market.LoadDashboardHistory(ctx, stock, "none")
+		if err != nil || len(chart.Bars) != len(h.Bars) || chart.Bars[0].Date != first || chart.AsOf != asof {
+			t.Fatalf("dashboard lost long history: bars=%d as_of=%s err=%v", len(chart.Bars), chart.AsOf, err)
+		}
 	}
 	assertStored("2026-10-13", "2016-10-13")
 	// Reopen the actual database, then use a five-bar update without losing history.

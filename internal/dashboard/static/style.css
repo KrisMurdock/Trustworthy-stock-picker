@@ -173,3 +173,37 @@ section { scroll-margin-top: 20px; }
 @media (max-width: 760px) { .page { padding: 25px 18px 0; } .header-inner { padding: 14px 18px; } .brand strong { font-size: 11px; } .brand-caption { font-size: 10px; letter-spacing: .5px; } .header-nav { gap: 15px; font-size: 11px; } .header-nav a:first-child { display: none; } .brand-mark { width: 36px; height: 36px; border-radius: 8px; } .brand-mark svg { width: 23px; } h1 { font-size: 30px; } .page-heading { align-items: flex-start; margin-bottom: 26px; gap: 12px; } .page-heading .eyebrow { font-size: 8px; letter-spacing: 1px; } .intro { font-size: 11px; max-width: 230px; } .refresh-area { padding-top: 18px; flex-shrink: 0; } .refresh-area .button { padding: 8px 11px; font-size: 11px; } .refresh-area p { font-size: 9px; } .snapshot-heading { align-items: flex-start; } .snapshot-date { flex-direction: column-reverse; align-items: flex-end; gap: 6px; } .snapshot-date .tag { font-size: 9px; padding: 3px 6px; } .summary-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; } .summary-card { padding: 16px; } .card-value { font-size: 31px; margin: 8px 0; } .card-note { min-height: 15px; } .snapshot-meta { font-size: 10px; gap: 7px 18px; margin-bottom: 22px; } .panel-heading { padding: 18px 16px; align-items: flex-start; } h2 { font-size: 19px; } .section-description { font-size: 11px; max-width: 250px; } .date-control { flex-direction: column; align-items: flex-end; gap: 5px; } .date-control label { font-size: 10px; } .date-control select { min-width: 123px; font-size: 11px; min-height: 35px; padding: 6px; } .market-legend { flex-wrap: wrap; justify-content: flex-end; gap: 6px 10px; max-width: 95px; } .table-tools { padding: 0 16px 15px; gap: 8px; } .search-control { flex: 1 1 170px; width: auto; } .filter-control { flex: 1 1 110px; } .filter-control select { width: 100%; min-width: 0; } .sort-control { flex: 1 1 190px; } .sort-control label { margin-left: 0; } .visible-count { width: auto; flex: 1 1 100px; text-align: right; } th:first-child, td:first-child { padding-left: 16px; } th:last-child, td:last-child { padding-right: 16px; } .report-meta { padding: 10px 16px; font-size: 10px; } .report-notice { margin: 12px 16px; } .panel-footer { padding: 11px 16px; font-size: 9px; } .notice { padding: 13px; font-size: 11px; align-items: flex-start; } .notice .button { min-height: 34px; padding: 6px 10px; font-size: 10px; } .site-footer { flex-direction: column; gap: 5px; font-size: 9px; } }
 @media (max-width: 400px) { .header-nav { gap: 12px; } .brand { gap: 8px; } .brand-caption { font-size: 9px; } .page { padding-left: 12px; padding-right: 12px; } .header-inner { padding-left: 12px; padding-right: 12px; } .summary-card { padding: 13px; } .card-note { font-size: 9px; } .date-control select { min-width: 118px; } .panel-heading { gap: 10px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+
+/* Daily candle chart shares the dashboard palette and stays inside its panel. */
+.stock-link { border: 0; background: none; padding: 0; text-align: left; cursor: pointer; }
+.stock-link:hover { color: var(--brand); text-decoration: underline; }
+.tag-available { background: var(--brand-light); color: var(--brand); }
+.chart-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
+.chart-controls select { min-height: 38px; max-width: 220px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 6px; }
+.chart-detail { padding: 0 24px; min-height: 30px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 16px; padding: 4px 24px 12px; font-size: 12px; color: var(--muted); }
+.chart-scroll { overflow-x: auto; padding: 0 12px; }
+.chart-scroll svg { width: 100%; min-width: 640px; height: auto; stroke: none; }
+.chart-grid { stroke: var(--line); stroke-width: 1; }
+.chart-axis { fill: var(--muted); font-size: 11px; stroke: none; }
+.chart-rise { color: var(--rise); }
+.chart-fall { color: var(--fall); }
+.chart-candle, .chart-volume { fill: currentColor; stroke: none; }
+.chart-volume { opacity: .6; }
+.chart-wick { stroke: currentColor; stroke-width: 1; }
+.chart-ma { fill: none; stroke-width: 1.5; }
+.chart-ma5 { color: #986e0b; stroke: #986e0b; }
+.chart-ma10 { color: #386cc6; stroke: #386cc6; }
+.chart-ma20 { color: #8b4eac; stroke: #8b4eac; }
+.chart-hit { fill: transparent; stroke: none; }
+.chart-cursor { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 4; }
+.chart-date-control { display: flex; gap: 12px; align-items: center; padding: 10px 24px 20px; font-size: 12px; }
+.chart-date-control input { flex: 1; min-width: 0; accent-color: var(--brand); }
+#stock-chart { scroll-margin-top: 20px; }
+#market-notice { margin-top: 14px; }
+@media (max-width: 700px) {
+  #stock-chart .panel-heading { align-items: flex-start; flex-direction: column; }
+  .chart-controls { width: 100%; }
+  .chart-controls select { max-width: 180px; }
+  .chart-detail, .chart-legend { padding-left: 16px; padding-right: 16px; }
+}

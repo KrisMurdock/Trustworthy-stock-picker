@@ -3,7 +3,8 @@
 (() => {
   const byId = (id) => document.getElementById(id);
   const state = { data: null, report: null, reportDate: "", followLatest: true, sort: "code", direction: 1, refreshing: false, reportRequest: 0, reportController: null };
-  const statusLabels = { selected: "已入选", eligible: "有效数据", filtered: "未通过筛选", excluded: "暂不参与", missing: "数据缺失" };
+  const chart = new window.StockChart(requestJSON);
+  const statusLabels = { available: "已同步 · 未发布推荐", selected: "已入选", eligible: "有效数据", filtered: "未通过筛选", excluded: "暂不参与", missing: "数据缺失" };
   const labels = {
     missing_data: "尚无行情数据", invalid_or_stale_data: "数据无效或已过期", no_history: "暂无历史数据",
     stale_or_suspended: "数据滞后或停牌", no_trading_volume: "当日无成交量", insufficient_or_invalid_history: "历史数据不足或无效",
@@ -13,7 +14,7 @@
     insufficient_or_unprofitable_evidence: "历史证据不足或收益未达标", extended_price: "短期涨幅较大", large_daily_range: "日内波动较大",
     upper_wick: "上影线较长", cash_insufficient: "参考资金不足", holdout_validation_not_passed: "独立样本验证未通过",
     baseline: "股池基准", pullback: "趋势回踩", momentum: "趋势动量", breakout: "突破形态", volume_recovery: "量能恢复",
-    network: "行情网络请求失败", timeout: "行情请求超时", canceled: "同步已取消", storage: "存储不可用", sync: "同步异常",
+    coverage: "覆盖率未达推荐门槛，已保存有效行情", network: "行情网络请求失败", timeout: "行情请求超时", canceled: "同步已取消", storage: "存储不可用", sync: "同步异常",
     http_403: "行情访问被拒绝", http_429: "行情请求受限", qfq_adjustment_missing: "缺少前复权数据", calendar_window: "交易日历覆盖不足", window_gap: "历史数据存在缺口",
   };
   const number = (value, digits = 0) => typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("zh-CN", { minimumFractionDigits: digits, maximumFractionDigits: digits }) : "—";
@@ -64,6 +65,7 @@
         if (response.status === 401 || response.status === 403) throw new Error("当前访问未获授权，请检查访问权限或网关配置。");
         if (response.status === 504) throw new Error("服务读取行情数据超时，请稍后重试。");
         if (payload?.error === "market data is temporarily unavailable") throw new Error("行情数据暂时不可用，请稍后重试。");
+        if (payload?.error === "history not found") throw new Error("该股票本次暂无通过校验的日线，请查看股池中的数据缺失原因，等待下次同步。");
         if (payload?.error === "report not found") throw new Error("所选日期的报告不存在，请刷新快照后重试。");
         throw new Error(typeof payload?.error === "string" ? payload.error : `请求失败（HTTP ${response.status}）`);
       }
@@ -83,8 +85,8 @@
     setText("pool-count", number(summary.pool_size));
     setText("available-count", number(summary.available));
     setText("missing-count", number(summary.missing));
-    setText("eligible-count", number(summary.eligible));
-    setText("selected-count", number(summary.selected));
+    setText("eligible-count", data.report_current ? number(summary.eligible) : "—");
+    setText("selected-count", data.report_current ? number(summary.selected) : "—");
     setText("coverage-value", number(summary.coverage_pct, 1));
     byId("coverage-progress").value = isNumber(summary.coverage_pct) ? Math.max(0, Math.min(100, summary.coverage_pct)) : 0;
     byId("coverage-progress").setAttribute("aria-valuetext", isNumber(summary.coverage_pct) ? `${number(summary.coverage_pct, 1)}%` : "暂无数据");
@@ -95,6 +97,8 @@
     const adjust = adjustLabels[data.adjust] || data.adjust || "—";
     setText("snapshot-adjust", `价格口径：${adjust}`);
     setText("stocks-footer", `${data.as_of || "等待同步"} · ${adjust}日线 · 成交量使用数据源原始单位`);
+    show("market-notice", !!data.as_of && !data.report_current);
+    setText("market-notice", `当前行情尚无对应推荐报告。${data.report ? `下方保留 ${data.report.as_of} 的历史报告，请以报告日期为准。` : "达到覆盖率及策略条件后才会生成推荐。"}`);
     const sync = data.latest_sync;
     const syncLabels = { published: "最近同步成功", success: "最近同步成功", succeeded: "最近同步成功", completed: "最近同步成功", partial: "最近同步部分成功", failed: "最近同步失败", failure: "最近同步失败", running: "同步进行中", canceled: "最近同步已取消" };
     const success = sync && ["published", "success", "succeeded", "completed"].includes(sync.status);
@@ -134,7 +138,11 @@
   }
   function stockIdentity(stock) {
     const cell = el("td");
-    cell.append(el("span", "stock-name", stock.name || "未命名股票"), el("span", "stock-code", stock.code || "—"));
+    const button = el("button", "stock-name stock-link", stock.name || "未命名股票");
+    button.type = "button";
+    button.setAttribute("aria-label", `查看${stock.name || stock.code}的日K`);
+    button.addEventListener("click", () => chart.select(stock.code, true));
+    cell.append(button, el("span", "stock-code", stock.code || "—"));
     return cell;
   }
   function renderStocks() {
@@ -300,6 +308,7 @@
       renderSummary(data);
       updateSectorOptions(data.stocks);
       renderStocks();
+      chart.update(data.stocks);
       updateReportDates(data);
       show("dashboard-content", true);
       show("error-state", false);

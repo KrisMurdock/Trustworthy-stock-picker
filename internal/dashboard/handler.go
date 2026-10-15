@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/logging"
+	"stock-watcher/internal/market"
 	"stock-watcher/internal/selection"
 	"stock-watcher/internal/storage"
 	"time"
@@ -23,6 +24,7 @@ var assets embed.FS
 const requestTimeout = 5 * time.Second
 
 type snapshotReader interface {
+	LoadDashboardHistory(context.Context, config.Stock, string) (market.History, error)
 	LoadDashboard(context.Context, []config.Stock, string) (storage.DashboardSnapshot, error)
 	LoadDashboardReport(context.Context, string) (selection.Report, error)
 }
@@ -74,6 +76,36 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, r, http.StatusOK, snapshot)
+	case "/api/history":
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		codes := values["code"]
+		if err != nil || len(values) != 1 || len(codes) != 1 || codes[0] == "" {
+			writeError(w, r, http.StatusBadRequest, "one stock code is required")
+			return
+		}
+		var stock config.Stock
+		for _, candidate := range h.stocks {
+			if candidate.Code == codes[0] {
+				stock = candidate
+				break
+			}
+		}
+		if stock.Code == "" {
+			writeError(w, r, http.StatusNotFound, "stock not in pool")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+		defer cancel()
+		history, err := h.db.LoadDashboardHistory(ctx, stock, h.adjust)
+		if errors.Is(err, fs.ErrNotExist) {
+			writeError(w, r, http.StatusNotFound, "history not found")
+			return
+		}
+		if err != nil {
+			h.readError(w, r, ctx, err)
+			return
+		}
+		writeJSON(w, r, http.StatusOK, history)
 	case "/api/reports":
 		query, err := parseReportDate(r)
 		if err != nil {
@@ -98,6 +130,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/assets/calculator.css":
 		w.Header().Set("Cache-Control", "no-cache")
 		h.asset(w, r, "calculator.css", "text/css; charset=utf-8")
+	case "/assets/chart.js":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "chart.js", "text/javascript; charset=utf-8")
 	case "/assets/app.js":
 		w.Header().Set("Cache-Control", "no-cache")
 		h.asset(w, r, "app.js", "text/javascript; charset=utf-8")

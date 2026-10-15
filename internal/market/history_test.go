@@ -124,3 +124,27 @@ func TestFetchRejectsBrokenHistoricalPages(t *testing.T) {
 		})
 	}
 }
+
+// Deterministically cancel after response headers, while reading the body.
+type cancelBodyTransport struct {
+	cancel context.CancelFunc
+	closed bool
+}
+
+func (t *cancelBodyTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: 200, Body: t, Header: make(http.Header)}, nil
+}
+func (t *cancelBodyTransport) Read([]byte) (int, error) { t.cancel(); return 0, context.Canceled }
+func (t *cancelBodyTransport) Close() error             { t.closed = true; return nil }
+func TestFetchWindowPreservesBodyCancellationAndClosesResponse(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	transport := &cancelBodyTransport{cancel: cancel}
+	client := NewClient(time.Second)
+	client.HTTP.Transport = transport
+	defer client.Close()
+	_, err := client.FetchWindow(ctx, config.Stock{Code: "sz000001", Name: "测试"}, "2026-10-12", "2026-10-13", "qfq", 640)
+	if !errors.Is(err, context.Canceled) || !transport.closed {
+		t.Fatalf("cancel=%v body_closed=%v", err, transport.closed)
+	}
+}

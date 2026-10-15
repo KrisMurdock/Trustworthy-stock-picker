@@ -18,14 +18,15 @@ import (
 func main() {
 	root := flag.String("data", "", "existing fixture data directory")
 	empty := flag.Bool("empty", false, "initialize without published snapshots")
+	partial := flag.Bool("partial", false, "save market data without a report after coverage failure")
 	flag.Parse()
-	if err := seed(*root, *empty); err != nil {
+	if err := seed(*root, *empty, *partial); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func seed(root string, empty bool) error {
+func seed(root string, empty, partial bool) error {
 	db, err := storage.InitMarket(root, false)
 	if err != nil {
 		return err
@@ -70,6 +71,12 @@ func seed(root string, empty bool) error {
 			report.Selected = []selection.Candidate{{Code: stocks[0].Code, Name: stocks[0].Name, Sector: stocks[0].Sector, Close: 10.25, ChangePct: 2.5, Metrics: selection.Metrics{Score: 85}, Ranking: &report.Ranking[0]}}
 			report.Research = &strategy.Research{Version: 1, Strategy: report.Strategy, AsOf: day, SampleCount: 120, ValidationPassed: false, Limitations: []string{"仅用于浏览器测试"}}
 		}
+		if partial {
+			if day != "2026-10-13" {
+				continue
+			}
+			return db.CommitMarketData(context.Background(), storage.SyncRun{ID: "partial-run", AsOf: day, StartedAt: at.Add(-time.Minute), FinishedAt: at, CoveragePct: 200.0 / 3}, items, "qfq")
+		}
 		if err := db.CommitSnapshot(context.Background(), storage.SyncRun{ID: "dashboard-run-" + day, AsOf: day, StartedAt: at.Add(-time.Minute), FinishedAt: at, CoveragePct: 200.0 / 3}, items, report); err != nil {
 			return err
 		}
@@ -79,7 +86,7 @@ func seed(root string, empty bool) error {
 
 func history(stock config.Stock, day string, at time.Time, index int) market.History {
 	var bars []market.Bar
-	for date := at; len(bars) < 40; date = date.AddDate(0, 0, -1) {
+	for date := at; len(bars) < 80; date = date.AddDate(0, 0, -1) {
 		if date.Weekday() == time.Saturday || date.Weekday() == time.Sunday {
 			continue
 		}
@@ -94,7 +101,7 @@ func history(stock config.Stock, day string, at time.Time, index int) market.His
 				close = 198
 			}
 		}
-		bars = append(bars, market.Bar{Date: date.Format("2006-01-02"), Open: close, Close: close, High: close * 1.01, Low: close * .99, Volume: float64((index + 1) * 1000)})
+		bars = append(bars, market.Bar{Date: date.Format("2006-01-02"), Open: close * (0.99 + .02*float64(index)), Close: close, High: close * 1.01, Low: close * .99, Volume: float64((index + 1) * 1000)})
 	}
 	for left, right := 0, len(bars)-1; left < right; left, right = left+1, right-1 {
 		bars[left], bars[right] = bars[right], bars[left]

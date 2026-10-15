@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"stock-watcher/internal/config"
+	"stock-watcher/internal/market"
 	"stock-watcher/internal/selection"
 	"stock-watcher/internal/storage"
 	"strings"
@@ -33,6 +34,11 @@ func (s *testReader) LoadDashboard(ctx context.Context, _ []config.Stock, _ stri
 		return storage.DashboardSnapshot{}, ctx.Err()
 	}
 	return s.snapshot, s.err
+}
+
+func (s *testReader) LoadDashboardHistory(ctx context.Context, stock config.Stock, adjust string) (market.History, error) {
+	_, err := s.LoadDashboard(ctx, nil, adjust)
+	return market.History{Version: 1, Code: stock.Code, Adjust: adjust, Bars: []market.Bar{{Date: "2026-10-13", Close: 10}}}, err
 }
 
 func (s *testReader) LoadDashboardReport(_ context.Context, date string) (selection.Report, error) {
@@ -177,5 +183,54 @@ func TestDatabaseFailuresAreGenericAndRequestsAreBounded(t *testing.T) {
 	}
 	if w := request(t, h, "GET", "/healthz"); w.Code != http.StatusOK {
 		t.Fatal("liveness depends on database availability")
+	}
+}
+
+func TestHistoryReadOnlyPoolScopeAndErrors(t *testing.T) {
+	c := config.Defaults()
+	c.Stocks = []config.Stock{{Code: "sz000001", Name: "测试银行"}}
+	reader := &testReader{}
+	h := newHandler(c, reader, nil)
+	for _, query := range []string{"", "?code=", "?code=sz000001&code=sh600519", "?code=sz000001&adjust=none", "?code=%ZZ"} {
+		if w := request(t, h, "GET", "/api/history"+query); w.Code != 400 {
+			t.Fatalf("invalid query accepted: %s %d", query, w.Code)
+		}
+	}
+	if w := request(t, h, "GET", "/api/history?code=sh600519"); w.Code != 404 {
+		t.Fatalf("pool boundary: %d", w.Code)
+	}
+	for _, identity := range []string{"", "Bearer ordinary-user", "Bearer administrator"} {
+		r := httptest.NewRequest("GET", "/api/history?code=sz000001", nil)
+		r.Header.Set("Authorization", identity)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		var history market.History
+		if err := json.Unmarshal(w.Body.Bytes(), &history); err != nil || w.Code != 200 || history.Code != "sz000001" || history.Bars[0].Close != 10 {
+			t.Fatalf("history: %s %v", w.Body, err)
+		}
+	}
+	if reader.deadline <= 0 || reader.deadline > requestTimeout {
+		t.Fatal("unbounded history request")
+	}
+	if w := request(t, h, "POST", "/api/history?code=sz000001"); w.Code != 405 {
+		t.Fatal("history allows mutation")
+	}
+	for _, tc := range []struct {
+		err    error
+		status int
+	}{{fs.ErrNotExist, 404}, {errors.New("private credentials"), 503}, {context.DeadlineExceeded, 504}} {
+		reader.err = tc.err
+		w := request(t, h, "GET", "/api/history?code=sz000001")
+		if w.Code != tc.status || strings.Contains(w.Body.String(), "private") {
+			t.Fatalf("history failure: %d %s", w.Code, w.Body)
+		}
+	}
+	reader.wait = true
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/history?code=sz000001", nil).WithContext(ctx))
+	if w.Code != 504 {
+		t.Fatalf("history cancellation: %d", w.Code)
 	}
 }

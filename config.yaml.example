@@ -27,7 +27,7 @@ selection:
   max_day_change_pct: 7
 
 sync:
-  min_coverage_pct: 100 # Every stock must have complete history.
+  min_coverage_pct: 95 # Recommendation gate; validated histories are saved below this threshold.
   incremental_bars: 5
 
 # Set enabled=true to replace legacy filtering with full-pool short-horizon ranking.

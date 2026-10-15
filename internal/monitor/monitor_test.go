@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/market"
@@ -205,10 +206,15 @@ func TestCorruptStateAndBeforeClose(t *testing.T) {
 	}
 }
 
-func TestSQLiteSyncRequiresEveryStockEvenWithLegacyCoverageThreshold(t *testing.T) {
+func TestSQLiteSyncPublishesAtConfiguredCoverageThreshold(t *testing.T) {
 	m, source, _ := fixture(t)
-	m.Config.Stocks = append(m.Config.Stocks, config.Stock{Code: "sh600000", Name: "第二只", ListedFrom: "2026-07-15"})
-	m.Config.Sync.MinCoveragePct = 50
+	m.Config.Stocks = make([]config.Stock, 20)
+	for i := range m.Config.Stocks {
+		m.Config.Stocks[i] = config.Stock{Code: fmt.Sprintf("sz%06d", i+1), Name: "测试", ListedFrom: "2026-07-15"}
+	}
+	if m.Config.Sync.MinCoveragePct != 95 {
+		t.Fatal("default recommendation gate changed")
+	}
 	marketDB, err := storage.InitMarket(t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
@@ -217,11 +223,13 @@ func TestSQLiteSyncRequiresEveryStockEvenWithLegacyCoverageThreshold(t *testing.
 	t.Cleanup(func() { m.Market.Close() })
 	source.err = &market.Failure{Status: 403, Kind: "status"}
 	source.failCode = m.Config.Stocks[0].Code
-	if _, err := m.Sync(context.Background(), "2026-10-13"); err == nil || !strings.Contains(err.Error(), "100%") {
-		t.Fatalf("partial pool accepted: %v", err)
+	report, err := m.Sync(context.Background(), "2026-10-13")
+	if err != nil || report.Eligible != 19 {
+		t.Fatalf("95%% boundary rejected: %+v %v", report, err)
 	}
-	if _, err := m.Market.LoadReport(context.Background(), "2026-10-13"); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("partial report published: %v", err)
+	stored, err := m.Market.LoadReport(context.Background(), report.AsOf)
+	if err != nil || stored.ID != report.ID {
+		t.Fatalf("report missing: %+v %v", stored, err)
 	}
 }
 
@@ -466,5 +474,34 @@ func TestMigratesV1PendingDelivery(t *testing.T) {
 	msg, err := reportmessage.FromSelection(legacy)
 	if err != nil || persisted.Events[msg.EventID].AsOf != legacy.AsOf {
 		t.Fatal("migrated event is incomplete")
+	}
+}
+
+func TestCoverageFailureSavesValidMarketDataWithoutSending(t *testing.T) {
+	m, source, channel := fixture(t)
+	m.Config.Daily.Adjust = "qfq"
+	m.Config.Stocks = append(m.Config.Stocks, config.Stock{Code: "sz000002", Name: "隔离股票"})
+	m.Config.Sync.MinCoveragePct = 95
+	db, err := storage.InitMarket(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	m.Market = db
+	source.failCode = "sz000002"
+	source.err = &market.Failure{Status: 403, Kind: "status"}
+	if err := m.Cycle(context.Background()); err == nil || !strings.Contains(err.Error(), "coverage") {
+		t.Fatalf("coverage gate: %v", err)
+	}
+	got, err := db.LoadDashboard(context.Background(), m.Config.Stocks, "qfq")
+	if err != nil || got.Summary.Available != 1 || got.Summary.CoveragePct != 50 || got.Report != nil || got.LatestSync.ErrorKind != "coverage" {
+		t.Fatalf("market data discarded: %+v %v", got, err)
+	}
+	if channel.calls != 0 {
+		t.Fatal("coverage failure sent a message")
+	}
+	state, err := m.Status()
+	if err != nil || len(state.Events) != 0 {
+		t.Fatalf("coverage failure enqueued a message: %+v %v", state, err)
 	}
 }

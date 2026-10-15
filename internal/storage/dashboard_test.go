@@ -82,7 +82,7 @@ func TestDashboardPublishedPoolAndFailedSync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := db.LoadDashboard(context.Background(), stocks, "hfq")
+	got, err := db.LoadDashboard(context.Background(), stocks, "qfq")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,4 +196,90 @@ func TestDashboardConcurrentPublicationIsAtomic(t *testing.T) {
 		}
 	}
 	workers.Wait()
+}
+
+func TestPartialMarketDataWithoutReportAndHistoryIsolation(t *testing.T) {
+	db, stocks, history, report := dashboardFixture(t)
+	ctx := context.Background()
+	run := SyncRun{ID: "partial", AsOf: history.AsOf, StartedAt: history.FetchedAt, FinishedAt: history.FetchedAt, CoveragePct: 100.0 / 3}
+	items := []SyncItem{{Stock: stocks[0], Adjusted: &history, Status: "ok"}, {Stock: stocks[1], Status: "isolated", Reason: "qfq_adjustment_missing"}}
+	if err := db.CommitMarketData(ctx, run, items, "qfq"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := db.LoadDashboard(ctx, stocks, "qfq")
+	if err != nil || snapshot.Report != nil || snapshot.ReportCurrent || len(snapshot.Dates) != 0 || snapshot.Summary.Available != 1 || snapshot.Stocks[0].Status != "available" || snapshot.LatestSync.ErrorKind != "coverage" {
+		t.Fatalf("partial data lost or promoted: %+v %v", snapshot, err)
+	}
+	got, err := db.LoadDashboardHistory(ctx, stocks[0], "qfq")
+	if err != nil || len(got.Bars) != len(history.Bars) || got.Bars[len(got.Bars)-1].Close != history.Bars[len(history.Bars)-1].Close {
+		t.Fatalf("saved history: %+v %v", got, err)
+	}
+	if _, err := db.LoadDashboardHistory(ctx, stocks[1], "qfq"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("isolated history: %v", err)
+	}
+	if _, err := db.LoadDashboardHistory(ctx, stocks[0], "none"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("adjustment mixed: %v", err)
+	}
+	ctxCanceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := db.LoadDashboardHistory(ctxCanceled, stocks[0], "qfq"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancel: %v", err)
+	}
+	// Publishing can recover; a subsequent same-day coverage failure cannot label
+	// the retained report's recommendation as belonging to the refreshed prices.
+	publishDashboard(t, db, stocks, history, report, "published")
+	run.ID = "partial-again"
+	if err := db.CommitMarketData(ctx, run, items, "qfq"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = db.LoadDashboard(ctx, stocks, "qfq")
+	if err != nil || snapshot.Report == nil || snapshot.ReportCurrent || snapshot.Summary.Selected != 0 || snapshot.Stocks[0].Status != "available" {
+		t.Fatalf("stale selection mixed with prices: %+v %v", snapshot, err)
+	}
+	before, _ := json.Marshal(snapshot.Report)
+	// All-isolated retry must hide the previously saved chart, preserving the report.
+	run.ID = "isolated-all"
+	items[0] = SyncItem{Stock: stocks[0], Status: "isolated", Reason: "window_gap"}
+	if err := db.CommitMarketData(ctx, run, items, "qfq"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.LoadDashboardHistory(ctx, stocks[0], "qfq"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("old candles leaked across isolation: %v", err)
+	}
+	stored, _ := db.LoadReport(ctx, report.AsOf)
+	after, _ := json.Marshal(stored)
+	if string(before) != string(after) {
+		t.Fatal("coverage failure changed published report")
+	}
+}
+
+func TestPartialMarketTransactionRollsBackAndHistoryTimeout(t *testing.T) {
+	db, stocks, history, report := dashboardFixture(t)
+	publishDashboard(t, db, stocks, history, report, "original")
+	ctx := context.Background()
+	bad := history
+	bad.Bars = append([]market.Bar(nil), history.Bars...)
+	bad.Code = stocks[1].Code
+	bad.Bars[0].Low = -1
+	history.Bars[len(history.Bars)-1].Close += .01
+	err := db.CommitMarketData(ctx, SyncRun{ID: "bad", AsOf: history.AsOf, FinishedAt: history.FetchedAt}, []SyncItem{
+		{Stock: stocks[0], Adjusted: &history, Status: "ok"}, {Stock: stocks[1], Adjusted: &bad, Status: "ok"},
+	}, "qfq")
+	if err == nil {
+		t.Fatal("invalid history committed")
+	}
+	got, err := db.LoadDashboardHistory(ctx, stocks[0], "qfq")
+	if err != nil || got.Bars[len(got.Bars)-1].Close != report.Selected[0].Close {
+		t.Fatalf("partial transaction not rolled back: %+v %v", got, err)
+	}
+	tx, err := db.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	limited, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	if _, err := db.LoadDashboardHistory(limited, stocks[0], "qfq"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("history timeout lost: %v", err)
+	}
 }

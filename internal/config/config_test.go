@@ -112,7 +112,7 @@ func TestNotificationChannelNamesAndUnknownFields(t *testing.T) {
 
 func TestSyncDefaultsAndValidation(t *testing.T) {
 	c := Defaults()
-	if c.Sync.MinCoveragePct != 100 || c.Sync.IncrementalBars != 5 {
+	if c.Sync.MinCoveragePct != 95 || c.Sync.IncrementalBars != 5 {
 		t.Fatalf("unexpected sync defaults: %+v", c.Sync)
 	}
 	c.Sync.MinCoveragePct = 101
