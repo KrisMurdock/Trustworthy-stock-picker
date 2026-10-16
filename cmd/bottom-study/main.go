@@ -39,6 +39,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	from := flags.String("from", "", "first signal date YYYY-MM-DD (required)")
 	through := flags.String("through", "", "last observation date YYYY-MM-DD (required)")
 	optimize := flags.Bool("optimize", false, "run the fixed net-return, batch-count and stop grid")
+	speed := flags.Bool("optimize-speed", false, "optimize no-stop time to target (requires compare-context)")
 	contextPath := flags.String("compare-context", "", "frozen sector/market JSON for the two-arm comparison")
 	trainThrough := flags.String("train-through", "", "last training outcome date (required with optimize or compare-context)")
 	if err := flags.Parse(args); err != nil {
@@ -49,6 +50,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if *optimize && *contextPath != "" {
 		return errors.New("optimize and compare-context are mutually exclusive")
+	}
+	if *speed && (*contextPath == "" || *optimize) {
+		return errors.New("optimize-speed requires compare-context and cannot be combined with optimize")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -88,11 +92,26 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if decoder.Decode(&background) != nil || decoder.Decode(new(any)) != io.EOF {
 			return errors.New("invalid context JSON or unsupported fields")
 		}
-		report, err := bottomstudy.CompareContext(ctx, snapshot, background, bottomstudy.GridOptions{Options: bottomstudy.Options{From: *from, Through: *through}, TrainThrough: *trainThrough})
+		options := bottomstudy.GridOptions{Options: bottomstudy.Options{From: *from, Through: *through}, TrainThrough: *trainThrough}
+		stockHash, contextHash := sha256.Sum256(data), sha256.Sum256(contextData)
+		if *speed {
+			report, err := bottomstudy.OptimizeSpeed(ctx, snapshot, background, options)
+			if err != nil {
+				return err
+			}
+			encoder := json.NewEncoder(stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(struct {
+				CodeVersion string `json:"code_version"`
+				StockSHA    string `json:"stock_snapshot_file_sha256"`
+				ContextSHA  string `json:"context_file_sha256"`
+				bottomstudy.SpeedReport
+			}{version, hex.EncodeToString(stockHash[:]), hex.EncodeToString(contextHash[:]), report})
+		}
+		report, err := bottomstudy.CompareContext(ctx, snapshot, background, options)
 		if err != nil {
 			return err
 		}
-		stockHash, contextHash := sha256.Sum256(data), sha256.Sum256(contextData)
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(struct {

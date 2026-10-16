@@ -149,6 +149,25 @@ func TestContextComparisonCLIAndFailures(t *testing.T) {
 	if json.Unmarshal(a.Bytes(), &got) != nil || a.String() != b.String() || got.Engine != bottomstudy.ComparisonEngine || len(got.Pairs) != 220 || len(got.ContextSHA) != 64 || len(got.StockSHA) != 64 {
 		t.Fatal("invalid comparison result or unstable output")
 	}
+	var speedOut bytes.Buffer
+	speedArgs := append(append([]string(nil), args...), "-optimize-speed")
+	if err := run(context.Background(), speedArgs, &speedOut, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	var speed bottomstudy.SpeedReport
+	if json.Unmarshal(speedOut.Bytes(), &speed) != nil || speed.Engine != bottomstudy.SpeedEngine || len(speed.Pairs) != 240 || len(speed.Winners) != 0 {
+		t.Fatal("invalid empty speed study")
+	}
+	for _, bad := range [][]string{
+		{"-snapshot", path, "-from", "2026-01-01", "-through", through, "-optimize-speed"},
+		append(append([]string(nil), speedArgs...), "-optimize"),
+		append(append([]string(nil), base...), "-optimize-speed"),
+	} {
+		var out bytes.Buffer
+		if err := run(context.Background(), bad, &out, &stderr); err == nil || out.Len() != 0 {
+			t.Fatal("invalid speed configuration emitted success")
+		}
+	}
 	for _, bad := range [][]string{base, append(append([]string(nil), args...), "-optimize")} {
 		var out bytes.Buffer
 		if err := run(context.Background(), bad, &out, &stderr); err == nil || out.Len() > 0 {
@@ -159,9 +178,11 @@ func TestContextComparisonCLIAndFailures(t *testing.T) {
 		if err := os.WriteFile(contextPath, bad, 0600); err != nil {
 			t.Fatal(err)
 		}
-		var out bytes.Buffer
-		if err := run(context.Background(), args, &out, &stderr); err == nil || out.Len() > 0 {
-			t.Fatal("invalid context emitted success")
+		for _, arguments := range [][]string{args, speedArgs} {
+			var out bytes.Buffer
+			if err := run(context.Background(), arguments, &out, &stderr); err == nil || out.Len() > 0 {
+				t.Fatal("invalid context emitted success")
+			}
 		}
 	}
 	if err := os.Remove(contextPath); err != nil {
