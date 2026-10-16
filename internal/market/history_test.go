@@ -49,6 +49,9 @@ func TestFetchRetainsTenYearsAcrossProviderPages(t *testing.T) {
 			}))
 			defer srv.Close()
 			client := NewClient(time.Second)
+			// Keep this historical-page fixture independent of the real date;
+			// current-day requests intentionally omit the endpoint's end date.
+			client.Now = func() time.Time { return time.Date(2026, 10, 17, 0, 0, 0, 0, Shanghai) }
 			client.Endpoint = srv.URL
 			defer client.Close()
 			// The start is a Sunday; retain the previous trading day as coverage evidence.
