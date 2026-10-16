@@ -27,6 +27,8 @@ market:
   # Defaults below can be overridden for a controlled proxy or local integration tests.
   # tencent_endpoint: https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get
   # sina_endpoint: https://finance.sina.com.cn/realstock/company
+  # Listing metadata is independent of price provider ordering; confirmed dates are cached in data_dir.
+  # listing_endpoint: https://vip.stock.finance.sina.com.cn/corp/go.php/vISSUE_NewStock/stockid
   # baostock_address: public-api.baostock.com:10030
   # tushare_endpoint: https://api.tushare.pro
   # eastmoney_endpoint: https://push2his.eastmoney.com/api/qt/stock/kline/get
@@ -38,7 +40,7 @@ web:
 
 daily:
   run_at: '18:05'  # Asia/Shanghai, completed sessions only
-  history_days: 365 # Analysis window; raw daily history always retains at least ten calendar years.
+  history_days: 365 # Analysis window, capped at ten years / listing date; raw history covers that full span.
   adjust: qfq
 
 selection:

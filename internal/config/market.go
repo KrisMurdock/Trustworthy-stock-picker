@@ -23,6 +23,7 @@ type Market struct {
 	TushareToken      string   `yaml:"-" json:"-"`
 	EastmoneyEndpoint string   `yaml:"eastmoney_endpoint"`
 	SinaEndpoint      string   `yaml:"sina_endpoint"`
+	ListingEndpoint   string   `yaml:"listing_endpoint"`
 }
 
 func DefaultMarket() Market {
@@ -31,12 +32,16 @@ func DefaultMarket() Market {
 		TencentEndpoint: "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get",
 		BaostockAddress: "public-api.baostock.com:10030", TushareEndpoint: "https://api.tushare.pro",
 		TushareTokenEnv: "TUSHARE_TOKEN", EastmoneyEndpoint: "https://push2his.eastmoney.com/api/qt/stock/kline/get",
-		SinaEndpoint: "https://finance.sina.com.cn/realstock/company"}
+		SinaEndpoint:    "https://finance.sina.com.cn/realstock/company",
+		ListingEndpoint: "https://vip.stock.finance.sina.com.cn/corp/go.php/vISSUE_NewStock/stockid"}
 }
 
 func (m *Market) loadCredentials() { m.TushareToken = strings.TrimSpace(os.Getenv(m.TushareTokenEnv)) }
 
 func (m Market) Validate() error {
+	if !validMarketEndpoint(m.ListingEndpoint) {
+		return errors.New("market.listing_endpoint requires HTTPS or loopback HTTP, without credentials or query parameters")
+	}
 	if len(m.Providers) == 0 || len(m.Providers) > 5 {
 		return errors.New("market.providers must contain one to five providers")
 	}
@@ -88,8 +93,7 @@ func (m Market) Validate() error {
 			return errors.New("unsupported market provider; use tencent, sina, baostock, tushare or eastmoney")
 		}
 		if endpoint != "" {
-			u, err := url.Parse(endpoint)
-			if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || net.ParseIP(u.Hostname()).IsLoopback()))) {
+			if !validMarketEndpoint(endpoint) {
 				return errors.New("market HTTP endpoints require HTTPS or loopback HTTP, without credentials or query parameters")
 			}
 		} else if name != "baostock" {
@@ -103,4 +107,9 @@ func (m Market) Validate() error {
 		return errors.New("no active market provider; configure the Tushare token environment variable or enable another provider")
 	}
 	return nil
+}
+
+func validMarketEndpoint(endpoint string) bool {
+	u, err := url.Parse(endpoint)
+	return err == nil && u.Hostname() != "" && u.User == nil && u.RawQuery == "" && u.Fragment == "" && (u.Scheme == "https" || (u.Scheme == "http" && (u.Hostname() == "localhost" || net.ParseIP(u.Hostname()).IsLoopback())))
 }

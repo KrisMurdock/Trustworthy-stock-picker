@@ -287,7 +287,7 @@ func (c Config) Validate() error {
 		return errors.New("daily.run_at must be HH:MM at or after 16:00")
 	}
 	if c.Daily.HistoryDays < 90 || c.Daily.HistoryDays > 7300 {
-		return errors.New("daily.history_days must be 90 to 7300 calendar days (sync retains at least ten calendar years)")
+		return errors.New("daily.history_days must be 90 to 7300 calendar days (effective window is capped at ten calendar years and the listing date)")
 	}
 	switch c.Daily.Adjust {
 	case "none", "qfq", "hfq":

@@ -45,6 +45,7 @@ type Monitor struct {
 	Store    *storage.Store
 	Market   *storage.MarketDB
 	Source   Source
+	Listings market.ListingSource
 	Channels []notify.Channel
 	Log      *logging.Logger
 	Calendar *calendar.Calendar
@@ -59,7 +60,7 @@ func NewWithMarketDB(c config.Config, s *storage.Store, marketDB *storage.Market
 	if log == nil {
 		log = logging.Nop()
 	}
-	return &Monitor{
+	m := &Monitor{
 		Config:   c,
 		Store:    s,
 		Market:   marketDB,
@@ -69,6 +70,10 @@ func NewWithMarketDB(c config.Config, s *storage.Store, marketDB *storage.Market
 		Calendar: calendar.New(c),
 		Now:      time.Now,
 	}
+	if listings, ok := source.(market.ListingSource); ok {
+		m.Listings = listings
+	}
+	return m
 }
 
 func (m *Monitor) channelNames() []string {
@@ -234,8 +239,11 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 		return report, err
 	}
 	end, _ := time.Parse("2006-01-02", asof)
-	start := historyStart(end, m.Config.Daily.HistoryDays)
+	start := historyStart(end)
 	analysisStart := end.AddDate(0, 0, -m.Config.Daily.HistoryDays).Format("2006-01-02")
+	if analysisStart < start {
+		analysisStart = start
+	}
 	m.Log.Info("Daily history synchronization started", "as_of", asof, "history_start", start, "stocks", len(m.Config.Stocks))
 	histories := make([]market.History, 0, len(m.Config.Stocks))
 	raw := make([]market.History, 0, len(m.Config.Stocks))
@@ -249,9 +257,21 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 		if err := m.Store.Check(); err != nil {
 			return report, err
 		}
+		stock, err = m.listingStock(ctx, stock)
+		if err != nil {
+			if !market.IsProviderFailure(err) {
+				return m.failSync(ctx, run, err)
+			}
+			reason := "listing_lookup: " + syncReason(err)
+			items = append(items, storage.SyncItem{Stock: stock, Status: "isolated", Reason: reason})
+			m.Log.Warn("Stock listing lookup failed", "code", stock.Code, "reason", reason, "completed", i+1, "total", len(m.Config.Stocks))
+			continue
+		}
+		stockStart := requiredHistoryStart(end, stock.ListedFrom)
+		m.Log.Debug("Stock history window resolved", "code", stock.Code, "listed_from", stock.ListedFrom, "history_start", stockStart, "as_of", asof)
 		adjustedStart := analysisStart
 		if m.Config.Daily.Adjust == "none" {
-			adjustedStart = start
+			adjustedStart = stockStart
 		}
 		history, err := m.fetchHistory(ctx, stock, adjustedStart, asof, m.Config.Daily.Adjust)
 		if err != nil {
@@ -275,7 +295,7 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 				return report, ctx.Err()
 			case <-time.After(350 * time.Millisecond):
 			}
-			r, err := m.fetchHistory(ctx, stock, start, asof, "none")
+			r, err := m.fetchHistory(ctx, stock, stockStart, asof, "none")
 			if err != nil {
 				histories = histories[:len(histories)-1]
 				if market.IsProviderFailure(err) {
@@ -285,7 +305,7 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 				}
 				return m.failSync(ctx, run, fmt.Errorf("raw download failed for %s: %w", stock.Code, err))
 			}
-			if err := validateHistory(m.Calendar, stock, r, start, asof); err != nil {
+			if err := validateHistory(m.Calendar, stock, r, stockStart, asof); err != nil {
 				histories = histories[:len(histories)-1]
 				if market.IsIsolatable(err) {
 					items = append(items, storage.SyncItem{Stock: stock, Status: "isolated", Reason: syncReason(err)})
@@ -365,14 +385,11 @@ func (m *Monitor) loadPreviousHistory(ctx context.Context, code, adjust, asof st
 	return market.History{}, fs.ErrNotExist
 }
 
-func historyStart(end time.Time, days int) string {
+func historyStart(end time.Time) string {
 	start := end.AddDate(-10, 0, 0)
 	if start.Month() != end.Month() {
 		// Clamp Feb 29 to Feb 28 instead of normalizing it into March.
 		start = start.AddDate(0, 0, -1)
-	}
-	if configured := end.AddDate(0, 0, -days); configured.Before(start) {
-		start = configured
 	}
 	return start.Format("2006-01-02")
 }

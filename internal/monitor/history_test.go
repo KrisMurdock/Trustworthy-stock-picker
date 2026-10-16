@@ -21,18 +21,15 @@ import (
 func TestHistoryStartEnforcesCalendarDecade(t *testing.T) {
 	for _, tc := range []struct {
 		end  string
-		days int
 		want string
 	}{
-		{"2026-10-13", 90, "2016-10-13"},
-		{"2026-10-13", 3650, "2016-10-13"},
-		{"2024-03-01", 365, "2014-03-01"},
-		{"2024-02-29", 3650, "2014-02-28"},
-		{"2026-10-13", 7300, "2006-10-18"},
+		{"2026-10-13", "2016-10-13"},
+		{"2024-03-01", "2014-03-01"},
+		{"2024-02-29", "2014-02-28"},
 	} {
 		end, _ := time.Parse("2006-01-02", tc.end)
-		if got := historyStart(end, tc.days); got != tc.want {
-			t.Errorf("start(%s,%d)=%s, want %s", tc.end, tc.days, got, tc.want)
+		if got := historyStart(end); got != tc.want {
+			t.Errorf("start(%s)=%s, want %s", tc.end, got, tc.want)
 		}
 	}
 }
@@ -55,7 +52,7 @@ func TestOldCalendarDoesNotHideTruncatedHistory(t *testing.T) {
 
 func TestTenYearHTTPBackfillSQLiteAndIncrementalRecovery(t *testing.T) {
 	m, fake, _ := fixture(t)
-	m.Config.Stocks[0].ListedFrom = ""
+	m.Config.Stocks[0].ListedFrom = "1991-04-03"
 	m.Config.Daily.Adjust = "none" // Exercise raw full/partial fetches without running research.
 	m.Config.Notify.Channels = nil
 	stock := m.Config.Stocks[0]

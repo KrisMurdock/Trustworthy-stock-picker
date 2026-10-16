@@ -29,6 +29,7 @@ type Sources struct {
 	mu               sync.Mutex
 	health           map[string]*providerHealth
 	now              func() time.Time
+	listings         *SinaListingClient
 }
 
 func NewSources(c config.Config, log *logging.Logger) (*Sources, error) {
@@ -40,6 +41,8 @@ func NewSources(c config.Config, log *logging.Logger) (*Sources, error) {
 		s.Log = logging.Nop()
 	}
 	timeout, interval := config.Duration(c.Timeout), config.Duration(c.Market.RequestInterval)
+	s.listings = NewSinaListingClient(timeout, interval)
+	s.listings.Endpoint = c.Market.ListingEndpoint
 	s.Log.RegisterSecret(c.Market.TushareToken)
 	for _, name := range c.Market.Providers {
 		var source Source
@@ -84,6 +87,9 @@ func (s *Sources) Names() []string {
 	return names
 }
 func (s *Sources) Close() {
+	if s.listings != nil {
+		s.listings.Close()
+	}
 	for _, p := range s.Providers {
 		if closer, ok := p.Source.(interface{ Close() }); ok {
 			closer.Close()

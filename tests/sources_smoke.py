@@ -17,7 +17,8 @@ import zlib
 ROOT = Path(__file__).resolve().parents[1]
 SEP = "\x01"
 TOKEN = "smoke-only-not-a-real-token"
-MODE = {"tushare": "ok"}
+MODE = {"tushare": "ok", "listing": "ok"}
+REQUESTS = {"listing": 0, "sina": 0}
 ASOF = "2026-10-14"
 
 
@@ -51,10 +52,25 @@ class HTTPFixture(BaseHTTPRequestHandler):
     def do_GET(self):
         from urllib.parse import parse_qs, urlparse
         url = urlparse(self.path)
+        if url.path.startswith("/listing/"):
+            REQUESTS["listing"] += 1
+            if MODE["listing"] != "ok":
+                self.send_json({"error": "metadata forbidden"}, 403)
+                return
+            assert url.path == "/listing/688808.phtml"
+            raw = ("<title>联讯仪器(688808)新股发行_新浪财经_新浪网</title>"
+                   "<td>发行日期</td><td>2026-04-03</td>"
+                   "<td><strong>上市日期</strong></td><td>2026-04-24</td>").encode("gb18030")
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
         if url.path == "/tencent":
             self.send_json({"error": "upstream unavailable"}, 503)
             return
         if url.path.startswith("/sina/sh688808/"):
+            REQUESTS["sina"] += 1
             if url.path.endswith("klc_kl.js"):
                 raw = (ROOT / "internal/market/testdata/sh688808.sina.js").read_bytes()
             else:
@@ -156,6 +172,7 @@ market:
   tushare_endpoint: {api}/tushare
   eastmoney_endpoint: {api}/eastmoney
   sina_endpoint: {api}/sina
+  listing_endpoint: {api}/listing
 stocks:
   - code: {code}
     name: 测试股票
@@ -206,21 +223,36 @@ calendar:
                 invoke("sync", "-as-of", ASOF, fail=True)
                 with sqlite3.connect(root / "data/market.db") as db:
                     assert db.execute("SELECT DISTINCT source FROM daily_bar").fetchall() == [("eastmoney",)]
-                config(["tencent", "sina"], code="sh688808", listed="2026-04-24", days=180,
+                config(["tencent", "sina"], code="sh688808", listed="", days=180,
                        holidays=["2026-05-01", "2026-05-04", "2026-05-05", "2026-06-19", "2026-09-25",
                                  "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07"])
                 invoke("sync", "-as-of", ASOF)
-                # Repeat against the existing DB, exercising incremental raw fetch.
+                metadata = root / "data/metadata/listings/sh688808.json"
+                listing = json.loads(metadata.read_text())
+                assert listing["schema_version"] == 1 and listing["code"] == "sh688808"
+                assert listing["listed_from"] == "2026-04-24" and listing["source"] == "sina_ipo"
+                assert REQUESTS["listing"] == 1, REQUESTS
+                # A fresh process reuses durable metadata even when its source is offline.
+                MODE["listing"] = "forbidden"
                 invoke("sync", "-as-of", ASOF)
+                assert REQUESTS["listing"] == 1, "cached listing was fetched again"
                 with sqlite3.connect(root / "data/market.db") as db:
                     rows = db.execute("SELECT adjust, count(*), min(source), min(volume_raw=volume_shares) FROM daily_bar WHERE code='sh688808' GROUP BY adjust").fetchall()
                     assert rows == [("none", 114, "sina", 1), ("qfq", 114, "sina", 1)], rows
                     raw, adjusted = db.execute("SELECT close_micros FROM daily_bar WHERE code='sh688808' AND trade_date=? ORDER BY adjust", (ASOF,)).fetchall()
                     assert abs(raw[0] - 2 * adjusted[0]) <= 10000, (raw, adjusted)
                     assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+                # Without verified metadata, skip price downloads and retain saved bars.
+                metadata.unlink()
+                before = REQUESTS["sina"]
+                result = invoke("sync", "-as-of", ASOF, fail=True)
+                assert "listing_lookup" in result.stdout, result.stdout
+                assert REQUESTS["listing"] == 2 and REQUESTS["sina"] == before, REQUESTS
+                with sqlite3.connect(root / "data/market.db") as db:
+                    assert db.execute("SELECT count(*) FROM daily_bar WHERE code='sh688808'").fetchone() == (228,)
                 for log in (root / "logs").glob("*.log"):
                     assert TOKEN not in log.read_text(), "credential leaked to file log"
-                print(json.dumps({"environment": args.image or "native", "result": "passed", "checks": "Go CLI/HTTP+TCP fallback/Sina KLC2+factors/incremental SQLite/source units/token missing/permission/rate/all-failed preservation/no credential logging"}))
+                print(json.dumps({"environment": args.image or "native", "result": "passed", "checks": "Go CLI/HTTP+TCP fallback/Sina KLC2+factors/listing preflight+durable cache+403 isolation/incremental SQLite/source units/token missing/permission/rate/all-failed preservation/no credential logging"}))
         finally:
             for server in (http, tcp):
                 server.shutdown()
