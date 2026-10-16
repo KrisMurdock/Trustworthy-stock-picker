@@ -1,0 +1,87 @@
+// bottom-study is an offline research utility. It reads an immutable experiment
+// snapshot and writes a deterministic JSON report; it never opens a live store.
+package main
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"stock-watcher/internal/bottomstudy"
+	"stock-watcher/internal/experiment"
+	"syscall"
+	"time"
+)
+
+var version = "development"
+
+type output struct {
+	SnapshotID   string `json:"snapshot_id"`
+	SnapshotSHA  string `json:"snapshot_file_sha256"`
+	CodeVersion  string `json:"code_version"`
+	PoolSize     int    `json:"pool_size"`
+	Excluded     int    `json:"excluded_stocks"`
+	SnapshotAsOf string `json:"snapshot_as_of"`
+	bottomstudy.Report
+}
+
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("bottom-study", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	path := flags.String("snapshot", "", "immutable experiment snapshot JSON (required)")
+	from := flags.String("from", "", "first signal date YYYY-MM-DD (required)")
+	through := flags.String("through", "", "last observation date YYYY-MM-DD (required)")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *path == "" || *from == "" || *through == "" || flags.NArg() != 0 {
+		return errors.New("snapshot, from and through are required; no positional arguments allowed")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f, err := os.Open(*path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, (32<<20)+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > 32<<20 {
+		return errors.New("snapshot exceeds 32 MiB")
+	}
+	var snapshot experiment.Snapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return errors.New("invalid snapshot JSON")
+	}
+	if err := experiment.ValidateSnapshot(snapshot); err != nil {
+		return fmt.Errorf("invalid snapshot: %w", err)
+	}
+	report, err := bottomstudy.Analyze(ctx, snapshot.Adjusted, bottomstudy.Options{From: *from, Through: *through})
+	if err != nil {
+		return err
+	}
+	hash := sha256.Sum256(data)
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(output{snapshot.ID, hex.EncodeToString(hash[:]), version, snapshot.PoolSize, len(snapshot.Excluded), snapshot.AsOf, report})
+}
+
+func main() {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	ctx, stop := context.WithTimeout(ctx, 2*time.Minute)
+	defer stop()
+	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
