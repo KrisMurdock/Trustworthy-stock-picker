@@ -80,21 +80,22 @@ type Results struct {
 	Next        []string                   `json:"next"`
 }
 type Record struct {
-	Version     int         `json:"schema_version"`
-	ID          string      `json:"id"`
-	ParentID    string      `json:"parent_id,omitempty"`
-	BaselineID  string      `json:"baseline_id"`
-	Engine      string      `json:"engine"`
-	CodeVersion string      `json:"code_version"`
-	CreatedAt   time.Time   `json:"created_at"`
-	FinishedAt  *time.Time  `json:"finished_at,omitempty"`
-	Status      string      `json:"status"`
-	Verdict     string      `json:"verdict"`
-	Error       string      `json:"error,omitempty"`
-	Spec        Spec        `json:"spec"`
-	Data        DataSummary `json:"data"`
-	Result      *Results    `json:"result,omitempty"`
-	Review      *Review     `json:"current_review,omitempty"`
+	Version        int             `json:"schema_version"`
+	ID             string          `json:"id"`
+	ParentID       string          `json:"parent_id,omitempty"`
+	BaselineID     string          `json:"baseline_id"`
+	Engine         string          `json:"engine"`
+	CodeVersion    string          `json:"code_version"`
+	CreatedAt      time.Time       `json:"created_at"`
+	FinishedAt     *time.Time      `json:"finished_at,omitempty"`
+	Status         string          `json:"status"`
+	Verdict        string          `json:"verdict"`
+	Error          string          `json:"error,omitempty"`
+	Spec           Spec            `json:"spec"`
+	Data           DataSummary     `json:"data"`
+	Result         *Results        `json:"result,omitempty"`
+	Review         *Review         `json:"current_review,omitempty"`
+	ResultSnapshot *ResultSnapshot `json:"result_snapshot,omitempty"`
 }
 
 func ValidID(id string) bool {

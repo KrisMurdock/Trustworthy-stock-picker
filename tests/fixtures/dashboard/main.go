@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"stock-watcher/internal/bottomstudy"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/experiment"
 	"stock-watcher/internal/market"
@@ -236,6 +237,28 @@ func seedExperiments(root string) error {
 	if err = experiment.Evaluate(ctx, snapshot, &r, nil); err != nil {
 		return err
 	}
+	if err = db.Finish(ctx, r); err != nil {
+		return err
+	}
+	return seedResultSnapshot(ctx, db, snapshot)
+}
+
+func seedResultSnapshot(ctx context.Context, db *storage.ExperimentDB, data experiment.Snapshot) error {
+	spec := experiment.Spec{Title: "测试无止损 · 持仓时间结果", Direction: "验证结果快照", Change: "两组固定参数对照", Criteria: "训练选优，后段复查", Range: &strategy.BacktestRange{From: "2026-01-01", Through: "2026-10-12"}}
+	r, err := experiment.NewRecord(data, spec, nil, "fixture-v1")
+	if err != nil {
+		return err
+	}
+	r.Engine = bottomstudy.SpeedEngine
+	if err = db.Start(ctx, data, r); err != nil {
+		return err
+	}
+	s := bottomstudy.SpeedStats{ComparisonStats: bottomstudy.ComparisonStats{TradeStats: bottomstudy.TradeStats{Samples: 19, Entries: 19, Resolved: 19, Targets: 18, Rate: 18.0 / 19, MeanDays: 7.37, MeanNet: 2.55, WorstNet: -8.21}}, SuccessDays: 6.67, PenalizedDays: 7.42}
+	p := bottomstudy.SpeedPair{ID: "fixture-pair", Policy: bottomstudy.TradePolicy{Rule: "macd_contraction", Batches: 2, Horizon: 20, Target: 3}, Confirmation: "none", Stock: bottomstudy.SpeedArm{Training: s, Later: s}, Combined: bottomstudy.SpeedArm{Training: s, Later: s}}
+	report := bottomstudy.SpeedReport{Pairs: []bottomstudy.SpeedPair{p}, Winners: []bottomstudy.SpeedWinner{{ID: p.ID}}}
+	now := time.Now().UTC()
+	r.FinishedAt, r.Status, r.Verdict = &now, "completed", "research"
+	r.ResultSnapshot = bottomstudy.SpeedResultSnapshot(report, r)
 	return db.Finish(ctx, r)
 }
 

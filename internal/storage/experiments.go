@@ -124,7 +124,7 @@ func (x *ExperimentDB) Start(ctx context.Context, snapshot experiment.Snapshot, 
 	if err := x.check(ctx); err != nil {
 		return err
 	}
-	if !experiment.ValidID(record.ID) || record.Version != 1 || record.Status != "running" || snapshot.ID != record.Data.ID || snapshot.Version != 1 {
+	if !experiment.ValidID(record.ID) || record.Version != 1 || record.Status != "running" || record.ResultSnapshot != nil || snapshot.ID != record.Data.ID || snapshot.Version != 1 {
 		return errors.New("invalid experiment record")
 	}
 	if record.ParentID != "" {
@@ -183,6 +183,19 @@ func (x *ExperimentDB) Finish(ctx context.Context, record experiment.Record) err
 	}
 	// Only execution fields can change after the hypothesis has been recorded.
 	old.Status, old.Verdict, old.Error, old.FinishedAt, old.Result = record.Status, record.Verdict, record.Error, record.FinishedAt, record.Result
+	old.Review = nil
+	if old.Status == "completed" {
+		if old.Result != nil {
+			old.ResultSnapshot = experiment.SnapshotResult(old)
+		} else {
+			old.ResultSnapshot = record.ResultSnapshot
+		}
+		if old.ResultSnapshot != nil {
+			if err := old.ResultSnapshot.Validate(old); err != nil {
+				return err
+			}
+		}
+	}
 	payload, err := experimentJSON(old)
 	if err != nil {
 		return err
@@ -210,7 +223,7 @@ func (x *ExperimentDB) List(ctx context.Context) ([]experiment.Record, error) {
 	if x.db == nil {
 		return out, nil
 	}
-	rows, err := x.db.QueryContext(ctx, "SELECT summary, json_extract(payload, '$.result.development.research.development.top_ranked') FROM experiment_run ORDER BY created_at DESC,id DESC LIMIT 200")
+	rows, err := x.db.QueryContext(ctx, "SELECT summary, json_extract(payload, '$.result.development.research') FROM experiment_run ORDER BY created_at DESC,id DESC LIMIT 200")
 	if err != nil {
 		return nil, errors.New("cannot list experiments")
 	}
@@ -226,11 +239,21 @@ func (x *ExperimentDB) List(ctx context.Context) ([]experiment.Record, error) {
 			return nil, errors.New("invalid stored experiment")
 		}
 		if r.Status == "completed" && statsJSON.Valid {
-			var stats strategy.Stats
-			if err = json.Unmarshal([]byte(statsJSON.String), &stats); err != nil {
+			var research strategy.Research
+			if err = json.Unmarshal([]byte(statsJSON.String), &research); err != nil {
 				return nil, errors.New("invalid stored experiment statistics")
 			}
-			r.Review = experiment.ReviewStats(stats)
+			r.Review = experiment.ReviewStats(research.Development.TopRanked)
+			if r.ResultSnapshot == nil {
+				r.Result = &experiment.Results{Development: strategy.DevelopmentResult{Research: research}}
+				r.ResultSnapshot = experiment.SnapshotResult(r)
+				r.Result = nil
+			}
+		}
+		if r.ResultSnapshot != nil {
+			if err := r.ResultSnapshot.Validate(r); err != nil {
+				return nil, err
+			}
 		}
 		out = append(out, r)
 	}
@@ -257,6 +280,11 @@ func (x *ExperimentDB) Get(ctx context.Context, id string) (experiment.Record, e
 	}
 	if len(b) > 32<<20 || json.Unmarshal(b, &r) != nil || r.Version != 1 || r.ID != id {
 		return r, errors.New("invalid stored experiment")
+	}
+	if r.ResultSnapshot == nil {
+		r.ResultSnapshot = experiment.SnapshotResult(r)
+	} else if err := r.ResultSnapshot.Validate(r); err != nil {
+		return r, err
 	}
 	return r, nil
 }

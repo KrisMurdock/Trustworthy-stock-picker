@@ -2,7 +2,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const state = { records: [], current: null, parent: null, baseline: null, id: "", request: 0, page: 0, evidenceRequest: 0 };
-  const verdicts = { entry_day_rejected: "买入日浮盈不达标", entry_day_unverified: "买入日证据待核实", below_goal: "次日目标未达到", goal_25_only: "仅 2.5% 档观察达标", goal_observed: "两档观察达标 · 待独立验证", risk_rejected: "风险不达标", risk_unverified: "风险待核实", tradeoff: "收益／周期有取舍", historical: "旧口径结论", baseline: "基线", promising: "开发候选", no_improvement: "未改善", insufficient: "证据不足", not_comparable: "口径不同", pending: "尚无结论" };
+  const verdicts = { research: "研究结果快照", entry_day_rejected: "买入日浮盈不达标", entry_day_unverified: "买入日证据待核实", below_goal: "次日目标未达到", goal_25_only: "仅 2.5% 档观察达标", goal_observed: "两档观察达标 · 待独立验证", risk_rejected: "风险不达标", risk_unverified: "风险待核实", tradeoff: "收益／周期有取舍", historical: "旧口径结论", baseline: "基线", promising: "开发候选", no_improvement: "未改善", insufficient: "证据不足", not_comparable: "口径不同", pending: "尚无结论" };
   const statuses = { running: "运行中", completed: "运行成功", failed: "运行失败", canceled: "已取消", interrupted: "运行中断" };
   const outcomes = { entry_path_unknown: "买入分钟缺失，路径未知", entry_invalidated: "跌破买入区间，放弃", entry_price_outside_zone: "触发后跳出区间，放弃", entry_not_triggered: "未满足到价反弹，放弃", target: "达到目标", stop: "止损", stop_gap: "跳空止损", timeout: "到期退出", unresolved: "无法判定", corporate_action: "除权窗口未决", entry_skipped: "跳过入场", missing_entry_session: "入场日缺失", missing_exit_session: "退出日缺失", cash_insufficient: "预算不足", risk_budget_insufficient: "交易成本已占满亏损额度" };
   const fmt = (v, digits = 2) => Number.isFinite(v) ? v.toLocaleString("zh-CN", { minimumFractionDigits: digits, maximumFractionDigits: digits }) : "—";
@@ -13,12 +13,14 @@
   const list = value => Array.isArray(value) ? value : [];
   const short = id => (id || "").slice(0, 8);
   const stats = r => r?.current_review?.stats || r?.result?.development?.research?.development?.top_ranked;
+  const researchSnapshot = r => r?.result_snapshot?.source === "no_stop_speed";
   const resolved = outcome => ["target", "stop", "stop_gap", "timeout"].includes(outcome.status);
   const touch = trade => resolved(trade.outcome) && trade.outcome.high_touch?.schema_version === 1 && trade.outcome.high_touch.observed_days > 0 ? trade.outcome.high_touch : null;
   const touchDays = h => h ? `${h.first_2_5_day || "未触达"}${h.first_2_5_order_unknown ? "（顺序不明）" : ""} / ${h.first_3_day || "未触达"}${h.first_3_order_unknown ? "（顺序不明）" : ""}` : "未记录 / 待核实";
   const breaches = trade => trade.selected && resolved(trade.outcome) && trade.outcome.net_pct <= -3 + 1e-9;
   const currentVerdict = r => {
     if (r.status !== "completed") return r.verdict;
+  if (researchSnapshot(r)) return "research";
     const risk = r.current_review?.risk;
     if (risk?.status === "breached") return "risk_rejected";
     if (risk?.status !== "observed_pass") return "risk_unverified";
@@ -59,6 +61,8 @@
       b.dataset.id = r.id; b.setAttribute("aria-current", String(r.id === state.id));
       b.append(node("span", `#${short(r.id)} · ${timestamp(r.created_at)}`, "item-meta"), node("strong", r.spec.title), badge(statuses[r.status] || r.status), document.createTextNode(" "), badge(verdicts[currentVerdict(r)] || currentVerdict(r), currentVerdict(r) === "promising"));
       if (r.parent_id) b.append(node("span", `源自 #${short(r.parent_id)}`, "item-meta"));
+      const summary = defaultSnapshotRow(r);
+      if (summary) b.append(node("span", `结果快照 · ${fmt(summary.target_net_pct, 1)}%目标`, "item-meta"), node("span", `达标 ${summary.mean_target_days == null ? "暂无" : fmt(summary.mean_target_days) + "日"} · 最大亏损 ${summary.max_realized_loss_pct == null ? "未记录" : fmt(summary.max_realized_loss_pct) + "%"}`, "item-meta"));
       return b;
     }));
     text("experiment-count", state.records.length); show("list-empty", !visible.length);
@@ -103,7 +107,7 @@
     if (r.parent_id && r.parent_id !== r.baseline_id) lineage.append(button(`父实验 #${short(r.parent_id)}`, () => select(r.parent_id, true)), node("span", "→"));
     lineage.append(node("strong", `本轮 #${short(r.id)}`));
     text("run-coverage", `${r.data.included} / ${r.data.pool_size} 支`);
-    text("run-dates", evaluation?.from ? `${evaluation.from} → ${evaluation.through}` : "尚无有效验证区间");
+    text("run-dates", evaluation?.from ? `${evaluation.from} → ${evaluation.through}` : researchSnapshot(r) ? `${r.spec.signal_range.from} → ${r.spec.signal_range.through}` : "尚无有效验证区间");
     text("run-validation-label", r.spec.signal_range ? "指定区间 · 未声明独立验证集" : "最终保留区间 · 本轮未评估");
     text("run-holdout", r.spec.signal_range ? `${r.spec.signal_range.from} → ${r.spec.signal_range.through}（信号日）` : dev?.holdout_from ? `${dev.holdout_from} → ${dev.holdout_through}` : "待划分");
     for (const field of ["direction", "hypothesis", "change", "criteria"]) text(`run-${field}`, r.spec[field]);
@@ -112,7 +116,7 @@
     if (!$("backtest-through").value) $("backtest-through").value = r.spec.signal_range?.through || evaluation?.through || "";
     $("run-data").replaceChildren(...[
       `日线公共起始边界 ${r.data.from}，截止 ${r.data.as_of}；日历 ${r.data.calendar.from} 至 ${r.data.calendar.through}。实际信号区间还需扣除指标预热、训练与持仓边界。`,
-      `每日选择前 ${r.data.top_n} 名；模拟止盈目标 ${fmt(p.target_net_pct)}%，配置止损目标 ${fmt(p.stop_net_pct)}%，买入后最多 ${p.max_holding_days} 个可卖出交易日。当前模型在 3% 硬限额内预留费用、滑点与价格取整；触发价不能保证实际成交价。`,
+      researchSnapshot(r) ? `每日选择前 ${r.data.top_n} 名；不设价格止损，净盈利目标、分批上限与期限见各结果分组。` : `每日选择前 ${r.data.top_n} 名；模拟止盈目标 ${fmt(p.target_net_pct)}%，配置止损目标 ${fmt(p.stop_net_pct)}%，买入后最多 ${p.max_holding_days} 个可卖出交易日。当前模型在 3% 硬限额内预留费用、滑点与价格取整；触发价不能保证实际成交价。`,
       `单股参考预算 ${fmt(p.trade_cash)} 元；双边佣金 ${fmt(p.commission_rate * 100, 4)}%，最低佣金 ${fmt(p.min_commission)} 元；过户费 ${fmt(p.transfer_rate * 100, 4)}%，卖出印花税 ${fmt(p.sell_stamp_rate * 100, 4)}%，滑点 ${fmt(p.slippage_rate * 100, 4)}%。`,
       r.spec.signal_range ? `显式回测信号区间 ${r.spec.signal_range.from} 至 ${r.spec.signal_range.through}；指标预热和退出行情另外读取，没有声明独立留出集。` : r.spec.entry_mode ? `固定规则分钟试运行，最近 3 个分钟交易日留出；短历史不能证明 80% 成功率。` : `开发期使用前复权特征与不复权成交模拟；预留 ${p.holdout_days} 个末段信号日期，跨边界持仓样本剔除。最终区间未参与本轮评价。`,
       r.data.minute_stocks ? `冻结分钟行情 ${r.data.minute_from} 至 ${r.data.minute_through}，${r.data.minute_stocks} 支。` : "此快照没有分钟路径；开盘买入结果不能视作条件低吸的验证。",
@@ -122,6 +126,8 @@
     $("run-excluded").replaceChildren(...list(r.data.excluded).map(x => node("li", `${x.name || x.code} ${x.code}：${reasons[x.reason] || x.reason}`)));
     show("run-failure", !!r.error || r.status === "running"); text("run-failure", r.error || "实验正在运行，完成后刷新记录可查看结果。异常退出的任务会在下次本地任务启动时标为中断。");
     show("run-results", !!result && r.status === "completed"); show("risk-review", !!result && r.status === "completed");
+  show("validation-rules", !researchSnapshot(r));
+  renderSnapshot();
     if (!result) return;
     renderComparison(); renderGroups(); renderTrades(); renderRisk(); renderNextDay(); renderEntryDay();
     $("run-findings").replaceChildren(...list(result.findings).map(f => {
@@ -133,6 +139,48 @@
     $("run-next").replaceChildren(...list(result.next).map(x => node("li", x)));
     const children = state.records.filter(x => x.parent_id === r.id);
     $("run-children").replaceChildren(node("span", children.length ? "已衍生的实验" : "尚未记录后续实验"), ...children.map(x => button(`${x.spec.title} #${short(x.id)}`, () => select(x.id, true))));
+  }
+
+  function defaultSnapshotRow(r) {
+    if (r?.status !== "completed" || r?.result_snapshot?.schema_version !== 1) return null;
+    const rows = list(r.result_snapshot.rows);
+    return rows.find(x => x.period.startsWith("后段") && x.label.includes("板块") && x.target_net_pct === 3 && x.rule.startsWith("macd_contraction")) || rows[0];
+  }
+  function snapshotRule(value) {
+    const names = { any: "任一底部信号", macd_contraction: "MACD绿柱收缩", price_reclaim: "收盘≥MA5", momentum_turn: "RSI与MACD柱改善", price_and_momentum: "收盘≥MA5且动量改善", none: "原信号" };
+    return value.split(" / ").map(x => names[x] || x).join(" · ");
+  }
+  function renderSnapshot() {
+    const r = state.current, s = r.result_snapshot, available = r.status === "completed" && s?.schema_version === 1 && list(s.rows).length > 0;
+    show("snapshot-content", available); show("snapshot-empty", !available); $("snapshot-download").disabled = !available;
+    $("snapshot-row").replaceChildren(); $("snapshot-table").replaceChildren(); $("snapshot-notes").replaceChildren();
+    text("snapshot-meta", available ? `结果 #${short(s.id)} · ${timestamp(s.finished_at)} · 原始结果固定保存` : "每次运行独立保存，后续规则变化不覆盖旧结果。");
+    if (!available) {
+      text("snapshot-empty", r.status === "running" ? "实验运行中，尚未生成结果快照。" : r.status !== "completed" ? "本次实验未成功完成，没有可用的结果快照。" : "此档案未记录可用的结果快照，不能按零收益或零亏损处理。");
+      return;
+    }
+    for (const row of s.rows) {
+      const option = node("option", `${row.period} · ${row.label} · ${fmt(row.target_net_pct, 1)}% · ${row.max_batches}批 · ${snapshotRule(row.rule)}`); option.value = row.id; $("snapshot-row").append(option);
+      const tr = node("tr");
+      for (const value of [`${row.period} / ${row.label} / ${snapshotRule(row.rule)} / ${row.max_batches}批`, `${fmt(row.target_net_pct, 1)}%`, row.targets == null ? "未记录" : `${row.targets} / ${row.samples}`, row.mean_target_days == null ? "—" : `${fmt(row.mean_target_days)}日`, row.max_realized_loss_pct == null ? "未记录" : `${fmt(row.max_realized_loss_pct)}%`]) tr.append(node("td", value));
+      const cell = node("td"); cell.append(button("查看指标", () => { $("snapshot-row").value = row.id; renderSnapshotMetrics(); })); tr.append(cell); $("snapshot-table").append(tr);
+    }
+    $("snapshot-row").value = defaultSnapshotRow(r).id;
+    $("snapshot-notes").replaceChildren(...list(s.notes).map(x => node("li", x)));
+    renderSnapshotMetrics();
+  }
+  function renderSnapshotMetrics() {
+    const s = state.current?.result_snapshot, row = list(s?.rows).find(x => x.id === $("snapshot-row").value);
+    if (!row) return;
+    const stop = row.stop_loss_pct == null ? "止损未记录" : row.stop_loss_pct === 0 ? "无价格止损" : `止损目标 ${fmt(row.stop_loss_pct)}%`;
+    text("snapshot-policy", `${row.from && row.through ? row.from + " → " + row.through : "暂无有效信号区间"} · 净目标 ${fmt(row.target_net_pct, 1)}% · ${stop} · 最多 ${row.max_batches} 批 / ${row.sellable_days} 个可卖出日`);
+    text("snapshot-target-days", row.mean_target_days == null ? row.targets === 0 ? "暂无达标交易" : "未记录" : `${fmt(row.mean_target_days)} 日`);
+    text("snapshot-max-loss", row.max_realized_loss_pct == null ? "暂无已结束样本" : `${fmt(row.max_realized_loss_pct)}%`);
+    text("snapshot-hit-rate", row.target_rate == null ? row.samples === 0 ? "暂无样本" : "未记录" : `${fmt(row.target_rate * 100)}%`);
+    text("snapshot-hit-count", row.targets == null ? `样本 ${row.samples} 笔 · 触达证据未记录` : `${row.targets} / ${row.samples} 笔 · 分母含未决`);
+    text("snapshot-holding-days", row.mean_resolved_holding_days == null ? "暂无已结束样本" : `${fmt(row.mean_resolved_holding_days)} 日`);
+    const values = [["已结束 / 未决 / 跳过入场", `${row.resolved} / ${row.unresolved} / ${row.skipped_entries} 笔`], ["平均已实现净收益", row.mean_resolved_net_pct == null ? "未记录" : `${fmt(row.mean_resolved_net_pct)}%`], ["最大持仓不利变动", row.max_adverse_loss_pct == null ? "未记录" : `${fmt(row.max_adverse_loss_pct)}%`], ["含失败等待分", row.mean_target_days_failure_21 == null ? "本轮未记录" : `${fmt(row.mean_target_days_failure_21)} 日（未达标 / 未决记21日）`]];
+    $("snapshot-secondary").replaceChildren(...values.map(([label, value]) => { const box = node("div"); box.append(node("dt", label), node("dd", value)); return box; }));
   }
   function renderRisk() {
     const r = state.current, review = r.current_review, risk = review?.risk;
@@ -238,11 +286,17 @@
     const from = $("backtest-from").value, through = $("backtest-through").value, policy = $("backtest-policy").value, r = state.current;
     text("backtest-command", "");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(through) || from > through) { text("backtest-command-status", "请填写有效且顺序正确的信号起止日期。"); return; }
-    const frozen = r && (policy !== "conditional-entry" || r.data.minute_stocks > 0);
+    const frozen = r && !researchSnapshot(r) && (policy !== "conditional-entry" || r.data.minute_stocks > 0);
     text("backtest-command", `./bin/stock-watcher experiment -config config.yaml -policy ${policy}${frozen ? ` -parent ${r.id}` : ""} -from ${from} -through ${through}`);
     text("backtest-command-status", frozen ? "复用当前快照；明确指定信号区间。区间变化时不展示父实验提升差值。" : "创建包含所需行情的新快照；条件低吸需要已保存的5分钟路径，缺失时不会假设最低价成交。");
   });
   $("show-breaches").addEventListener("click", () => { $("trade-filter").value = "breaches"; state.page = 0; renderTrades(); $("trade-section").scrollIntoView({ block: "start" }); });
+  $("snapshot-row").addEventListener("change", renderSnapshotMetrics);
+  $("snapshot-download").addEventListener("click", () => {
+    if (state.current?.status !== "completed" || !state.current.result_snapshot) return;
+    const blob = new Blob([JSON.stringify(state.current.result_snapshot, null, 2) + "\n"], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob), link = node("a"); link.href = url; link.download = `experiment-result-${state.current.id}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
   $("refresh-experiments").addEventListener("click", refresh); $("lab-retry").addEventListener("click", refresh); $("detail-retry").addEventListener("click", () => select(state.id));
   $("experiment-search").addEventListener("input", renderList); $("experiment-filter").addEventListener("change", renderList);
   $("group-kind").addEventListener("change", renderGroups); $("trade-filter").addEventListener("change", () => { state.page = 0; renderTrades(); });
