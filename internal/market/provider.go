@@ -144,9 +144,9 @@ func parseCompactDate(date string) (string, error) {
 
 // ProviderVolumeShares preserves the schema-v1 provider_raw values while
 // recording consistent share counts in SQLite. Tencent's STAR board is the
-// legacy exception; BaoStock reports shares, Tushare and Eastmoney report lots.
+// legacy exception; BaoStock/Sina report shares, Tushare and Eastmoney report lots.
 func ProviderVolumeShares(source, code string, raw float64) float64 {
-	if source == "baostock" {
+	if source == "baostock" || source == "sina" {
 		return raw
 	}
 	if source == "tencent" {

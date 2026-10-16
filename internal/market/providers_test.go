@@ -312,9 +312,9 @@ func TestFallbackFailureClassificationAndCancellation(t *testing.T) {
 
 func TestProviderVolumeUnits(t *testing.T) {
 	for _, code := range []string{"sz000001", "sh600000", "sh688981"} {
-		for _, source := range []string{"tencent", "baostock", "tushare", "eastmoney"} {
+		for _, source := range []string{"tencent", "sina", "baostock", "tushare", "eastmoney"} {
 			want := 10000.0
-			if source == "baostock" || (source == "tencent" && code == "sh688981") {
+			if source == "baostock" || source == "sina" || (source == "tencent" && code == "sh688981") {
 				want = 100
 			}
 			if got := ProviderVolumeShares(source, code, 100); got != want {

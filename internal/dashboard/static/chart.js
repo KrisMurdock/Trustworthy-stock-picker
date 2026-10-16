@@ -104,8 +104,8 @@ window.StockChart = class {
         return point;
       });
       const basisLabel = { qfq: "前复权", hfq: "后复权", none: "不复权" }[history.adjust];
-      const source = { tencent: "腾讯", baostock: "BaoStock", tushare: "Tushare", eastmoney: "东方财富" }[history.source] || history.source;
-      const volumeUnit = history.source === "baostock" || (history.source === "tencent" && code.startsWith("sh68")) ? "股" : "手";
+      const source = { tencent: "腾讯", sina: "新浪", baostock: "BaoStock", tushare: "Tushare", eastmoney: "东方财富" }[history.source] || history.source;
+      const volumeUnit = ["baostock", "sina"].includes(history.source) || (history.source === "tencent" && code.startsWith("sh68")) ? "股" : "手";
       const last = history.bars.at(-1).date;
       if (minutePeriod) {
         this.byId("chart-meta").textContent = `${code} · 腾讯 · 不复权 · 成交量：数据源原始单位 · ${history.bars[0].date} 至 ${last} · ${history.bars.length} 根 ${minutePeriod} 分钟 K 线`;

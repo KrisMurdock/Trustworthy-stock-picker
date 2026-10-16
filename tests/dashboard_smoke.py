@@ -69,7 +69,7 @@ def fixture(directory, empty, partial=False):
     config = config.replace("intraday:\n  enabled: true", "intraday:\n  enabled: false")
     config = config.replace("request_timeout: 10s", "request_timeout: 1s")
     # All other upstreams must remain disabled: BaoStock uses TCP and bypasses HTTPS_PROXY.
-    config = config.replace("providers: [tencent, baostock, tushare, eastmoney]", "providers: [tencent]")
+    config = config.replace("providers: [tencent, sina, baostock, tushare, eastmoney]", "providers: [tencent]")
     config = config.replace("poll_interval: 5m", "poll_interval: 1h")
     # Freeze saved-data UI fixtures. Even a failed refresh saves a sync status.
     # A mock calendar with no recent completed session blocks background writes
@@ -404,12 +404,12 @@ def chart_checks(page, url, state, args):
     expect(page.locator("#chart-meta")).to_contain_text("成交量单位：股")
     expect(page.locator("#chart-detail")).to_contain_text("198.00")
     expect(page.locator("#chart-plot .chart-fall .chart-candle")).to_have_count(60)
-    for source, label in (("tushare", "Tushare"), ("eastmoney", "东方财富")):
+    for source, label in (("tushare", "Tushare"), ("eastmoney", "东方财富"), ("sina", "新浪")):
         page.route("**/api/history?code=sz000001", lambda route, *, source=source: route.fulfill(
             status=200, content_type="application/json", body=json.dumps({**history, "source": source})))
         page.locator("#chart-stock").select_option("sz000001")
         expect(page.locator("#chart-meta")).to_contain_text(label)
-        expect(page.locator("#chart-meta")).to_contain_text("成交量单位：手")
+        expect(page.locator("#chart-meta")).to_contain_text("成交量单位：股" if source == "sina" else "成交量单位：手")
         expect(page.get_by_test_id("kline-candle")).to_have_count(60)
         page.unroute("**/api/history?code=sz000001")
         page.locator("#chart-stock").select_option("sh600519")

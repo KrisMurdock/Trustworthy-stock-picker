@@ -1,10 +1,11 @@
 # 行情来源与同步契约
 
-`stock-watcher` 使用 Go 原生日线客户端，按 `market.providers` 顺序取第一个通过校验的完整窗口。默认 `tencent, baostock, tushare, eastmoney`；`eastmoney` 是 AKShare `stock_zh_a_hist` 的实际上游，配置名不使用 `akshare`，以免把直接 HTTP 访问误认为运行了 AKShare 库。本次不安装 Python SDK 或额外的数据服务。
+`stock-watcher` 使用 Go 原生日线客户端，按 `market.providers` 顺序取第一个通过校验的完整窗口。默认 `tencent, sina, baostock, tushare, eastmoney`；`eastmoney` 是 AKShare `stock_zh_a_hist` 的实际上游，配置名不使用 `akshare`，以免把直接 HTTP 访问误认为运行了 AKShare 库。生产不安装 Python SDK 或额外的数据服务。
 
 | 配置名 | 协议与接口 | 复权 | 原始成交量 |
 | --- | --- | --- | --- |
 | `tencent` | 腾讯 HTTP，复用原客户端和 640 根分页 | none / qfq / hfq | 沿用原协议：科创板为股，其余为手 |
+| `sina` | AKShare 新浪日线上游，Go 原生 KLC2 解码与复权因子 | none / qfq / hfq | 股 |
 | `baostock` | 官方 0.9.4 TCP 协议，匿名登录、压缩帧、250 根分页 | 3 / 2 / 1 映射为 none / qfq / hfq | 股 |
 | `tushare` | 官方 REST `daily` + `adj_factor` | 原价；前复权乘当日因子/窗口末日因子；后复权乘当日因子 | 手 |
 | `eastmoney` | AKShare 所用的东方财富日线 HTTP 接口 | fqt 0 / 1 / 2 | 手 |
@@ -15,7 +16,7 @@ Tushare 按自然年请求，以避免长窗口遇到单次条数上限；拉完
 
 ```yaml
 market:
-  providers: [tencent, baostock, tushare, eastmoney]
+  providers: [tencent, sina, baostock, tushare, eastmoney]
   request_interval: 1s
   tushare_token_env: TUSHARE_TOKEN
 ```
@@ -33,7 +34,7 @@ Token 仅从指定环境变量读取。未配置时跳过 Tushare；若它是唯
 
 ## 回退与数据一致性
 
-1. 同一窗口依次尝试来源，每个来源尝试一次。单请求超时由 `request_timeout` 控制，每源间隔由 `market.request_interval` 控制；多页请求依次执行，受调用者取消信号控制。
+1. 同一窗口依次尝试来源，每个来源尝试一次。单请求超时由 `request_timeout` 控制，每源间隔由 `market.request_interval` 控制；多页请求同时受 `market.attempt_timeout` 和调用者取消信号控制。冷却中的来源暂时跳过，详见下文。
 2. 校验股票代码、日期、正价格、OHLC、成交量、复权字段、日历和历史覆盖。HTTP 成功但数据不可用同样回退。
 3. 前复权/后复权窗口完整刷新。不复权增量只在来源、单位、复权字段及重叠日线全部一致时合并；切换来源或发现重叠修订会完整回补。
 4. 复权分析窗口与十年原始窗口分别回退，各自记录实际来源。不会把一个窗口内的部分日期从不同来源拼接，也不会平均多个来源的价格。本次不进行多源交叉验证。
@@ -42,7 +43,7 @@ Token 仅从指定环境变量读取。未配置时跳过 Tushare；若它是唯
 
 腾讯当日日线使用不指定结束日期的最新窗口，避免历史日期查询在收盘后仍只返回上一交易日；解析结果仍限制在请求日期内。供应商额外附加当日行时，仅保留请求根数的最新窗口，历史分页继续按明确日期查询。是否可以使用当日日线仍由上层收盘时间与完整性检查决定。
 
-历史 JSON 保持 `schema_version: 1`、UTF-8、ISO 日期和 `volume_unit: provider_raw`，`source` 扩展为四个允许值，`data_field` 仍是 `day/qfqday/hfqday`。新增来源均使用既有 SQLite schema 2，无需迁移或清空库。入库时分别保留原始量和按来源换算的股数；历史读取拒绝来源或复权字段不一致的混合窗口。旧版本只识别腾讯，回滚旧二进制前需要恢复相应旧数据快照。
+历史 JSON 保持 `schema_version: 1`、UTF-8、ISO 日期和 `volume_unit: provider_raw`，`source` 支持表中五个允许值，`data_field` 仍是 `day/qfqday/hfqday`。新增来源均使用既有 SQLite schema 2，无需迁移或清空库。入库时分别保留原始量和按来源换算的股数；历史读取拒绝来源或复权字段不一致的混合窗口。旧版本只识别腾讯，回滚旧二进制前需要恢复相应旧数据快照。
 
 `/api/dashboard` 新增 `stocks[].source` 与 `stocks[].bar.volume_shares`，兼容原有 `volume` 字段。网页股池表以股显示并排序；日 K 显示原始量，并明确标注来源及股/手。
 
@@ -63,3 +64,47 @@ Token 仅从指定环境变量读取。未配置时跳过 Tushare；若它是唯
 分钟路径复用 `request_timeout`，使用单独的 `intraday.request_interval` 限速；每股每轮一次请求，最多 `intraday.workers` 个并发，取消会中断网络、排队和数据库写入。HTTP 403/429、超时或无效响应只记录稳定错误原因，不输出原始响应；有效但落后的数据标为 stale，缺根或最后一根待确认标为 partial，均不计作盘后校准成功。供应商返回较旧窗口不会删除本地已观察到的更新 K 线。
 
 默认盘中 1 分钟轮询、15:10 全日校准，非交易时段失败/不完整股票每 5 分钟重试。初次/校准最多请求 640 根，盘中请求 64 根；超出历史窗口的缺口不能靠该接口补齐。盘后校准要求当前交易日完整的 48 根已完成 5 分钟线，停牌或上游缺根股票会保持未完成状态。分钟同步成功不代表日线推荐覆盖率满足要求。
+
+## 新浪备用日线与故障源保护
+
+新增 `sina` 原生 Go 客户端，对应 AKShare 的 `stock_zh_a_daily` 上游。直接读取
+`https://finance.sina.com.cn/realstock/company/<code>/hisdata_klc2/klc_kl.js`，
+在 Go 内解码 KLC2 日线；前/后复权分别读取 `qfq.js`、`hfq.js`，按日期匹配因子，
+前复权除以因子，后复权乘以因子，OHLC 保留两位小数，成交量为股。
+不运行 Python、JavaScript 引擎或外部数据服务，也不执行响应中的代码。
+未知编码、缺失/非法因子、错误股票标识、截断和无效 OHLCV 均触发回退。
+新浪返回上市以来的完整流，客户端保留请求窗口及边界锚点；不能用返回的首日直接推断上市日期。
+
+新的默认顺序为 `tencent → sina → baostock → tushare → eastmoney`。
+**已有配置显式写了 `market.providers` 时不会自动插入来源**，需在合并部署时修改该列表：
+
+```yaml
+market:
+  providers: [tencent, sina, baostock, tushare, eastmoney]
+  request_interval: 1s
+  attempt_timeout: 60s
+  failure_threshold: 3
+  failure_cooldown: 5m
+```
+
+- `attempt_timeout` 限制同一来源整个窗口的网络用时，包括分页、增量失败后的全量请求；允许 10 秒至 5 分钟，默认 60 秒。源内预算到期可回退；调用者取消或整体超时仍立即中止。共享盘读取使用调用者上下文，磁盘故障不会被改写成行情源超时。
+- 连续网络、限流或可重试服务错误达到 `failure_threshold` 后，整个日线实例暂时跳过该来源。阈值允许 1–20，默认 3；`failure_cooldown` 允许 1 分钟至 1 小时，默认 5 分钟。
+- 冷却到期仅放行一个恢复探测；再次失败继续冷却。有效响应或单股数据校验错误会清除网络失败计数；历史不足、停牌缺口不算整个源不可用。冷却状态仅在进程内，重启后重新探测。
+- 日志记录每次失败耗时、进入冷却与恢复时间；隔离股票保留各来源原因，不再只显示泛化的 `invalid_data`。没有任何来源可用时继续下一只股票，整轮保存通过校验的数据，推荐仍须满足 95% 门槛。
+
+`source: sina` 与现有 schema 兼容，无数据库结构迁移；SQLite 中原始量和股数一致，网页显示“新浪 / 成交量单位：股”。回退到不认识 `sina` 的旧二进制前，应恢复匹配的数据快照。分钟数据仍使用独立的腾讯路径，本次新浪接入只覆盖日线。
+
+解码回归使用公开历史响应与独立参考解码器生成的全字段摘要；测试不依赖网络。
+`make sources-smoke` 额外覆盖新浪回退、复权、空库写入和已有库增量更新；
+`make dashboard-smoke` 验证真实浏览器中的新浪来源与成交量单位。
+
+参考：[AKShare 新浪日线实现](https://github.com/akfamily/akshare/blob/main/akshare/stock/stock_zh_a_sina.py)、
+[编码参考](https://github.com/akfamily/akshare/blob/main/akshare/stock/cons.py)。
+
+### 2026-10-16 服务器实测
+
+以已收盘的 2026-10-15 为截止日：新浪对全池 104 只股票的 `none/qfq` 共 208 个窗口均返回通过 OHLCV、日期和复权解析校验的数据，最新日均为 10 月 15 日；单窗口耗时中位数约 1.51 秒，最大 3.71 秒（含每秒一次的限速等待）。另对 10 只代表股票重复请求三轮，30/30 成功；对 5 只股票最近 20 根 `none/qfq` 与腾讯交叉核验，OHLC 一致，统一股数最大差异 49 股。后复权另抽样 5 只，均通过解析校验。
+
+同期东方财富按 AKShare 当前源码参数重复 3 次，均在连接阶段被重置；加常见请求头也没有改善。故选择增加独立的新浪上游，而非把同一东方财富请求再包装为 AKShare。
+
+这是一台服务器在有限时段的观测，不代表公共接口长期可用性承诺。208 个窗口的成功也**不等于推荐覆盖达标**：其中 44 只股票返回的历史不足十年，仍须核对真实上市日期并配置 `listed_from`，或确认是否存在缺失历史。不得直接把供应商首条日线当作上市日期，亦不得为发布推荐而降低 95% 门槛。

@@ -13,30 +13,47 @@ import (
 type Market struct {
 	Providers         []string `yaml:"providers"`
 	RequestInterval   string   `yaml:"request_interval"`
+	AttemptTimeout    string   `yaml:"attempt_timeout"`
+	FailureThreshold  int      `yaml:"failure_threshold"`
+	FailureCooldown   string   `yaml:"failure_cooldown"`
 	TencentEndpoint   string   `yaml:"tencent_endpoint"`
 	BaostockAddress   string   `yaml:"baostock_address"`
 	TushareEndpoint   string   `yaml:"tushare_endpoint"`
 	TushareTokenEnv   string   `yaml:"tushare_token_env"`
 	TushareToken      string   `yaml:"-" json:"-"`
 	EastmoneyEndpoint string   `yaml:"eastmoney_endpoint"`
+	SinaEndpoint      string   `yaml:"sina_endpoint"`
 }
 
 func DefaultMarket() Market {
-	return Market{Providers: []string{"tencent", "baostock", "tushare", "eastmoney"}, RequestInterval: "1s",
+	return Market{Providers: []string{"tencent", "sina", "baostock", "tushare", "eastmoney"}, RequestInterval: "1s",
+		AttemptTimeout: "60s", FailureThreshold: 3, FailureCooldown: "5m",
 		TencentEndpoint: "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get",
 		BaostockAddress: "public-api.baostock.com:10030", TushareEndpoint: "https://api.tushare.pro",
-		TushareTokenEnv: "TUSHARE_TOKEN", EastmoneyEndpoint: "https://push2his.eastmoney.com/api/qt/stock/kline/get"}
+		TushareTokenEnv: "TUSHARE_TOKEN", EastmoneyEndpoint: "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+		SinaEndpoint: "https://finance.sina.com.cn/realstock/company"}
 }
 
 func (m *Market) loadCredentials() { m.TushareToken = strings.TrimSpace(os.Getenv(m.TushareTokenEnv)) }
 
 func (m Market) Validate() error {
-	if len(m.Providers) == 0 || len(m.Providers) > 4 {
-		return errors.New("market.providers must contain one to four providers")
+	if len(m.Providers) == 0 || len(m.Providers) > 5 {
+		return errors.New("market.providers must contain one to five providers")
 	}
 	interval, err := time.ParseDuration(m.RequestInterval)
 	if err != nil || interval < 350*time.Millisecond || interval > time.Minute {
 		return errors.New("market.request_interval must be between 350ms and 1m")
+	}
+	budget, err := time.ParseDuration(m.AttemptTimeout)
+	if err != nil || budget < 10*time.Second || budget > 5*time.Minute {
+		return errors.New("market.attempt_timeout must be between 10s and 5m")
+	}
+	cooldown, err := time.ParseDuration(m.FailureCooldown)
+	if err != nil || cooldown < time.Minute || cooldown > time.Hour {
+		return errors.New("market.failure_cooldown must be between 1m and 1h")
+	}
+	if m.FailureThreshold < 1 || m.FailureThreshold > 20 {
+		return errors.New("market.failure_threshold must be between 1 and 20")
 	}
 	seen := map[string]bool{}
 	active := 0
@@ -65,8 +82,10 @@ func (m Market) Validate() error {
 			}
 		case "eastmoney":
 			endpoint = m.EastmoneyEndpoint
+		case "sina":
+			endpoint = m.SinaEndpoint
 		default:
-			return errors.New("unsupported market provider; use tencent, baostock, tushare or eastmoney")
+			return errors.New("unsupported market provider; use tencent, sina, baostock, tushare or eastmoney")
 		}
 		if endpoint != "" {
 			u, err := url.Parse(endpoint)

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/logging"
@@ -19,15 +21,21 @@ type Provider struct {
 // calendar/coverage validation, so HTTP success with unusable data also falls
 // back. Cancellation never starts another provider.
 type Sources struct {
-	Providers []Provider
-	Log       *logging.Logger
+	Providers        []Provider
+	Log              *logging.Logger
+	attemptTimeout   time.Duration
+	failureThreshold int
+	failureCooldown  time.Duration
+	mu               sync.Mutex
+	health           map[string]*providerHealth
+	now              func() time.Time
 }
 
 func NewSources(c config.Config, log *logging.Logger) (*Sources, error) {
 	if err := c.Market.Validate(); err != nil {
 		return nil, err
 	}
-	s := &Sources{Log: log}
+	s := &Sources{Log: log, attemptTimeout: config.Duration(c.Market.AttemptTimeout), failureThreshold: c.Market.FailureThreshold, failureCooldown: config.Duration(c.Market.FailureCooldown)}
 	if s.Log == nil {
 		s.Log = logging.Nop()
 	}
@@ -56,6 +64,10 @@ func NewSources(c config.Config, log *logging.Logger) (*Sources, error) {
 		case "eastmoney":
 			client := NewEastmoneyClient(timeout, interval)
 			client.Endpoint = c.Market.EastmoneyEndpoint
+			source = client
+		case "sina":
+			client := NewSinaClient(timeout, interval)
+			client.Endpoint = c.Market.SinaEndpoint
 			source = client
 		}
 		s.Providers = append(s.Providers, Provider{Name: name, Source: source})
@@ -98,6 +110,16 @@ type sourceFailures struct {
 func (e *sourceFailures) Error() string {
 	return "all market providers failed (" + strings.Join(e.names, ", ") + ")"
 }
+
+// ProviderFailureSummary exposes sanitized per-provider reasons for persisted
+// stock status; it never includes response bodies, endpoints or credentials.
+func ProviderFailureSummary(err error) string {
+	var all *sourceFailures
+	if errors.As(err, &all) {
+		return all.Error()
+	}
+	return ""
+}
 func (e *sourceFailures) isolatable() bool {
 	if len(e.failures) == 0 {
 		return false
@@ -116,7 +138,20 @@ func (s *Sources) Attempt(ctx context.Context, stock config.Stock, adjust string
 		if err := ctx.Err(); err != nil {
 			return History{}, err
 		}
-		h, err := fetch(p.Source)
+		if !s.available(p.Name) {
+			all.names = append(all.names, p.Name+":cooldown")
+			all.failures = append(all.failures, &Failure{Kind: "cooldown"})
+			continue
+		}
+		started := time.Now()
+		budget := s.attemptTimeout
+		if budget == 0 {
+			budget = time.Minute
+		}
+		attempt, cancel := context.WithTimeout(ctx, budget)
+		h, err := fetch(withBudget(p.Source, attempt))
+		cancel()
+		s.record(p.Name, err)
 		if ctx.Err() != nil {
 			return History{}, ctx.Err()
 		}
@@ -149,7 +184,7 @@ func (s *Sources) Attempt(ctx context.Context, stock config.Stock, adjust string
 		all.names = append(all.names, p.Name+":"+reason)
 		all.failures = append(all.failures, err)
 		if s.Log != nil {
-			s.Log.Warn("Market provider attempt failed", "code", stock.Code, "adjust", adjust, "source", p.Name, "reason", reason)
+			s.Log.Warn("Market provider attempt failed", "code", stock.Code, "adjust", adjust, "source", p.Name, "reason", reason, "elapsed_ms", time.Since(started).Milliseconds())
 		}
 	}
 	return History{}, all

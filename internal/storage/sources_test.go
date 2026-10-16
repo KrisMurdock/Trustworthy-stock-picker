@@ -15,7 +15,7 @@ func TestMultiSourceVolumePersistenceAndDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	for i, source := range []string{"tencent", "baostock", "tushare", "eastmoney"} {
+	for i, source := range []string{"tencent", "sina", "baostock", "tushare", "eastmoney"} {
 		h := dbHistory("sh688981", "none", "day")
 		h.Source = source
 		stock := config.Stock{Code: h.Code, Name: h.Name}

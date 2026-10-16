@@ -82,7 +82,7 @@ func (h History) Validate() error {
 
 func validSource(source string) bool {
 	switch source {
-	case "tencent", "baostock", "tushare", "eastmoney":
+	case "tencent", "sina", "baostock", "tushare", "eastmoney":
 		return true
 	}
 	return false

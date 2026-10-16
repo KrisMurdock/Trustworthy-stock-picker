@@ -54,6 +54,16 @@ class HTTPFixture(BaseHTTPRequestHandler):
         if url.path == "/tencent":
             self.send_json({"error": "upstream unavailable"}, 503)
             return
+        if url.path.startswith("/sina/sh688808/"):
+            if url.path.endswith("klc_kl.js"):
+                raw = (ROOT / "internal/market/testdata/sh688808.sina.js").read_bytes()
+            else:
+                raw = b'var sh688808qfq={"total":1,"data":[{"d":"1900-01-01","f":"2"}]}\n/* fixture */'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
         query = parse_qs(url.query)
         assert query["secid"] == ["1.688981"]
         rows = bars(iso(query["beg"][0]), iso(query["end"][0]))
@@ -128,7 +138,7 @@ def main():
                     env.pop(name, None)
                 env.update({"TUSHARE_TOKEN": TOKEN, "STOCK_WATCHER_LOG_DIR": str(root / "logs"), "STOCK_WATCHER_LOG_COLOR": "off"})
 
-                def config(providers):
+                def config(providers, code="sh688981", listed="2026-07-15", days=90, holidays=None):
                     (root / "config.yaml").write_text(f"""schema_version: 1
 data_dir: data
 require_cifs: false
@@ -136,7 +146,7 @@ request_timeout: 1s
 web:
   enabled: false
 daily:
-  history_days: 90
+  history_days: {days}
   adjust: qfq
 market:
   providers: {json.dumps(providers)}
@@ -145,14 +155,15 @@ market:
   baostock_address: 127.0.0.1:{tcp.server_address[1]}
   tushare_endpoint: {api}/tushare
   eastmoney_endpoint: {api}/eastmoney
+  sina_endpoint: {api}/sina
 stocks:
-  - code: sh688981
+  - code: {code}
     name: 测试股票
-    listed_from: '2026-07-15'
+    listed_from: '{listed}'
 calendar:
   valid_from: '2026-01-01'
   valid_through: '2026-12-31'
-  holidays: []
+  holidays: {json.dumps(holidays or [])}
 """)
 
                 def invoke(*command, fail=False):
@@ -195,9 +206,21 @@ calendar:
                 invoke("sync", "-as-of", ASOF, fail=True)
                 with sqlite3.connect(root / "data/market.db") as db:
                     assert db.execute("SELECT DISTINCT source FROM daily_bar").fetchall() == [("eastmoney",)]
+                config(["tencent", "sina"], code="sh688808", listed="2026-04-24", days=180,
+                       holidays=["2026-05-01", "2026-05-04", "2026-05-05", "2026-06-19", "2026-09-25",
+                                 "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07"])
+                invoke("sync", "-as-of", ASOF)
+                # Repeat against the existing DB, exercising incremental raw fetch.
+                invoke("sync", "-as-of", ASOF)
+                with sqlite3.connect(root / "data/market.db") as db:
+                    rows = db.execute("SELECT adjust, count(*), min(source), min(volume_raw=volume_shares) FROM daily_bar WHERE code='sh688808' GROUP BY adjust").fetchall()
+                    assert rows == [("none", 114, "sina", 1), ("qfq", 114, "sina", 1)], rows
+                    raw, adjusted = db.execute("SELECT close_micros FROM daily_bar WHERE code='sh688808' AND trade_date=? ORDER BY adjust", (ASOF,)).fetchall()
+                    assert abs(raw[0] - 2 * adjusted[0]) <= 10000, (raw, adjusted)
+                    assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
                 for log in (root / "logs").glob("*.log"):
                     assert TOKEN not in log.read_text(), "credential leaked to file log"
-                print(json.dumps({"environment": args.image or "native", "result": "passed", "checks": "Go CLI/HTTP+TCP fallback/SQLite/source units/token missing/permission/rate/all-failed preservation/no credential logging"}))
+                print(json.dumps({"environment": args.image or "native", "result": "passed", "checks": "Go CLI/HTTP+TCP fallback/Sina KLC2+factors/incremental SQLite/source units/token missing/permission/rate/all-failed preservation/no credential logging"}))
         finally:
             for server in (http, tcp):
                 server.shutdown()

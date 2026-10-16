@@ -17,12 +17,16 @@ intraday:
 
 # Go-native clients, tried in this order; no Python SDK or AKTools service.
 market:
-  providers: [tencent, baostock, tushare, eastmoney]
+  providers: [tencent, sina, baostock, tushare, eastmoney]
   request_interval: 1s # Per provider; minimum 350ms. Raise for a lower Tushare quota.
+  attempt_timeout: 60s # Whole window including pagination; parent cancellation still aborts.
+  failure_threshold: 3 # Consecutive transient failures across stocks.
+  failure_cooldown: 5m # Skip an unavailable source, then allow one recovery probe.
   tushare_token_env: TUSHARE_TOKEN # Missing token skips Tushare; a Tushare-only config fails.
   # eastmoney is the upstream used by AKShare stock_zh_a_hist, not the AKShare library.
   # Defaults below can be overridden for a controlled proxy or local integration tests.
   # tencent_endpoint: https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get
+  # sina_endpoint: https://finance.sina.com.cn/realstock/company
   # baostock_address: public-api.baostock.com:10030
   # tushare_endpoint: https://api.tushare.pro
   # eastmoney_endpoint: https://push2his.eastmoney.com/api/qt/stock/kline/get

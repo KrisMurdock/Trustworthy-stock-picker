@@ -497,6 +497,9 @@ func (m *Monitor) failSync(ctx context.Context, run storage.SyncRun, err error) 
 }
 
 func syncReason(err error) string {
+	if summary := market.ProviderFailureSummary(err); summary != "" {
+		return summary
+	}
 	var dataErr *market.DataError
 	if errors.As(err, &dataErr) {
 		return dataErr.Reason
