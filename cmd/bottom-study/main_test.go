@@ -88,3 +88,18 @@ func TestMissingInvalidTamperedAndCanceledInput(t *testing.T) {
 		t.Fatal("error emitted a partial report")
 	}
 }
+
+func TestOptimizationRequiresExplicitSplit(t *testing.T) {
+	path, through := snapshotFixture(t)
+	var stdout, stderr bytes.Buffer
+	base := []string{"-snapshot", path, "-from", "2026-01-01", "-through", through}
+	if err := run(context.Background(), append(base, "-optimize"), &stdout, &stderr); err == nil {
+		t.Fatal("optimization accepted missing training boundary")
+	}
+	if err := run(context.Background(), append(base, "-train-through", "2026-03-01"), &stdout, &stderr); err == nil {
+		t.Fatal("descriptive mode silently accepted optimization option")
+	}
+	if stdout.Len() != 0 {
+		t.Fatal("invalid grid emitted partial output")
+	}
+}

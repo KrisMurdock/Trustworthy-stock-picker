@@ -37,6 +37,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	path := flags.String("snapshot", "", "immutable experiment snapshot JSON (required)")
 	from := flags.String("from", "", "first signal date YYYY-MM-DD (required)")
 	through := flags.String("through", "", "last observation date YYYY-MM-DD (required)")
+	optimize := flags.Bool("optimize", false, "run the fixed net-return, batch-count and stop grid")
+	trainThrough := flags.String("train-through", "", "last training outcome date (required with -optimize)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -64,6 +66,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if err := experiment.ValidateSnapshot(snapshot); err != nil {
 		return fmt.Errorf("invalid snapshot: %w", err)
+	}
+	if *optimize {
+		report, err := bottomstudy.Optimize(ctx, snapshot, bottomstudy.GridOptions{Options: bottomstudy.Options{From: *from, Through: *through}, TrainThrough: *trainThrough})
+		if err != nil {
+			return err
+		}
+		hash := sha256.Sum256(data)
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(struct {
+			CodeVersion string `json:"code_version"`
+			SnapshotSHA string `json:"snapshot_file_sha256"`
+			bottomstudy.GridReport
+		}{version, hex.EncodeToString(hash[:]), report})
+	}
+	if *trainThrough != "" {
+		return errors.New("train-through requires -optimize")
 	}
 	report, err := bottomstudy.Analyze(ctx, snapshot.Adjusted, bottomstudy.Options{From: *from, Through: *through})
 	if err != nil {
