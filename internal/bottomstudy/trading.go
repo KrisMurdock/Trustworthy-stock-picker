@@ -54,6 +54,7 @@ type opportunity struct {
 	bars                  []market.Bar // Index 0: signal; 1: entry; 2: first sellable.
 	events                []bool
 	invalid               map[int]string
+	unknownAdds           map[int]bool // Context is needed only when an add is still possible.
 }
 
 type lot struct{ shares, bought int }
@@ -205,6 +206,10 @@ func simulateTrade(s config.Strategy, policy TradePolicy, o opportunity) Trade {
 			}
 		}
 		if t.BatchesFilled < policy.Batches && (i == 1 || i < deadline && o.events[i-1]) {
+			if o.unknownAdds[i] {
+				t.Status = "missing_add_context"
+				return t
+			}
 			gap := math.Abs(b.Open/previous.Close-1) * 100
 			if b.Volume > 0 && !onePrice(b) && gap <= s.MaxEntryGapPct {
 				budget := math.Min(s.TradeCash/float64(policy.Batches), s.TradeCash-p.invested)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"stock-watcher/internal/bottomstudy"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/experiment"
 	"stock-watcher/internal/market"
@@ -17,6 +18,7 @@ import (
 func snapshotFixture(t *testing.T) (string, string) {
 	t.Helper()
 	c := config.Defaults()
+	c.Calendar.ValidFrom, c.Calendar.ValidThrough, c.Calendar.Holidays = "2026-01-01", "2026-12-31", nil
 	c.Stocks = []config.Stock{{Code: "sz000001", Name: "样本"}}
 	h := market.History{Version: 1, Code: "sz000001", Name: "样本", Source: "tencent", Adjust: "qfq", DataField: "qfqday", VolumeUnit: "provider_raw", FetchedAt: time.Now()}
 	d := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -101,5 +103,72 @@ func TestOptimizationRequiresExplicitSplit(t *testing.T) {
 	}
 	if stdout.Len() != 0 {
 		t.Fatal("invalid grid emitted partial output")
+	}
+}
+
+func TestContextComparisonCLIAndFailures(t *testing.T) {
+	path, through := snapshotFixture(t)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s experiment.Snapshot
+	if err := json.Unmarshal(data, &s); err != nil {
+		t.Fatal(err)
+	}
+	c := bottomstudy.MarketContext{Version: 1, StockSnapshotID: s.ID, Basis: "current_only", ObservedAt: "2026-10-16T00:00:00Z", From: "2026-01-01", Through: through}
+	for _, code := range []string{"sh000001", "sz399001", "sz399006", "BK1"} {
+		kind := "market"
+		if code == "BK1" {
+			kind = "sector"
+		}
+		c.Indices = append(c.Indices, bottomstudy.ContextIndex{Code: code, Name: code, Kind: kind, Source: "fixture", Bars: s.Adjusted[0].Bars})
+	}
+	c.Memberships = []bottomstudy.Membership{{StockCode: s.Stocks[0].Code, SectorCode: "BK1", SectorName: "BK1", ObservedAt: c.ObservedAt}}
+	contextPath := filepath.Join(t.TempDir(), "context.json")
+	contextJSON, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(contextPath, contextJSON, 0600); err != nil {
+		t.Fatal(err)
+	}
+	base := []string{"-snapshot", path, "-from", "2026-01-01", "-through", through, "-compare-context", contextPath}
+	args := append(append([]string(nil), base...), "-train-through", "2026-03-31")
+	var a, b, stderr bytes.Buffer
+	for _, out := range []*bytes.Buffer{&a, &b} {
+		if err := run(context.Background(), args, out, &stderr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var got struct {
+		ContextSHA string `json:"context_file_sha256"`
+		StockSHA   string `json:"stock_snapshot_file_sha256"`
+		bottomstudy.ComparisonReport
+	}
+	if json.Unmarshal(a.Bytes(), &got) != nil || a.String() != b.String() || got.Engine != bottomstudy.ComparisonEngine || len(got.Pairs) != 220 || len(got.ContextSHA) != 64 || len(got.StockSHA) != 64 {
+		t.Fatal("invalid comparison result or unstable output")
+	}
+	for _, bad := range [][]string{base, append(append([]string(nil), args...), "-optimize")} {
+		var out bytes.Buffer
+		if err := run(context.Background(), bad, &out, &stderr); err == nil || out.Len() > 0 {
+			t.Fatal("invalid options emitted success")
+		}
+	}
+	for _, bad := range [][]byte{[]byte("{"), append(contextJSON, []byte(" {}")...), []byte(`{"schema_version":1,"unknown":true}`)} {
+		if err := os.WriteFile(contextPath, bad, 0600); err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		if err := run(context.Background(), args, &out, &stderr); err == nil || out.Len() > 0 {
+			t.Fatal("invalid context emitted success")
+		}
+	}
+	if err := os.Remove(contextPath); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := run(context.Background(), args, &out, &stderr); err == nil || out.Len() > 0 {
+		t.Fatal("missing file emitted success")
 	}
 }

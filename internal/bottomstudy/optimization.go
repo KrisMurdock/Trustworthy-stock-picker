@@ -218,7 +218,7 @@ func prepareGrid(ctx context.Context, snapshot experiment.Snapshot, o GridOption
 						invalid[i] = "corporate_action"
 					}
 				}
-				data[rule] = append(data[rule], opportunity{h.Code + "/" + a[start].Date, h.Code, h.Name, split, b[start : start+22], events[start : start+22], invalid})
+				data[rule] = append(data[rule], opportunity{id: h.Code + "/" + a[start].Date, code: h.Code, name: h.Name, split: split, bars: b[start : start+22], events: events[start : start+22], invalid: invalid})
 				start += 20 // Next start may be the previous deadline's close.
 			}
 		}

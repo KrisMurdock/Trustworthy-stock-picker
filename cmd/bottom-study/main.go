@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -38,12 +39,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	from := flags.String("from", "", "first signal date YYYY-MM-DD (required)")
 	through := flags.String("through", "", "last observation date YYYY-MM-DD (required)")
 	optimize := flags.Bool("optimize", false, "run the fixed net-return, batch-count and stop grid")
-	trainThrough := flags.String("train-through", "", "last training outcome date (required with -optimize)")
+	contextPath := flags.String("compare-context", "", "frozen sector/market JSON for the two-arm comparison")
+	trainThrough := flags.String("train-through", "", "last training outcome date (required with optimize or compare-context)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if *path == "" || *from == "" || *through == "" || flags.NArg() != 0 {
 		return errors.New("snapshot, from and through are required; no positional arguments allowed")
+	}
+	if *optimize && *contextPath != "" {
+		return errors.New("optimize and compare-context are mutually exclusive")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -67,6 +72,36 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := experiment.ValidateSnapshot(snapshot); err != nil {
 		return fmt.Errorf("invalid snapshot: %w", err)
 	}
+	if *contextPath != "" {
+		contextFile, err := os.Open(*contextPath)
+		if err != nil {
+			return err
+		}
+		defer contextFile.Close()
+		contextData, err := io.ReadAll(io.LimitReader(contextFile, (32<<20)+1))
+		if err != nil || len(contextData) > 32<<20 {
+			return errors.New("context cannot be read or exceeds 32 MiB")
+		}
+		var background bottomstudy.MarketContext
+		decoder := json.NewDecoder(bytes.NewReader(contextData))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&background) != nil || decoder.Decode(new(any)) != io.EOF {
+			return errors.New("invalid context JSON or unsupported fields")
+		}
+		report, err := bottomstudy.CompareContext(ctx, snapshot, background, bottomstudy.GridOptions{Options: bottomstudy.Options{From: *from, Through: *through}, TrainThrough: *trainThrough})
+		if err != nil {
+			return err
+		}
+		stockHash, contextHash := sha256.Sum256(data), sha256.Sum256(contextData)
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(struct {
+			CodeVersion string `json:"code_version"`
+			StockSHA    string `json:"stock_snapshot_file_sha256"`
+			ContextSHA  string `json:"context_file_sha256"`
+			bottomstudy.ComparisonReport
+		}{version, hex.EncodeToString(stockHash[:]), hex.EncodeToString(contextHash[:]), report})
+	}
 	if *optimize {
 		report, err := bottomstudy.Optimize(ctx, snapshot, bottomstudy.GridOptions{Options: bottomstudy.Options{From: *from, Through: *through}, TrainThrough: *trainThrough})
 		if err != nil {
@@ -82,7 +117,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}{version, hex.EncodeToString(hash[:]), report})
 	}
 	if *trainThrough != "" {
-		return errors.New("train-through requires -optimize")
+		return errors.New("train-through requires optimize or compare-context")
 	}
 	report, err := bottomstudy.Analyze(ctx, snapshot.Adjusted, bottomstudy.Options{From: *from, Through: *through})
 	if err != nil {
