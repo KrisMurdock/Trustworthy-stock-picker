@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"stock-watcher/internal/experiment"
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/strategy"
@@ -130,14 +131,21 @@ func (x *ExperimentDB) Start(ctx context.Context, snapshot experiment.Snapshot, 
 	if record.Stage != "" && record.Stage != "development" && record.Stage != "holdout" {
 		return errors.New("invalid experiment stage")
 	}
+	var parentRecord *experiment.Record
 	if record.ParentID != "" {
 		parent, err := x.Get(ctx, record.ParentID)
 		if err != nil {
 			return err
 		}
+		parentRecord = &parent
 		baselineID := experiment.BaselineFor(record, parent)
 		if parent.Status != "completed" || parent.Data.ID != snapshot.ID || record.BaselineID != baselineID {
 			return errors.New("invalid experiment parent")
+		}
+	}
+	if record.Stage == "holdout" {
+		if err := validateHoldoutRecord(record, parentRecord); err != nil {
+			return err
 		}
 	}
 	if err := experiment.ValidateSnapshot(snapshot); err != nil {
@@ -179,6 +187,42 @@ func (x *ExperimentDB) Start(ctx context.Context, snapshot experiment.Snapshot, 
 	}
 	return tx.Commit()
 }
+
+// validateHoldoutRecord keeps holdout lineage a storage invariant rather than a
+// caller convention. The child must reuse the parent's frozen rule and consume
+// exactly the interval reserved by the parent development run.
+func validateHoldoutRecord(record experiment.Record, parent *experiment.Record) error {
+	if parent == nil || record.ParentID == "" {
+		return errors.New("holdout record requires a parent experiment")
+	}
+	if parent.Stage == "holdout" {
+		return errors.New("a holdout experiment cannot parent another holdout")
+	}
+	if parent.Status != "completed" || parent.Result == nil {
+		return errors.New("holdout parent has no completed result")
+	}
+	if record.Holdout == nil {
+		return errors.New("invalid holdout record")
+	}
+	reserved := parent.Result.Development
+	if reserved.HoldoutFrom == "" || reserved.HoldoutThrough == "" ||
+		record.Holdout.From != reserved.HoldoutFrom || record.Holdout.Through != reserved.HoldoutThrough {
+		return errors.New("holdout interval differs from the parent reservation")
+	}
+	if record.Engine != parent.Engine || record.CodeVersion != parent.CodeVersion {
+		return errors.New("holdout engine differs from its parent")
+	}
+	expectedSpec := parent.Spec
+	expectedSpec.Range = nil
+	if !reflect.DeepEqual(record.Spec, expectedSpec) {
+		return errors.New("holdout specification differs from its parent")
+	}
+	if !reflect.DeepEqual(record.Data, parent.Data) {
+		return errors.New("holdout data summary differs from its parent")
+	}
+	return nil
+}
+
 func (x *ExperimentDB) Finish(ctx context.Context, record experiment.Record) error {
 	if x.lock == nil {
 		return errors.New("experiment archive is read-only")

@@ -196,6 +196,9 @@ func (d Dataset) Coverage(from, through string) (Coverage, error) {
 			return Coverage{}, err
 		}
 	}
+	if err := d.validateConsistency(); err != nil {
+		return Coverage{}, err
+	}
 	spans := make([]Span, 0, len(d))
 	for _, h := range d {
 		a, b := h.From, h.Through
@@ -241,6 +244,53 @@ func (d Dataset) Coverage(from, through string) (Coverage, error) {
 		Complete: len(missing) == 0,
 		Missing:  missing,
 	}, nil
+}
+
+// validateConsistency rejects overlapping windows that disagree about whether
+// a day inside both declared ranges is a trading day. Coverage is a claim about
+// the whole window, so an absent day is just as meaningful as a present one.
+func (d Dataset) validateConsistency() error {
+	for i := 0; i < len(d); i++ {
+		for j := i + 1; j < len(d); j++ {
+			from, through := d[i].From, d[i].Through
+			if d[j].From > from {
+				from = d[j].From
+			}
+			if d[j].Through < through {
+				through = d[j].Through
+			}
+			if from > through {
+				continue
+			}
+			left, right := map[string]bool{}, map[string]bool{}
+			for _, day := range d[i].Days {
+				if day >= from && day <= through {
+					left[day] = true
+				}
+			}
+			for _, day := range d[j].Days {
+				if day >= from && day <= through {
+					right[day] = true
+				}
+			}
+			conflicts := []string{}
+			for day := range left {
+				if !right[day] {
+					conflicts = append(conflicts, day)
+				}
+			}
+			for day := range right {
+				if !left[day] {
+					conflicts = append(conflicts, day)
+				}
+			}
+			if len(conflicts) > 0 {
+				sort.Strings(conflicts)
+				return fmt.Errorf("trading calendar sources disagree on %s", conflicts[0])
+			}
+		}
+	}
+	return nil
 }
 
 func (d Dataset) TradingDays(from, through string) ([]string, error) {

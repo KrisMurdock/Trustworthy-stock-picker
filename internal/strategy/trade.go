@@ -112,7 +112,8 @@ func lockedDown(b market.Bar, previous float64, code string) bool {
 	if !rule.Known {
 		// Intraday callers may pass a synthetic bar without its trading date.
 		// Use the narrowest supported band so an unknown regime cannot make a
-		// locked day appear sellable. Non-empty unknown dates remain unresolved.
+		// locked day appear sellable. Dated callers must reject unknown rules
+		// before invoking this helper; the boolean cannot express that state.
 		if b.Date != "" {
 			return false
 		}

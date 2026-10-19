@@ -485,7 +485,8 @@ func inspectCalendarCoverage(cal *calendar.Calendar, data []Dataset) CalendarCov
 			if b.Date > out.Through {
 				out.Through = b.Date
 			}
-			if _, err := cal.Trading(b.Date); err != nil && !seen[b.Date] {
+			trading, err := cal.Trading(b.Date)
+			if (err != nil || !trading) && !seen[b.Date] {
 				seen[b.Date] = true
 				out.Uncovered = append(out.Uncovered, b.Date)
 			}
@@ -503,6 +504,9 @@ func inspectCalendarCoverage(cal *calendar.Calendar, data []Dataset) CalendarCov
 }
 
 func appendObservedFlags(research *Research) {
+	if !hasFlag(research.Flags, "historical_st_unknown") {
+		research.Flags = append(research.Flags, "historical_st_unknown")
+	}
 	if research.Calendar.Source == "configured" && !hasFlag(research.Flags, "configured_calendar") {
 		research.Flags = append(research.Flags, "configured_calendar")
 	}

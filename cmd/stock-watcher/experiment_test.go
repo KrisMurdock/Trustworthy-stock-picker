@@ -167,6 +167,8 @@ calendar:
 		{"experiment", "-config", path, "-parent", "invalid"},
 		{"experiment", "-config", path, "-parent", parent.ID, "-as-of", "2026-01-01"},
 		{"experiment", "-config", path, "-holdout"},
+		{"experiment", "-config", path, "-parent", parent.ID, "-holdout", "-policy", "baseline"},
+		{"experiment", "-config", path, "-parent", parent.ID, "-holdout", "-as-of", h.AsOf},
 		{"experiment", "-config", path, "-parent", parent.ID, "-holdout", "-from", "2026-04-01", "-through", "2026-05-01"},
 		{"sync", "-config", path, "-policy", "upper-wick"},
 		{"sync", "-config", path, "-holdout"},

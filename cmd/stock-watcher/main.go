@@ -88,6 +88,20 @@ func run(args []string) error {
 	if *holdout && (*parent == "" || *from != "" || *through != "") {
 		return errors.New("experiment -holdout requires -parent and cannot be combined with -from/-through")
 	}
+	if *holdout {
+		explicitPolicy := false
+		f.Visit(func(flag *flag.Flag) {
+			if flag.Name == "policy" {
+				explicitPolicy = true
+			}
+		})
+		if *asof != "" {
+			return errors.New("experiment -holdout cannot be combined with -as-of")
+		}
+		if explicitPolicy {
+			return errors.New("experiment -holdout reuses the parent policy and cannot be combined with -policy")
+		}
+	}
 	c, err := config.Load(*path)
 	if err != nil {
 		return err

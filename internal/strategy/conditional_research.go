@@ -224,7 +224,9 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 	research.AvailableSamples = result.Selection.Candidates
 	research.EvaluatedSamples = research.Development.TopRanked.Samples
 	research.AuditCandidates = len(result.Trades) - result.Selection.Selected
-	research.SampleCount = research.AvailableSamples
+	// Keep sample_count's legacy meaning for conditional research. It counts
+	// archived trade rows, while available_samples carries the candidate count.
+	research.SampleCount = len(result.Trades)
 	appendObservedFlags(&research)
 	research.Verdict = researchVerdict(research, false)
 	result.Research = research

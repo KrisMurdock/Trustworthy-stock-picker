@@ -101,6 +101,9 @@ func SimulateConditional(s config.Strategy, cal *calendar.Calendar, code string,
 		if err != nil {
 			return out, err
 		}
+		if !PriceLimitFor(code, exitDate).Known {
+			return out, ErrPriceLimitUnknown
+		}
 		if len(future) < 2 || future[1].Date != exitDate || !completeMinuteDay(exitBars, future[1]) {
 			return out, nil
 		}

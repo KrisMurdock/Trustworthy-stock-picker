@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"math"
+	"stock-watcher/internal/calendar"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/market"
 	"testing"
@@ -54,12 +55,38 @@ func TestPurgingFrozenHoldoutAndNoFutureFeatureInput(t *testing.T) {
 	if prior != again {
 		t.Fatal("future close changed past features")
 	}
+	if !hasFlag(x.Research.Flags, "historical_st_unknown") {
+		t.Fatal("historical ST limitation was not exposed")
+	}
 	samples := []Sample{{Date: "2026-03-01", LabelEnd: "2026-03-10", Rules: []string{"baseline"}, Outcomes: map[string]Outcome{key(3, 5): {Status: "target", EntryDate: "2026-03-02", NetPct: 3, HoldingDays: 2}}}}
 	if find(statsFor(samples, "2026-03-10", c.Strategy), "baseline", 3, 5).Samples != 0 {
 		t.Fatal("boundary labels were not purged")
 	}
 	if find(statsFor(samples, "2026-03-11", c.Strategy), "baseline", 3, 5).Targets != 1 {
 		t.Fatal("completed label missing")
+	}
+}
+
+func TestCalendarCoverageRejectsBarOnNonTradingDay(t *testing.T) {
+	c, h, raw := researchFixture()
+	target := h[0].Bars[100].Date
+	tradingDays := []string{}
+	for _, bar := range h[0].Bars {
+		if bar.Date != target {
+			tradingDays = append(tradingDays, bar.Date)
+		}
+	}
+	c.Calendar.TradingDays = tradingDays
+	data, err := datasets(c, h, raw, h[0].AsOf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coverage := inspectCalendarCoverage(calendar.New(c), data)
+	if coverage.Complete || len(coverage.Uncovered) == 0 || coverage.Uncovered[0] != target {
+		t.Fatalf("bar on a non-trading day was ignored: %+v", coverage)
+	}
+	if err := requireCalendarCoverage(calendar.New(c), data); err == nil {
+		t.Fatal("experiment accepted a calendar that omitted a saved bar date")
 	}
 }
 func TestResearchMissingRawCancellationAndCorporateActions(t *testing.T) {

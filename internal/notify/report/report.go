@@ -701,6 +701,7 @@ func flagLabel(flag string) string {
 		"partial_calendar":             "交易日历不完整",
 		"configured_calendar":          "使用配置日历",
 		"current_universe_bias":        "当前股池幸存者偏差",
+		"historical_st_unknown":        "历史 ST 状态未知",
 		"incomplete_signal_date":       "存在不完整信号日",
 		"contaminated":                 "保留区间已污染",
 		"corporate_action":             "公司行为未决",

@@ -66,6 +66,22 @@ func TestHoldoutLifecyclePreservesParentAndMarksRepeatedConsumption(t *testing.T
 	if first.Holdout.From != original.Result.Development.HoldoutFrom || first.Holdout.Through != original.Result.Development.HoldoutThrough {
 		t.Fatal("holdout child changed the parent's reserved interval")
 	}
+	tamperedRange, err := experiment.NewHoldoutRecord(snapshot, original, consumed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tamperedRange.Holdout.From = snapshot.Adjusted[0].Bars[0].Date
+	if err = db.Start(ctx, snapshot, tamperedRange); err == nil {
+		t.Fatal("storage accepted a holdout outside the parent reservation")
+	}
+	tamperedSpec, err := experiment.NewHoldoutRecord(snapshot, original, consumed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tamperedSpec.Spec.Title = "changed after development"
+	if err = db.Start(ctx, snapshot, tamperedSpec); err == nil {
+		t.Fatal("storage accepted a holdout with a changed rule")
+	}
 	if err = db.Start(ctx, snapshot, first); err != nil {
 		t.Fatal(err)
 	}

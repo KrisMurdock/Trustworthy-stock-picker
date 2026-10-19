@@ -30,12 +30,14 @@ func ensureSnapshotCalendar(ctx context.Context, c config.Config, snapshot exper
 	defer cache.Close()
 	if frozen, freezeErr := cache.Freeze(ctx, from, through); freezeErr == nil {
 		return experiment.WithTradingCalendar(snapshot, frozen)
+	} else {
+		var coverageErr *calendar.CoverageError
+		if !errors.As(freezeErr, &coverageErr) {
+			return snapshot, freezeErr
+		}
 	}
 	history, err := fetchTradingCalendar(ctx, c, from, through)
 	if err != nil {
-		if snapshot.Calendar.Version != 0 && len(snapshot.Calendar.Days) > 0 {
-			return snapshot, nil
-		}
 		return snapshot, err
 	}
 	if err := cache.Save(ctx, history); err != nil {

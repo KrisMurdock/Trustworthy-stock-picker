@@ -80,6 +80,21 @@ func TestDatasetFreezesAdjacentWindows(t *testing.T) {
 	}
 }
 
+func TestOverlappingCalendarWindowsMustAgree(t *testing.T) {
+	left := testHistory(t, SourceBaoStock, "2026-01-01", "2026-01-31", []string{"2026-01-02", "2026-01-05"})
+	right := testHistory(t, SourceTushare, "2026-01-15", "2026-02-15", []string{"2026-01-16", "2026-01-20"})
+	dataset := Dataset{left, right}
+	if _, err := dataset.Coverage("2026-01-01", "2026-02-15"); err == nil || !strings.Contains(err.Error(), "disagree") {
+		t.Fatalf("conflicting overlap was merged: %v", err)
+	}
+	if _, err := dataset.TradingDays("2026-01-01", "2026-02-15"); err == nil {
+		t.Fatal("conflicting overlap returned trading days")
+	}
+	if _, err := dataset.Freeze("2026-01-01", "2026-02-15"); err == nil {
+		t.Fatal("conflicting overlap was frozen into a snapshot calendar")
+	}
+}
+
 type fakeCalendarSource struct {
 	days []string
 	err  error

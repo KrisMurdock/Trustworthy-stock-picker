@@ -135,6 +135,20 @@ func TestCalendarDBDoesNotModifyMarketDB(t *testing.T) {
 	}
 }
 
+func TestCalendarDBSaveRechecksStoragePolicy(t *testing.T) {
+	ctx := context.Background()
+	db, err := OpenCalendar(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.requireCIFS = true
+	history := calendarWindow(t, calendar.SourceBaoStock, "2026-01-01", "2026-01-31", []string{"2026-01-02"})
+	if err := db.Save(ctx, history); err == nil {
+		t.Fatal("calendar write bypassed the storage policy check")
+	}
+}
+
 func TestCalendarDBRejectsInvalidAndTamperedRows(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

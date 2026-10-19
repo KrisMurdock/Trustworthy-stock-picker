@@ -21,9 +21,10 @@ const calendarSchemaVersion = 1
 // CalendarDB owns the independent trading-calendar cache in
 // <data_dir>/calendar.db. It never opens or extends market.db.
 type CalendarDB struct {
-	db       *sql.DB
-	root     string
-	writable bool
+	db          *sql.DB
+	root        string
+	writable    bool
+	requireCIFS bool
 }
 
 // OpenCalendar opens the writable calendar cache and creates it when absent.
@@ -71,7 +72,7 @@ func openCalendar(root string, requireCIFS bool, writable, create bool) (*Calend
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	c := &CalendarDB{db: db, root: root, writable: writable}
+	c := &CalendarDB{db: db, root: root, writable: writable, requireCIFS: requireCIFS}
 	if err := c.configure(); err != nil {
 		db.Close()
 		return nil, err
@@ -191,6 +192,9 @@ func (c *CalendarDB) HasDatabase() bool {
 func (c *CalendarDB) Save(ctx context.Context, history calendar.History) error {
 	if c == nil || c.db == nil || !c.writable {
 		return errors.New("calendar database is read-only")
+	}
+	if err := (&Store{root: c.root, requireCIFS: c.requireCIFS}).Check(); err != nil {
+		return err
 	}
 	if err := history.Validate(); err != nil {
 		return err
