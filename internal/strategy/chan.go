@@ -18,9 +18,13 @@ const (
 )
 
 const (
-	chanPass    = "pass"
-	chanFail    = "fail"
-	chanUnknown = "unknown"
+	ChanPass    = "pass"
+	ChanFail    = "fail"
+	ChanUnknown = "unknown"
+
+	chanPass    = ChanPass
+	chanFail    = ChanFail
+	chanUnknown = ChanUnknown
 )
 
 type ChanZoneEvidence struct {

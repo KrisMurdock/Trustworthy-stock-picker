@@ -46,6 +46,7 @@ var labels = map[string]string{
 	"baseline": "股池基准", "breakout": "突破形态", "pullback": "趋势回踩", "momentum": "趋势动量", "volume_recovery": "量能恢复",
 	"historical_net_loss_limit_breached": "历史单笔净亏损超限", "insufficient_or_unprofitable_evidence": "匹配规则未通过历史检验", "holdout_validation_not_passed": "独立验证未通过",
 	"extended_price": "涨幅/偏离过大", "large_daily_range": "日内波幅过大", "upper_wick": "上影线较长", "cash_insufficient": "预算不足最小买入量",
+	"chan_filtered": "缠论未通过", "chan_unknown": "缠论结构未知",
 }
 
 func Label(code string) string {

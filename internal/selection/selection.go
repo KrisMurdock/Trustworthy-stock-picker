@@ -159,10 +159,27 @@ func lastDate(h market.History) string {
 // BuildWithExecution keeps legacy configuration and persisted v1 reports readable.
 // Short-horizon reports have their own v2 contract; histories remain v1.
 func BuildWithExecution(ctx context.Context, c config.Config, histories, raw []market.History, asof, target string, now time.Time) (Report, error) {
+	return buildWithExecution(ctx, c, histories, raw, nil, asof, target, now)
+}
+
+// BuildWithExecutionMinutes adds the Chan gate when saved 5-minute histories
+// are available. A nil or empty slice preserves the daily-only behavior used
+// by callers without an intraday store.
+func BuildWithExecutionMinutes(ctx context.Context, c config.Config, histories, raw []market.History, minutes []market.MinuteHistory, asof, target string, now time.Time) (Report, error) {
+	return buildWithExecution(ctx, c, histories, raw, minutes, asof, target, now)
+}
+
+func buildWithExecution(ctx context.Context, c config.Config, histories, raw []market.History, minutes []market.MinuteHistory, asof, target string, now time.Time) (Report, error) {
 	if !c.Strategy.Enabled {
 		return Build(c, histories, asof, target, now)
 	}
-	result, err := strategy.Analyze(ctx, c, histories, raw, asof)
+	var result strategy.Result
+	var err error
+	if minutes == nil {
+		result, err = strategy.Analyze(ctx, c, histories, raw, asof)
+	} else {
+		result, err = strategy.AnalyzeWithChan(ctx, c, histories, raw, minutes, asof)
+	}
 	if err != nil {
 		return Report{}, err
 	}
@@ -183,7 +200,7 @@ func BuildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 	}
 	for _, x := range r.Ranking {
 		if !x.Recommended {
-			r.Filtered = append(r.Filtered, Excluded{Code: x.Code, Reason: "strategy_evidence_or_risk_gate"})
+			r.Filtered = append(r.Filtered, Excluded{Code: x.Code, Reason: recommendationFilterReason(x.Risks)})
 			continue
 		}
 		r.Passed++
@@ -208,4 +225,23 @@ func BuildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 	sum := sha256.Sum256(data)
 	r.ID = hex.EncodeToString(sum[:12])
 	return r, nil
+}
+
+func recommendationFilterReason(risks []string) string {
+	if hasRisk(risks, "chan_filtered") {
+		return "chan_filtered"
+	}
+	if hasRisk(risks, "chan_unknown") {
+		return "chan_unknown"
+	}
+	return "strategy_evidence_or_risk_gate"
+}
+
+func hasRisk(risks []string, want string) bool {
+	for _, risk := range risks {
+		if risk == want {
+			return true
+		}
+	}
+	return false
 }

@@ -60,10 +60,12 @@ func TestChanLevelStatesUseOnlyConfirmedStructure(t *testing.T) {
 
 func chanMinuteFixture(days int) (market.MinuteHistory, map[string]market.Bar) {
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, market.Shanghai)
-	history := market.MinuteHistory{Version: 1, Code: "sz000001", Name: "测试", Source: "tencent", Period: 5, BasePeriod: 5, Adjust: "none", VolumeUnit: "provider_raw", FetchedAt: start.AddDate(0, 0, days+1)}
+	history := market.MinuteHistory{Version: 1, Code: "sz000001", Name: "测试", Source: "tencent", Period: 5, BasePeriod: 5, Adjust: "none", VolumeUnit: "provider_raw"}
 	daily := map[string]market.Bar{}
-	for day := 0; day < days; day++ {
-		date := start.AddDate(0, 0, day)
+	for date, day := start, 0; day < days; date = date.AddDate(0, 0, 1) {
+		if date.Weekday() == time.Saturday || date.Weekday() == time.Sunday {
+			continue
+		}
 		bars := []market.MinuteBar{}
 		for i := 0; i < 48; i++ {
 			minute := 575 + i*5
@@ -75,6 +77,8 @@ func chanMinuteFixture(days int) (market.MinuteHistory, map[string]market.Bar) {
 		}
 		history.Bars = append(history.Bars, bars...)
 		daily[date.Format("2006-01-02")] = rawDay(bars)
+		history.FetchedAt = date.Add(18 * time.Hour)
+		day++
 	}
 	return history, daily
 }

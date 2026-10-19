@@ -241,10 +241,19 @@ func shortCandidateSections(r selection.Report, diagnosis *diagnostics.Report) [
 			{Label: "股票", Value: ranking.Code + " " + escape(ranking.Name)},
 			{Label: "排名", Value: fmt.Sprintf("第%d", ranking.Rank)},
 			{Label: "状态", Value: status},
-			{Label: "机会分", Value: fmt.Sprintf("%.1f", ranking.Score)},
-			{Label: "依据", Value: tags(ranking.Reasons)},
-			{Label: "风险", Value: risks},
 		}
+		if ranking.Chan != nil {
+			fields = append(fields, notify.Field{Label: "缠论门控", Value: chanSummary(*ranking.Chan)})
+		}
+		fields = append(fields, notify.Field{Label: "机会分", Value: fmt.Sprintf("%.1f", ranking.Score)})
+		if ranking.ScoreBreakdown != nil && ranking.ScoreBreakdown.Formula != "" {
+			fields = append(fields, notify.Field{Label: "评分推导", Value: escape(ranking.ScoreBreakdown.Formula)})
+		}
+		fields = append(fields,
+			notify.Field{Label: "依据", Value: tags(ranking.Reasons)},
+			notify.Field{Label: "规则", Value: tags(ranking.Rules)},
+			notify.Field{Label: "风险", Value: risks},
+		)
 		for _, rule := range detail.Rules {
 			lines := []string{rule.Summary}
 			for _, failure := range rule.Failures {
@@ -270,6 +279,43 @@ func shortCandidateSections(r selection.Report, diagnosis *diagnostics.Report) [
 		})
 	}
 	return sections
+}
+
+func chanSummary(evidence strategy.ChanEvidence) string {
+	switch evidence.Status {
+	case strategy.ChanPass:
+		details := []string{}
+		for _, level := range evidence.Levels {
+			switch level.Period {
+			case 30:
+				if level.Zone != nil {
+					details = append(details, "30m未破中枢下沿")
+				} else if level.LastStroke == "up" {
+					details = append(details, "30m最近完成笔向上")
+				}
+			case 15, 5:
+				if level.LastFractal == "bottom" {
+					details = append(details, fmt.Sprintf("%dm底分型收复", level.Period))
+				}
+			}
+		}
+		if len(details) == 0 {
+			return "通过：5m/15m/30m 均满足；未被过滤"
+		}
+		return "通过：" + strings.Join(details, "、") + "；未被过滤"
+	case strategy.ChanFail:
+		if evidence.Reason == "" {
+			return "未通过：结构不满足；仅观察"
+		}
+		return "未通过：" + escape(evidence.Reason) + "；仅观察"
+	case strategy.ChanUnknown:
+		if evidence.Reason == "" {
+			return "未知：结构证据不足；仅观察"
+		}
+		return "未知：" + escape(evidence.Reason) + "；仅观察"
+	default:
+		return "未知：未检查；仅观察"
+	}
 }
 
 func detailedStats(stats strategy.Stats) string {
@@ -315,6 +361,8 @@ func exclusionReason(reason string) string {
 		"overheat_or_weakness":            "RSI/涨幅不符",
 		"score_below_threshold":           "评分不足",
 		"strategy_evidence_or_risk_gate":  "证据/风险门槛未过",
+		"chan_filtered":                   "缠论未通过",
+		"chan_unknown":                    "缠论结构未知",
 	}
 	if label := labels[reason]; label != "" {
 		return label
@@ -332,9 +380,16 @@ func tags(values []string) string {
 		"historical_rule_pullback":              "历史回踩",
 		"historical_rule_momentum":              "历史动量",
 		"historical_rule_volume_recovery":       "历史放量恢复",
+		"baseline":                              "股池基准",
+		"breakout":                              "突破",
+		"pullback":                              "回踩",
+		"momentum":                              "动量",
+		"volume_recovery":                       "放量恢复",
 		"rising_ma20":                           "MA20↑",
 		"stronger_than_pool":                    "近5日强于股池",
 		"strong_close":                          "收盘偏强",
+		"chan_filtered":                         "缠论未通过",
+		"chan_unknown":                          "缠论结构未知",
 		"insufficient_or_unprofitable_evidence": "匹配规则未通过历史检验",
 		"historical_net_loss_limit_breached":    "历史单笔净亏损超限",
 		"extended_price":                        "涨幅/偏离过大",

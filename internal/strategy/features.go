@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"stock-watcher/internal/indicators"
 	"stock-watcher/internal/market"
@@ -84,27 +85,45 @@ func Matches(f Features) []string {
 }
 
 func opportunity(f Features) float64 {
+	value, _ := opportunityFormula(f)
+	return value
+}
+
+// opportunityFormula keeps the score reproducible in pushed reports. The
+// first value is the daily opportunity score before historical evidence is
+// blended in; the string is the exact arithmetic used to obtain it.
+func opportunityFormula(f Features) (float64, string) {
 	value := float64(f.Metrics.Score)*0.25 + 25
+	formula := fmt.Sprintf("25 + %.1f(日线%d×0.25)", float64(f.Metrics.Score)*0.25, f.Metrics.Score)
 	if f.MA20Slope > 0 {
 		value += 10
+		formula += " + 10(MA20↑)"
 	}
 	if f.Relative5 > 0 {
 		value += 10
+		formula += " + 10(强于池)"
 	}
 	if f.ClosePosition >= 0.65 {
 		value += 10
+		formula += " + 10(收盘强)"
 	}
 	if f.VolumeRatio >= 1 && f.VolumeRatio <= 2.5 {
 		value += 10
+		formula += " + 10(量能适中)"
 	}
 	if f.ATR14Pct >= 1 && f.ATR14Pct <= 4 {
 		value += 10
+		formula += " + 10(波动适中)"
 	}
 	if f.MA20Distance > 10 || f.Return5 > 12 {
 		value -= 20
+		formula += " - 20(偏离过大)"
 	}
 	if f.UpperWick > 0.5 {
 		value -= 10
+		formula += " - 10(上影线长)"
 	}
-	return math.Max(0, math.Min(100, value))
+	value = math.Max(0, math.Min(100, value))
+	formula += fmt.Sprintf(" = %.1f", value)
+	return value, formula
 }

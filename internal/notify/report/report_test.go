@@ -53,6 +53,59 @@ func TestNoSignalIsNotPresentedAsInsufficientHistory(t *testing.T) {
 	}
 }
 
+func TestShortCandidateExplainsChanGateAndScoreDerivation(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		evidence *strategy.ChanEvidence
+		want     string
+	}{
+		{name: "passed", evidence: &strategy.ChanEvidence{Status: strategy.ChanPass}, want: "未被过滤"},
+		{name: "unknown", evidence: &strategy.ChanEvidence{Status: strategy.ChanUnknown, Reason: "30m 尚无完成笔"}, want: "仅观察"},
+		{name: "failed", evidence: &strategy.ChanEvidence{Status: strategy.ChanFail, Reason: "15m 最近分型不是底分型"}, want: "15m 最近分型不是底分型"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			message, err := FromSelection(selection.Report{
+				Version: 2, ID: "rationale", AsOf: "2026-10-16", Target: "2026-10-19", SelectionEnabled: true,
+				Ranking: []strategy.Candidate{{
+					Code: "sh600900", Name: "测试候选", Rank: 1, Score: 24,
+					ScoreBreakdown: &strategy.ScoreBreakdown{Formula: "25 + 13(日线52×0.25) = 48.0；无合格历史证据：48.0×0.5 = 24.0"},
+					Chan:           test.evidence,
+					Rules:          []string{"baseline", "momentum"},
+					Reasons:        []string{"rising_ma20"},
+					Risks:          []string{"chan_unknown"},
+				}},
+				Research: &strategy.Research{Parameters: config.DefaultStrategy()},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			section := candidateSection(t, message, "sh600900")
+			if got := fieldValue(t, section, "缠论门控"); !strings.Contains(got, test.want) {
+				t.Errorf("Chan gate = %q, want contains %q", got, test.want)
+			}
+			if got := fieldValue(t, section, "评分推导"); !strings.Contains(got, "48.0×0.5 = 24.0") {
+				t.Errorf("score derivation = %q", got)
+			}
+			if got := fieldValue(t, section, "规则"); !strings.Contains(got, "股池基准") || !strings.Contains(got, "动量") {
+				t.Errorf("matched rules = %q", got)
+			}
+		})
+	}
+}
+
+func TestChanSummaryNamesPassingLevelEvidence(t *testing.T) {
+	summary := chanSummary(strategy.ChanEvidence{Status: strategy.ChanPass, Levels: []strategy.ChanLevelEvidence{
+		{Period: 30, Status: strategy.ChanPass, LastStroke: "up"},
+		{Period: 15, Status: strategy.ChanPass, LastFractal: "bottom"},
+		{Period: 5, Status: strategy.ChanPass, LastFractal: "bottom"},
+	}})
+	for _, want := range []string{"30m最近完成笔向上", "15m底分型收复", "5m底分型收复", "未被过滤"} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("summary %q missing %q", summary, want)
+		}
+	}
+}
+
 func TestTrendMessageUsesStructuredOverviewAndCandidateFields(t *testing.T) {
 	message, err := FromSelection(selection.Report{
 		Version:          1,

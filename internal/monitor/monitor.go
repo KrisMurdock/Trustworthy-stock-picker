@@ -632,7 +632,28 @@ func (m *Monitor) buildReport(ctx context.Context, histories, raw []market.Histo
 		}
 		return out
 	}
-	return selection.BuildWithExecution(ctx, m.Config, window(histories), window(raw), asof, target, m.Now())
+	minutes := []market.MinuteHistory{}
+	if m.Market != nil && m.Market.HasDatabase() {
+		valid := make(map[string]bool, len(histories))
+		for _, history := range histories {
+			valid[history.Code] = true
+		}
+		for _, stock := range m.Config.Stocks {
+			if !valid[stock.Code] {
+				continue
+			}
+			snapshot, err := m.Market.LoadMinutes(ctx, stock, 5)
+			if err != nil || len(snapshot.Bars) == 0 {
+				continue
+			}
+			minutes = append(minutes, snapshot.MinuteHistory)
+		}
+		m.Log.Debug("Minute histories loaded for Chan gate", "loaded", len(minutes), "eligible_daily", len(histories))
+	}
+	if len(minutes) == 0 {
+		return selection.BuildWithExecution(ctx, m.Config, window(histories), window(raw), asof, target, m.Now())
+	}
+	return selection.BuildWithExecutionMinutes(ctx, m.Config, window(histories), window(raw), minutes, asof, target, m.Now())
 }
 
 func mustNext(cal *calendar.Calendar, asof string) string {

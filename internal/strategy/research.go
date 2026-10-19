@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 	"stock-watcher/internal/calendar"
@@ -108,17 +109,28 @@ type Research struct {
 	Limitations      []string        `json:"limitations"`
 }
 type Candidate struct {
-	Code        string   `json:"code"`
-	Name        string   `json:"name"`
-	Features    Features `json:"features"`
-	Score       float64  `json:"opportunity_score"`
-	Rank        int      `json:"rank"`
-	Recommended bool     `json:"recommended"`
-	Rules       []string `json:"matched_rules"`
-	Evidence    *Stats   `json:"historical_evidence,omitempty"`
-	Reasons     []string `json:"reasons"`
-	Risks       []string `json:"risks"`
-	Plan        *Plan    `json:"reference_plan,omitempty"`
+	Code           string          `json:"code"`
+	Name           string          `json:"name"`
+	Features       Features        `json:"features"`
+	Score          float64         `json:"opportunity_score"`
+	ScoreBreakdown *ScoreBreakdown `json:"score_breakdown,omitempty"`
+	Rank           int             `json:"rank"`
+	Recommended    bool            `json:"recommended"`
+	Rules          []string        `json:"matched_rules"`
+	Evidence       *Stats          `json:"historical_evidence,omitempty"`
+	Reasons        []string        `json:"reasons"`
+	Risks          []string        `json:"risks"`
+	Plan           *Plan           `json:"reference_plan,omitempty"`
+	Chan           *ChanEvidence   `json:"chan,omitempty"`
+}
+
+// ScoreBreakdown records the arithmetic behind a candidate's opportunity
+// score. It is additive report data so older persisted reports stay readable.
+type ScoreBreakdown struct {
+	Version     int     `json:"schema_version"`
+	Formula     string  `json:"formula"`
+	Opportunity float64 `json:"opportunity_score"`
+	Final       float64 `json:"final_score"`
 }
 type Result struct {
 	Ranking  []Candidate
@@ -298,7 +310,8 @@ func find(stats []Stats, rule string, target float64, h int) Stats {
 	return Stats{Rule: rule, Target: target, Horizon: h}
 }
 func rank(code, name string, f Features, stats []Stats, s config.Strategy) Candidate {
-	c := Candidate{Code: code, Name: name, Features: f, Score: opportunity(f), Rules: Matches(f), Reasons: []string{}, Risks: []string{}}
+	base, formula := opportunityFormula(f)
+	c := Candidate{Code: code, Name: name, Features: f, Score: base, ScoreBreakdown: &ScoreBreakdown{Version: 1, Formula: formula, Opportunity: base, Final: base}, Rules: Matches(f), Reasons: []string{}, Risks: []string{}}
 	baseline := find(stats, "baseline", s.TargetNetPct, s.MaxHoldingDays)
 	for _, rule := range c.Rules {
 		if rule == "baseline" {
@@ -318,10 +331,14 @@ func rank(code, name string, f Features, stats []Stats, s config.Strategy) Candi
 		}
 	}
 	if c.Evidence != nil {
-		c.Score = c.Score*0.5 + c.Evidence.LowerBound*50
+		c.Score = base*0.5 + c.Evidence.LowerBound*50
+		c.ScoreBreakdown.Formula += fmt.Sprintf("；证据融合：%.1f×0.5 + 下界%.1f%%×50 = %.1f", base, c.Evidence.LowerBound*100, c.Score)
+		c.ScoreBreakdown.Final = c.Score
 		c.Reasons = append(c.Reasons, "historical_rule_"+c.Evidence.Rule)
 	} else {
-		c.Score *= 0.5
+		c.Score = base * 0.5
+		c.ScoreBreakdown.Formula += fmt.Sprintf("；无合格历史证据：%.1f×0.5 = %.1f", base, c.Score)
+		c.ScoreBreakdown.Final = c.Score
 		c.Risks = append(c.Risks, "insufficient_or_unprofitable_evidence")
 	}
 	if f.MA20Slope > 0 {
