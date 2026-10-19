@@ -33,6 +33,9 @@ func TestLoadValidation(t *testing.T) {
 		{"strategy_valid", valid + "strategy:\n  schema_version: 1\n  enabled: true\n  commission_rate: 0.0001\n", true},
 		{"strategy_fee_percent", valid + "strategy:\n  schema_version: 1\n  enabled: true\n  commission_rate: 1\n", false},
 		{"strategy_positive_stop", valid + "strategy:\n  schema_version: 1\n  enabled: true\n  stop_net_pct: 3\n", false},
+		{"structure_guard_shadow", valid + "structure_guard:\n  mode: shadow\n", true},
+		{"structure_guard_enforce", valid + "structure_guard:\n  mode: enforce\n", true},
+		{"structure_guard_invalid", valid + "structure_guard:\n  mode: live\n", false},
 		{"bad_listed_from", strings.Replace(valid, "sz000001", "sz000001\n    listed_from: '2026-13-01'", 1), false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -52,6 +55,20 @@ func TestLoadValidation(t *testing.T) {
 	}
 	if _, err := Load(filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Fatal("accepted missing config")
+	}
+}
+
+func TestStructureGuardDefaultsToShadow(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(p, []byte(valid), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.StructureGuard.Mode != "shadow" {
+		t.Fatalf("default mode = %q", c.StructureGuard.Mode)
 	}
 }
 func TestEnvironmentCredentials(t *testing.T) {

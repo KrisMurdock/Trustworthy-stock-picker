@@ -160,8 +160,12 @@ func shortFirstSelected(selected []selection.Candidate) selection.Candidate {
 }
 
 func metadataLine(r selection.Report) string {
-	return fmt.Sprintf("数据日 %s · 目标日 %s · 有效行情 %d/%d · 数据排除 %d",
+	line := fmt.Sprintf("数据日 %s · 目标日 %s · 有效行情 %d/%d · 数据排除 %d",
 		r.AsOf, r.Target, r.Eligible, r.PoolSize, len(r.Excluded))
+	if hasStructureGuard(r) {
+		line += fmt.Sprintf(" · 结构通过 %d/%d", r.GuardPassed, r.Eligible)
+	}
+	return line
 }
 
 func mainCardTable(r selection.Report, short bool, diagnosis *diagnostics.Report) *notify.Table {
@@ -261,6 +265,22 @@ func shortCandidateStatus(r selection.Report, candidate strategy.Candidate) stri
 	if !r.SelectionEnabled {
 		return "未启用"
 	}
+	if candidate.StructureGuard != nil {
+		shadow := candidate.StructureGuard.Mode == strategy.StructureGuardShadow
+		switch candidate.StructureGuard.GuardStatus {
+		case strategy.StructureGuardFail:
+			return "结构未过"
+		case strategy.StructureGuardUnknown:
+			return "结构未知"
+		case strategy.StructureGuardPass:
+			if candidate.Recommended {
+				return "可执行"
+			}
+			if shadow {
+				return "结构通过"
+			}
+		}
+	}
 	if candidate.Recommended {
 		return "可执行"
 	}
@@ -307,6 +327,9 @@ func detailPages(r selection.Report, short bool, diagnosis *diagnostics.Report) 
 		global := []notify.Section{
 			researchSection(r.Research, validation),
 			strategyParametersSection(r.Research.Parameters),
+		}
+		if section, ok := structureGuardSection(r); ok {
+			global = append(global, section)
 		}
 		return paginateDetails(global, shortCandidateDetailSections(r, diagnosis), exclusionSections(r))
 	}
@@ -379,23 +402,35 @@ func shortCandidateDetailSections(r selection.Report, diagnosis *diagnostics.Rep
 		if candidate.Evidence != nil {
 			evidence = detailedStats(*candidate.Evidence)
 		}
-		lines := []string{
-			"缠论门控：" + candidateChanSummary(candidate.Chan),
-			"评分推导：" + candidateScoreFormula(candidate.ScoreBreakdown),
+		score, breakdown := candidate.Score, candidate.ScoreBreakdown
+		if candidate.EligibleRank > 0 && candidate.EligibleScore != 0 {
+			score, breakdown = candidate.EligibleScore, candidate.EligibleScoreBreakdown
 		}
+		lines := []string{}
+		if candidate.StructureGuard != nil {
+			lines = append(lines, "结构门控："+structureGuardSummary(*candidate.StructureGuard))
+		}
+		lines = append(lines,
+			"缠论门控："+candidateChanSummary(candidate.Chan),
+			"评分推导："+candidateScoreFormula(breakdown),
+		)
 		for _, rule := range detail.Rules {
 			lines = append(lines, diagnosticRuleLine(rule))
 		}
 		lines = append(lines, "风险："+fullRisks(detail.Risks))
 		heading := fmt.Sprintf("第%d名 · %s %s · %s",
 			candidate.Rank, candidate.Code, escape(candidate.Name), shortCandidateStatus(r, candidate))
+		if candidate.EligibleRank > 0 {
+			heading = fmt.Sprintf("可入选第%d / 观察第%d名 · %s %s · %s",
+				candidate.EligibleRank, observationRank(&candidate), candidate.Code, escape(candidate.Name), shortCandidateStatus(r, candidate))
+		}
 		if candidate.Rank > mainTableRows {
 			heading = "推荐补充 · " + heading
 		}
 		sections = append(sections, notify.Section{
 			Heading: heading,
 			Fields: []notify.Field{
-				{Label: "机会分", Value: fmt.Sprintf("%.1f", candidate.Score)},
+				{Label: "机会分", Value: fmt.Sprintf("%.1f", score)},
 				{Label: "历史证据", Value: evidence},
 				{Label: "依据", Value: tags(candidate.Reasons)},
 				{Label: "规则", Value: tags(candidate.Rules)},
@@ -411,6 +446,64 @@ func candidateChanSummary(evidence *strategy.ChanEvidence) string {
 		return "未知：未检查；仅观察"
 	}
 	return chanSummary(*evidence)
+}
+
+func hasStructureGuard(r selection.Report) bool {
+	for i := range r.Ranking {
+		if r.Ranking[i].StructureGuard != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func observationRank(candidate *strategy.Candidate) int {
+	if candidate.ObservationRank > 0 {
+		return candidate.ObservationRank
+	}
+	return candidate.Rank
+}
+
+func structureGuardSection(r selection.Report) (notify.Section, bool) {
+	found := false
+	mode, rule := "", strategy.StructureGuardRule
+	for i := range r.Ranking {
+		if r.Ranking[i].StructureGuard == nil {
+			continue
+		}
+		found = true
+		mode = r.Ranking[i].StructureGuard.Mode
+		rule = r.Ranking[i].StructureGuard.Rule
+		break
+	}
+	if !found {
+		return notify.Section{}, false
+	}
+	return notify.Section{
+		Heading: "结构门控",
+		Fields: []notify.Field{
+			{Label: "规则", Value: rule},
+			{Label: "模式", Value: mode},
+			{Label: "结构通过", Value: fmt.Sprintf("%d/%d", r.GuardPassed, r.Eligible)},
+			{Label: "口径", Value: "日线定方向；30m/5m 仅能否决，不生成买点"},
+		},
+	}, true
+}
+
+func structureGuardSummary(evidence strategy.StructureGuardEvidence) string {
+	switch evidence.GuardStatus {
+	case strategy.StructureGuardPass:
+		return "pass：日线结构未逆向，30m/5m 未触发失效；仅代表未被过滤，不是买点"
+	case strategy.StructureGuardFail:
+		return "fail：" + escape(evidence.Reason) + "；已过滤"
+	case strategy.StructureGuardUnknown:
+		if evidence.Reason == "" {
+			return "unknown：结构证据不足；已过滤"
+		}
+		return "unknown：" + escape(evidence.Reason) + "；已过滤"
+	default:
+		return "unknown：未评估；已过滤"
+	}
 }
 
 func candidateScoreFormula(breakdown *strategy.ScoreBreakdown) string {
@@ -664,6 +757,8 @@ func exclusionReason(reason string) string {
 		"strategy_evidence_or_risk_gate":  "证据/风险门槛未过",
 		"chan_filtered":                   "缠论未通过",
 		"chan_unknown":                    "缠论结构未知",
+		"structure_guard_fail":            "结构门控不通过",
+		"structure_guard_unknown":         "结构门控数据不足",
 	}
 	if label := labels[reason]; label != "" {
 		return label
@@ -691,6 +786,8 @@ func tags(values []string) string {
 		"strong_close":                          "收盘偏强",
 		"chan_filtered":                         "缠论未通过",
 		"chan_unknown":                          "缠论结构未知",
+		"structure_guard_fail":                  "结构门控不通过",
+		"structure_guard_unknown":               "结构门控数据不足",
 		"insufficient_or_unprofitable_evidence": "匹配规则未通过历史检验",
 		"historical_net_loss_limit_breached":    "历史单笔净亏损超限",
 		"extended_price":                        "涨幅/偏离过大",

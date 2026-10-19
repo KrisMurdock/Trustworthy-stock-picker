@@ -109,19 +109,27 @@ type Research struct {
 	Limitations      []string        `json:"limitations"`
 }
 type Candidate struct {
-	Code           string          `json:"code"`
-	Name           string          `json:"name"`
-	Features       Features        `json:"features"`
-	Score          float64         `json:"opportunity_score"`
-	ScoreBreakdown *ScoreBreakdown `json:"score_breakdown,omitempty"`
-	Rank           int             `json:"rank"`
-	Recommended    bool            `json:"recommended"`
-	Rules          []string        `json:"matched_rules"`
-	Evidence       *Stats          `json:"historical_evidence,omitempty"`
-	Reasons        []string        `json:"reasons"`
-	Risks          []string        `json:"risks"`
-	Plan           *Plan           `json:"reference_plan,omitempty"`
-	Chan           *ChanEvidence   `json:"chan,omitempty"`
+	Code                      string                  `json:"code"`
+	Name                      string                  `json:"name"`
+	Features                  Features                `json:"features"`
+	Score                     float64                 `json:"opportunity_score"`
+	ScoreBreakdown            *ScoreBreakdown         `json:"score_breakdown,omitempty"`
+	Rank                      int                     `json:"rank"`
+	ObservationRank           int                     `json:"observation_rank,omitempty"`
+	EligibleRank              int                     `json:"eligible_rank,omitempty"`
+	ObservationScore          float64                 `json:"observation_score,omitempty"`
+	EligibleScore             float64                 `json:"eligible_score,omitempty"`
+	ObservationScoreBreakdown *ScoreBreakdown         `json:"observation_score_breakdown,omitempty"`
+	EligibleScoreBreakdown    *ScoreBreakdown         `json:"eligible_score_breakdown,omitempty"`
+	Recommended               bool                    `json:"recommended"`
+	EligibleRecommended       bool                    `json:"eligible_recommended"`
+	Rules                     []string                `json:"matched_rules"`
+	Evidence                  *Stats                  `json:"historical_evidence,omitempty"`
+	Reasons                   []string                `json:"reasons"`
+	Risks                     []string                `json:"risks"`
+	Plan                      *Plan                   `json:"reference_plan,omitempty"`
+	Chan                      *ChanEvidence           `json:"chan,omitempty"`
+	StructureGuard            *StructureGuardEvidence `json:"structure_guard,omitempty"`
 }
 
 // ScoreBreakdown records the arithmetic behind a candidate's opportunity
@@ -133,9 +141,10 @@ type ScoreBreakdown struct {
 	Final       float64 `json:"final_score"`
 }
 type Result struct {
-	Ranking  []Candidate
-	Excluded map[string]string
-	Research Research
+	Ranking     []Candidate
+	Excluded    map[string]string
+	Research    Research
+	GuardPassed int
 }
 
 func key(target float64, horizon int) string {

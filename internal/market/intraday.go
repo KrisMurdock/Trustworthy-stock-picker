@@ -108,7 +108,13 @@ func ValidateMinutePair(base, derived MinuteHistory) error {
 	if err := derived.Validate(); err != nil {
 		return err
 	}
-	expected := AggregateMinutes(base.Bars, derived.Period, base.FetchedAt)
+	aggregated := AggregateMinutes(base.Bars, derived.Period, base.FetchedAt)
+	expected := make([]MinuteBar, 0, len(aggregated))
+	for _, bar := range aggregated {
+		if bar.Final {
+			expected = append(expected, bar)
+		}
+	}
 	if len(expected) != len(derived.Bars) {
 		return errors.New("minute pair bar count mismatch")
 	}

@@ -116,7 +116,7 @@
     try {
       const report = await requestJSON(`/api/reports?as_of=${encodeURIComponent(date)}`, state.reportController.signal);
       if (requestID !== state.reportRequest) return;
-      if (!report || report.as_of !== date || ![1, 2].includes(report.schema_version)) throw new Error("报告日期或版本不匹配，请重新加载。");
+      if (!report || report.as_of !== date || ![1, 2, 3].includes(report.schema_version)) throw new Error("报告日期或版本不匹配，请重新加载。");
       renderReport(report);
     } catch (error) {
       if (requestID !== state.reportRequest || error.name === "AbortError") return;

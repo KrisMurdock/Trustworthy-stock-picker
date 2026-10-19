@@ -48,6 +48,7 @@ type Report struct {
 	TopN             int                  `json:"top_n"`
 	PoolSize         int                  `json:"pool_size"`
 	Eligible         int                  `json:"eligible"`
+	GuardPassed      int                  `json:"guard_passed"`
 	Passed           int                  `json:"passed"`
 	Rules            []string             `json:"rules"`
 	Selected         []Candidate          `json:"selected"`
@@ -186,7 +187,11 @@ func buildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 	if err != nil {
 		return Report{}, err
 	}
-	r := Report{Version: 2, AsOf: asof, Target: target, GeneratedAt: now.In(market.Shanghai), Strategy: "short_horizon_v1", SelectionEnabled: c.Selection.Enabled, Adjust: c.Daily.Adjust, TopN: c.Selection.TopN, PoolSize: len(c.Stocks), Eligible: len(result.Ranking), Ranking: result.Ranking, Research: &result.Research, Selected: []Candidate{}, Excluded: []Excluded{}, Filtered: []Excluded{}, Rules: []string{
+	version := 2
+	if minutes != nil {
+		version = 3
+	}
+	r := Report{Version: version, AsOf: asof, Target: target, GeneratedAt: now.In(market.Shanghai), Strategy: "short_horizon_v1", SelectionEnabled: c.Selection.Enabled, Adjust: c.Daily.Adjust, TopN: c.Selection.TopN, PoolSize: len(c.Stocks), Eligible: len(result.Ranking), GuardPassed: result.GuardPassed, Ranking: result.Ranking, Research: &result.Research, Selected: []Candidate{}, Excluded: []Excluded{}, Filtered: []Excluded{}, Rules: []string{
 		fmt.Sprintf("次日开盘模拟买入；净止盈 %.1f%% / 净止损 %.1f%%", c.Strategy.TargetNetPct, c.Strategy.StopNetPct),
 		fmt.Sprintf("买入当日不卖出；买入后第 %d 个交易日收盘到期退出", c.Strategy.MaxHoldingDays),
 		"历史验收硬条件：单笔扣费后净亏损严格低于投入的3%，超限或未决不通过；止损触发价不保证实盘成交价",
@@ -236,6 +241,12 @@ func recommendationFilterReason(risks []string) string {
 	}
 	if hasRisk(risks, "chan_unknown") {
 		return "chan_unknown"
+	}
+	if hasRisk(risks, "structure_guard_fail") {
+		return "structure_guard_fail"
+	}
+	if hasRisk(risks, "structure_guard_unknown") {
+		return "structure_guard_unknown"
 	}
 	return "strategy_evidence_or_risk_gate"
 }

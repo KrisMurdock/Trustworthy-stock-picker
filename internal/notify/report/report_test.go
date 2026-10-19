@@ -686,7 +686,8 @@ func headings(sections []notify.Section) []string {
 func detailCandidateSections(sections []notify.Section) []notify.Section {
 	out := []notify.Section{}
 	for _, section := range sections {
-		if strings.HasPrefix(section.Heading, "第") || strings.HasPrefix(section.Heading, "推荐补充 · 第") || strings.HasPrefix(section.Heading, "入选 ") {
+		if strings.HasPrefix(section.Heading, "第") || strings.HasPrefix(section.Heading, "推荐补充 · 第") ||
+			strings.HasPrefix(section.Heading, "观察第") || strings.HasPrefix(section.Heading, "可入选第") || strings.HasPrefix(section.Heading, "入选 ") {
 			out = append(out, section)
 		}
 	}
@@ -737,4 +738,66 @@ func lineWithPrefix(lines []string, prefix string) string {
 
 func lineHasPrefix(lines []string, prefix string) bool {
 	return lineWithPrefix(lines, prefix) != ""
+}
+
+func TestStructureGuardMessageExplainsPassFilterAndScore(t *testing.T) {
+	pass := shortCandidate("sz000001", "结构票", 2, 88, true)
+	pass.ObservationRank = 2
+	pass.EligibleRank = 1
+	pass.EligibleScore = 77.5
+	pass.EligibleScoreBreakdown = &strategy.ScoreBreakdown{Version: 1, Formula: "25 + 50×0.25 + ... = 77.5", Final: 77.5}
+	pass.StructureGuard = &strategy.StructureGuardEvidence{
+		Version: 1, Rule: strategy.StructureGuardRule, Mode: strategy.StructureGuardEnforce,
+		DataStatus: "ok", GuardStatus: strategy.StructureGuardPass, ReasonCode: "daily_structure_ok", Reason: "日线结构未逆向，低级别未触发失效",
+	}
+	filtered := shortCandidate("sz000002", "数据不足票", 1, 99, false)
+	filtered.ObservationRank = 1
+	filtered.StructureGuard = &strategy.StructureGuardEvidence{
+		Version: 1, Rule: strategy.StructureGuardRule, Mode: strategy.StructureGuardEnforce,
+		DataStatus: "insufficient", GuardStatus: strategy.StructureGuardUnknown, ReasonCode: "minute_insufficient", Reason: "5m 样本不足",
+	}
+	cards, err := FromSelection(selection.Report{
+		Version: 3, ID: "guard-event", AsOf: "2026-10-16", Target: "2026-10-19", Strategy: "short_horizon_v1",
+		SelectionEnabled: true, PoolSize: 2, Eligible: 2, GuardPassed: 1, Passed: 1,
+		Selected: []selection.Candidate{{Code: pass.Code, Name: pass.Name, Ranking: &pass}},
+		Ranking:  []strategy.Candidate{pass, filtered},
+		Research: &strategy.Research{Version: 1, Strategy: "short_horizon_v1", AsOf: "2026-10-16", Parameters: config.DefaultStrategy()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := detailSectionByHeading(t, cards, "结构门控")
+	if got := fieldValue(t, section, "结构通过"); got != "1/2" {
+		t.Fatalf("structure pass count = %q", got)
+	}
+	candidate := detailSectionByCode(t, cards, pass.Code)
+	if !strings.Contains(candidate.Heading, "可入选第1") {
+		t.Fatalf("eligible rank missing: %q", candidate.Heading)
+	}
+	if got := fieldValue(t, candidate, "机会分"); got != "77.5" {
+		t.Fatalf("eligible score not used: %q", got)
+	}
+	if got := lineWithPrefix(candidate.Lines, "评分推导："); !strings.Contains(got, "77.5") {
+		t.Fatalf("score formula missing: %q", got)
+	}
+	if got := lineWithPrefix(candidate.Lines, "结构门控："); !strings.Contains(got, "不是买点") || strings.Contains(got, "买点确认") {
+		t.Fatalf("structure pass wording is misleading: %q", got)
+	}
+	filteredSection := detailSectionByCode(t, cards, filtered.Code)
+	if got := lineWithPrefix(filteredSection.Lines, "结构门控："); !strings.Contains(got, "已过滤") {
+		t.Fatalf("filter reason missing: %q", got)
+	}
+}
+
+func detailSectionByHeading(t *testing.T, cards Cards, heading string) notify.Section {
+	t.Helper()
+	for _, detail := range cards.Details {
+		for _, section := range detail.Sections {
+			if section.Heading == heading {
+				return section
+			}
+		}
+	}
+	t.Fatalf("no detail section headed %q", heading)
+	return notify.Section{}
 }

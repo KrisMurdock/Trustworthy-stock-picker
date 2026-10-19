@@ -45,6 +45,7 @@ type Provenance struct {
 
 func SafeConfig(c config.Config) config.Config {
 	out := config.Config{Version: c.Version, Strategy: c.Strategy}
+	out.StructureGuard = c.StructureGuard
 	out.Stocks = append([]config.Stock(nil), c.Stocks...)
 	out.Analysis = c.Analysis
 	out.Daily = c.Daily
@@ -64,7 +65,7 @@ type builtinEngine struct{ descriptor EngineDescriptor }
 
 func (e builtinEngine) Descriptor() EngineDescriptor { return e.descriptor }
 func (e builtinEngine) Analyze(ctx context.Context, in Input) (Report, error) {
-	if len(in.Minutes) > 0 {
+	if in.Minutes != nil {
 		return BuildWithExecutionMinutes(ctx, in.Config, in.Histories, in.Raw, in.Minutes, in.AsOf, in.Target, in.Now)
 	}
 	return BuildWithExecution(ctx, in.Config, in.Histories, in.Raw, in.AsOf, in.Target, in.Now)
@@ -194,7 +195,7 @@ func Execute(ctx context.Context, e Engine, in Input, build string) (Report, err
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
 	}
-	if result.SelectionEnabled != in.Config.Selection.Enabled || (!in.Config.Selection.Enabled && len(result.Selected) > 0) || result.ID == "" || (result.Version != 1 && result.Version != 2) || result.AsOf != in.AsOf || result.Target != in.Target || result.Adjust != d.Adjust || result.Strategy != d.ID {
+	if result.SelectionEnabled != in.Config.Selection.Enabled || (!in.Config.Selection.Enabled && len(result.Selected) > 0) || result.ID == "" || (result.Version != 1 && result.Version != 2 && result.Version != 3) || result.AsOf != in.AsOf || result.Target != in.Target || result.Adjust != d.Adjust || result.Strategy != d.ID {
 		return Report{}, errors.New("invalid algorithm result identity")
 	}
 	seen := map[string]bool{}

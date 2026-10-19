@@ -25,18 +25,19 @@ type Stock struct {
 }
 
 type Config struct {
-	Analysis     Analysis `yaml:"analysis"`
-	Intraday     Intraday `yaml:"intraday"`
-	Market       Market   `yaml:"market"`
-	Strategy     Strategy `yaml:"strategy"`
-	Version      int      `yaml:"schema_version"`
-	DataDir      string   `yaml:"data_dir"`
-	RequireCIFS  bool     `yaml:"require_cifs"`
-	PollInterval string   `yaml:"poll_interval"`
-	Timeout      string   `yaml:"request_timeout"`
-	PoolFile     string   `yaml:"pool_file,omitempty"`
-	Stocks       []Stock  `yaml:"stocks"`
-	Web          struct {
+	Analysis       Analysis       `yaml:"analysis"`
+	Intraday       Intraday       `yaml:"intraday"`
+	Market         Market         `yaml:"market"`
+	Strategy       Strategy       `yaml:"strategy"`
+	StructureGuard StructureGuard `yaml:"structure_guard"`
+	Version        int            `yaml:"schema_version"`
+	DataDir        string         `yaml:"data_dir"`
+	RequireCIFS    bool           `yaml:"require_cifs"`
+	PollInterval   string         `yaml:"poll_interval"`
+	Timeout        string         `yaml:"request_timeout"`
+	PoolFile       string         `yaml:"pool_file,omitempty"`
+	Stocks         []Stock        `yaml:"stocks"`
+	Web            struct {
 		Enabled bool   `yaml:"enabled"`
 		Listen  string `yaml:"listen"`
 	} `yaml:"web"`
@@ -77,6 +78,10 @@ type Config struct {
 	} `yaml:"calendar"`
 }
 
+type StructureGuard struct {
+	Mode string `yaml:"mode" json:"mode"`
+}
+
 type NotifyChannel struct {
 	Name            string `yaml:"name"`
 	Type            string `yaml:"type"`
@@ -96,6 +101,7 @@ func Defaults() Config {
 	c := Config{Version: 1, DataDir: "data", RequireCIFS: true, PollInterval: "5m", Timeout: "10s"}
 	c.Analysis = Analysis{Engine: "auto", Timeout: "10m", SyncTimeout: "90m"}
 	c.Strategy = DefaultStrategy()
+	c.StructureGuard.Mode = "shadow"
 	c.Market = DefaultMarket()
 	c.Intraday = DefaultIntraday()
 	c.Web.Enabled = true
@@ -241,6 +247,11 @@ func (c Config) Validate() error {
 	}
 	if err := c.Strategy.Validate(); err != nil {
 		return err
+	}
+	switch c.StructureGuard.Mode {
+	case "", "shadow", "enforce":
+	default:
+		return errors.New("structure_guard.mode must be shadow or enforce")
 	}
 	if c.Strategy.Enabled && c.Daily.Adjust != "qfq" {
 		return errors.New("strategy requires daily.adjust=qfq")

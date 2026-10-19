@@ -338,7 +338,7 @@ func readDashboardReport(ctx context.Context, reader sqlReader, asof string) (se
 	if err != nil {
 		return report, dashboardReadError(ctx)
 	}
-	if err := json.Unmarshal(data, &report); err != nil || (report.Version != 1 && report.Version != 2) || report.AsOf != asof ||
+	if err := json.Unmarshal(data, &report); err != nil || (report.Version != 1 && report.Version != 2 && report.Version != 3) || report.AsOf != asof ||
 		(report.Adjust != "qfq" && report.Adjust != "hfq" && report.Adjust != "none") {
 		return report, errors.New("invalid stored dashboard report")
 	}

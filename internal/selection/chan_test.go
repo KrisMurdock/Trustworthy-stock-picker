@@ -90,3 +90,20 @@ func TestRecommendationFilterReasonPrefersChanEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestEnforceStructureGuardDoesNotBypassInsufficientDailyHistory(t *testing.T) {
+	c, histories, raw := executionFixture()
+	c.StructureGuard.Mode = "enforce"
+	asof := histories[0].AsOf
+	minutes := singleDayMinuteHistory(asof, raw[0].Bars[len(raw[0].Bars)-1])
+	report, err := BuildWithExecutionMinutes(context.Background(), c, histories, raw, []market.MinuteHistory{minutes}, asof, "2026-10-20", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Version != 3 || report.GuardPassed != 0 || report.Passed != 0 || len(report.Selected) != 0 {
+		t.Fatalf("insufficient daily history bypassed structure guard: %+v", report)
+	}
+	if len(report.Ranking) != 1 || report.Ranking[0].StructureGuard == nil || report.Ranking[0].StructureGuard.GuardStatus != "unknown" {
+		t.Fatalf("structure evidence missing: %+v", report.Ranking)
+	}
+}

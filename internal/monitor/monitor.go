@@ -887,10 +887,10 @@ func (m *Monitor) buildReport(ctx context.Context, histories, raw []market.Histo
 // reportMinutes preserves the existing bounded Chan input, excluding forming
 // bars and observations from a later session. Replay never calls this loader.
 func (m *Monitor) reportMinutes(ctx context.Context, histories []market.History, asof string) ([]market.MinuteHistory, error) {
-	var minutes []market.MinuteHistory
 	if !m.Config.Strategy.Enabled || m.Market == nil || !m.Market.HasDatabase() {
-		return minutes, nil
+		return nil, nil
 	}
+	minutes := []market.MinuteHistory{}
 	valid := make(map[string]bool, len(histories))
 	for _, h := range histories {
 		valid[h.Code] = true

@@ -79,6 +79,12 @@ strategy:
   holdout_days: 40
   min_rank_score: 60
 
+# Structure gate over qfq daily bars plus same-snapshot 30m/5m bars.
+# shadow records evidence and eligible ranks without changing formal picks;
+# switch to enforce only after the shadow review period.
+structure_guard:
+  mode: shadow
+
 notify:
   channels:
     - name: feishu-main
