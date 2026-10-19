@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"path/filepath"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/market"
 	"testing"
@@ -126,5 +128,30 @@ func TestLegacyWindowRejectsUndetectableRevision(t *testing.T) {
 	}
 	if _, err := db.LoadHistories(ctx, []config.Stock{stock}, h.AsOf, "qfq"); err == nil {
 		t.Fatal("revised legacy input relabeled as original")
+	}
+}
+
+func TestUnsupportedLegacySchemaIsNotRelabeled(t *testing.T) {
+	root := t.TempDir()
+	db, err := InitMarket(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec("PRAGMA user_version=1"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if reopened, err := OpenMarket(root, false); err == nil {
+		reopened.Close()
+		t.Fatal("unsupported schema 1 was relabeled as current")
+	}
+	raw, err := sql.Open("sqlite", "file:"+filepath.Join(root, "market.db")+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var version int
+	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
+		t.Fatal("unsupported schema was mutated", version, err)
 	}
 }

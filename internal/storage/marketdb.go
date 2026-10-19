@@ -211,7 +211,7 @@ func (m *MarketDB) initSchema() error {
 	if err := m.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return errors.New("cannot read market database version")
 	}
-	if version > marketSchemaVersion {
+	if version != 0 && version != 2 && version != 3 && version != marketSchemaVersion {
 		return errors.New("unsupported market database version")
 	}
 	_, err := m.db.Exec(`
