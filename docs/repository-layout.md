@@ -39,4 +39,6 @@ data/                    Windows 共享盘链接或挂载（忽略）
 
 scripts/ 只组织构建或 exec Go 二进制，生产容器和 systemd 直接运行 Go；没有恢复旧 Python 启动链路。现有根配置路径保持不变，避免为了目录齐全移动用户的私有配置。
 
-support-agent 的数据库迁移、HTTP API/端口、LLM 提示词、前端、内部镜像仓库与 GitLab 私有流水线依赖不适用于本项目，因此不创建 db/、conf/prompts 或空占位目录。本项目不提供 Web UI，也不额外开放 HTTP 健康检查端口；健康状态使用原生 check 命令。
+support-agent 的 LLM 提示词、内部镜像仓库与 GitLab 私有流水线依赖不适用于本项目，因此不创建 db/、conf/prompts 或空占位目录。本项目已提供 Go 内嵌只读网页及 HTTP API，同一监听端口承载 `/healthz`、`/readyz` 和 `/api/status`，无需独立前端容器。SQLite 迁移由 `internal/storage` 的版本化代码管理，不创建空的 db/ 目录。
+
+`internal/selection/engine.go` 定义日常算法计算边界；`internal/health` 汇总只读业务健康；任务和快照仍由 `internal/storage` 管理。实验代码保持独立，实验结果不会自动进入生产推送。

@@ -51,7 +51,7 @@ services:
           create_host_path: false
     command: [run, -config, /app/config.yaml]
     healthcheck:
-      test: [CMD, stock-watcher, check, -config, /app/config.yaml]
+      test: [CMD, stock-watcher, health, -config, /app/config.yaml]
       interval: 60s
       timeout: 15s
       start_period: 10s

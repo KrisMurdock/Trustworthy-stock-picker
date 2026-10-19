@@ -39,7 +39,7 @@ docker compose --env-file docker/.env -f docker/compose.yaml logs --tail 50
 docker compose --env-file docker/.env -f docker/compose.yaml exec stock-watcher stock-watcher status -config /app/config.yaml
 ```
 
-check 是读写探针与配置检查；服务主命令是 `run`，健康状态应为 healthy。没有对外 HTTP 端口。容器内 /data 直接映射 Windows，/logs 是本地有限滚动日志。
+`check` 是读写探针与配置检查；服务主命令为 `run`，Compose 用只读 `health` 检查就绪。默认宿主机端口为 `127.0.0.1:8080`，网页与 API 共用该端口；`/api/status` 的业务降级与容器 healthy 分开判断。容器内 /data 直接映射 Windows，/logs 是本地有限滚动日志。
 
 ## 升级、停止与回滚
 
@@ -53,3 +53,5 @@ docker compose --env-file docker/.env -f docker/compose.yaml down
 ## 网页入口
 
 `run` 会同时提供监控任务与嵌入网页。Compose 将容器 8080 映射至宿主机 `127.0.0.1:8080`；浏览器打开该地址即可查看全量股池、摘要快照和每日排名。修改 `docker/.env` 的 `STOCK_WATCHER_WEB_BIND` 可调整宿主机地址/端口。网页没有账号或写入接口，远程访问需通过受控网络或已有认证反向代理，根路径、`/api/` 和 `/assets/` 应保持一致。
+
+行情库 schema 4 升级、只读健康、报告重放、停机备份和回滚流程见 [部署说明](../docs/deployment.md#框架升级与恢复)。

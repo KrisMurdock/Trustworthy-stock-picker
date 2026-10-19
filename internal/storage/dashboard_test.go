@@ -118,6 +118,14 @@ func TestDashboardReportVersionsAndHistoricalRanking(t *testing.T) {
 		t.Fatalf("v2 dashboard report lost ranking/date ordering: %+v %v", got, err)
 	}
 	historical, err := db.LoadDashboardReport(context.Background(), first.AsOf)
+	if historical.InputID == "" {
+		t.Fatal("report input provenance missing")
+	}
+	if _, err := db.LoadReportInputs(context.Background(), historical.InputID); err != nil {
+		t.Fatal(err)
+	}
+	first.InputID = historical.InputID
+	first.Revision = historical.Revision
 	historicalJSON, _ := json.Marshal(historical)
 	firstJSON, _ := json.Marshal(first)
 	if err != nil || string(historicalJSON) != string(firstJSON) {

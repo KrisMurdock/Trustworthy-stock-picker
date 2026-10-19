@@ -33,6 +33,9 @@ type Excluded struct {
 	LastDate string `json:"last_date,omitempty"`
 }
 type Report struct {
+	Revision         string               `json:"revision,omitempty"`
+	Provenance       *Provenance          `json:"provenance,omitempty"`
+	InputID          string               `json:"input_id,omitempty"`
 	Version          int                  `json:"schema_version"`
 	ID               string               `json:"id"`
 	AsOf             string               `json:"as_of"`

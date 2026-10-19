@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/experiment"
+	"stock-watcher/internal/health"
 	"stock-watcher/internal/logging"
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/selection"
@@ -39,6 +40,7 @@ type experimentReader interface {
 }
 
 type handler struct {
+	health      func(context.Context) (health.Status, error)
 	experiments experimentReader
 	stocks      []config.Stock
 	adjust      string
@@ -56,7 +58,11 @@ func newHandler(c config.Config, db snapshotReader, log *logging.Logger) http.Ha
 	if log == nil {
 		log = logging.Nop()
 	}
-	return &handler{experiments: storage.ExperimentView{Root: c.DataDir, RequireCIFS: c.RequireCIFS}, stocks: append([]config.Stock(nil), c.Stocks...), adjust: c.Daily.Adjust, db: db, log: log}
+	h := &handler{experiments: storage.ExperimentView{Root: c.DataDir, RequireCIFS: c.RequireCIFS}, stocks: append([]config.Stock(nil), c.Stocks...), adjust: c.Daily.Adjust, db: db, log: log}
+	if marketDB, ok := db.(*storage.MarketDB); ok {
+		h.health = func(ctx context.Context) (health.Status, error) { return health.Read(ctx, c, marketDB, time.Now()) }
+	}
+	return h
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -73,6 +79,32 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/healthz":
 		writeJSON(w, r, http.StatusOK, map[string]string{"status": "ok"})
+	case "/readyz", "/api/status":
+		if r.URL.RawQuery != "" {
+			writeError(w, r, http.StatusBadRequest, "status does not accept query parameters")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+		defer cancel()
+		if h.health == nil {
+			writeError(w, r, http.StatusServiceUnavailable, "status unavailable")
+			return
+		}
+		status, err := h.health(ctx)
+		if err != nil {
+			h.log.Warn("Runtime status unavailable", "error", err)
+			if r.URL.Path == "/api/status" {
+				status.Version = 1
+				status.Ready = false
+				status.Business = "degraded"
+				status.Issues = append(status.Issues, "dependencies_unavailable")
+				writeJSON(w, r, http.StatusOK, status)
+			} else {
+				writeError(w, r, http.StatusServiceUnavailable, "storage or calendar unavailable")
+			}
+			return
+		}
+		writeJSON(w, r, http.StatusOK, status)
 	case "/api/dashboard":
 		if r.URL.RawQuery != "" {
 			writeError(w, r, http.StatusBadRequest, "dashboard does not accept query parameters")

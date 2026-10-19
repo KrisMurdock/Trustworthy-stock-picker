@@ -25,6 +25,7 @@ type Stock struct {
 }
 
 type Config struct {
+	Analysis     Analysis `yaml:"analysis"`
 	Intraday     Intraday `yaml:"intraday"`
 	Market       Market   `yaml:"market"`
 	Strategy     Strategy `yaml:"strategy"`
@@ -91,6 +92,7 @@ func ValidCode(s string) bool { return stockCode.MatchString(s) }
 
 func Defaults() Config {
 	c := Config{Version: 1, DataDir: "data", RequireCIFS: true, PollInterval: "5m", Timeout: "10s"}
+	c.Analysis = Analysis{Engine: "auto", Timeout: "10m", SyncTimeout: "90m"}
 	c.Strategy = DefaultStrategy()
 	c.Market = DefaultMarket()
 	c.Intraday = DefaultIntraday()
@@ -211,6 +213,12 @@ func Load(path string) (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if (c.Analysis.Engine == "short_horizon_v1" && !c.Strategy.Enabled) || (c.Analysis.Engine == "leader_daily_v1" && c.Strategy.Enabled) {
+		return errors.New("analysis.engine does not match strategy.enabled")
+	}
+	if err := c.Analysis.Validate(); err != nil {
+		return err
+	}
 	if err := c.Intraday.Validate(); err != nil {
 		return err
 	}

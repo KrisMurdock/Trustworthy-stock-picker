@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/notify"
+	"stock-watcher/internal/selection"
 	"stock-watcher/internal/storage"
 	"testing"
 	"time"
@@ -106,5 +107,37 @@ func TestFlushDeadlineRetainsUncertainDelivery(t *testing.T) {
 	got := channelState(t, state, ch.Name())
 	if !ch.called || got.Status != notify.Expired || !got.PossiblyDuplicate {
 		t.Fatalf("uncertainty lost: %+v", got)
+	}
+}
+
+func TestStatusProjectsLegacyLedgerWithoutMigrationWrite(t *testing.T) {
+	m, _, _ := fixture(t)
+	root := t.TempDir()
+	writer, err := storage.Open(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	legacy := persistedState{Version: 1, Pending: &legacyPending{Report: selection.Report{Version: 1, ID: "old", AsOf: "2026-10-13", Target: "2026-10-14", SelectionEnabled: true}, Attempts: 2}}
+	if err := writer.Write("state/delivery.json", legacy); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(root, "state/delivery.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := storage.OpenView(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer view.Close()
+	m.Store = view
+	state, err := m.Status()
+	if err != nil || state.Version != 2 {
+		t.Fatal("legacy projection failed", err)
+	}
+	after, err := os.ReadFile(filepath.Join(root, "state/delivery.json"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("read-only migration changed persisted bytes", err)
 	}
 }

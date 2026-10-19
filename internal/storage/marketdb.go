@@ -20,7 +20,7 @@ import (
 )
 
 const marketDBName = "market.db"
-const marketSchemaVersion = 3
+const marketSchemaVersion = 4
 
 type MarketDB struct {
 	db          *sql.DB
@@ -173,6 +173,9 @@ func (m *MarketDB) configure() error {
 			return err
 		}
 	}
+	if !m.writable {
+		return nil
+	} // Read-only probes must not scan the entire database.
 	var result string
 	if err := m.db.QueryRow("PRAGMA quick_check").Scan(&result); err != nil || result != "ok" {
 		return errors.New("market database quick_check failed")
@@ -183,7 +186,7 @@ func (m *MarketDB) configure() error {
 func verifySchema(reader sqlReader) error {
 	rows, err := reader.QueryContext(context.Background(), `
 		SELECT name FROM sqlite_master
-		WHERE type='table' AND name IN ('stock', 'daily_bar', 'stock_sync', 'sync_run', 'selection_run', 'selection_result', 'intraday_bar', 'intraday_sync')
+		WHERE type='table' AND name IN ('stock', 'daily_bar', 'stock_sync', 'sync_run', 'selection_run', 'selection_result', 'intraday_bar', 'intraday_sync', 'history_snapshot', 'history_revision', 'report_input', 'report_archive', 'sync_task', 'sync_checkpoint')
 	`)
 	if err != nil {
 		return errors.New("cannot inspect market database schema")
@@ -197,7 +200,7 @@ func verifySchema(reader sqlReader) error {
 		}
 		found[name] = true
 	}
-	if err := rows.Err(); err != nil || len(found) != 8 {
+	if err := rows.Err(); err != nil || len(found) != 14 {
 		return errors.New("market database schema is incomplete")
 	}
 	return nil
@@ -275,9 +278,11 @@ func (m *MarketDB) initSchema() error {
 		return errors.New("cannot initialize market database")
 	}
 	if version == 0 || version == 2 {
-		return m.initMinuteSchema()
+		if err := m.initMinuteSchema(); err != nil {
+			return err
+		}
 	}
-	return nil
+	return m.initSnapshotSchema()
 }
 
 func (m *MarketDB) Close() error {
@@ -306,8 +311,14 @@ func (m *MarketDB) CommitMarketData(ctx context.Context, run SyncRun, items []Sy
 }
 
 func (m *MarketDB) commitMarket(ctx context.Context, run SyncRun, items []SyncItem, adjust string, report *selection.Report) error {
+	return m.commitMarketMode(ctx, run, items, adjust, report, false)
+}
+func (m *MarketDB) commitMarketMode(ctx context.Context, run SyncRun, items []SyncItem, adjust string, report *selection.Report, analysisOnly bool) error {
 	if m == nil || !m.writable {
 		return errors.New("market database is read-only")
+	}
+	if err := (&Store{root: m.root, requireCIFS: m.requireCIFS}).Check(); err != nil {
+		return err
 	}
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -318,6 +329,9 @@ func (m *MarketDB) commitMarket(ctx context.Context, run SyncRun, items []SyncIt
 		return e
 	}
 	for _, item := range items {
+		if analysisOnly {
+			break
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO stock(code, name, sector, active, updated_at) VALUES(?, ?, ?, 1, ?)
 			ON CONFLICT(code) DO UPDATE SET name=excluded.name, sector=excluded.sector, active=1, updated_at=excluded.updated_at
@@ -367,7 +381,7 @@ func (m *MarketDB) commitMarket(ctx context.Context, run SyncRun, items []SyncIt
 	}
 	if report == nil {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO sync_run(id, as_of, started_at, finished_at, status, coverage_pct, error_kind)
-			VALUES(?, ?, ?, ?, ?, ?, ?)`, run.ID, run.AsOf, run.StartedAt.UTC().Format(time.RFC3339Nano),
+			VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET finished_at=excluded.finished_at,status=excluded.status,coverage_pct=excluded.coverage_pct,error_kind=excluded.error_kind`, run.ID, run.AsOf, run.StartedAt.UTC().Format(time.RFC3339Nano),
 			run.FinishedAt.UTC().Format(time.RFC3339Nano), run.Status, run.CoveragePct, run.ErrorKind); err != nil {
 			return rollback(errors.New("cannot persist market data run"))
 		}
@@ -376,15 +390,32 @@ func (m *MarketDB) commitMarket(ctx context.Context, run SyncRun, items []SyncIt
 		}
 		return nil
 	}
+	inputID, payload, err := encodeSnapshot(items)
+	if err != nil {
+		return rollback(err)
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO report_input(id,payload) VALUES(?,?) ON CONFLICT(id) DO NOTHING`, inputID, payload); err != nil {
+		return rollback(err)
+	}
+	report.InputID = inputID
+	report.Revision = ""
 	reportJSON, err := json.Marshal(report)
 	if err != nil {
 		return rollback(errors.New("cannot encode selection report"))
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sync_run(id, as_of, started_at, finished_at, status, coverage_pct, error_kind)
-		VALUES(?, ?, ?, ?, 'published', ?, '')
+		VALUES(?, ?, ?, ?, 'published', ?, '') ON CONFLICT(id) DO UPDATE SET finished_at=excluded.finished_at,status='published',coverage_pct=excluded.coverage_pct,error_kind=''
 	`, run.ID, run.AsOf, run.StartedAt.UTC().Format(time.RFC3339Nano), run.FinishedAt.UTC().Format(time.RFC3339Nano), run.CoveragePct); err != nil {
 		return rollback(errors.New("cannot persist sync run"))
+	}
+	report.Revision = sha256Sum(reportJSON)
+	reportJSON, err = json.Marshal(report)
+	if err != nil {
+		return rollback(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO report_archive(id,report_json) VALUES(?,?) ON CONFLICT(id) DO NOTHING`, report.Revision, reportJSON); err != nil {
+		return rollback(err)
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO selection_run(as_of, id, generated_at, report_json)
@@ -411,7 +442,7 @@ func (m *MarketDB) RecordFailedRun(ctx context.Context, run SyncRun) error {
 	}
 	_, err := m.db.ExecContext(ctx, `
 		INSERT INTO sync_run(id, as_of, started_at, finished_at, status, coverage_pct, error_kind)
-		VALUES(?, ?, ?, ?, 'failed', ?, ?)
+		VALUES(?, ?, ?, ?, 'failed', ?, ?) ON CONFLICT(id) DO UPDATE SET finished_at=excluded.finished_at,status='failed',coverage_pct=excluded.coverage_pct,error_kind=excluded.error_kind
 	`, run.ID, run.AsOf, run.StartedAt.UTC().Format(time.RFC3339Nano), run.FinishedAt.UTC().Format(time.RFC3339Nano),
 		run.CoveragePct, run.ErrorKind)
 	if err != nil {
@@ -439,7 +470,7 @@ func insertHistory(ctx context.Context, tx *sql.Tx, h market.History) error {
 			return errors.New("cannot persist daily history")
 		}
 	}
-	return nil
+	return saveHistorySnapshot(ctx, tx, h)
 }
 
 func insertSelectionResults(ctx context.Context, tx *sql.Tx, report selection.Report) error {
@@ -592,12 +623,12 @@ func (m *MarketDB) LoadLatestHistory(ctx context.Context, code, adjust, limitAsO
 
 func loadHistory(ctx context.Context, reader sqlReader, stock config.Stock, asof, adjust string) (market.History, error) {
 	var h market.History
-	var dataField, source, fetchedAt, status, reason, windowStart string
+	var dataField, source, fetchedAt, status, reason, windowStart, windowHash string
 	var bars int
 	err := reader.QueryRowContext(ctx, `
-		SELECT data_field, source, fetched_at, status, reason, bars, window_start
+		SELECT data_field, source, fetched_at, status, reason, bars, window_start, window_hash
 		FROM stock_sync WHERE code=? AND adjust=? AND as_of=?
-	`, stock.Code, adjust, asof).Scan(&dataField, &source, &fetchedAt, &status, &reason, &bars, &windowStart)
+	`, stock.Code, adjust, asof).Scan(&dataField, &source, &fetchedAt, &status, &reason, &bars, &windowStart, &windowHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return h, fs.ErrNotExist
 	}
@@ -610,6 +641,18 @@ func loadHistory(ctx context.Context, reader sqlReader, stock config.Stock, asof
 		}
 		return h, fmt.Errorf("stock %s is %s: %s", stock.Code, status, reason)
 	}
+	frozen, frozenErr := loadHistorySnapshot(ctx, reader, stock.Code, adjust, asof)
+	if frozenErr == nil {
+		if historyHash(frozen) != windowHash || len(frozen.Bars) != bars || frozen.Source != source || frozen.DataField != dataField {
+			return h, errors.New("stored snapshot does not match sync metadata")
+		}
+		return frozen, nil
+	}
+	if !errors.Is(frozenErr, sql.ErrNoRows) {
+		return h, frozenErr
+	}
+	// Legacy windows are reconstructable only while their recorded hash still
+	// matches the latest view. Never silently relabel revised prices as old data.
 	parsed, err := time.Parse(time.RFC3339Nano, fetchedAt)
 	if err != nil {
 		return h, errors.New("invalid stored fetch time")
@@ -643,6 +686,9 @@ func loadHistory(ctx context.Context, reader sqlReader, stock config.Stock, asof
 	}
 	if err := h.Validate(); err != nil {
 		return h, err
+	}
+	if historyHash(h) != windowHash {
+		return h, errors.New("legacy history is not reproducible: window hash mismatch; resync required")
 	}
 	return h, nil
 }

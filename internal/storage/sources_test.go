@@ -43,7 +43,13 @@ func TestMultiSourceVolumePersistenceAndDashboard(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, "UPDATE daily_bar SET source='tencent' WHERE trade_date='2026-10-12'"); err != nil {
 		t.Fatal(err)
 	}
+	if h, err := db.LoadDashboardHistory(ctx, config.Stock{Code: "sh688981", Name: "测试"}, "none"); err != nil || h.Source != "eastmoney" {
+		t.Fatal("immutable window read from mutable mixed-source rows", err)
+	}
+	if _, err := db.db.ExecContext(ctx, `UPDATE history_snapshot SET payload=x'00'`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.LoadDashboardHistory(ctx, config.Stock{Code: "sh688981", Name: "测试"}, "none"); err == nil {
-		t.Fatal("silently read a mixed-source history")
+		t.Fatal("corrupt immutable history accepted")
 	}
 }

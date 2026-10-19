@@ -47,3 +47,18 @@ sha256sum -c SHA256SUMS
 GitHub Actions 在 master/main 推送、PR 或手工触发时执行 `scripts/ci.sh` 和容器冒烟，保留 Linux amd64 发布包 7 天；不发布镜像、不部署、不发送飞书消息。流程使用 [GitHub 官方 Go Actions 模式](https://docs.github.com/en/actions/tutorials/build-and-test-code/go)。
 
 `make clean` 只删除 bin/ 和 .builds/；不会删除行情、私有配置或日志。
+
+## 框架与界面验证
+
+GitHub Actions 在原生、镜像冒烟后分别执行浏览器门禁。测试依赖为 Python 3.12、`playwright==1.61.0` 及该版本 Chromium，不进入生产镜像：
+
+```bash
+python3 -m pip install playwright==1.61.0
+python3 -m playwright install --with-deps chromium
+make dashboard-smoke
+make docker-dashboard-smoke
+```
+
+浏览器断言包含 DOM、URL、标题、静态资源、只读 HTTP 方法、网关拒绝、请求失败／超时和恢复；新增 `/api/status` 的业务状态也必须在页面出现。没有内置账号角色，因此不虚构普通用户／管理员身份。`make ci` 本身仍是无浏览器的基础验证，完整 CI 由 Actions 追加上述步骤。
+
+框架回归位于 `internal/monitor/pipeline_test.go`、`internal/storage/reliability_test.go`、`internal/health/health_test.go`：模拟采集与分析失败、断点恢复、同日修订重放、旧库迁移、长期分钟查询、交易日新鲜度。使用临时数据库和模拟通道，不发送真实消息。

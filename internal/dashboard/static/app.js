@@ -320,9 +320,27 @@
     select.value = selectedDate;
     loadReport(selectedDate);
   }
+  async function refreshRuntimeStatus() {
+    try {
+      const status = await requestJSON("/api/status");
+      if (status.schema_version !== 1 || !Array.isArray(status.issues)) throw new Error("运行状态格式不匹配");
+      if (!status.ready) throw new Error("存储或交易日历暂不可用");
+      const labels = {healthy: "业务正常", degraded: "业务需关注", syncing: "同步处理中"};
+      const phases = {collecting: "采集", analyzing: "分析", completed: "完成"};
+      const task = status.task;
+      const progress = task ? `；${phases[task.phase] || task.phase} ${task.completed}/${task.total}，最近心跳 ${formatTime(task.updated_at)}` : "；尚无任务记录";
+      const minutes = status.minute_enabled ? `；分钟数据 ${status.minute_current}/${status.pool_size}（腾讯）` : "；分钟同步未启用";
+      const issues = {daily_data_stale_or_incomplete: "日线未更新或覆盖不足", analysis_not_published: "分析尚未发布", task_heartbeat_stale: "任务心跳中断", notification_blocked: "消息发送受阻", notification_unknown: "消息结果未确认", notification_overdue: "消息重试延迟", minute_data_stale_or_incomplete: "分钟数据未更新或未校准"};
+      const notes = status.issues.map(item => issues[item] || (item.startsWith("task_failed_") ? "最近任务失败" : item)).join("、");
+      setText("runtime-status", `${labels[status.business] || "运行状态未知"} · 应有日线 ${status.expected_date}，可用 ${status.available}/${status.pool_size}${progress}${minutes}${notes ? `；${notes}` : ""}`);
+    } catch (error) {
+      setText("runtime-status", `运行状态不可用：${error.message}。行情显示不代表后台任务正常。`);
+    }
+  }
   async function refreshDashboard() {
     if (state.refreshing) return;
     state.refreshing = true;
+    refreshRuntimeStatus();
     byId("refresh-button").disabled = true;
     byId("retry-button").disabled = true;
     byId("refresh-button").querySelector("span").textContent = "正在刷新";

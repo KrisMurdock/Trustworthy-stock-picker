@@ -41,15 +41,17 @@ type persistedState struct {
 }
 
 type Monitor struct {
-	Config   config.Config
-	Store    *storage.Store
-	Market   *storage.MarketDB
-	Source   Source
-	Listings market.ListingSource
-	Channels []notify.Channel
-	Log      *logging.Logger
-	Calendar *calendar.Calendar
-	Now      func() time.Time
+	Engine       selection.Engine
+	BuildVersion string
+	Config       config.Config
+	Store        *storage.Store
+	Market       *storage.MarketDB
+	Source       Source
+	Listings     market.ListingSource
+	Channels     []notify.Channel
+	Log          *logging.Logger
+	Calendar     *calendar.Calendar
+	Now          func() time.Time
 }
 
 func New(c config.Config, s *storage.Store, source Source, channels []notify.Channel, log *logging.Logger) *Monitor {
@@ -228,8 +230,7 @@ func (m *Monitor) writeState(state State) error {
 
 // Sync downloads the entire pool and validates each stock before publication.
 // Valid histories remain viewable if the recommendation coverage gate fails.
-func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, error) {
-	var report selection.Report
+func (m *Monitor) Sync(ctx context.Context, asof string) (report selection.Report, resultErr error) {
 	ok, err := m.Calendar.Trading(asof)
 	if err != nil || !ok {
 		return report, errors.New("as-of must be a covered trading date")
@@ -242,18 +243,56 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 	if err != nil {
 		return report, err
 	}
-	end, _ := time.Parse("2006-01-02", asof)
-	start := historyStart(end)
-	analysisStart := end.AddDate(0, 0, -m.Config.Daily.HistoryDays).Format("2006-01-02")
-	if analysisStart < start {
-		analysisStart = start
+	timeout := config.Duration(m.Config.Analysis.SyncTimeout)
+	if timeout <= 0 {
+		timeout = 90 * time.Minute
 	}
-	m.Log.Info("Daily history synchronization started", "as_of", asof, "history_start", start, "stocks", len(m.Config.Stocks))
-	histories := make([]market.History, 0, len(m.Config.Stocks))
-	raw := make([]market.History, 0, len(m.Config.Stocks))
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	end, _ := time.Parse("2006-01-02", asof)
+	analysisStart := end.AddDate(0, 0, -m.Config.Daily.HistoryDays).Format("2006-01-02")
+	if analysisStart < historyStart(end) {
+		analysisStart = historyStart(end)
+	}
+	run := storage.SyncRun{ID: fmt.Sprintf("%s-%d", asof, time.Now().UnixNano()), AsOf: asof, StartedAt: m.Now(), FinishedAt: m.Now()}
+	durable := m.Market != nil && m.Market.HasDatabase()
+	fingerprint, _ := selection.ConfigDigest(m.Config)
+	task := storage.SyncTask{ID: run.ID, AsOf: asof, Fingerprint: fingerprint, Phase: "collecting", Status: "running", Total: len(m.Config.Stocks), StartedAt: m.Now(), UpdatedAt: m.Now()}
+	cached := map[string]storage.SyncItem{}
+	if durable {
+		task, cached, err = m.Market.BeginSyncTask(ctx, task)
+		if err != nil {
+			return report, err
+		}
+		run.ID, run.StartedAt = task.ID, task.StartedAt
+		stopHeartbeat := m.heartbeat(ctx, task.ID)
+		defer stopHeartbeat()
+		if err := m.Market.RecordRunningSync(ctx, run); err != nil {
+			return report, err
+		}
+		defer func() {
+			cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			task.UpdatedAt = m.Now()
+			if resultErr != nil {
+				task.Status = "failed"
+				if task.ErrorKind == "" {
+					task.ErrorKind = task.Phase
+				}
+				run.FinishedAt = m.Now()
+				run.ErrorKind = task.ErrorKind
+				resultErr = errors.Join(resultErr, m.Market.RecordFailedRun(cleanup, run))
+			} else {
+				task.Phase = "completed"
+				task.Status = "completed"
+				task.ErrorKind = ""
+			}
+			resultErr = errors.Join(resultErr, m.Market.SaveSyncTask(cleanup, task))
+		}()
+	}
+	m.Log.Info("Daily history synchronization started", "as_of", asof, "task_id", task.ID, "resume_stocks", len(cached), "stocks", len(m.Config.Stocks))
 	items := make([]storage.SyncItem, 0, len(m.Config.Stocks))
-	started := m.Now()
-	run := storage.SyncRun{ID: fmt.Sprintf("%s-%d", asof, started.UnixNano()), AsOf: asof, StartedAt: started}
+	histories, raw := []market.History{}, []market.History{}
 	for i, stock := range m.Config.Stocks {
 		if err := ctx.Err(); err != nil {
 			return report, err
@@ -261,107 +300,89 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 		if err := m.Store.Check(); err != nil {
 			return report, err
 		}
-		stock, err = m.listingStock(ctx, stock)
-		if err != nil {
-			if !market.IsProviderFailure(err) {
-				return m.failSync(ctx, run, err)
-			}
-			reason := "listing_lookup: " + syncReason(err)
-			items = append(items, storage.SyncItem{Stock: stock, Status: "isolated", Reason: reason})
-			m.Log.Warn("Stock listing lookup failed", "code", stock.Code, "reason", reason, "completed", i+1, "total", len(m.Config.Stocks))
-			continue
-		}
-		stockStart := requiredHistoryStart(end, stock.ListedFrom)
-		m.Log.Debug("Stock history window resolved", "code", stock.Code, "listed_from", stock.ListedFrom, "history_start", stockStart, "as_of", asof)
-		adjustedStart := analysisStart
-		if m.Config.Daily.Adjust == "none" {
-			adjustedStart = stockStart
-		}
-		history, err := m.fetchHistory(ctx, stock, adjustedStart, asof, m.Config.Daily.Adjust)
-		if err != nil {
-			if market.IsProviderFailure(err) {
-				items = append(items, storage.SyncItem{Stock: stock, Status: "isolated", Reason: syncReason(err)})
-				m.Log.Warn("Daily stock isolated", "code", stock.Code, "adjust", m.Config.Daily.Adjust, "reason", syncReason(err), "completed", i+1, "total", len(m.Config.Stocks))
-				continue
-			}
-			return m.failSync(ctx, run, fmt.Errorf("download failed for %s: %w", stock.Code, err))
-		}
-		if err := validateHistory(m.Calendar, stock, history, adjustedStart, asof); err != nil {
-			items = append(items, storage.SyncItem{Stock: stock, Status: "isolated", Reason: syncReason(err)})
-			m.Log.Warn("Daily stock isolated", "code", stock.Code, "adjust", history.Adjust, "reason", syncReason(err))
-			continue
-		}
-		histories = append(histories, history)
-		item := storage.SyncItem{Stock: stock, Adjusted: &history, Status: "ok"}
-		if m.Config.Daily.Adjust != "none" {
-			select {
-			case <-ctx.Done():
-				return report, ctx.Err()
-			case <-time.After(350 * time.Millisecond):
-			}
-			r, err := m.fetchHistory(ctx, stock, stockStart, asof, "none")
+		item, found := cached[stock.Code]
+		// A completed analysis input is frozen even when some stocks were isolated.
+		// During collection retries only successful stocks are reused.
+		if !found || (item.Status != "ok" && task.Phase == "collecting") {
+			item, err = m.collectStock(ctx, stock, end, analysisStart, asof)
 			if err != nil {
-				histories = histories[:len(histories)-1]
-				if market.IsProviderFailure(err) {
-					items = append(items, storage.SyncItem{Stock: stock, Status: "isolated", Reason: syncReason(err)})
-					m.Log.Warn("Daily stock isolated", "code", stock.Code, "adjust", "none", "reason", syncReason(err), "completed", i+1, "total", len(m.Config.Stocks))
-					continue
-				}
-				return m.failSync(ctx, run, fmt.Errorf("raw download failed for %s: %w", stock.Code, err))
+				return report, err
 			}
-			if err := validateHistory(m.Calendar, stock, r, stockStart, asof); err != nil {
-				histories = histories[:len(histories)-1]
-				if market.IsIsolatable(err) {
-					items = append(items, storage.SyncItem{Stock: stock, Status: "isolated", Reason: syncReason(err)})
-					m.Log.Warn("Daily stock isolated", "code", stock.Code, "adjust", "none", "reason", syncReason(err))
-					continue
+			if durable {
+				if err := m.Market.CheckpointStock(ctx, task, item); err != nil {
+					return report, err
 				}
-				return m.failSync(ctx, run, fmt.Errorf("raw data failed for %s: %w", stock.Code, err))
 			}
-			raw = append(raw, r)
-			item.Raw = &r
-		} else {
-			raw = append(raw, history)
+			if i < len(m.Config.Stocks)-1 {
+				timer := time.NewTimer(350 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return report, ctx.Err()
+				case <-timer.C:
+				}
+			}
 		}
 		items = append(items, item)
-		if (i+1)%10 == 0 {
-			m.Log.Info("Daily download progress", "completed", i+1, "total", len(m.Config.Stocks), "as_of", asof, "adjusted_valid", len(histories), "raw_valid", len(raw))
-		}
-		if i < len(m.Config.Stocks)-1 {
-			timer := time.NewTimer(350 * time.Millisecond)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return report, ctx.Err()
-			case <-timer.C:
+		if item.Adjusted != nil {
+			histories = append(histories, *item.Adjusted)
+			if item.Raw != nil {
+				raw = append(raw, *item.Raw)
+			} else {
+				raw = append(raw, *item.Adjusted)
 			}
 		}
+		task.Completed = i + 1
+		task.UpdatedAt = m.Now()
+		if durable {
+			if err := m.Market.SaveSyncTask(ctx, task); err != nil {
+				return report, err
+			}
+		}
+		if (i+1)%10 == 0 || i+1 == len(m.Config.Stocks) {
+			m.Log.Info("Daily download progress", "task_id", task.ID, "as_of", asof, "completed", i+1, "total", len(m.Config.Stocks), "adjusted_valid", len(histories), "raw_valid", len(raw))
+		}
+		m.Log.Debug("Daily collection checkpoint saved", "task_id", task.ID, "code", stock.Code, "status", item.Status, "completed", i+1, "total", len(m.Config.Stocks))
 	}
-	coverage := float64(len(raw)) / float64(len(m.Config.Stocks)) * 100
-	run.CoveragePct = coverage
+	if len(m.Config.Stocks) == 0 {
+		return report, errors.New("stock pool is empty")
+	}
+	run.CoveragePct = float64(len(raw)) / float64(len(m.Config.Stocks)) * 100
 	run.FinishedAt = m.Now()
-	if coverage < m.Config.Sync.MinCoveragePct {
-		coverageErr := fmt.Errorf("sync coverage %.2f%% is below %.2f%%", coverage, m.Config.Sync.MinCoveragePct)
-		if m.Market != nil && m.Market.HasDatabase() {
+	if run.CoveragePct < m.Config.Sync.MinCoveragePct {
+		task.Phase = "collecting"
+		task.ErrorKind = "coverage"
+		if durable {
 			if err := m.Market.CommitMarketData(ctx, run, items, m.Config.Daily.Adjust); err != nil {
 				return report, err
 			}
-			m.Log.Warn("Valid market data saved; recommendation coverage gate not met", "as_of", asof, "coverage_pct", coverage, "valid_stocks", len(histories))
-			return report, coverageErr
 		}
-		return m.failSync(ctx, run, coverageErr)
+		return report, fmt.Errorf("sync coverage %.2f%% is below %.2f%%", run.CoveragePct, m.Config.Sync.MinCoveragePct)
+	}
+	if durable {
+		if err := m.Market.CommitCollectedData(ctx, run, items, m.Config.Daily.Adjust); err != nil {
+			return report, err
+		}
+		task.Phase = "analyzing"
+		task.UpdatedAt = m.Now()
+		if err := m.Market.SaveSyncTask(ctx, task); err != nil {
+			return report, err
+		}
 	}
 	report, err = m.buildReport(ctx, histories, raw, asof, target)
 	if err != nil {
-		return m.failSync(ctx, run, err)
+		return report, err
 	}
-	if m.Market != nil && m.Market.HasDatabase() {
-		if err := m.Market.CommitSnapshot(ctx, run, items, report); err != nil {
+	run.FinishedAt = m.Now()
+	if durable {
+		if err := m.Market.CommitAnalysis(ctx, run, items, report); err != nil {
+			return report, err
+		}
+		report, err = m.Market.LoadReport(ctx, asof)
+		if err != nil {
 			return report, err
 		}
 	} else {
-		// Compatibility path for package-level tests and old callers. The CLI
-		// always opens the SQLite market database before constructing Monitor.
 		for _, item := range items {
 			if item.Adjusted != nil {
 				if err := m.Store.Write("daily/"+asof+"/"+item.Stock.Code+".json", *item.Adjusted); err != nil {
@@ -378,8 +399,55 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (selection.Report, erro
 			return report, err
 		}
 	}
-	m.Log.Info("Daily report saved", "as_of", asof, "target", target, "selected", len(report.Selected), "eligible", report.Eligible, "event_id", report.ID, "coverage_pct", coverage, "adjusted_valid", len(histories), "raw_valid", len(raw))
+	m.Log.Info("Daily report saved", "as_of", asof, "target", target, "selected", len(report.Selected), "eligible", report.Eligible, "event_id", report.ID, "coverage_pct", run.CoveragePct, "input_id", report.InputID)
 	return report, nil
+}
+
+func (m *Monitor) collectStock(ctx context.Context, stock config.Stock, end time.Time, analysisStart, asof string) (storage.SyncItem, error) {
+	isolate := func(err error) (storage.SyncItem, error) {
+		if !market.IsProviderFailure(err) {
+			return storage.SyncItem{}, err
+		}
+		reason := syncReason(err)
+		m.Log.Warn("Daily stock isolated", "code", stock.Code, "reason", reason)
+		return storage.SyncItem{Stock: stock, Status: "isolated", Reason: reason}, nil
+	}
+	resolved, err := m.listingStock(ctx, stock)
+	if err != nil {
+		return isolate(err)
+	}
+	stock = resolved
+	start := requiredHistoryStart(end, stock.ListedFrom)
+	adjustedStart := analysisStart
+	if m.Config.Daily.Adjust == "none" {
+		adjustedStart = start
+	}
+	h, err := m.fetchHistory(ctx, stock, adjustedStart, asof, m.Config.Daily.Adjust)
+	if err != nil {
+		return isolate(err)
+	}
+	if err := validateHistory(m.Calendar, stock, h, adjustedStart, asof); err != nil {
+		return isolate(err)
+	}
+	item := storage.SyncItem{Stock: stock, Status: "ok", Adjusted: &h}
+	if m.Config.Daily.Adjust != "none" {
+		timer := time.NewTimer(350 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return storage.SyncItem{}, ctx.Err()
+		case <-timer.C:
+		}
+		r, err := m.fetchHistory(ctx, stock, start, asof, "none")
+		if err != nil {
+			return isolate(err)
+		}
+		if err := validateHistory(m.Calendar, stock, r, start, asof); err != nil {
+			return isolate(err)
+		}
+		item.Raw = &r
+	}
+	return item, nil
 }
 
 func (m *Monitor) loadPreviousHistory(ctx context.Context, code, adjust, asof string) (market.History, error) {
@@ -505,18 +573,6 @@ func mergeHistory(previous, recent market.History, stock config.Stock, start, as
 	return recent
 }
 
-func (m *Monitor) failSync(ctx context.Context, run storage.SyncRun, err error) (selection.Report, error) {
-	run.FinishedAt = m.Now()
-	if run.FinishedAt.IsZero() {
-		run.FinishedAt = time.Now()
-	}
-	run.ErrorKind = "sync"
-	if m.Market != nil && m.Market.HasDatabase() {
-		_ = m.Market.RecordFailedRun(ctx, run)
-	}
-	return selection.Report{}, err
-}
-
 func syncReason(err error) string {
 	if summary := market.ProviderFailureSummary(err); summary != "" {
 		return summary
@@ -636,28 +692,20 @@ func (m *Monitor) buildReport(ctx context.Context, histories, raw []market.Histo
 		}
 		return out
 	}
-	minutes := []market.MinuteHistory{}
-	if m.Market != nil && m.Market.HasDatabase() {
-		valid := make(map[string]bool, len(histories))
-		for _, history := range histories {
-			valid[history.Code] = true
+	engine := m.Engine
+	if engine == nil {
+		engine, err = selection.DefaultEngine(m.Config)
+		if err != nil {
+			return selection.Report{}, err
 		}
-		for _, stock := range m.Config.Stocks {
-			if !valid[stock.Code] {
-				continue
-			}
-			snapshot, err := m.Market.LoadMinutes(ctx, stock, 5)
-			if err != nil || len(snapshot.Bars) == 0 {
-				continue
-			}
-			minutes = append(minutes, snapshot.MinuteHistory)
-		}
-		m.Log.Debug("Minute histories loaded for Chan gate", "loaded", len(minutes), "eligible_daily", len(histories))
 	}
-	if len(minutes) == 0 {
-		return selection.BuildWithExecution(ctx, m.Config, window(histories), window(raw), asof, target, m.Now())
+	timeout := config.Duration(m.Config.Analysis.Timeout)
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
 	}
-	return selection.BuildWithExecutionMinutes(ctx, m.Config, window(histories), window(raw), minutes, asof, target, m.Now())
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return selection.Execute(ctx, engine, selection.Input{Config: m.Config, Histories: window(histories), Raw: window(raw), AsOf: asof, Target: target, Now: m.Now()}, m.BuildVersion)
 }
 
 func mustNext(cal *calendar.Calendar, asof string) string {

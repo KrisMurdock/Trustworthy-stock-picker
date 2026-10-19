@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"stock-watcher/internal/config"
+	"stock-watcher/internal/health"
+	"stock-watcher/internal/logging"
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/selection"
 	"stock-watcher/internal/storage"
@@ -354,5 +356,29 @@ func TestIntradayReadOnlyValidationAndErrors(t *testing.T) {
 		if w.Code != want {
 			t.Fatal(w.Code, w.Body.String())
 		}
+	}
+}
+
+func TestRuntimeStatusReadinessAndUnavailable(t *testing.T) {
+	h := &handler{log: logging.Nop(), health: func(context.Context) (health.Status, error) {
+		return health.Status{Version: 1, Ready: true, Business: "degraded", Issues: []string{"analysis_not_published"}}, nil
+	}}
+	for _, path := range []string{"/healthz", "/readyz", "/api/status"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 200 {
+			t.Fatal(path, w.Code)
+		}
+	}
+	h.health = func(context.Context) (health.Status, error) { return health.Status{}, context.DeadlineExceeded }
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/readyz", nil))
+	if w.Code != 503 {
+		t.Fatal("unavailable storage ready")
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("POST", "/api/status", nil))
+	if w.Code != 405 {
+		t.Fatal("status accepted write")
 	}
 }

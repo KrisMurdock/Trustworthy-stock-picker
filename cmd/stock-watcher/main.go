@@ -13,6 +13,7 @@ import (
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/dashboard"
 	"stock-watcher/internal/feishu"
+	"stock-watcher/internal/health"
 	"stock-watcher/internal/intraday"
 	"stock-watcher/internal/logging"
 	"stock-watcher/internal/market"
@@ -34,7 +35,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check-config|init|check|sync|sync-intraday|preview|research|experiment|plan|run|once|status|retry [channel] [-config config.yaml] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-intraday|preview|research|experiment|plan|run|once|status|retry [channel] [-config config.yaml] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -43,6 +44,7 @@ func run(args []string) error {
 	}
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
 	path := f.String("config", "config.yaml", "configuration file")
+	revision := f.String("revision", "", "saved report revision (replay only)")
 	asof := f.String("as-of", "", "completed data date (sync/preview/research/experiment only)")
 	code := f.String("code", "", "stock code (plan only)")
 	parent := f.String("parent", "", "parent experiment ID (experiment only)")
@@ -60,9 +62,15 @@ func run(args []string) error {
 		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
-	case "check-config", "init", "check", "sync", "sync-intraday", "preview", "research", "experiment", "plan", "run", "once", "status", "retry":
+	case "check-config", "init", "check", "health", "replay", "sync", "sync-intraday", "preview", "research", "experiment", "plan", "run", "once", "status", "retry":
 	default:
 		return errors.New("unknown command")
+	}
+	if command == "replay" && len(*revision) != 64 {
+		return errors.New("replay requires -revision from a saved report")
+	}
+	if command != "replay" && *revision != "" {
+		return errors.New("revision requires replay")
 	}
 	if *asof != "" && command != "sync" && command != "preview" && command != "research" && command != "experiment" {
 		return errors.New("as-of is supported by sync, preview, research and experiment only")
@@ -117,6 +125,20 @@ func run(args []string) error {
 	defer log.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if command == "health" {
+		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		db, err := storage.OpenMarketView(c.DataDir, c.RequireCIFS)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		status, err := health.Read(probeCtx, c, db, time.Now())
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(status)
+	}
 	if command == "experiment" {
 		var interval *strategy.BacktestRange
 		if *from != "" {
@@ -126,7 +148,7 @@ func run(args []string) error {
 	}
 	openStore := storage.Open
 	readOnly := false
-	if command == "status" || command == "preview" || command == "research" || command == "check" {
+	if command == "replay" || command == "status" || command == "preview" || command == "research" || command == "check" {
 		openStore = storage.OpenView
 		readOnly = true
 	}
@@ -181,6 +203,7 @@ func run(args []string) error {
 		log.RegisterSecret(channel.Secret)
 	}
 	m := monitor.NewWithMarketDB(c, store, marketDB, source, channels, log)
+	m.BuildVersion = version
 	cal := calendar.New(c)
 	if _, err := cal.Trading(calendar.Date(time.Now())); err != nil {
 		return err
@@ -197,6 +220,12 @@ func run(args []string) error {
 			return err
 		}
 		return printJSON(map[string]any{"status": "ready", "pool_size": len(c.Stocks), "cifs_required": c.RequireCIFS, "notification_channels": len(channels), "selection_enabled": c.Selection.Enabled, "calendar_through": c.Calendar.ValidThrough, "market_sources": source.Names()})
+	case "replay":
+		r, err := m.Replay(ctx, *revision)
+		if err != nil {
+			return err
+		}
+		return printJSON(r)
 	case "status":
 		s, err := m.Status()
 		if err != nil {

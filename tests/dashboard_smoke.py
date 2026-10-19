@@ -242,6 +242,21 @@ def populated_checks(context, page, url, args, directory, env):
     assert page.url.rstrip("/") == url
     assert "股池观察" in page.title(), "unexpected browser title"
     expect(page.get_by_test_id("dashboard-title")).to_be_visible()
+    expect(page.get_by_test_id("runtime-status")).to_contain_text("运行状态不可用")
+    status_response = context.request.get(url + "/api/status")
+    assert status_response.status == 200 and status_response.json()["schema_version"] == 1
+    assert not status_response.json()["ready"]
+    assert context.request.get(url + "/readyz").status == 503
+    # The fixture deliberately closes 40 sessions to prevent background writes.
+    # Exercise successful business status rendering with an explicit HTTP mock.
+    healthy = {"schema_version": 1, "ready": True, "business": "syncing", "issues": [],
+               "expected_date": LATEST, "available": 2, "pool_size": 3,
+               "minute_enabled": False, "task": {"phase": "analyzing", "completed": 3,
+               "total": 3, "updated_at": "2026-10-13T19:00:00+08:00"}}
+    page.route("**/api/status", lambda route: route.fulfill(json=healthy))
+    page.get_by_test_id("refresh-button").click()
+    expect(page.get_by_test_id("runtime-status")).to_contain_text("分析 3/3")
+    page.unroute("**/api/status")
     expect(page.get_by_test_id("snapshot-summary")).to_contain_text("3")
     expect(page.get_by_test_id("stock-row")).to_have_count(3)
     expect(page.get_by_test_id("ranking-row")).to_have_count(2)
