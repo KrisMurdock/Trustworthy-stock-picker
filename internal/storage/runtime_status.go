@@ -112,8 +112,8 @@ func (m *MarketDB) RuntimeStatus(ctx context.Context, stocks []config.Stock, aso
 }
 
 func (m *MarketDB) TouchSyncTask(ctx context.Context, id, at string) error {
-	if m == nil || !m.writable {
-		return errors.New("market database is read-only")
+	if err := m.checkWriter(ctx); err != nil {
+		return err
 	}
 	_, err := m.db.ExecContext(ctx, `UPDATE sync_task SET updated_at=? WHERE id=? AND status='running'`, at, id)
 	return err

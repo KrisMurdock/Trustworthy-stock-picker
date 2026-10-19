@@ -49,7 +49,7 @@ func TestBusinessFreshnessAndReadinessAreSeparate(t *testing.T) {
 	// A startup refresh can publish today's data before the normal run time.
 	h.AsOf = "2026-10-19"
 	h.Bars[0].Date = h.AsOf
-	h.FetchedAt = now.Add(72 * time.Hour)
+	h.FetchedAt = time.Date(2026, 10, 19, 15, 30, 0, 0, market.Shanghai)
 	report.ID = "monday"
 	report.AsOf = h.AsOf
 	report.Target = "2026-10-20"

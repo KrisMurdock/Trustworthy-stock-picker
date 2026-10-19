@@ -437,8 +437,8 @@ func (m *MarketDB) commitMarketMode(ctx context.Context, run SyncRun, items []Sy
 }
 
 func (m *MarketDB) RecordFailedRun(ctx context.Context, run SyncRun) error {
-	if m == nil || !m.writable {
-		return errors.New("market database is read-only")
+	if err := m.checkWriter(ctx); err != nil {
+		return err
 	}
 	_, err := m.db.ExecContext(ctx, `
 		INSERT INTO sync_run(id, as_of, started_at, finished_at, status, coverage_pct, error_kind)
