@@ -22,8 +22,9 @@ func main() {
 	root := flag.String("data", "", "existing fixture data directory")
 	empty := flag.Bool("empty", false, "initialize without published snapshots")
 	partial := flag.Bool("partial", false, "save market data without a report after coverage failure")
+	gates := flag.Bool("gates", false, "seed rejected strategy rules and an empty recommendation holdout")
 	flag.Parse()
-	if err := seed(*root, *empty, *partial); err != nil {
+	if err := seed(*root, *empty, *partial, *gates); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -35,7 +36,7 @@ func main() {
 	}
 }
 
-func seed(root string, empty, partial bool) error {
+func seed(root string, empty, partial, gates bool) error {
 	db, err := storage.InitMarket(root, false)
 	if err != nil {
 		return err
@@ -91,6 +92,22 @@ func seed(root string, empty, partial bool) error {
 			}
 			report.Selected = []selection.Candidate{{Code: stocks[0].Code, Name: stocks[0].Name, Sector: stocks[0].Sector, Close: 10.25, ChangePct: 2.5, Metrics: selection.Metrics{Score: 85}, Ranking: &report.Ranking[0]}}
 			report.Research = &strategy.Research{Version: 1, Strategy: report.Strategy, AsOf: day, SampleCount: 120, ValidationPassed: false, Limitations: []string{"仅用于浏览器测试"}}
+			if gates {
+				report.Passed, report.Selected = 0, nil
+				report.Ranking[0].Recommended = false
+				report.Ranking[0].Rules = []string{"baseline", "momentum"}
+				report.Ranking[0].Reasons = []string{"rising_ma20"}
+				report.Ranking[0].Risks = []string{"historical_net_loss_limit_breached", "insufficient_or_unprofitable_evidence", "holdout_validation_not_passed"}
+				report.Ranking[1].Rules = []string{"baseline"}
+				report.Ranking[1].Reasons = []string{"rising_ma20"}
+				report.Ranking[1].Risks = []string{"insufficient_or_unprofitable_evidence", "holdout_validation_not_passed"}
+				report.Research.Parameters = config.DefaultStrategy()
+				report.Research.Holdout = strategy.Evaluation{Method: "frozen_holdout", From: "2026-08-06", Through: "2026-10-08", SignalDates: 40}
+				report.Research.Rules = []strategy.Stats{
+					{Rule: "baseline", Target: 3, Horizon: 5, HitRate: .458},
+					{Rule: "momentum", Target: 3, Horizon: 5, Samples: 1095, Dates: 154, Resolved: 1041, Unresolved: 54, HitRate: .474, MeanNet: .36, WorstNet: -15.3766, LossBreaches: 209, LossLimitPct: 3},
+				}
+			}
 		}
 		if partial {
 			if day != "2026-10-13" {

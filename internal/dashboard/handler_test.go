@@ -11,10 +11,46 @@ import (
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/selection"
 	"stock-watcher/internal/storage"
+	"stock-watcher/internal/strategy"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestReportDiagnosticsAreReadOnlyAndAvailableOnBothRoutes(t *testing.T) {
+	r := selection.Report{Version: 2, ID: "saved", AsOf: "2026-10-13", Adjust: "qfq", Research: &strategy.Research{Parameters: config.DefaultStrategy(), Holdout: strategy.Evaluation{Method: "frozen_holdout", SignalDates: 40}}, Ranking: []strategy.Candidate{{Code: "sz000001", Rules: []string{"baseline"}, Risks: []string{"insufficient_or_unprofitable_evidence"}}}}
+	reader := &testReader{report: r, snapshot: storage.DashboardSnapshot{Version: 1, Report: &r}}
+	h := newHandler(config.Defaults(), reader, nil)
+	before, _ := json.Marshal(r)
+	for _, path := range []string{"/api/dashboard", "/api/reports?as_of=2026-10-13"} {
+		w := request(t, h, "GET", path)
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != 200 {
+			t.Fatalf("read failed: %v", err)
+		}
+		if path == "/api/dashboard" {
+			if err := json.Unmarshal(body["report"], &body); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var view reportView
+		raw, _ := json.Marshal(body)
+		if err := json.Unmarshal(raw, &view); err != nil {
+			t.Fatal(err)
+		}
+		if view.Diagnostics == nil || view.Diagnostics.Version != 1 || view.Diagnostics.Candidates["sz000001"].Status != "no_signal" || view.Diagnostics.Validation.Status != "no_recommendations" {
+			t.Fatalf("missing typed diagnostics: %s", raw)
+		}
+		stored, _ := json.Marshal(view.Report)
+		if string(stored) != string(before) {
+			t.Fatal("API changed stored report fields")
+		}
+	}
+	after, _ := json.Marshal(reader.report)
+	if string(before) != string(after) {
+		t.Fatal("view mutated reader state")
+	}
+}
 
 type testReader struct {
 	snapshot storage.DashboardSnapshot

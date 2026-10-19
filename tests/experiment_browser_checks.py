@@ -11,7 +11,7 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     page.get_by_role("link", name="策略实验室", exact=True).click()
     expect(page).to_have_title("策略实验室 · Stock Watcher")
     assert urlparse(page.url).path == "/experiments"
-    expect(page.locator(".experiment-item")).to_have_count(5)
+    expect(page.locator(".experiment-item")).to_have_count(6)
     payload = context.request.get(url + "/api/experiments").json()
     records = payload["experiments"]
     child = next(r for r in records if r["spec"].get("max_upper_wick") is not None)
