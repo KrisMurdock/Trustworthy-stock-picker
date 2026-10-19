@@ -324,3 +324,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 ---
 
 如果这个项目对你有帮助，欢迎通过 Issue 分享使用场景、数据源问题和策略验证结果。
+
+## Star 历史
+
+[![Star History Chart](https://api.star-history.com/svg?repos=krismurdock%2Ftrustworthy-stock-picker&type=Date)](https://star-history.com/#KrisMurdock/Trustworthy-stock-picker&Date)
