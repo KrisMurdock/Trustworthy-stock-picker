@@ -67,7 +67,7 @@ func extractSignalFeatures(bars []market.Bar) (Features, error) {
 
 func validSignalRule(rule string) bool {
 	switch rule {
-	case "", "rsi", "macd", "bollinger", "confluence", "all-three", "guard", "confluence-guard":
+	case "", "rsi", "macd", "bollinger", "confluence", "all-three", "guard", "confluence-guard", ChanSignalRule:
 		return true
 	}
 	return false

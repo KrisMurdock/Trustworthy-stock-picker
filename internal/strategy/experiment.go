@@ -12,14 +12,15 @@ import (
 // ExperimentTrade retains the exact signal features and simulated execution.
 // Selected=false records a rejected original top-N candidate for attribution.
 type ExperimentTrade struct {
-	ID        string     `json:"id"`
-	Code      string     `json:"code"`
-	Date      string     `json:"date"`
-	Rank      int        `json:"rank"`
-	Selected  bool       `json:"selected"`
-	Features  Features   `json:"features"`
-	Outcome   Outcome    `json:"outcome"`
-	EntryZone *EntryZone `json:"entry_zone,omitempty"`
+	ID        string        `json:"id"`
+	Code      string        `json:"code"`
+	Date      string        `json:"date"`
+	Rank      int           `json:"rank"`
+	Selected  bool          `json:"selected"`
+	Features  Features      `json:"features"`
+	Outcome   Outcome       `json:"outcome"`
+	EntryZone *EntryZone    `json:"entry_zone,omitempty"`
+	Chan      *ChanEvidence `json:"chan,omitempty"`
 }
 type DevelopmentResult struct {
 	Research       Research          `json:"research"`
