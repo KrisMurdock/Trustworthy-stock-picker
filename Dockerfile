@@ -14,9 +14,8 @@ LABEL org.opencontainers.image.title="stock-watcher" \
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=build /stock-watcher /usr/local/bin/stock-watcher
-COPY config.yaml.example /app/config.yaml
 COPY leaders.yaml /app/leaders.yaml
 ENV STOCK_WATCHER_DATA_DIR=/data STOCK_WATCHER_LOG_DIR=/logs STOCK_WATCHER_LOG_COLOR=off STOCK_WATCHER_WEB_ADDR=0.0.0.0:8080
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/stock-watcher"]
-CMD ["run", "-config", "/app/config.yaml"]
+CMD ["run"]

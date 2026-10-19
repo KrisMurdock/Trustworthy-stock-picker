@@ -3,38 +3,42 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestCLIInvalidAndMissingConfiguration(t *testing.T) {
-	for _, args := range [][]string{nil, {"unknown"}, {"check", "-config", filepath.Join(t.TempDir(), "missing.yaml")}, {"run", "-as-of", "2026-10-13"}, {"run", "-entry-price", "10"}, {"plan", "-entry-price", "NaN"}} {
+	for _, args := range [][]string{nil, {"unknown"}, {"check", "-config", "config.yaml"}, {"run", "-as-of", "2026-10-13"}, {"run", "-entry-price", "10"}, {"plan", "-entry-price", "NaN"}} {
 		if err := run(args); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
 	}
 }
 
+func useBuiltinConfig(t *testing.T, dataDir string, codes ...string) {
+	t.Helper()
+	pool := filepath.Join(t.TempDir(), "leaders.yaml")
+	var text strings.Builder
+	text.WriteString("schema_version: 1\nstocks:\n")
+	for _, code := range codes {
+		text.WriteString("  - code: " + code + "\n")
+	}
+	if err := os.WriteFile(pool, []byte(text.String()), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STOCK_WATCHER_DATA_DIR", dataDir)
+	t.Setenv("STOCK_WATCHER_REQUIRE_CIFS", "false")
+	t.Setenv("STOCK_WATCHER_FEISHU_ENABLED", "false")
+	t.Setenv("STOCK_WATCHER_POOL_FILE", pool)
+}
+
 func TestPlanUsesActualFillWithoutMarketMount(t *testing.T) {
 	root := t.TempDir()
-	p := filepath.Join(root, "config.yaml")
-	cfg := `schema_version: 1
-data_dir: nonexistent-share
-stocks:
-  - code: sz000001
-calendar:
-  valid_from: '2026-01-01'
-  valid_through: '2026-12-31'
-strategy:
-  schema_version: 1
-  commission_rate: 0.0001
-`
-	if err := os.WriteFile(p, []byte(cfg), 0600); err != nil {
+	useBuiltinConfig(t, filepath.Join(root, "nonexistent-share"), "sz000001")
+	if err := run([]string{"plan", "-code", "sz000001", "-entry-price", "10"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"plan", "-config", p, "-code", "sz000001", "-entry-price", "10"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := run([]string{"plan", "-config", p, "-code", "sh688981", "-entry-price", "1000"}); err == nil {
+	if err := run([]string{"plan", "-code", "sh688981", "-entry-price", "1000"}); err == nil {
 		t.Fatal("unfundable STAR order accepted")
 	}
 }
@@ -42,29 +46,18 @@ func TestCLIProductionShapeAndMissingMount(t *testing.T) {
 	root := t.TempDir()
 	data := filepath.Join(root, "data")
 	os.Mkdir(data, 0700)
-	cfg := `schema_version: 1
-data_dir: data
-require_cifs: false
-stocks:
-  - code: sz000001
-calendar:
-  valid_from: '2026-01-01'
-  valid_through: '2026-12-31'
-  holidays: []
-`
-	p := filepath.Join(root, "config.yaml")
-	os.WriteFile(p, []byte(cfg), 0600)
-	if err := run([]string{"check", "-config", p}); err == nil {
+	useBuiltinConfig(t, data, "sz000001")
+	if err := run([]string{"check"}); err == nil {
 		t.Fatal("check reported ready before market database initialization")
 	}
-	if err := run([]string{"init", "-config", p}); err != nil {
+	if err := run([]string{"init"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"check", "-config", p}); err != nil {
+	if err := run([]string{"check"}); err != nil {
 		t.Fatal(err)
 	}
 	os.RemoveAll(data)
-	if err := run([]string{"check", "-config", p}); err == nil {
+	if err := run([]string{"check"}); err == nil {
 		t.Fatal("missing root accepted")
 	}
 	if _, err := os.Stat(data); !os.IsNotExist(err) {
@@ -78,21 +71,8 @@ func TestCLIInitCreatesMarketDatabase(t *testing.T) {
 	if err := os.Mkdir(data, 0700); err != nil {
 		t.Fatal(err)
 	}
-	cfg := `schema_version: 1
-data_dir: data
-require_cifs: false
-stocks:
-  - code: sz000001
-calendar:
-  valid_from: '2026-01-01'
-  valid_through: '2026-12-31'
-  holidays: []
-`
-	p := filepath.Join(root, "config.yaml")
-	if err := os.WriteFile(p, []byte(cfg), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := run([]string{"init", "-config", p}); err != nil {
+	useBuiltinConfig(t, data, "sz000001")
+	if err := run([]string{"init"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(data, "market.db")); err != nil {
@@ -101,19 +81,18 @@ calendar:
 }
 
 func TestCheckConfigBeforeStoppingService(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "config.yaml")
-	valid := "schema_version: 1\ndata_dir: missing\nstocks:\n  - code: sz000001\ncalendar:\n  valid_from: '2026-01-01'\n  valid_through: '2026-12-31'\n"
-	if err := os.WriteFile(p, []byte(valid), 0600); err != nil {
+	useBuiltinConfig(t, filepath.Join(t.TempDir(), "missing"), "sz000001")
+	if err := run([]string{"check-config"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"check-config", "-config", p}); err != nil {
-		t.Fatal(err)
-	}
-	if err := run([]string{"check-config", "-config", p + ".missing"}); err == nil {
-		t.Fatal("missing config accepted")
+	missing := filepath.Join(t.TempDir(), "missing-leaders.yaml")
+	t.Setenv("STOCK_WATCHER_POOL_FILE", missing)
+	if err := run([]string{"check-config"}); err == nil {
+		t.Fatal("missing stock pool accepted")
 	}
 	t.Setenv("STOCK_WATCHER_LOG_MAX_MB", "invalid")
-	if err := run([]string{"check-config", "-config", p}); err == nil {
+	useBuiltinConfig(t, filepath.Join(t.TempDir(), "missing"), "sz000001")
+	if err := run([]string{"check-config"}); err == nil {
 		t.Fatal("invalid logging settings accepted")
 	}
 }

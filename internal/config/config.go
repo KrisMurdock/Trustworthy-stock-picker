@@ -126,8 +126,21 @@ func Defaults() Config {
 	return c
 }
 
-// Load resolves paths against the config file. Environment values override secrets.
-func Load(path string) (Config, error) {
+// Load returns the built-in configuration when no path is supplied. A path is
+// retained for internal fixtures and offline research tools only; the
+// production CLI never requires or reads an application configuration file.
+func Load(paths ...string) (Config, error) {
+	switch len(paths) {
+	case 0:
+		return resolve(Builtin(), ".")
+	case 1:
+		return loadFile(paths[0])
+	default:
+		return Config{}, errors.New("at most one configuration path is supported")
+	}
+}
+
+func loadFile(path string) (Config, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return Config{}, errors.New("cannot open configuration file")
@@ -145,13 +158,20 @@ func Load(path string) (Config, error) {
 	if err := d.Decode(&extra); err != io.EOF {
 		return Config{}, errors.New("configuration must contain one YAML document")
 	}
+	return resolve(c, filepath.Dir(path))
+}
+
+func resolve(c Config, baseDir string) (Config, error) {
+	if err := applyEnvironment(&c); err != nil {
+		return Config{}, err
+	}
 	if c.PoolFile != "" {
 		if len(c.Stocks) > 0 {
 			return Config{}, errors.New("set pool_file or stocks, not both")
 		}
 		poolPath := c.PoolFile
 		if !filepath.IsAbs(poolPath) {
-			poolPath = filepath.Join(filepath.Dir(path), poolPath)
+			poolPath = filepath.Join(baseDir, poolPath)
 		}
 		f, err := os.Open(poolPath)
 		if err != nil {
@@ -167,19 +187,14 @@ func Load(path string) (Config, error) {
 		if decoder.Decode(&pool) != nil || pool.Version != 1 {
 			return Config{}, errors.New("invalid stock pool schema")
 		}
+		var extra any
 		if decoder.Decode(&extra) != io.EOF {
 			return Config{}, errors.New("stock pool must contain one document")
 		}
 		c.Stocks = pool.Stocks
 	}
-	if v, ok := os.LookupEnv("STOCK_WATCHER_DATA_DIR"); ok {
-		c.DataDir = v
-	}
-	if v, ok := os.LookupEnv("STOCK_WATCHER_WEB_ADDR"); ok {
-		c.Web.Listen = v
-	}
-	if c.Feishu.CredentialsFile != "" {
-		credentials, err := loadFeishuCredentials(path, c.Feishu.CredentialsFile)
+	if c.Feishu.Enabled && c.Feishu.CredentialsFile != "" {
+		credentials, err := loadFeishuCredentials(baseDir, c.Feishu.CredentialsFile)
 		if err != nil {
 			return Config{}, err
 		}
@@ -193,8 +208,8 @@ func Load(path string) (Config, error) {
 	}
 	for i := range c.Notify.Channels {
 		channel := &c.Notify.Channels[i]
-		if channel.CredentialsFile != "" {
-			credentials, err := loadFeishuCredentials(path, channel.CredentialsFile)
+		if channel.Enabled && channel.CredentialsFile != "" {
+			credentials, err := loadFeishuCredentials(baseDir, channel.CredentialsFile)
 			if err != nil {
 				return Config{}, err
 			}
@@ -215,12 +230,13 @@ func Load(path string) (Config, error) {
 		return Config{}, errors.New("data_dir is required")
 	}
 	if !filepath.IsAbs(c.DataDir) {
-		c.DataDir = filepath.Join(filepath.Dir(path), c.DataDir)
+		c.DataDir = filepath.Join(baseDir, c.DataDir)
 	}
-	c.DataDir, err = filepath.Abs(c.DataDir)
+	absolute, err := filepath.Abs(c.DataDir)
 	if err != nil {
 		return Config{}, errors.New("invalid data directory")
 	}
+	c.DataDir = absolute
 	c.Market.loadCredentials()
 	return c, c.Validate()
 }

@@ -76,41 +76,49 @@ def main():
         root=Path(temporary);(root/"data").mkdir();(root/"logs").mkdir()
         with socket.socket() as sock: sock.bind(("127.0.0.1",0));port=sock.getsockname()[1]
         api=f"http://127.0.0.1:{provider.server_port}";url=f"http://127.0.0.1:{port}"
-        (root/"config.yaml").write_text(f"""schema_version: 1
-data_dir: data
-require_cifs: false
-request_timeout: 1s
-poll_interval: 1h
-web:
-  enabled: true
-  listen: '127.0.0.1:{port}'
-intraday:
-  enabled: true
-  poll_interval: 30s
-  tencent_endpoint: {api}/minutes
-market:
-  providers: [tencent]
-  request_interval: 350ms
-  tencent_endpoint: {api}/daily
-stocks:
-  - code: sz000001
-    name: 分钟测试
-calendar:
-  valid_from: '2020-01-01'
-  valid_through: '2099-12-31'
-  holidays: []
-""")
-        env={k:v for k,v in os.environ.items() if not k.startswith(("FEISHU_","TUSHARE_","STOCK_WATCHER_"))}
-        env.update(STOCK_WATCHER_LOG_DIR=str(root/"logs"),STOCK_WATCHER_LOG_COLOR="off",NO_PROXY="127.0.0.1,localhost")
-        name="stock-watcher-minute-test-"+str(os.getpid())
+        (root/"leaders.yaml").write_text("schema_version: 1\nstocks:\n  - code: sz000001\n    name: 分钟测试\n")
         mount="/fixture" if args.image else str(root)
+        env={k:v for k,v in os.environ.items() if not k.startswith(("FEISHU_","TUSHARE_","STOCK_WATCHER_"))}
+        env.update({
+            "STOCK_WATCHER_DATA_DIR": f"{mount}/data",
+            "STOCK_WATCHER_LOG_DIR": f"{mount}/logs",
+            "STOCK_WATCHER_LOG_COLOR": "off",
+            "STOCK_WATCHER_REQUIRE_CIFS": "false",
+            "STOCK_WATCHER_POOL_FILE": f"{mount}/leaders.yaml",
+            "STOCK_WATCHER_REQUEST_TIMEOUT": "1s",
+            "STOCK_WATCHER_POLL_INTERVAL": "1h",
+            "STOCK_WATCHER_WEB_ADDR": f"127.0.0.1:{port}",
+            "STOCK_WATCHER_INTRADAY_ENABLED": "true",
+            "STOCK_WATCHER_STRATEGY_ENABLED": "false",
+            "STOCK_WATCHER_INTRADAY_POLL_INTERVAL": "30s",
+            "STOCK_WATCHER_INTRADAY_TENCENT_ENDPOINT": f"{api}/minutes",
+            "STOCK_WATCHER_MARKET_PROVIDERS": "tencent",
+            "STOCK_WATCHER_MARKET_REQUEST_INTERVAL": "350ms",
+            "STOCK_WATCHER_MARKET_TENCENT_ENDPOINT": f"{api}/daily",
+            "STOCK_WATCHER_CALENDAR_VALID_FROM": "2016-01-01",
+            "STOCK_WATCHER_CALENDAR_VALID_THROUGH": "2099-12-31",
+            "STOCK_WATCHER_CALENDAR_HOLIDAYS": "",
+            "STOCK_WATCHER_FEISHU_ENABLED": "false",
+            "NO_PROXY": "127.0.0.1,localhost",
+        })
+        name="stock-watcher-minute-test-"+str(os.getpid())
         def command(verb, service=False):
             if args.image:
-                prefix=["docker","run","--rm","--network","host","--read-only","--cpus","1","--memory","256m","--pids-limit","64","--cap-drop","ALL","--security-opt","no-new-privileges:true","--mount",f"type=bind,src={root},dst=/fixture","-e","STOCK_WATCHER_DATA_DIR=/fixture/data","-e",f"STOCK_WATCHER_WEB_ADDR=127.0.0.1:{port}","-e","STOCK_WATCHER_LOG_DIR=/fixture/logs","-e","STOCK_WATCHER_LOG_COLOR=off"]
+                prefix=["docker","run","--rm","--network","host","--read-only","--cpus","1","--memory","256m","--pids-limit","64","--cap-drop","ALL","--security-opt","no-new-privileges:true","--mount",f"type=bind,src={root},dst=/fixture"]
+                for key in ("STOCK_WATCHER_DATA_DIR","STOCK_WATCHER_LOG_DIR","STOCK_WATCHER_LOG_COLOR",
+                            "STOCK_WATCHER_REQUIRE_CIFS","STOCK_WATCHER_POOL_FILE","STOCK_WATCHER_REQUEST_TIMEOUT",
+                            "STOCK_WATCHER_POLL_INTERVAL","STOCK_WATCHER_WEB_ADDR","STOCK_WATCHER_INTRADAY_ENABLED",
+                            "STOCK_WATCHER_STRATEGY_ENABLED",
+                            "STOCK_WATCHER_INTRADAY_POLL_INTERVAL","STOCK_WATCHER_INTRADAY_TENCENT_ENDPOINT",
+                            "STOCK_WATCHER_MARKET_PROVIDERS","STOCK_WATCHER_MARKET_REQUEST_INTERVAL",
+                            "STOCK_WATCHER_MARKET_TENCENT_ENDPOINT","STOCK_WATCHER_CALENDAR_VALID_FROM",
+                            "STOCK_WATCHER_CALENDAR_VALID_THROUGH","STOCK_WATCHER_CALENDAR_HOLIDAYS",
+                            "STOCK_WATCHER_FEISHU_ENABLED","NO_PROXY"):
+                    prefix += ["-e", f"{key}={env[key]}"]
                 if service: prefix += ["--name",name]
                 prefix += [args.image]
             else: prefix=[args.binary]
-            return prefix+[verb,"-config",mount+"/config.yaml"]
+            return prefix+[verb]
         def invoke(verb, fail=False):
             r=subprocess.run(command(verb),env=env,capture_output=True,text=True,timeout=30)
             assert r.returncode==(1 if fail else 0),r.stdout+r.stderr
@@ -140,7 +148,7 @@ calendar:
                         assert proc.poll() is None,(root/"stdout.log").read_text()
                         try:
                             with urlopen(url+"/api/intraday?code=sz000001&period=5",timeout=1) as response: snap=json.load(response)
-                            if snap["sync"]["status"]=="ok" and STATE["daily"]>0:break
+                            if snap["sync"]["status"]=="ok":break
                         except OSError:pass
                         assert time.monotonic()<until,(root/"stdout.log").read_text()
                         time.sleep(.1)
@@ -151,7 +159,7 @@ calendar:
                         assert data["base_period_minutes"]==5 and data["period_minutes"]==period
                         if not target()[1] and target()[0].hour==15: assert len(data["bars"])==240//period
                     with sqlite3.connect(root/"data/market.db") as db:
-                        assert db.execute("PRAGMA user_version").fetchone()==(4,)
+                        assert db.execute("PRAGMA user_version").fetchone()==(5,)
                         assert db.execute("PRAGMA integrity_check").fetchone()==("ok",)
                         assert db.execute("SELECT count(*) FROM daily_bar").fetchone()==(0,)
                 finally:

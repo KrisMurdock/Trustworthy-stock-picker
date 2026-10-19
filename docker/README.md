@@ -8,12 +8,9 @@
 cp -n docker/.env.example docker/.env
 chmod 600 docker/.env
 mkdir -p logs
-# 已有配置/环境文件不得覆盖。
-cp -n config.yaml.example config.yaml
-chmod 600 config.yaml
 ```
 
-编辑 `docker/.env`，把 HOST_CONFIG/POOL/LOGS 改为本机绝对路径；HOST_DATA 指向现有 CIFS 挂载。配置里的 `pool_file` 使用 `leaders.yaml`。准备 `STOCK_WATCHER_RUNTIME_ENV` 指向的私有文件（示例 `/etc/stock-watcher.env`），关闭通知时可为空，权限 600；其变量语法见[环境文档](../docs/environment-variables.md)。所有路径必须已经存在。
+编辑 `docker/.env`，把 HOST_POOL/LOGS 改为本机绝对路径；HOST_DATA 指向现有 CIFS 挂载。业务配置已内置在镜像中，不再挂载 `config.yaml`；股池固定读取 `/app/leaders.yaml`。准备 `STOCK_WATCHER_RUNTIME_ENV` 指向的私有文件（示例 `/etc/stock-watcher.env`），在其中设置 `STOCK_WATCHER_FEISHU_ENABLED=false` 或提供飞书凭据；其变量语法见[环境文档](../docs/environment-variables.md)。所有路径必须已经存在。
 
 ## 构建与检查
 
@@ -23,7 +20,7 @@ export STOCK_WATCHER_IMAGE="stock-watcher:$STOCK_WATCHER_VERSION"
 docker compose --env-file docker/.env -f docker/compose.yaml config --quiet
 docker compose --env-file docker/.env -f docker/compose.yaml build
 docker compose --env-file docker/.env -f docker/compose.yaml run --rm --no-deps stock-watcher version
-docker compose --env-file docker/.env -f docker/compose.yaml run --rm --no-deps stock-watcher check -config /app/config.yaml
+docker compose --env-file docker/.env -f docker/compose.yaml run --rm --no-deps stock-watcher check
 ```
 
 将上面确定的 IMAGE/VERSION 也记录到 `docker/.env`，确保新的终端仍使用同一版本。Compose 命令的 shell 环境变量优先于该文件；切换版本时同步更新或清除旧的 shell 变量。不使用普通 `config` 输出，避免展开运行凭证。
@@ -36,7 +33,7 @@ docker compose --env-file docker/.env -f docker/compose.yaml run --rm --no-deps 
 docker compose --env-file docker/.env -f docker/compose.yaml up -d --no-build
 docker compose --env-file docker/.env -f docker/compose.yaml ps
 docker compose --env-file docker/.env -f docker/compose.yaml logs --tail 50
-docker compose --env-file docker/.env -f docker/compose.yaml exec stock-watcher stock-watcher status -config /app/config.yaml
+docker compose --env-file docker/.env -f docker/compose.yaml exec stock-watcher stock-watcher status
 ```
 
 `check` 是读写探针与配置检查；服务主命令为 `run`，Compose 用只读 `health` 检查就绪。默认宿主机端口为 `127.0.0.1:8080`，网页与 API 共用该端口；`/api/status` 的业务降级与容器 healthy 分开判断。容器内 /data 直接映射 Windows，/logs 是本地有限滚动日志。

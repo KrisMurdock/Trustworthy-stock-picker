@@ -12,14 +12,14 @@ import (
 	"time"
 )
 
-func archiveSpeedResult(ctx context.Context, path string, snapshot experiment.Snapshot, report bottomstudy.SpeedReport, stockSHA, contextSHA string) (string, error) {
+func archiveSpeedResult(ctx context.Context, snapshot experiment.Snapshot, report bottomstudy.SpeedReport, stockSHA, contextSHA string) (string, error) {
 	if report.Engine != bottomstudy.SpeedEngine || report.SnapshotID != snapshot.ID {
 		return "", errors.New("speed report does not match the frozen stock snapshot")
 	}
 	if len(report.Winners) == 0 {
-		return "", errors.New("no training-qualified candidate to archive; run without archive-config to inspect the grid")
+		return "", errors.New("no training-qualified candidate to archive; run without -archive to inspect the grid")
 	}
-	c, err := config.Load(path)
+	c, err := config.Load()
 	if err != nil {
 		return "", err
 	}

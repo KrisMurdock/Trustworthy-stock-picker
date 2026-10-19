@@ -14,10 +14,10 @@ type feishuCredentials struct {
 	Secret  string `yaml:"secret,omitempty"`
 }
 
-func loadFeishuCredentials(configPath, path string) (feishuCredentials, error) {
+func loadFeishuCredentials(baseDir, path string) (feishuCredentials, error) {
 	var credentials feishuCredentials
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(filepath.Dir(configPath), path)
+		path = filepath.Join(baseDir, path)
 	}
 	f, err := os.Open(path)
 	if err != nil {

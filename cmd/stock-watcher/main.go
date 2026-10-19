@@ -35,7 +35,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-intraday|status-backfill|status-refresh|status-audit|preview|research|experiment|plan|run|once|status|retry [channel] [-config config.yaml] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-intraday|status-backfill|status-refresh|status-audit|preview|research|experiment|plan|run|once|status|retry [channel] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -43,7 +43,6 @@ func run(args []string) error {
 		return nil
 	}
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
-	path := f.String("config", "config.yaml", "configuration file")
 	revision := f.String("revision", "", "saved report revision (replay only)")
 	asof := f.String("as-of", "", "completed data date (sync/status/preview/research/experiment only)")
 	code := f.String("code", "", "stock code (plan only)")
@@ -102,7 +101,7 @@ func run(args []string) error {
 			return errors.New("experiment -holdout reuses the parent policy and cannot be combined with -policy")
 		}
 	}
-	c, err := config.Load(*path)
+	c, err := config.Load()
 	if err != nil {
 		return err
 	}
@@ -134,7 +133,7 @@ func run(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "valid", "pool_size": len(c.Stocks)})
 	}
 	if !filepath.IsAbs(options.Dir) {
-		options.Dir = filepath.Join(filepath.Dir(*path), options.Dir)
+		options.Dir = filepath.Join(".", options.Dir)
 	}
 	log, err := logging.New(options)
 	if err != nil {

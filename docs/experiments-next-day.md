@@ -54,7 +54,7 @@
 | `next-day-risk-qualified` | `d4cf2b14901b43e8892cd93159710360` |
 
 ```bash
-./bin/stock-watcher experiment -config config.yaml -parent 464ba103aee3ef6475e0f81df6a00705 -policy next-day-momentum
+./bin/stock-watcher experiment -parent 464ba103aee3ef6475e0f81df6a00705 -policy next-day-momentum
 ```
 
 上述命令生成新记录，不覆盖已有记录。复现相同数值需使用上述功能提交或对应镜像；换代码后不能以旧代码版本冒充同口径。

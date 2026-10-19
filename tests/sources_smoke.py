@@ -184,47 +184,61 @@ def main():
                 env = os.environ.copy()
                 for name in ("FEISHU_WEBHOOK", "FEISHU_SECRET", "STOCK_WATCHER_DATA_DIR", "STOCK_WATCHER_WEB_ADDR"):
                     env.pop(name, None)
-                env.update({"TUSHARE_TOKEN": TOKEN, "STOCK_WATCHER_LOG_DIR": str(root / "logs"), "STOCK_WATCHER_LOG_COLOR": "off"})
+                env.update({
+                    "TUSHARE_TOKEN": TOKEN,
+                    "STOCK_WATCHER_DATA_DIR": f"{mount}/data",
+                    "STOCK_WATCHER_LOG_DIR": f"{mount}/logs",
+                    "STOCK_WATCHER_LOG_COLOR": "off",
+                    "STOCK_WATCHER_REQUIRE_CIFS": "false",
+                    "STOCK_WATCHER_WEB_ENABLED": "false",
+                    "STOCK_WATCHER_FEISHU_ENABLED": "false",
+                    "STOCK_WATCHER_INTRADAY_ENABLED": "false",
+                    "STOCK_WATCHER_STRATEGY_ENABLED": "false",
+                    "STOCK_WATCHER_REQUEST_TIMEOUT": "1s",
+                    "STOCK_WATCHER_MARKET_REQUEST_INTERVAL": "350ms",
+                    "STOCK_WATCHER_POOL_FILE": f"{mount}/leaders.yaml",
+                    "STOCK_WATCHER_CALENDAR_VALID_FROM": "2026-01-01",
+                    "STOCK_WATCHER_CALENDAR_VALID_THROUGH": "2026-12-31",
+                })
 
                 def config(providers, code="sh688981", listed="2026-07-15", days=90, holidays=None):
-                    (root / "config.yaml").write_text(f"""schema_version: 1
-data_dir: data
-require_cifs: false
-request_timeout: 1s
-web:
-  enabled: false
-daily:
-  history_days: {days}
-  adjust: qfq
-market:
-  providers: {json.dumps(providers)}
-  request_interval: 350ms
-  tencent_endpoint: {api}/tencent
-  baostock_address: 127.0.0.1:{tcp.server_address[1]}
-  tushare_endpoint: {api}/tushare
-  eastmoney_endpoint: {api}/eastmoney
-  sina_endpoint: {api}/sina
-  listing_endpoint: {api}/listing
-stocks:
-  - code: {code}
-    name: 测试股票
-    listed_from: '{listed}'
-calendar:
-  valid_from: '2026-01-01'
-  valid_through: '2026-12-31'
-  holidays: {json.dumps(holidays or [])}
-""")
+                    pool = f"schema_version: 1\nstocks:\n  - code: {code}\n    name: 测试股票\n"
+                    if listed:
+                        pool += f"    listed_from: '{listed}'\n"
+                    (root / "leaders.yaml").write_text(pool)
+                    env.update({
+                        "STOCK_WATCHER_MARKET_PROVIDERS": ",".join(providers),
+                        "STOCK_WATCHER_DAILY_HISTORY_DAYS": str(days),
+                        "STOCK_WATCHER_CALENDAR_HOLIDAYS": ",".join(holidays or []),
+                        "STOCK_WATCHER_MARKET_TENCENT_ENDPOINT": f"{api}/tencent",
+                        "STOCK_WATCHER_MARKET_BAOSTOCK_ADDRESS": f"127.0.0.1:{tcp.server_address[1]}",
+                        "STOCK_WATCHER_MARKET_TUSHARE_ENDPOINT": f"{api}/tushare",
+                        "STOCK_WATCHER_MARKET_EASTMONEY_ENDPOINT": f"{api}/eastmoney",
+                        "STOCK_WATCHER_MARKET_SINA_ENDPOINT": f"{api}/sina",
+                        "STOCK_WATCHER_MARKET_LISTING_ENDPOINT": f"{api}/listing",
+                    })
 
                 def invoke(*command, fail=False):
                     if args.image:
                         prefix = ["docker", "run", "--rm", "--network", "host", "--read-only", "--cpus", "1", "--memory", "256m",
                                   "--pids-limit", "64", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
-                                  "--mount", f"type=bind,src={root},dst=/fixture", "-e", "TUSHARE_TOKEN",
-                                  "-e", "STOCK_WATCHER_DATA_DIR=/fixture/data",
-                                  "-e", "STOCK_WATCHER_LOG_DIR=/fixture/logs", "-e", "STOCK_WATCHER_LOG_COLOR=off", args.image]
+                                  "--mount", f"type=bind,src={root},dst=/fixture"]
+                        for key in ("TUSHARE_TOKEN", "STOCK_WATCHER_DATA_DIR", "STOCK_WATCHER_LOG_DIR",
+                                    "STOCK_WATCHER_LOG_COLOR", "STOCK_WATCHER_REQUIRE_CIFS",
+                                    "STOCK_WATCHER_WEB_ENABLED", "STOCK_WATCHER_FEISHU_ENABLED",
+                                    "STOCK_WATCHER_INTRADAY_ENABLED", "STOCK_WATCHER_REQUEST_TIMEOUT",
+                                    "STOCK_WATCHER_MARKET_REQUEST_INTERVAL", "STOCK_WATCHER_POOL_FILE",
+                                    "STOCK_WATCHER_CALENDAR_VALID_FROM", "STOCK_WATCHER_CALENDAR_VALID_THROUGH",
+                                    "STOCK_WATCHER_CALENDAR_HOLIDAYS", "STOCK_WATCHER_MARKET_PROVIDERS",
+                                    "STOCK_WATCHER_DAILY_HISTORY_DAYS", "STOCK_WATCHER_MARKET_TENCENT_ENDPOINT",
+                                    "STOCK_WATCHER_MARKET_BAOSTOCK_ADDRESS", "STOCK_WATCHER_MARKET_TUSHARE_ENDPOINT",
+                                    "STOCK_WATCHER_MARKET_EASTMONEY_ENDPOINT", "STOCK_WATCHER_MARKET_SINA_ENDPOINT",
+                                    "STOCK_WATCHER_MARKET_LISTING_ENDPOINT"):
+                            prefix += ["-e", f"{key}={env.get(key, '')}"]
+                        prefix += [args.image]
                     else:
                         prefix = [args.binary]
-                    result = subprocess.run(prefix + list(command) + ["-config", f"{mount}/config.yaml"], env=env,
+                    result = subprocess.run(prefix + list(command), env=env,
                                             capture_output=True, text=True, timeout=45)
                     assert (result.returncode == 1 if fail else result.returncode == 0), result.stdout + result.stderr
                     assert TOKEN not in result.stdout + result.stderr, "credential leaked"

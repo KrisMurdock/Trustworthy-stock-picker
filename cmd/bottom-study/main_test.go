@@ -160,7 +160,7 @@ func TestContextComparisonCLIAndFailures(t *testing.T) {
 	}
 	for _, bad := range [][]string{
 		{"-snapshot", path, "-from", "2026-01-01", "-through", through, "-optimize-speed"},
-		{"-snapshot", path, "-from", "2026-01-01", "-through", through, "-archive-config", "missing.yaml"},
+		{"-snapshot", path, "-from", "2026-01-01", "-through", through, "-archive"},
 		append(append([]string(nil), speedArgs...), "-optimize"),
 		append(append([]string(nil), base...), "-optimize-speed"),
 	} {

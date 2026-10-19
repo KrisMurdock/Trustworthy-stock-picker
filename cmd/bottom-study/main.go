@@ -40,7 +40,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	through := flags.String("through", "", "last observation date YYYY-MM-DD (required)")
 	optimize := flags.Bool("optimize", false, "run the fixed net-return, batch-count and stop grid")
 	speed := flags.Bool("optimize-speed", false, "optimize no-stop time to target (requires compare-context)")
-	archiveConfig := flags.String("archive-config", "", "save speed-result snapshot to the experiment archive configured by this YAML")
+	archive := flags.Bool("archive", false, "save speed-result snapshot to the experiment archive")
 	contextPath := flags.String("compare-context", "", "frozen sector/market JSON for the two-arm comparison")
 	trainThrough := flags.String("train-through", "", "last training outcome date (required with optimize or compare-context)")
 	if err := flags.Parse(args); err != nil {
@@ -55,8 +55,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *speed && (*contextPath == "" || *optimize) {
 		return errors.New("optimize-speed requires compare-context and cannot be combined with optimize")
 	}
-	if *archiveConfig != "" && !*speed {
-		return errors.New("archive-config requires optimize-speed")
+	if *archive && !*speed {
+		return errors.New("archive requires optimize-speed")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -103,8 +103,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			if err != nil {
 				return err
 			}
-			if *archiveConfig != "" {
-				id, err := archiveSpeedResult(ctx, *archiveConfig, snapshot, report, hex.EncodeToString(stockHash[:]), hex.EncodeToString(contextHash[:]))
+			if *archive {
+				id, err := archiveSpeedResult(ctx, snapshot, report, hex.EncodeToString(stockHash[:]), hex.EncodeToString(contextHash[:]))
 				if err != nil {
 					return err
 				}

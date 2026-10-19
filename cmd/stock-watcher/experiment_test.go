@@ -19,20 +19,16 @@ import (
 func TestExperimentCLIUsesSavedDataAndFrozenParent(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	path := filepath.Join(root, "config.yaml")
-	if err := os.WriteFile(path, []byte(`schema_version: 1
-data_dir: .
-require_cifs: false
-stocks:
-  - code: sz000001
-    name: 测试
-calendar:
-  valid_from: '2026-01-01'
-  valid_through: '2026-12-31'
-`), 0600); err != nil {
+	pool := filepath.Join(root, "leaders.yaml")
+	if err := os.WriteFile(pool, []byte("schema_version: 1\nstocks:\n  - code: sz000001\n    name: 测试\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	c, err := config.Load(path)
+	t.Setenv("STOCK_WATCHER_DATA_DIR", root)
+	t.Setenv("STOCK_WATCHER_REQUIRE_CIFS", "false")
+	t.Setenv("STOCK_WATCHER_FEISHU_ENABLED", "false")
+	t.Setenv("STOCK_WATCHER_POOL_FILE", pool)
+	t.Setenv("STOCK_WATCHER_CALENDAR_HOLIDAYS", "")
+	c, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +65,7 @@ calendar:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = run([]string{"experiment", "-config", path}); err != nil {
+	if err = run([]string{"experiment"}); err != nil {
 		t.Fatal(err)
 	}
 	view := storage.ExperimentView{Root: root}
@@ -132,7 +128,7 @@ calendar:
 		t.Fatal(err)
 	}
 	interval := &strategy.BacktestRange{From: nextDay.Result.Development.Trades[0].Date, Through: nextDay.Result.Development.Trades[5].Date}
-	if err = run([]string{"experiment", "-config", path, "-parent", nextDay.ID, "-policy", "next-day-baseline", "-from", interval.From, "-through", interval.Through}); err != nil {
+	if err = run([]string{"experiment", "-parent", nextDay.ID, "-policy", "next-day-baseline", "-from", interval.From, "-through", interval.Through}); err != nil {
 		t.Fatal(err)
 	}
 	items, _ = view.List(ctx)
@@ -148,7 +144,7 @@ calendar:
 	if err != nil || inherited.Spec.Range == nil || *inherited.Spec.Range != *interval {
 		t.Fatal("child lost parent range", err)
 	}
-	if err = run([]string{"experiment", "-config", path, "-parent", parent.ID, "-holdout"}); err != nil {
+	if err = run([]string{"experiment", "-parent", parent.ID, "-holdout"}); err != nil {
 		t.Fatal(err)
 	}
 	items, _ = view.List(ctx)
@@ -157,27 +153,27 @@ calendar:
 		t.Fatal("holdout CLI did not create a clean child record", holdoutRecord)
 	}
 	for _, args := range [][]string{
-		{"experiment", "-config", path, "-policy", "unknown"},
-		{"experiment", "-config", path, "-policy", "upper-wick"},
-		{"experiment", "-config", path, "-policy", "next-day-low-volatility"},
-		{"experiment", "-config", path, "-policy", "next-day-typo"},
-		{"experiment", "-config", path, "-policy", "conditional-rsi"},
-		{"experiment", "-config", path, "-policy", "conditional-unknown"},
-		{"experiment", "-config", path, "-parent", parent.ID, "-policy", "conditional-macd"},
-		{"experiment", "-config", path, "-parent", "invalid"},
-		{"experiment", "-config", path, "-parent", parent.ID, "-as-of", "2026-01-01"},
-		{"experiment", "-config", path, "-holdout"},
-		{"experiment", "-config", path, "-parent", parent.ID, "-holdout", "-policy", "baseline"},
-		{"experiment", "-config", path, "-parent", parent.ID, "-holdout", "-as-of", h.AsOf},
-		{"experiment", "-config", path, "-parent", parent.ID, "-holdout", "-from", "2026-04-01", "-through", "2026-05-01"},
-		{"sync", "-config", path, "-policy", "upper-wick"},
-		{"sync", "-config", path, "-holdout"},
-		{"experiment", "-config", path + ".missing"},
-		{"experiment", "-config", path, "-from", "2026-04-01"},
-		{"experiment", "-config", path, "-parent", nextDay.ID, "-from", "2026-05-02", "-through", "2026-05-01"},
-		{"experiment", "-config", path, "-parent", nextDay.ID, "-from", h.AsOf, "-through", h.AsOf},
-		{"experiment", "-config", path, "-parent", nextDay.ID, "-policy", "conditional-entry"},
-		{"sync", "-config", path, "-from", "2026-04-01", "-through", "2026-05-01"},
+		{"experiment", "-policy", "unknown"},
+		{"experiment", "-policy", "upper-wick"},
+		{"experiment", "-policy", "next-day-low-volatility"},
+		{"experiment", "-policy", "next-day-typo"},
+		{"experiment", "-policy", "conditional-rsi"},
+		{"experiment", "-policy", "conditional-unknown"},
+		{"experiment", "-parent", parent.ID, "-policy", "conditional-macd"},
+		{"experiment", "-parent", "invalid"},
+		{"experiment", "-parent", parent.ID, "-as-of", "2026-01-01"},
+		{"experiment", "-holdout"},
+		{"experiment", "-parent", parent.ID, "-holdout", "-policy", "baseline"},
+		{"experiment", "-parent", parent.ID, "-holdout", "-as-of", h.AsOf},
+		{"experiment", "-parent", parent.ID, "-holdout", "-from", "2026-04-01", "-through", "2026-05-01"},
+		{"sync", "-policy", "upper-wick"},
+		{"sync", "-holdout"},
+		{"experiment", "-config", "config.yaml"},
+		{"experiment", "-from", "2026-04-01"},
+		{"experiment", "-parent", nextDay.ID, "-from", "2026-05-02", "-through", "2026-05-01"},
+		{"experiment", "-parent", nextDay.ID, "-from", h.AsOf, "-through", h.AsOf},
+		{"experiment", "-parent", nextDay.ID, "-policy", "conditional-entry"},
+		{"sync", "-from", "2026-04-01", "-through", "2026-05-01"},
 	} {
 		if err = run(args); err == nil {
 			t.Fatalf("invalid command accepted: %v", args)

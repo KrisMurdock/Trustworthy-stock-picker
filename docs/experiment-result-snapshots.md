@@ -32,12 +32,12 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(git rev-parse
 ./bin/bottom-study -snapshot /path/to/stocks.json \
   -compare-context /path/to/context.json -optimize-speed \
   -from 2026-01-01 -train-through 2026-06-30 -through 2026-10-12 \
-  -archive-config config.yaml > /path/to/report.json
+  -archive > /path/to/report.json
 ```
 
-此命令照常输出完整 240 对研究报告，并将**训练选中的参数及同参数 A/B、训练/后段对照**作为一个实验记录保存到配置数据目录的 `experiments.db`。未达训练样本门槛而没有候选时，归档明确失败，可去掉归档选项查看完整网格。它不是为全部参数各创建一条记录，避免把 480 个候选误当成 480 次独立验证。
+此命令照常输出完整 240 对研究报告，并将**训练选中的参数及同参数 A/B、训练/后段对照**作为一个实验记录保存到内置数据目录的 `experiments.db`。未达训练样本门槛而没有候选时，归档明确失败，可去掉归档选项查看完整网格。它不是为全部参数各创建一条记录，避免把 480 个候选误当成 480 次独立验证。
 
-归档遵循配置的 CIFS 要求、已有独立实验写锁、原子更新和数据快照散列校验，不打开行情写库或创建行情提供方，不发送通知。未传 `-archive-config` 时保持原有纯离线、不写档案行为。标准实验命令在成功结束时自动保存结果快照，无需新增参数。
+归档遵循 `STOCK_WATCHER_REQUIRE_CIFS`、已有独立实验写锁、原子更新和数据快照散列校验，不打开行情写库或创建行情提供方，不发送通知。未传 `-archive` 时保持原有纯离线、不写档案行为。标准实验命令在成功结束时自动保存结果快照，无需新增参数。
 
 归档完成后刷新实验页。相同输入重跑也会创建新 ID，旧快照保持不变；下载 JSON 是当前选中实验的完整结果快照，包含所有保存的分组，切换分组不会改动下载内容。
 

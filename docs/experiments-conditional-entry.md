@@ -19,11 +19,11 @@
 
 ```bash
 # 读取现有固定快照并继承区间，重算全部指标
-./bin/stock-watcher experiment -config config.yaml \
+./bin/stock-watcher experiment \
   -parent c1174a9861c0fd1e251a0f422e327a41 -policy conditional-entry
 
 # 明确指定信号区间；后续成交日仍需在快照覆盖范围内
-./bin/stock-watcher experiment -config config.yaml \
+./bin/stock-watcher experiment \
   -parent c1174a9861c0fd1e251a0f422e327a41 -policy conditional-entry \
   -from 2026-09-18 -through 2026-10-08
 ```

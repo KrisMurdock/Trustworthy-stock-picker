@@ -58,11 +58,11 @@
 
 ```bash
 # 使用同一数据和区间复现RSI组
-./bin/stock-watcher experiment -config config.yaml \
+./bin/stock-watcher experiment \
   -parent c90718268ad7bf886c202a5fae5d2026 -policy conditional-rsi
 
 # 两项共振加波动量能约束，作为对照而非实盘建议
-./bin/stock-watcher experiment -config config.yaml \
+./bin/stock-watcher experiment \
   -parent c90718268ad7bf886c202a5fae5d2026 -policy conditional-confluence-guard
 ```
 

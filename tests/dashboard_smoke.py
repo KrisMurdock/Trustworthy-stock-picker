@@ -70,21 +70,6 @@ def fixture(directory, empty, partial=False, gates=False):
     (directory / "data").mkdir()
     (directory / "logs").mkdir()
     (directory / "leaders.yaml").write_text(POOL)
-    config = (ROOT / "config.yaml.example").read_text()
-    config = config.replace("require_cifs: true", "require_cifs: false")
-    config = config.replace("intraday:\n  enabled: true", "intraday:\n  enabled: false")
-    config = config.replace("request_timeout: 10s", "request_timeout: 1s")
-    # All other upstreams must remain disabled: BaoStock uses TCP and bypasses HTTPS_PROXY.
-    config = config.replace("providers: [tencent, sina, baostock, tushare, eastmoney]", "providers: [tencent]")
-    config = config.replace("poll_interval: 5m", "poll_interval: 1h")
-    # Freeze saved-data UI fixtures. Even a failed refresh saves a sync status.
-    # A mock calendar with no recent completed session blocks background writes
-    # while allowing the real CLI to start. Collector behavior is tested separately.
-    today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
-    closed = "".join(f"    - '{today - timedelta(days=i)}'\n" for i in range(-1, 40))
-    config = re.sub(r"(?ms)^calendar:\n.*?(?=^\S|\Z)",
-                    "calendar:\n  valid_from: '2020-01-01'\n  valid_through: '2099-12-31'\n  holidays:\n" + closed, config)
-    (directory / "config.yaml").write_text(config)
     args = ["go", "run", "./tests/fixtures/dashboard", "-data", str(directory / "data")]
     if empty:
         args.append("-empty")
@@ -102,6 +87,8 @@ def service(args, empty=False, partial=False, gates=False):
         fixture(directory, empty, partial, gates)
         port = available_port()
         url = f"http://127.0.0.1:{port}"
+        today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+        closed = ",".join(str(today - timedelta(days=i)) for i in range(-1, 40))
         env = os.environ.copy()
         for key in ("FEISHU_WEBHOOK", "FEISHU_SECRET"):
             env.pop(key, None)
@@ -110,6 +97,17 @@ def service(args, empty=False, partial=False, gates=False):
             "STOCK_WATCHER_LOG_DIR": str(directory / "logs"),
             "STOCK_WATCHER_LOG_COLOR": "off",
             "STOCK_WATCHER_WEB_ADDR": f"127.0.0.1:{port}",
+            "STOCK_WATCHER_REQUIRE_CIFS": "false",
+            "STOCK_WATCHER_POOL_FILE": str(directory / "leaders.yaml"),
+            "STOCK_WATCHER_FEISHU_ENABLED": "false",
+            "STOCK_WATCHER_INTRADAY_ENABLED": "false",
+            "STOCK_WATCHER_STRATEGY_ENABLED": "false",
+            "STOCK_WATCHER_REQUEST_TIMEOUT": "1s",
+            "STOCK_WATCHER_MARKET_PROVIDERS": "tencent",
+            "STOCK_WATCHER_POLL_INTERVAL": "1h",
+            "STOCK_WATCHER_CALENDAR_VALID_FROM": "2020-01-01",
+            "STOCK_WATCHER_CALENDAR_VALID_THROUGH": "2099-12-31",
+            "STOCK_WATCHER_CALENDAR_HOLIDAYS": closed,
             # Go's HTTP transport sends HTTPS requests through this closed local
             # proxy. Startup synchronization cannot reach a live provider.
             "HTTPS_PROXY": "http://127.0.0.1:9",
@@ -135,17 +133,28 @@ def service(args, empty=False, partial=False, gates=False):
                     "STOCK_WATCHER_LOG_DIR": "/fixture/logs",
                     "STOCK_WATCHER_LOG_COLOR": "off",
                     "STOCK_WATCHER_WEB_ADDR": "0.0.0.0:8080",
+                    "STOCK_WATCHER_REQUIRE_CIFS": "false",
+                    "STOCK_WATCHER_POOL_FILE": "/fixture/leaders.yaml",
+                    "STOCK_WATCHER_FEISHU_ENABLED": "false",
+                    "STOCK_WATCHER_INTRADAY_ENABLED": "false",
+                    "STOCK_WATCHER_STRATEGY_ENABLED": "false",
+                    "STOCK_WATCHER_REQUEST_TIMEOUT": "1s",
+                    "STOCK_WATCHER_MARKET_PROVIDERS": "tencent",
+                    "STOCK_WATCHER_POLL_INTERVAL": "1h",
+                    "STOCK_WATCHER_CALENDAR_VALID_FROM": "2020-01-01",
+                    "STOCK_WATCHER_CALENDAR_VALID_THROUGH": "2099-12-31",
+                    "STOCK_WATCHER_CALENDAR_HOLIDAYS": closed,
                     "HTTPS_PROXY": "http://127.0.0.1:9",
                     "HTTP_PROXY": "http://127.0.0.1:9",
                     "NO_PROXY": "127.0.0.1,localhost",
                 }
                 for key, value in container_env.items():
                     command += ["-e", f"{key}={value}"]
-                run(command + [args.image, "run", "-config", "/fixture/config.yaml"], capture_output=True, text=True)
+                run(command + [args.image, "run"], capture_output=True, text=True)
                 started = True
             else:
                 process = subprocess.Popen(
-                    [args.binary, "run", "-config", str(directory / "config.yaml")],
+                    [args.binary, "run"],
                     env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
                 )
             yield url, directory, env
@@ -403,11 +412,13 @@ def populated_checks(context, page, url, args, directory, env):
     expect(page).to_have_url(url + "/rankings")
 
     if not args.image:
-        missing_config = subprocess.run(
-            [args.binary, "run", "-config", str(directory / "absent.yaml")],
-            env=env, capture_output=True, text=True, timeout=10,
+        missing_pool_env = dict(env)
+        missing_pool_env["STOCK_WATCHER_POOL_FILE"] = str(directory / "absent-leaders.yaml")
+        missing_pool = subprocess.run(
+            [args.binary, "check-config"],
+            env=missing_pool_env, capture_output=True, text=True, timeout=10,
         )
-        assert missing_config.returncode == 1, "missing config must fail before serving"
+        assert missing_pool.returncode == 1, "missing stock pool must fail before serving"
 
 
 def chart_checks(page, url, state, args):

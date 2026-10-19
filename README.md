@@ -8,38 +8,36 @@
 
 ```bash
 make build
-cp config.yaml.example config.yaml
-chmod 600 config.yaml
-./bin/stock-watcher init -config config.yaml
-./bin/stock-watcher check -config config.yaml
-./bin/stock-watcher status-backfill -config config.yaml -as-of 2026-10-13
-./bin/stock-watcher status-audit -config config.yaml -as-of 2026-10-13
-./bin/stock-watcher sync -config config.yaml
-./bin/stock-watcher preview -config config.yaml -as-of 2026-10-13
-./bin/stock-watcher run -config config.yaml
+./bin/stock-watcher init
+./bin/stock-watcher check
+./bin/stock-watcher status-backfill -as-of 2026-10-13
+./bin/stock-watcher status-audit -as-of 2026-10-13
+./bin/stock-watcher sync
+./bin/stock-watcher preview -as-of 2026-10-13
+./bin/stock-watcher run
 ```
 
-`make run` 构建后前台运行，启动即按北京时间确定最近已收盘交易日，重新同步整个股池、保存到配置的数据目录、分析并尝试推送飞书。即使当天已有报告也会重新下载；默认下载前复权分析窗口和最近十年的不复权日线；上市不足十年的从上市日起下载；未启用短线策略也会保存原始历史。完成后持续运行，按 `daily.run_at`（默认 18:05）处理后续交易日。
+生产配置已编译进二进制，启动不再读取 `config.yaml`。`leaders.yaml` 和 `feishu.config` 仍作为外部股池与私有凭证文件保留；数据目录、网页地址、通知开关等部署差异通过环境变量覆盖。`make run` 构建后前台运行，启动即按北京时间确定最近已收盘交易日，重新同步整个股池、保存到数据目录、分析并尝试推送飞书。即使当天已有报告也会重新下载；默认下载前复权分析窗口和最近十年的不复权日线；上市不足十年的从上市日起下载；未启用短线策略也会保存原始历史。完成后持续运行，按内置的 `daily.run_at`（默认 18:05）处理后续交易日。
 
 升级到 schema 5 或首次部署后，先执行一次 `status-backfill` 为股池补齐十年停牌状态和交易所日历；未完成时 `sync`/`run` 会拒绝发布。之后每轮同步只刷新最近 `sync.status_refresh_days` 天，也可手动运行 `status-refresh`。`status-audit` 只读输出每只股票的交易会话、停牌、缺口和当日可分析状态。状态源只解释缺失日期，不生成或改写 K 线；冲突和未知日期仍按缺口隔离。
 
 - 交易日 15:00 前使用上一已收盘交易日；周末和节假日跳过休市日。盘中启动会更新数据与分析，但目标买入日已到 09:30 的旧推荐不再推送。收盘后启动立即处理当天，无需等待 18:05。
 - 全池同步失败时不发送缓存报告，按轮询间隔重试（至少 1 分钟）。飞书发送失败后只重试投递，不重新下载整池；权限或签名错误仍需修正后用 `retry` 解锁。
-- 每个数据日期、每个通道保留首次投递记录。同日重启或修改配置会更新本地报告，但不会重复推送已送达消息，也不会替换待重试的消息快照。新增通道可接收当日尚未过期的报告。
+- 每个数据日期、每个通道保留首次投递记录。同日重启或修改环境变量会更新本地报告，但不会重复推送已送达消息，也不会替换待重试的消息快照。新增通道可接收当日尚未过期的报告。
 
-`sync` 只下载并生成报告，不发送消息。`once` 只执行一次定时调度，遵循 18:05 和开盘前补发窗口，不执行启动强制同步。`status` 查看投递状态，`retry [channel]` 在停止服务并修正永久错误后解除指定通道或全部通道的阻塞。修改配置或股池后重启生效。启动日志显示日期、同步进度和入队通道数；未推送时记录原因（未启用通道、已过买入时点或已有投递记录）。
+`sync` 只下载并生成报告，不发送消息。`once` 只执行一次定时调度，遵循 18:05 和开盘前补发窗口，不执行启动强制同步。`status` 查看投递状态，`retry [channel]` 在停止服务并修正永久错误后解除指定通道或全部通道的阻塞。修改环境变量或股池后重启生效。启动日志显示日期、同步进度和入队通道数；未推送时记录原因（未启用通道、已过买入时点或已有投递记录）。
 
 `leaders.yaml` 保存已核对的 104 个证券代码和名称，可直接添加或删除股票。用户原名单另外 6 个疑似笔误在 `leaders.pending.yaml`，确认前不参与下载与筛选。上海和深圳 A 股支持带市场前缀的代码；名称不会参与自动猜测。维护者应使用已核对的证券代码。同步前先确认上市日期：已配置的 `listed_from: YYYY-MM-DD` 优先，否则读取共享目录缓存，首次从新浪发行资料查询“上市日期”并保存。上市不足 10 年的下载上市以来全部日线，满 10 年的下载最近十年；查询失败跳过该股票并保留原因，继续处理其他股票，不把首条 K 线当作上市日期。`cmd/resolve-pool` 可辅助核对名称，结果须人工检查。
 
 ## 短线净收益排名
 
-在配置中设置 `strategy.schema_version: 1` 和 `strategy.enabled: true`，启用新的全池排名。默认保持旧配置的趋势筛选行为，启用后需先运行 `sync` 更新分析报告与不复权日线：
+内置配置默认启用全池短周期排名。需要临时关闭时设置 `STOCK_WATCHER_STRATEGY_ENABLED=false`。启用后需先运行 `sync` 更新分析报告与不复权日线：
 
 ```bash
-./bin/stock-watcher sync -config config.yaml -as-of 2026-10-13
-./bin/stock-watcher preview -config config.yaml -as-of 2026-10-13
-./bin/stock-watcher research -config config.yaml -as-of 2026-10-13
-./bin/stock-watcher plan -config config.yaml -code sz000001 -entry-price 10
+./bin/stock-watcher sync -as-of 2026-10-13
+./bin/stock-watcher preview -as-of 2026-10-13
+./bin/stock-watcher research -as-of 2026-10-13
+./bin/stock-watcher plan -code sz000001 -entry-price 10
 ```
 
 `preview` 输出全池排名和研究结果，`research` 仅输出研究统计，二者只读 Windows 行情、不发消息。`plan` 按输入成交价和配置预算计算买入数量、买入总成本、净 +2.5% / +3% 卖价及净止损价，不需要访问行情盘；输出数量是预算推算，使用前核对实际成交数量和费用。预选报告中的计划以当日不复权收盘价估算，标记 `reference_only: true`；它不是次日已知买入价或买入指令。
@@ -84,10 +82,10 @@ chmod 600 config.yaml
 
 首次采集和盘后校准最多请求最近 640 根原始线，普通轮询请求最近 64 根。已保存的更早数据持续保留，长期停机超出供应商窗口的缺口不会自动回补。15/30/60 分钟从同一批 5 分钟数据计算，盘后修订会立即反映到各周期；缺失基础线的历史周期不补造，不跨午休合并。成交量保留腾讯分钟接口原始单位，不与日线的股/手换算混用。
 
-配置见 `config.yaml.example` 的 `intraday`。旧配置省略该段也默认启用；`intraday.enabled: false` 可关闭采集，仍可读取已保存数据。手动执行一轮：
+分钟采集默认启用；设置 `STOCK_WATCHER_INTRADAY_ENABLED=false` 可关闭采集，仍可读取已保存数据。手动执行一轮：
 
 ```bash
-./bin/stock-watcher sync-intraday -config config.yaml
+./bin/stock-watcher sync-intraday
 ```
 
 该命令同样遵守间隔和已完成校准状态，输出处理/成功/失败/校准数量；失败或数据不完整返回非零。运行中的进程持有同一数据目录的写锁，手动命令须先停止常驻实例。分钟采集不发送额外飞书通知，现有日线分析及 T+1 推送照常执行。
@@ -98,7 +96,7 @@ chmod 600 config.yaml
 
 ## 股池网页
 
-执行 `make run` 会同时启动日线监控、分钟采集和只读网页，浏览器打开 `http://127.0.0.1:8080`。页面资源嵌入 Go 二进制，无需安装 Node 或单独启动前端。首次部署仍需先运行 `stock-watcher init -config config.yaml`。
+执行 `make run` 会同时启动日线监控、分钟采集和只读网页，浏览器打开 `http://127.0.0.1:8080`。页面资源嵌入 Go 二进制，无需安装 Node 或单独启动前端。首次部署仍需先运行 `stock-watcher init`。
 
 网页监听成功后，终端会明确打印 `Dashboard ready at http://127.0.0.1:8080/`，地址随实际配置端口变化。默认地址指服务器本机；在 Windows 浏览器访问时，先建立 SSH 端口转发。监听 `0.0.0.0` 或 `::` 时，日志展示对应本机访问地址，并在 `listen` 字段保留真实监听地址。
 
@@ -108,7 +106,7 @@ chmod 600 config.yaml
 
 点击导航中的「仓位计算」或直接打开 `http://127.0.0.1:8080/calculator`，可输入账户资金、亏损预算、止损价与买入计划，测算底仓和加仓数量、剩余风险及净止盈价。支持多批已有持仓、固定净利润金额或收益率目标，默认净收益率 3%。计算仅在浏览器内进行，不上传或持久化账户金额，也不依赖行情接口；刷新后清空参数。公式与命令行脚本一致，使用说明见 [单股价格策略](docs/单股价格策略.md)。
 
-点击导航「个股 K 线」、股池或排名中的股票名称，或使用图表的股票选择框，可查看日 K、成交量和 MA5/10/20；股票代码写入 `/chart?code=`，可直接分享。图表支持最近 60 根、120 根、250 根与全部已保存日线；悬停、点击图中日期或拖动下方滑块可查看开高低收和均线数值。均线先按完整已保存窗口计算，再截取显示范围；不足周期的数值显示横线。价格口径默认使用配置的复权分析窗口，可切换「不复权 · 原始历史」查看本地留存的十年原始日线；标题下明确显示实际保存的起止日期与根数，不足十年不会补造数据。长历史按可读的蜡烛宽度横向滚动，拖动日期滑块会定位到对应 K 线。复权与不复权价格独立读取，不混用不同窗口；不复权价格可能出现除权除息跳空，图表展示实际来源、复权方式和成交量单位，保留来源原始成交量；股池表的成交量统一换算为股，避免多个来源的“手”和“股”影响排序。不混用不同来源或复权窗口。
+点击导航「个股 K 线」、股池或排名中的股票名称，或使用图表的股票选择框，可查看日 K、成交量和 MA5/10/20；股票代码写入 `/chart?code=`，可直接分享。图表支持最近 60 根、120 根、250 根与全部已保存日线；悬停、点击图中日期或拖动下方滑块可查看开高低收和均线数值。均线先按完整已保存窗口计算，再截取显示范围；不足周期的数值显示横线。价格口径默认使用内置复权分析窗口，可切换「不复权 · 原始历史」查看本地留存的十年原始日线；标题下明确显示实际保存的起止日期与根数，不足十年不会补造数据。长历史按可读的蜡烛宽度横向滚动，拖动日期滑块会定位到对应 K 线。复权与不复权价格独立读取，不混用不同窗口；不复权价格可能出现除权除息跳空，图表展示实际来源、复权方式和成交量单位，保留来源原始成交量；股池表的成交量统一换算为股，避免多个来源的“手”和“股”影响排序。不混用不同来源或复权窗口。
 
 股池下载完成但完整性或当日可分析覆盖率不足时，通过校验的行情和隔离原因仍会事务落库，网页可读；默认 95% 的十年完整性门槛和 90% 的当日可分析门槛不变，本轮不会创建推荐或发送通知。页面明确区分行情日期与报告日期，旧报告仍可回看，但不会把旧入选状态套到新行情上。切换到数据缺失或当日停牌的股票时清空图表并说明原因，不回退展示旧日线。临时网络失败导致下载未完成、共享盘异常或事务失败时，仍保留此前数据并等待重试。
 
@@ -121,9 +119,9 @@ chmod 600 config.yaml
 网页导航中的「策略实验室」（`/experiments`）保存每轮实验的方向、假设、规则变化、判断条件、验证效果、缺点证据和下一步问题。可沿父子关系查看迭代，并比较根基线、父实验和本轮；按月份、行业和个股拆分表现，点击样本查看本次实验固定的原始 K 线。
 
 ```bash
-./bin/stock-watcher experiment -config config.yaml -policy baseline
-./bin/stock-watcher experiment -config config.yaml -parent <基线完整ID> -policy upper-wick
-./bin/stock-watcher experiment -config config.yaml -parent <基线完整ID> -holdout
+./bin/stock-watcher experiment -policy baseline
+./bin/stock-watcher experiment -parent <基线完整ID> -policy upper-wick
+./bin/stock-watcher experiment -parent <基线完整ID> -holdout
 ```
 
 对照支持上影线占比不超过 30% 的过滤，以及 `-policy risk-qualified` 的历史证据与风险过滤。验收先检查单笔净亏损严格低于 3%，再比较最高价扣费后触达 ≥2.5%／≥3% 的比例和首次触达天数，实际退出收益另列；软指标有取舍时单独标记。实验只读取已保存的行情，不下载行情、不推送；缺失交易日历时可能通过 BaoStock/Tushare 补全并缓存到 `calendar.db`。网页只读，本地命令将记录与固定数据快照写入独立的 `experiments.db`。完成的记录不可覆盖，每次重跑产生新 ID，子实验沿用父实验的快照与参数。
@@ -142,7 +140,7 @@ data/                       # 实际位于 Windows 共享盘
 logs/stock-watcher.log       # 服务器上的有限运行日志
 ```
 
-先执行 `./bin/stock-watcher init -config config.yaml` 创建 `market.db`，再运行 `sync` 或 `run`。普通写入模式不会自动创建数据库，避免共享盘挂载错误时误写到错误位置。行情日线、复权/不复权窗口、同步状态和覆盖率通过 SQLite 事务保存；达到推荐覆盖率门槛时，与筛选报告在同一事务中发布，否则只保存有效行情及本轮未通过覆盖率的状态。事务失败时保留此前完整数据。`preview`、`research` 和 `status` 使用只读连接。旧版 `daily/`、`execution/` 和 `reports/` JSON 仅作为数据库不存在时的只读兼容回退，新的 CLI 生产路径不再写入这些行情 JSON。
+先执行 `./bin/stock-watcher init` 创建 `market.db`，再运行 `sync` 或 `run`。普通写入模式不会自动创建数据库，避免共享盘挂载错误时误写到错误位置。行情日线、复权/不复权窗口、同步状态和覆盖率通过 SQLite 事务保存；达到推荐覆盖率门槛时，与筛选报告在同一事务中发布，否则只保存有效行情及本轮未通过覆盖率的状态。事务失败时保留此前完整数据。`preview`、`research` 和 `status` 使用只读连接。旧版 `daily/`、`execution/` 和 `reports/` JSON 仅作为数据库不存在时的只读兼容回退，新的 CLI 生产路径不再写入这些行情 JSON。
 
 每次同步先确认上市日期，再保存从 **上市日与截止日前十个自然年中较晚者** 起的**不复权原始日线**，无论是否启用短线策略。`daily.history_days` 继续控制复权与策略分析窗口，默认 365、兼容接受 90–7300；有效分析范围同样受上市日和最近十年限制，不再因较大的分析天数扩大原始下载范围。上市日期缓存位于 `<data_dir>/metadata/listings/<code>.json`，与行情一起存到共享盘；手工配置优先于缓存，缓存损坏或共享盘错误会中止同步。十年前的边界若为休市日，会额外保留之前一根日线用于确认覆盖。腾讯单次最多 640 条，程序向前分页并校验相邻页的重叠日线；复权分析窗口每轮完整刷新，不跨轮拼接不同复权基准。早年前复权价格可能因累计分红变为负数，现有指标要求正价格，因此十年留存采用真实不复权价格，分析仍使用配置窗口。不复权数据仅在已有完整历史且增量与旧数据重叠时增量更新，旧版短窗口和长时间断档会自动全量回补。SQLite 可保存、重读完整窗口，不再截断到 640 条，已有更早日线不主动删除。
 
@@ -163,19 +161,19 @@ FEISHU_SECRET=...
 
 新配置在 `notify.channels` 中声明通道，并通过 `webhook_env`、`secret_env` 引用环境变量。旧 `feishu.enabled` 配置仍兼容。开启签名时，按[飞书官方签名规则](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot)计算 HMAC-SHA256 和 Base64。只有 HTTP 200 且业务码为 0 才确认送达。429、5xx、限流和网络错误持久重试；401/403、签名或关键词错误阻塞对应通道，需要修正配置并运行 `retry feishu-main`。日志不输出 webhook、secret 或原始响应。
 
-已有私有 `feishu.config`（内容为 `webhook: ...`，可选 `secret: ...`）时，在对应 `notify.channels[]` 或旧 `feishu` 节点配置 `credentials_file: feishu.config`。路径相对 `config.yaml` 解析，文件由 Go 读取，不作为 Shell 执行；设置权限为 `600`，不要提交。环境变量优先于文件，文件优先于旧配置内联值；显式空环境变量也会覆盖文件。该文件不会自动启用通知，仍需 `enabled: true`。容器使用此方式时须额外只读挂载文件到配置指定的路径。
+内置配置默认启用飞书通道并读取当前工作目录下的 `feishu.config`（内容为 `webhook: ...`，可选 `secret: ...`）。文件由 Go 读取，不作为 Shell 执行；设置权限为 `600`，不要提交。环境变量优先于文件；显式空环境变量也会覆盖文件。无需通知时设置 `STOCK_WATCHER_FEISHU_ENABLED=false`。容器使用文件方式时须额外只读挂载到 `/app/feishu.config`。
 
 推送是至少一次投递：请求成功后、写入确认前异常退出可能重复；重启时在途记录会按可能重复处理。每个报告拆成一张主决策卡和若干详情卡：主卡先送达，详情卡按页严格串行，任一步失败即停止，重试只发送失败页。主卡不裁剪，超过 20 KiB 时以 `payload_limit` 永久失败；详情卡每页最多 8 只股票，不重复主卡的参考买入、目标价和止损。卡片包含固定事件 ID，并标注主卡或详情页码。升级前已入账的消息仍按原格式发送。过了目标交易日 09:30 的消息不再发送。`sync` 和报告预览不依赖通道配置；先以 report-only 模式生成报告，之后启用通道可补发同一数据日的未过期报告。
 
 ## 交易日历与数据源
 
-2026 日历来自[深交所休市通知](https://www.szse.cn/disclosure/notice/general/t20251222_618087.html)。T+1 跳过周末和配置中的节假日；日历覆盖到期会报错，应提前按新年度通知更新。未收盘日期不会用于筛选。
+2026 日历来自[深交所休市通知](https://www.szse.cn/disclosure/notice/general/t20251222_618087.html)。T+1 跳过周末和内置交易日历中的节假日；日历覆盖到期会报错，应提前按新年度通知更新二进制。未收盘日期不会用于筛选。
 
-日线默认依次使用 **腾讯 → BaoStock → Tushare → 东方财富**，可通过 `market.providers` 调整顺序或只选部分来源。旧配置不写 `market` 也使用此默认顺序。所有客户端由 Go 直接实现；按项目纯 Go 的约束，AKShare 部分接入其 `stock_zh_a_hist` 使用的东方财富上游，实际来源保存为 `eastmoney`，不依赖 Python、AKShare SDK 或 AKTools。详见[数据源接入与回退](docs/data-sources.md)。
+日线默认依次使用 **腾讯 → 新浪 → BaoStock → Tushare → 东方财富**，可通过 `STOCK_WATCHER_MARKET_PROVIDERS` 调整顺序或只选部分来源。所有客户端由 Go 直接实现；按项目纯 Go 的约束，AKShare 部分接入其 `stock_zh_a_hist` 使用的东方财富上游，实际来源保存为 `eastmoney`，不依赖 Python、AKShare SDK 或 AKTools。详见[数据源接入与回退](docs/data-sources.md)。
 
-Tushare 从 `TUSHARE_TOKEN` 环境变量读取凭证（可用 `market.tushare_token_env` 修改变量名），未配置时跳过并打印警告；仅启用 Tushare 且缺少 Token 时启动失败。`make run` 可从私有 `.env` 加载；systemd 与 Docker 使用已有运行环境文件。前/后复权需要 `daily` 和 `adj_factor` 两个接口权限，权限或积分不足会进入下一个来源。不要把 Token 写进 YAML、日志或提交记录。
+Tushare 从 `TUSHARE_TOKEN` 环境变量读取凭证，未配置时跳过并打印警告；仅启用 Tushare 且缺少 Token 时启动失败。`make run` 可从私有 `.env` 加载；systemd 与 Docker 使用已有运行环境文件。前/后复权需要 `daily` 和 `adj_factor` 两个接口权限，权限或积分不足会进入下一个来源。不要把 Token 写进日志或提交记录。
 
-每个来源的网络请求超时默认 10 秒；`market.request_interval` 默认每源 1 秒，最小 350 毫秒。每个窗口对每个来源尝试一次，网络、限流、权限、空数据、过期、缺日或覆盖不完整都尝试备用源；不做无限重试，后续同步周期重新尝试。单源尝试超时同样触发备用源，只有调用者取消或整体截止时间才中止。所有来源都失败时，只含数据/永久错误的股票隔离；包含网络或限流等临时失败则中止本轮发布。已有数据保留，双覆盖率门槛仍生效。取消与共享盘错误直接退出。修改配置、来源顺序或凭证后需重启。
+每个来源的网络请求超时默认 10 秒；`STOCK_WATCHER_MARKET_REQUEST_INTERVAL` 默认每源 1 秒，最小 350 毫秒。每个窗口对每个来源尝试一次，网络、限流、权限、空数据、过期、缺日或覆盖不完整都尝试备用源；不做无限重试，后续同步周期重新尝试。单源尝试超时同样触发备用源，只有调用者取消或整体截止时间才中止。所有来源都失败时，只含数据/永久错误的股票隔离；包含网络或限流等临时失败则中止本轮发布。已有数据保留，双覆盖率门槛仍生效。取消与共享盘错误直接退出。修改环境变量、来源顺序或凭证后需重启。
 
 ## 工程结构、部署与验证
 

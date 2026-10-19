@@ -23,21 +23,19 @@ func TestArchiveSpeedResultIsIndependentAndImmutable(t *testing.T) {
 		t.Fatal("bad fixture")
 	}
 	root := t.TempDir()
-	config := filepath.Join(root, "config.yaml")
-	if err := os.WriteFile(config, []byte("schema_version: 1\ndata_dir: .\nrequire_cifs: false\nstocks:\n  - code: sz000001\n    name: 测试\ncalendar:\n  valid_from: '2026-01-01'\n  valid_through: '2026-12-31'\n"), 0600); err != nil {
+	pool := filepath.Join(root, "leaders.yaml")
+	if err := os.WriteFile(pool, []byte("schema_version: 1\nstocks:\n  - code: sz000001\n    name: 测试\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("STOCK_WATCHER_DATA_DIR", root)
+	t.Setenv("STOCK_WATCHER_REQUIRE_CIFS", "false")
+	t.Setenv("STOCK_WATCHER_FEISHU_ENABLED", "false")
+	t.Setenv("STOCK_WATCHER_POOL_FILE", pool)
 	stats := bottomstudy.SpeedStats{ComparisonStats: bottomstudy.ComparisonStats{TradeStats: bottomstudy.TradeStats{Samples: 2, Entries: 2, Resolved: 2, Targets: 1, Rate: .5, WorstNet: -8, MeanDays: 8}}, SuccessDays: 2, PenalizedDays: 11.5}
 	pair := bottomstudy.SpeedPair{ID: "winner", Policy: bottomstudy.TradePolicy{Rule: "any", Target: 3, Batches: 1, Horizon: 20}, Stock: bottomstudy.SpeedArm{Training: stats, Later: stats}, Combined: bottomstudy.SpeedArm{Training: stats, Later: stats}}
 	report := bottomstudy.SpeedReport{Engine: bottomstudy.SpeedEngine, SnapshotID: s.ID, Options: bottomstudy.GridOptions{Options: bottomstudy.Options{From: "2026-01-01", Through: "2026-10-12"}, TrainThrough: "2026-06-30"}, Winners: []bottomstudy.SpeedWinner{{ID: pair.ID}}, Pairs: []bottomstudy.SpeedPair{pair}}
 	ctx := context.Background()
-	if _, err := archiveSpeedResult(ctx, config+"-missing", s, report, "stock", "context"); err == nil {
-		t.Fatal("missing config accepted")
-	}
-	if _, err := os.Stat(filepath.Join(root, "experiments.db")); !os.IsNotExist(err) {
-		t.Fatal("failed config initialized archive")
-	}
-	id, err := archiveSpeedResult(ctx, config, s, report, "stock", "context")
+	id, err := archiveSpeedResult(ctx, s, report, "stock", "context")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +47,7 @@ func TestArchiveSpeedResultIsIndependentAndImmutable(t *testing.T) {
 	if r.ResultSnapshot.InputSHA["context"] != "context" || len(r.ResultSnapshot.Rows) != 4 {
 		t.Fatal("lost provenance or matched groups")
 	}
-	second, err := archiveSpeedResult(ctx, config, s, report, "stock", "context")
+	second, err := archiveSpeedResult(ctx, s, report, "stock", "context")
 	if err != nil || id == second {
 		t.Fatal("rerun overwrote prior experiment", err)
 	}
@@ -62,7 +60,7 @@ func TestArchiveSpeedResultIsIndependentAndImmutable(t *testing.T) {
 	}
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := archiveSpeedResult(canceled, config, s, report, "stock", "context"); err == nil {
+	if _, err := archiveSpeedResult(canceled, s, report, "stock", "context"); err == nil {
 		t.Fatal("cancellation ignored")
 	}
 }

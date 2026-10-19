@@ -21,7 +21,7 @@ market:
   tushare_token_env: TUSHARE_TOKEN
 ```
 
-Token 仅从指定环境变量读取。未配置时跳过 Tushare；若它是唯一来源，则配置校验失败。配置实际 Token 的私有 `.env` 不入库；`make run` 已支持加载该文件，systemd 使用 `EnvironmentFile`，Docker Compose 使用 `STOCK_WATCHER_RUNTIME_ENV` 指定的环境文件。使用 `./bin/stock-watcher check -config config.yaml` 可查看 `market_sources`，该检查确认配置与存储可用，**不探测远端权限或网络**。
+Token 仅从 `TUSHARE_TOKEN` 读取。未配置时跳过 Tushare；若它是唯一来源，则配置校验失败。配置实际 Token 的私有 `.env` 不入库；`make run` 已支持加载该文件，systemd 使用 `EnvironmentFile`，Docker Compose 使用 `STOCK_WATCHER_RUNTIME_ENV` 指定的环境文件。使用 `./bin/stock-watcher check` 可查看 `market_sources`，该检查确认内置配置与存储可用，**不探测远端权限或网络**。
 
 默认端点：
 
@@ -30,7 +30,7 @@ Token 仅从指定环境变量读取。未配置时跳过 Tushare；若它是唯
 - Tushare：`https://api.tushare.pro`
 - 东方财富：`https://push2his.eastmoney.com/api/qt/stock/kline/get`
 
-可使用示例配置中的 `*_endpoint` / `baostock_address` 覆盖端点。HTTP 端点只接受 HTTPS，回环地址允许 HTTP 供本地测试；禁止 URL 内嵌凭证、查询参数和重定向。所有响应体、TCP 解压和页数都有大小上限，供应商原始错误正文不写日志。
+可使用 `STOCK_WATCHER_MARKET_*_ENDPOINT` 和 `STOCK_WATCHER_MARKET_BAOSTOCK_ADDRESS` 覆盖端点。HTTP 端点只接受 HTTPS，回环地址允许 HTTP 供本地测试；禁止 URL 内嵌凭证、查询参数和重定向。所有响应体、TCP 解压和页数都有大小上限，供应商原始错误正文不写日志。
 
 ## 回退与数据一致性
 
@@ -60,8 +60,8 @@ Token 仅从指定环境变量读取。未配置时跳过 Tushare；若它是唯
 首次升级或新建数据库后必须显式执行一次全量状态回填；未完成时 `sync`/`run` 拒绝发布推荐：
 
 ```bash
-./bin/stock-watcher status-backfill -config config.yaml -as-of YYYY-MM-DD
-./bin/stock-watcher status-audit -config config.yaml -as-of YYYY-MM-DD
+./bin/stock-watcher status-backfill -as-of YYYY-MM-DD
+./bin/stock-watcher status-audit -as-of YYYY-MM-DD
 ```
 
 之后每轮同步只增量刷新最近 `sync.status_refresh_days` 天，默认 30 天；也可手动执行 `status-refresh`。刷新失败会切掉对应的旧覆盖区间，保留区间两侧仍然有效的覆盖，并让下一轮同步拒绝把过期状态当成完整答案。`status-audit` 使用只读连接，输出每只股票的交易会话数、停牌数、缺口数、完整性和当日可分析状态。完整源会整段替换旧状态并建立覆盖；仅有 Tushare 稀疏事件时只按日期合并状态、把该区间标为 `partial` 并撤销旧的完整性声明，因为稀疏源没有返回的日期不能证明当天交易。

@@ -13,7 +13,7 @@ PACKAGE_STAGE="$(mktemp -d "$PACKAGE_PARENT/.package-XXXXXXXX")"
 trap 'rm -rf -- "$PACKAGE_STAGE"' EXIT
 mkdir -p "$PACKAGE_STAGE/bin" "$PACKAGE_STAGE/deploy" "$PACKAGE_STAGE/docs"
 CGO_ENABLED=0 GOOS=linux GOARCH="$BUILD_GOARCH" "${GO:-go}" build -trimpath -ldflags "-s -w -X main.version=$BUILD_VERSION" -o "$PACKAGE_STAGE/bin/stock-watcher" ./cmd/stock-watcher
-cp config.yaml.example leaders.yaml leaders.pending.yaml .env.example README.md "$PACKAGE_STAGE/"
+cp leaders.yaml leaders.pending.yaml .env.example README.md "$PACKAGE_STAGE/"
 cp deploy/stock-watcher.service "$PACKAGE_STAGE/deploy/"
 cp docs/*.md "$PACKAGE_STAGE/docs/"
 printf '%s\n' "$BUILD_VERSION" > "$PACKAGE_STAGE/VERSION"

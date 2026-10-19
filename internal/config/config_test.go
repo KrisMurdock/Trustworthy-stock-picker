@@ -236,3 +236,41 @@ func TestNamedChannelCredentialsFileAndEnvironment(t *testing.T) {
 		t.Fatal("empty environment did not clear file webhook")
 	}
 }
+
+func TestBuiltinConfiguration(t *testing.T) {
+	c := Builtin()
+	if c.Version != 1 || !c.RequireCIFS || c.PoolFile != "leaders.yaml" {
+		t.Fatalf("unexpected builtin identity: %+v", c)
+	}
+	if !c.Strategy.Enabled || !c.Selection.Enabled || !c.Feishu.Enabled || c.Feishu.CredentialsFile != "feishu.config" {
+		t.Fatalf("unexpected builtin feature flags: %+v", c)
+	}
+	if c.Calendar.ValidFrom != "2026-01-01" || c.Calendar.ValidThrough != "2026-12-31" || len(c.Calendar.Holidays) == 0 {
+		t.Fatalf("unexpected builtin calendar: %+v", c.Calendar)
+	}
+}
+
+func TestLoadBuiltinUsesEnvironmentAndPool(t *testing.T) {
+	root := t.TempDir()
+	pool := filepath.Join(root, "leaders.yaml")
+	if err := os.WriteFile(pool, []byte("schema_version: 1\nstocks:\n  - code: sz000001\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STOCK_WATCHER_DATA_DIR", root)
+	t.Setenv("STOCK_WATCHER_REQUIRE_CIFS", "false")
+	t.Setenv("STOCK_WATCHER_FEISHU_ENABLED", "false")
+	t.Setenv("STOCK_WATCHER_POOL_FILE", pool)
+	t.Setenv("STOCK_WATCHER_CALENDAR_VALID_FROM", "2020-01-01")
+	t.Setenv("STOCK_WATCHER_CALENDAR_VALID_THROUGH", "2099-12-31")
+	t.Setenv("STOCK_WATCHER_CALENDAR_HOLIDAYS", "")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DataDir != root || c.RequireCIFS || c.Feishu.Enabled || len(c.Stocks) != 1 || c.Stocks[0].Code != "sz000001" {
+		t.Fatalf("builtin environment not applied: %+v", c)
+	}
+	if c.Calendar.ValidFrom != "2020-01-01" || len(c.Calendar.Holidays) != 0 {
+		t.Fatalf("calendar environment not applied: %+v", c.Calendar)
+	}
+}

@@ -318,7 +318,7 @@
     const frozen = r && !researchSnapshot(r) && (!policy.startsWith("conditional-") || r.data.minute_stocks > 0);
     const requiresParent = !["conditional-entry", "next-day-baseline"].includes(policy);
     if (requiresParent && !frozen) { text("backtest-command-status", "该对照规则需要可复用的父实验；条件指标对照请先建立含分钟数据的区间低吸基线。"); return; }
-    text("backtest-command", `./bin/stock-watcher experiment -config config.yaml -policy ${policy}${frozen ? ` -parent ${r.id}` : ""} -from ${from} -through ${through}`);
+    text("backtest-command", `./bin/stock-watcher experiment -policy ${policy}${frozen ? ` -parent ${r.id}` : ""} -from ${from} -through ${through}`);
     text("backtest-command-status", frozen ? "复用当前快照；明确指定信号区间。区间变化时不展示父实验提升差值。" : "创建包含所需行情的新快照；条件低吸需要已保存的5分钟路径，缺失时不会假设最低价成交。");
   });
   $("show-breaches").addEventListener("click", () => { $("trade-filter").value = "breaches"; state.page = 0; renderTrades(); $("trade-section").scrollIntoView({ block: "start" }); });

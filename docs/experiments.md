@@ -12,19 +12,19 @@
 
 ```bash
 # 默认采用最新已保存行情日期；也可追加 -as-of YYYY-MM-DD
-./bin/stock-watcher experiment -config config.yaml -policy baseline
+./bin/stock-watcher experiment -policy baseline
 
 # 用上一条命令最终 JSON 中的完整 id 建立对照
-./bin/stock-watcher experiment -config config.yaml -parent <完整ID> -policy upper-wick
+./bin/stock-watcher experiment -parent <完整ID> -policy upper-wick
 
 # 只选当时已完成的历史证据通过亏损与推荐门槛的候选
-./bin/stock-watcher experiment -config config.yaml -parent <新基线完整ID> -policy risk-qualified
+./bin/stock-watcher experiment -parent <新基线完整ID> -policy risk-qualified
 
 # 在同一固定快照上重跑基线，仍生成新记录
-./bin/stock-watcher experiment -config config.yaml -parent <基线完整ID> -policy baseline
+./bin/stock-watcher experiment -parent <基线完整ID> -policy baseline
 
 # 开发实验完成后，消耗父记录预留的保留区间；不能与 -from/-through 同用
-./bin/stock-watcher experiment -config config.yaml -parent <基线完整ID> -holdout
+./bin/stock-watcher experiment -parent <基线完整ID> -holdout
 ```
 
 `upper-wick` 和 `risk-qualified` 要求父实验。子实验从父档案恢复股池、日历、参数、前复权特征日线和不复权模拟日线，即使后续行情同步或当前配置变化也沿用原输入。子实验的 `-as-of` 若与父快照不同会拒绝运行。代码升级后可以重跑，但版本不同不会显示数值改善结论；应先在新版本建立基线，再建立对照。代码版本由 `make build` 写入，复现实验应保留对应提交或镜像。
@@ -37,10 +37,10 @@
 
 ```bash
 # 区间为包含两端的信号日期，不是成交日期
-./bin/stock-watcher experiment -config config.yaml -policy conditional-entry \
+./bin/stock-watcher experiment -policy conditional-entry \
   -as-of 2026-10-15 -from 2026-09-18 -through 2026-10-08
 # 同一快照、相同区间和规则重算；不再依赖当前行情库
-./bin/stock-watcher experiment -config config.yaml -parent <本轮完整ID> -policy conditional-entry
+./bin/stock-watcher experiment -parent <本轮完整ID> -policy conditional-entry
 ```
 
 `-from` 和 `-through` 必须一起提供，支持所有实验 policy。程序保留区间前的指标预热和已成熟历史证据，只统计所选信号日；交易日历必须覆盖区间，快照截止日必须足够覆盖最后一个信号日之后的买入和完整卖出期限。股票本身缺失的入场路径和退出数据仍会保留为未知/未决，不当成安全跳过。区间外没有有效信号时显示空样本，不伪造成功率。
@@ -85,11 +85,11 @@ MACD沿用EMA12/26、DEA为DIF的EMA9，初值使用对应窗口SMA；柱值为2
 
 ```bash
 # 用已有分钟快照重跑新版本基线；代码/引擎改变时建立新的根基线并保留旧父档案
-./bin/stock-watcher experiment -config config.yaml \
+./bin/stock-watcher experiment \
   -parent <含分钟数据的旧实验ID> -policy conditional-entry
 
 # 用新基线ID运行一组固定对照，自动继承信号区间
-./bin/stock-watcher experiment -config config.yaml \
+./bin/stock-watcher experiment \
   -parent <本轮新基线ID> -policy conditional-confluence-guard
 ```
 
@@ -105,11 +105,11 @@ MACD沿用EMA12/26、DEA为DIF的EMA9，初值使用对应窗口SMA；柱值为2
 
 ```bash
 # 新快照下建立次日基线
-./bin/stock-watcher experiment -config config.yaml -policy next-day-baseline
+./bin/stock-watcher experiment -policy next-day-baseline
 # 或加 -parent <旧实验ID> 复用原快照，建立独立的次日根基线
-./bin/stock-watcher experiment -config config.yaml -parent <旧实验ID> -policy next-day-baseline
+./bin/stock-watcher experiment -parent <旧实验ID> -policy next-day-baseline
 # 用新的次日基线ID做预先定义的对照
-./bin/stock-watcher experiment -config config.yaml -parent <次日基线ID> -policy next-day-low-volatility
+./bin/stock-watcher experiment -parent <次日基线ID> -policy next-day-low-volatility
 ```
 
 所有 `next-day-*` 实验都在首个可卖出日止损、止盈或到期收盘退出；无法卖出及除权仍保留未决。目标触达按最高价扣费/滑点计算，实际成交按原模型另外计算。只计退出前已确认触达；开盘已退出的后续反弹不算成功，同日触达/止损顺序不明不算成功。
@@ -148,7 +148,7 @@ MACD沿用EMA12/26、DEA为DIF的EMA9，初值使用对应窗口SMA；柱值为2
 2. 至少 30 笔完成交易和 30 个完整信号日期才能作为候选证据；信号槽位不足按现金 0，未知结果使该信号日不完整。
 3. **软目标**：可卖出持仓窗口内最高价扣除费用及卖出滑点后，触达 ≥2.5%／≥3% 的比例越高、首次触达平均天数越短越好；不要求收盘价或实际退出收益达标。触达率分母为所有入场样本，包含未决；首次触达均值只计算触达目标的样本。实际净收益与实际平均持仓另列，避免把触达机会当作成交盈利。风险达标后，软指标至少一项改善且其他项不恶化时标「开发候选」；软指标互有升降标「收益／周期有取舍」。当前轮通过风险而父轮未通过时，优先记录风险改善，但仍要求当前平均净收益为正。达成率与周期不能抵消超限，不把 2.5% 或 3% 作为盈利上限。
 
-止损模型保留 v3 的成本预留约束：向上取整触发价，并预留配置的卖出滑点与成交分位取整；正常触发情况下，预计净亏损严格小于 `max(stop_net_pct, -3)` 的亏损边界。`plan` 输出 `net_loss_limit_pct`、`effective_stop_goal_net_pct`、`modeled_stop_net_pct`，实际成本无足够止损空间则拒绝计划。跳空按观察到的开盘及滑点执行，无法卖出仍保留为未决，**不把超限亏损裁剪成 -3%**。更紧的止损继续生效，更宽的配置不能放宽硬条件。
+止损模型保留 v3 的成本预留约束：向上取整触发价，并预留内置卖出滑点与成交分位取整；正常触发情况下，预计净亏损严格小于 `max(stop_net_pct, -3)` 的亏损边界。`plan` 输出 `net_loss_limit_pct`、`effective_stop_goal_net_pct`、`modeled_stop_net_pct`，实际成本无足够止损空间则拒绝计划。跳空按观察到的开盘及滑点执行，无法卖出仍保留为未决，**不把超限亏损裁剪成 -3%**。更紧的止损继续生效，更宽的内置参数不能放宽硬条件。
 
 硬条件约束的是已完成模拟交易的最终净亏损。整根日线的 MAE 另行展示，可能包含平仓之后的价格，不能作为精确的盘中持仓回撤。历史零超限也不能保证未来实盘零超限；本系统是研究与提醒工具，没有自动向券商提交止损单。[上交所交易规则](https://www.sse.com.cn/lawandrules/sselawsrules2025/trade/universal/c/c_20260424_10816492.shtml)中的交收及交易限制，和跳空/流动性限制，均会影响实际退出。
 
