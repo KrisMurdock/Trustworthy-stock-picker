@@ -211,3 +211,11 @@ section { scroll-margin-top: 20px; }
 }
 
 .chart-forming .chart-candle { stroke-dasharray: 3 2; fill-opacity: .35; }
+
+.report-diagnostics { padding: 14px 18px; border: 1px solid #dce5df; border-radius: 8px; background: #f7faf8; font-size: 12px; }
+.report-diagnostics > strong { display: block; margin-bottom: 6px; }
+.report-diagnostics > p { margin: 8px 0 0; line-height: 1.7; }
+.gate-detail { margin-top: 8px; font-size: 11px; line-height: 1.7; white-space: normal; }
+.gate-detail summary { cursor: pointer; color: #52685e; }
+.gate-detail summary:focus-visible { outline: 2px solid #377760; outline-offset: 3px; }
+.gate-detail .reason-list { margin-top: 6px; }

@@ -1,6 +1,7 @@
 package report
 
 import (
+	"encoding/json"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/notify"
 	"stock-watcher/internal/selection"
@@ -8,6 +9,49 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestFailedRuleMessageShowsMeasuredReasons(t *testing.T) {
+	p := config.DefaultStrategy()
+	r := selection.Report{Version: 2, ID: "failed-rule", AsOf: "2026-10-16", Target: "2026-10-19", SelectionEnabled: true,
+		Ranking: []strategy.Candidate{{Code: "sh600900", Name: "测试候选", Rank: 1, Rules: []string{"baseline", "momentum"},
+			Risks: []string{"historical_net_loss_limit_breached", "insufficient_or_unprofitable_evidence", "holdout_validation_not_passed"}}},
+		Research: &strategy.Research{Parameters: p, Rules: []strategy.Stats{
+			{Rule: "baseline", Target: 3, Horizon: 5, HitRate: .458},
+			{Rule: "momentum", Target: 3, Horizon: 5, Samples: 1095, Dates: 154, Resolved: 1041, Unresolved: 54, MeanNet: .36, HitRate: .474, WorstNet: -15.3766, LossBreaches: 209, LossLimitPct: 3},
+		}, Holdout: strategy.Evaluation{Method: "frozen_holdout", SignalDates: 40}}}
+	m, err := FromSelection(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"历史单笔净亏损超限", "趋势动量", "209", "-15.38%", "无合格推荐样本", "暂无可统计收益"} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("missing diagnostic %q", want)
+		}
+	}
+	for _, bad := range []string{"historical net loss limit breached", "历史证据不足", "净目标达标0.0%"} {
+		if strings.Contains(string(raw), bad) {
+			t.Errorf("misleading diagnostic %q", bad)
+		}
+	}
+}
+
+func TestNoSignalIsNotPresentedAsInsufficientHistory(t *testing.T) {
+	r := selection.Report{Version: 2, ID: "no-signal", AsOf: "2026-10-16", Target: "2026-10-19", SelectionEnabled: true,
+		Ranking:  []strategy.Candidate{{Code: "sh600276", Name: "测试候选", Rank: 1, Rules: []string{"baseline"}, Risks: []string{"insufficient_or_unprofitable_evidence"}}},
+		Research: &strategy.Research{Parameters: config.DefaultStrategy()}}
+	m, err := FromSelection(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	risk := fieldValue(t, candidateSection(t, m, "sh600276"), "风险")
+	if !strings.Contains(risk, "未触发买入规则") || strings.Contains(risk, "历史证据不足") {
+		t.Fatalf("no signal mislabeled: %s", risk)
+	}
+}
 
 func TestTrendMessageUsesStructuredOverviewAndCandidateFields(t *testing.T) {
 	message, err := FromSelection(selection.Report{
@@ -148,11 +192,11 @@ func TestShortHorizonMessageUsesStructuredResearchAndRanksSelectedFirst(t *testi
 			SampleCount:     500,
 			Development: strategy.Evaluation{
 				Method: "rolling_validation", From: "2026-01-01", Through: "2026-06-30", SignalDates: 35,
-				Recommended: strategy.Stats{Samples: 100, Dates: 25, HitRate: .42, LowerBound: .31, MeanNet: 1.2},
+				Recommended: strategy.Stats{Samples: 100, Resolved: 100, Dates: 25, HitRate: .42, LowerBound: .31, MeanNet: 1.2},
 			},
 			Holdout: strategy.Evaluation{
 				Method: "frozen_holdout", From: "2026-08-01", Through: "2026-09-30", SignalDates: 20,
-				Recommended: strategy.Stats{Samples: 60, Dates: 15, HitRate: .4, LowerBound: .28, MeanNet: 1.5},
+				Recommended: strategy.Stats{Samples: 60, Resolved: 60, Dates: 15, HitRate: .4, LowerBound: .28, MeanNet: 1.5},
 			},
 			ValidationPassed: true,
 		},

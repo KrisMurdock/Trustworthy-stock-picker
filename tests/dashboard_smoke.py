@@ -60,7 +60,7 @@ def available_port():
         return listener.getsockname()[1]
 
 
-def fixture(directory, empty, partial=False):
+def fixture(directory, empty, partial=False, gates=False):
     (directory / "data").mkdir()
     (directory / "logs").mkdir()
     (directory / "leaders.yaml").write_text(POOL)
@@ -84,14 +84,16 @@ def fixture(directory, empty, partial=False):
         args.append("-empty")
     if partial:
         args.append("-partial")
+    if gates:
+        args.append("-gates")
     run(args, cwd=ROOT, capture_output=True, text=True)
 
 
 @contextmanager
-def service(args, empty=False, partial=False):
+def service(args, empty=False, partial=False, gates=False):
     with tempfile.TemporaryDirectory(prefix="stock-watcher-dashboard-") as temporary:
         directory = Path(temporary)
-        fixture(directory, empty, partial)
+        fixture(directory, empty, partial, gates)
         port = available_port()
         url = f"http://127.0.0.1:{port}"
         env = os.environ.copy()
@@ -660,6 +662,41 @@ def main():
                 calculator_checks(context, page, url, ROOT, args, state, stalled_endpoint)
                 error_checks(page, url, state)
                 page.goto("about:blank")
+            with service(args, gates=True) as (url, _, _):
+                payload = wait_ready(context, url)
+                saved = context.request.get(url + "/api/reports?as_of=" + LATEST).json()
+                diagnosis = saved["diagnostics"]
+                assert diagnosis == payload["report"]["diagnostics"]
+                assert diagnosis["schema_version"] == 1
+                assert diagnosis["validation"]["status"] == "no_recommendations"
+                assert not saved["selected"] and not any(row["recommended"] for row in saved["ranking"])
+                page.goto(url, wait_until="networkidle")
+                assert page.url.rstrip("/") == url and "股池观察" in page.title()
+                panel = page.locator("#report-diagnostics")
+                expect(panel).to_contain_text("无合格推荐样本")
+                expect(panel).to_contain_text("入场样本 0 / 要求 ≥30")
+                expect(panel).to_contain_text("不同信号日 0 / 要求 ≥10")
+                expect(panel).not_to_contain_text("达标率0.00%")
+                failed = page.get_by_test_id("ranking-row").filter(has_text="测试银行")
+                expect(failed).to_contain_text("历史单笔净亏损超限")
+                failed.locator("summary").click()
+                expect(failed.locator("details[open]")).to_contain_text("209笔")
+                expect(failed.locator("details[open]")).to_contain_text("-15.38%")
+                expect(failed.locator("details[open]")).to_contain_text("要求每笔净收益严格高于 -3.00%")
+                expect(page.get_by_test_id("ranking-row").filter(has_text="测试消费")).to_contain_text("未触发买入规则")
+                expect(page.locator("#ranking-body")).not_to_contain_text("historical_net_loss_limit_breached")
+                expect(page.locator("#ranking-body")).not_to_contain_text("历史证据不足")
+                kind = "container" if args.image else "native"
+                panel.screenshot(path=str(ROOT / ".scratch/dashboard-verification" / f"{kind}-gate-diagnostics.png"))
+                page.set_viewport_size({"width": 390, "height": 844})
+                expect(panel).to_be_visible()
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), "diagnostics overflow mobile viewport"
+                page.locator("#report-date-select").select_option(PREVIOUS)
+                expect(panel).to_be_hidden()
+                page.locator("#report-date-select").select_option(LATEST)
+                expect(panel).to_contain_text("无合格推荐样本")
+                page.set_viewport_size({"width": 1440, "height": 1000})
+                page.goto("about:blank")
             with service(args, empty=True) as (url, _, _):
                 payload = wait_ready(context, url)
                 assert payload["report"] is None and payload["summary"]["available"] == 0
@@ -701,7 +738,7 @@ def main():
         artifact = hashlib.sha256(Path(args.binary).read_bytes()).hexdigest()
     print(json.dumps({"result": "passed", "mode": "container" if args.image else "native", "artifact": artifact,
                       "identity": "anonymous (no application authentication)",
-                      "checks": "minute-5-15-30-60/forming/calibrated/status/independent-daily/volume-MA/experiments/lineage/comparison/snapshot-evidence/empty/errors/cancel/raw-2700-bars/price-basis-switch/cancel/mismatched-basis/raw-missing/synced-filter/candles/volume/MA/stock-switch/isolation/partial-coverage/snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/read-only API/gateway-403/503/timeout/recovery/empty/calculator/initial/add/holdings/net-target/validation/offline/no-account-upload/model-load-failure/SIGTERM"}, ensure_ascii=False))
+                      "checks": "rule-gate-diagnostics/measured-thresholds/zero-sample-unavailable/legacy-history/mobile/minute-5-15-30-60/forming/calibrated/status/independent-daily/volume-MA/experiments/lineage/comparison/snapshot-evidence/empty/errors/cancel/raw-2700-bars/price-basis-switch/cancel/mismatched-basis/raw-missing/synced-filter/candles/volume/MA/stock-switch/isolation/partial-coverage/snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/read-only API/gateway-403/503/timeout/recovery/empty/calculator/initial/add/holdings/net-target/validation/offline/no-account-upload/model-load-failure/SIGTERM"}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

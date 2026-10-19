@@ -3,6 +3,7 @@ package report
 import (
 	"fmt"
 	"stock-watcher/internal/config"
+	"stock-watcher/internal/diagnostics"
 	"stock-watcher/internal/notify"
 	"stock-watcher/internal/selection"
 	"stock-watcher/internal/strategy"
@@ -41,11 +42,12 @@ func FromSelection(r selection.Report) (notify.Message, error) {
 		sections = append(sections, notify.Section{Heading: "说明", Lines: []string{"规则筛选结果；不保证次日表现。"}})
 	} else {
 		title = shortTitle
+		diagnosis := diagnostics.Explain(r)
 		sections = append(sections,
-			researchSection(r.Research),
+			researchSection(r.Research, diagnosis.Validation),
 			strategyParametersSection(r.Research.Parameters),
 		)
-		sections = append(sections, shortCandidateSections(r)...)
+		sections = append(sections, shortCandidateSections(r, diagnosis)...)
 		if len(r.Excluded) > 0 {
 			sections = append(sections, optionalExclusionSection("数据排除", r.Excluded))
 		}
@@ -138,8 +140,12 @@ func trendCandidateSections(r selection.Report) []notify.Section {
 	return sections
 }
 
-func researchSection(research *strategy.Research) notify.Section {
-	return notify.Section{
+func researchSection(research *strategy.Research, diagnosis diagnostics.Validation) notify.Section {
+	conclusion := diagnosis.Summary
+	if diagnosis.Status == "passed" {
+		conclusion = "通过"
+	}
+	section := notify.Section{
 		Heading: "研究与验证",
 		Fields: []notify.Field{
 			{Label: "训练截至", Value: research.TrainingThrough},
@@ -148,9 +154,13 @@ func researchSection(research *strategy.Research) notify.Section {
 			{Label: "开发表现", Value: conciseStats(research.Development.Recommended)},
 			{Label: "独立验证区间", Value: evaluationRange(research.Holdout)},
 			{Label: "独立验证表现", Value: conciseStats(research.Holdout.Recommended)},
-			{Label: "独立验证结论", Value: validationResult(research.ValidationPassed)},
+			{Label: "独立验证结论", Value: conclusion},
 		},
 	}
+	for _, failure := range diagnosis.Failures {
+		section.Lines = append(section.Lines, failure.Message)
+	}
+	return section
 }
 
 func evaluationRange(evaluation strategy.Evaluation) string {
@@ -167,14 +177,13 @@ func evaluationRange(evaluation strategy.Evaluation) string {
 }
 
 func conciseStats(stats strategy.Stats) string {
-	return fmt.Sprintf("%d样本/%d日 · 净目标达标%.1f%% · 已退出均值%+.2f%%", stats.Samples, stats.Dates, stats.HitRate*100, stats.MeanNet)
-}
-
-func validationResult(passed bool) string {
-	if passed {
-		return "通过"
+	if stats.Samples == 0 {
+		return "0样本/0日 · 暂无可统计收益"
 	}
-	return "未通过"
+	if stats.Resolved == 0 {
+		return fmt.Sprintf("%d样本/%d日 · 尚无已退出样本，暂无可统计收益", stats.Samples, stats.Dates)
+	}
+	return fmt.Sprintf("%d样本/%d日 · 净目标达标%.1f%% · 已退出均值%+.2f%%", stats.Samples, stats.Dates, stats.HitRate*100, stats.MeanNet)
 }
 
 func strategyParametersSection(parameters config.Strategy) notify.Section {
@@ -183,6 +192,7 @@ func strategyParametersSection(parameters config.Strategy) notify.Section {
 		Fields: []notify.Field{
 			{Label: "买入时点", Value: "次日开盘（模拟）"},
 			{Label: "净目标/止损", Value: fmt.Sprintf("净+%.1f%% / %.1f%%", parameters.TargetNetPct, parameters.StopNetPct)},
+			{Label: "历史风险准入", Value: "规则历史每笔净收益 > -3%；止损触发目标与历史准入分别校验"},
 			{Label: "持有期限", Value: fmt.Sprintf("最多%d交易日", parameters.MaxHoldingDays)},
 			{Label: "单股预算", Value: formatMoney(parameters.TradeCash)},
 			{Label: "佣金", Value: fmt.Sprintf("%.4f%% / 最低%.2f元", parameters.CommissionRate*100, parameters.MinCommission)},
@@ -196,7 +206,7 @@ func strategyParametersSection(parameters config.Strategy) notify.Section {
 	}
 }
 
-func shortCandidateSections(r selection.Report) []notify.Section {
+func shortCandidateSections(r selection.Report, diagnosis *diagnostics.Report) []notify.Section {
 	if r.Research == nil {
 		return nil
 	}
@@ -222,13 +232,25 @@ func shortCandidateSections(r selection.Report) []notify.Section {
 		if ranking.Recommended && r.SelectionEnabled {
 			status = "通过"
 		}
+		detail := diagnosis.Candidates[ranking.Code]
+		risks := "无"
+		if len(detail.Risks) > 0 {
+			risks = escape(strings.Join(detail.Risks, " / "))
+		}
 		fields := []notify.Field{
 			{Label: "股票", Value: ranking.Code + " " + escape(ranking.Name)},
 			{Label: "排名", Value: fmt.Sprintf("第%d", ranking.Rank)},
 			{Label: "状态", Value: status},
 			{Label: "机会分", Value: fmt.Sprintf("%.1f", ranking.Score)},
 			{Label: "依据", Value: tags(ranking.Reasons)},
-			{Label: "风险", Value: tags(ranking.Risks)},
+			{Label: "风险", Value: risks},
+		}
+		for _, rule := range detail.Rules {
+			lines := []string{rule.Summary}
+			for _, failure := range rule.Failures {
+				lines = append(lines, failure.Message)
+			}
+			fields = append(fields, notify.Field{Label: rule.Label + "（全股池历史）", Value: escape(strings.Join(lines, "；"))})
 		}
 		if ranking.Evidence != nil {
 			fields = append(fields, notify.Field{Label: "历史证据", Value: detailedStats(*ranking.Evidence)})
@@ -313,7 +335,8 @@ func tags(values []string) string {
 		"rising_ma20":                           "MA20↑",
 		"stronger_than_pool":                    "近5日强于股池",
 		"strong_close":                          "收盘偏强",
-		"insufficient_or_unprofitable_evidence": "历史证据不足",
+		"insufficient_or_unprofitable_evidence": "匹配规则未通过历史检验",
+		"historical_net_loss_limit_breached":    "历史单笔净亏损超限",
 		"extended_price":                        "涨幅/偏离过大",
 		"large_daily_range":                     "日内波幅过大",
 		"upper_wick":                            "上影线较长",

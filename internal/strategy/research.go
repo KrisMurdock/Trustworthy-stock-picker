@@ -309,7 +309,7 @@ func rank(code, name string, f Features, stats []Stats, s config.Strategy) Candi
 			c.Risks = append(c.Risks, "historical_net_loss_limit_breached")
 			continue
 		}
-		if x.Samples < s.MinEvidence || x.Dates < s.MinTrainingDays || x.Unresolved > 0 || x.MeanNet <= 0 || x.HitRate <= baseline.HitRate {
+		if len(EvidenceFailures(x, baseline, s)) > 0 {
 			continue
 		}
 		if c.Evidence == nil || x.LowerBound > c.Evidence.LowerBound || (x.LowerBound == c.Evidence.LowerBound && x.Rule < c.Evidence.Rule) {
@@ -617,7 +617,7 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 		return result, err
 	}
 	hold := research.Holdout
-	research.ValidationPassed = hold.Method == "frozen_holdout" && hold.Recommended.Samples >= 30 && hold.Recommended.Dates >= 10 && AssessLoss(hold.Recommended).Status == "observed_pass" && hold.Recommended.MeanNet > 0 && hold.Recommended.HitRate > hold.PoolBaseline.HitRate && hold.Recommended.MeanNet > hold.PoolBaseline.MeanNet
+	research.ValidationPassed = len(HoldoutFailures(hold)) == 0
 	if !research.ValidationPassed {
 		for i := range result.Ranking {
 			result.Ranking[i].Recommended = false

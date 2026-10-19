@@ -85,7 +85,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.readError(w, r, ctx, err)
 			return
 		}
-		writeJSON(w, r, http.StatusOK, snapshot)
+		writeJSON(w, r, http.StatusOK, explainSnapshot(snapshot))
 	case "/api/experiments", "/api/experiment-history":
 		h.serveExperiments(w, r)
 	case "/api/history":
@@ -179,7 +179,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.readError(w, r, ctx, err)
 			return
 		}
-		writeJSON(w, r, http.StatusOK, report)
+		writeJSON(w, r, http.StatusOK, explainReport(report))
 	case "/":
 		h.asset(w, r, "index.html", "text/html; charset=utf-8")
 	case "/experiments":
