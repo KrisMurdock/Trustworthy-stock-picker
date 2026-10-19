@@ -369,7 +369,18 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (report selection.Repor
 			return report, err
 		}
 	}
-	report, err = m.buildReport(ctx, histories, raw, asof, target)
+	minutes, err := m.reportMinutes(ctx, histories, asof)
+	if err != nil {
+		return report, err
+	}
+	for i := range items {
+		for j := range minutes {
+			if items[i].Stock.Code == minutes[j].Code {
+				items[i].Minutes = &minutes[j]
+			}
+		}
+	}
+	report, err = m.buildReportWithMinutes(ctx, histories, raw, minutes, asof, target)
 	if err != nil {
 		return report, err
 	}
@@ -676,6 +687,57 @@ func (m *Monitor) PreviewContext(ctx context.Context, asof string) (selection.Re
 }
 
 func (m *Monitor) buildReport(ctx context.Context, histories, raw []market.History, asof, target string) (selection.Report, error) {
+	minutes, err := m.reportMinutes(ctx, histories, asof)
+	if err != nil {
+		return selection.Report{}, err
+	}
+	return m.buildReportWithMinutes(ctx, histories, raw, minutes, asof, target)
+}
+
+// reportMinutes preserves the existing bounded Chan input, excluding forming
+// bars and observations from a later session. Replay never calls this loader.
+func (m *Monitor) reportMinutes(ctx context.Context, histories []market.History, asof string) ([]market.MinuteHistory, error) {
+	var minutes []market.MinuteHistory
+	if !m.Config.Strategy.Enabled || m.Market == nil || !m.Market.HasDatabase() {
+		return minutes, nil
+	}
+	valid := make(map[string]bool, len(histories))
+	for _, h := range histories {
+		valid[h.Code] = true
+	}
+	for _, stock := range m.Config.Stocks {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !valid[stock.Code] {
+			continue
+		}
+		snapshot, err := m.Market.LoadMinutes(ctx, stock, 5)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		h := snapshot.MinuteHistory
+		h.Bars = nil
+		for _, bar := range snapshot.Bars {
+			if bar.Final && bar.End.In(market.Shanghai).Format("2006-01-02") <= asof {
+				h.Bars = append(h.Bars, bar)
+			}
+		}
+		if len(snapshot.Bars) > 0 && len(h.Bars) == 0 {
+			return nil, fmt.Errorf("no completed minute history on or before %s for %s", asof, stock.Code)
+		}
+		if len(h.Bars) > 0 {
+			minutes = append(minutes, h)
+		}
+	}
+	m.Log.Debug("Minute histories loaded for Chan gate", "loaded", len(minutes), "eligible_daily", len(histories))
+	return minutes, nil
+}
+
+func (m *Monitor) buildReportWithMinutes(ctx context.Context, histories, raw []market.History, minutes []market.MinuteHistory, asof, target string) (selection.Report, error) {
 	end, err := time.Parse("2006-01-02", asof)
 	if err != nil {
 		return selection.Report{}, err
@@ -705,7 +767,7 @@ func (m *Monitor) buildReport(ctx context.Context, histories, raw []market.Histo
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return selection.Execute(ctx, engine, selection.Input{Config: m.Config, Histories: window(histories), Raw: window(raw), AsOf: asof, Target: target, Now: m.Now()}, m.BuildVersion)
+	return selection.Execute(ctx, engine, selection.Input{Config: m.Config, Histories: window(histories), Raw: window(raw), Minutes: minutes, AsOf: asof, Target: target, Now: m.Now()}, m.BuildVersion)
 }
 
 func mustNext(cal *calendar.Calendar, asof string) string {

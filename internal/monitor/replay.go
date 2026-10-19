@@ -39,8 +39,12 @@ func (m *Monitor) Replay(ctx context.Context, revision string) (selection.Report
 		return selection.Report{}, err
 	}
 	var adjusted, raw []market.History
+	var minutes []market.MinuteHistory
 	for _, item := range items {
 		if item.Adjusted != nil {
+			if item.Minutes != nil {
+				minutes = append(minutes, *item.Minutes)
+			}
 			adjusted = append(adjusted, *item.Adjusted)
 			if item.Raw != nil {
 				raw = append(raw, *item.Raw)
@@ -52,7 +56,7 @@ func (m *Monitor) Replay(ctx context.Context, revision string) (selection.Report
 	replay := *m
 	replay.Config = params
 	replay.Now = func() time.Time { return recorded.GeneratedAt }
-	result, err := replay.buildReport(ctx, adjusted, raw, recorded.AsOf, recorded.Target)
+	result, err := replay.buildReportWithMinutes(ctx, adjusted, raw, minutes, recorded.AsOf, recorded.Target)
 	if err != nil {
 		return result, err
 	}

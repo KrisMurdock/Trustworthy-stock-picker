@@ -32,6 +32,7 @@ type Input struct {
 	Config       config.Config // SafeConfig only; no paths, credentials or network clients.
 	Histories    []market.History
 	Raw          []market.History
+	Minutes      []market.MinuteHistory
 	AsOf, Target string
 	Now          time.Time
 }
@@ -63,6 +64,9 @@ type builtinEngine struct{ descriptor EngineDescriptor }
 
 func (e builtinEngine) Descriptor() EngineDescriptor { return e.descriptor }
 func (e builtinEngine) Analyze(ctx context.Context, in Input) (Report, error) {
+	if len(in.Minutes) > 0 {
+		return BuildWithExecutionMinutes(ctx, in.Config, in.Histories, in.Raw, in.Minutes, in.AsOf, in.Target, in.Now)
+	}
 	return BuildWithExecution(ctx, in.Config, in.Histories, in.Raw, in.AsOf, in.Target, in.Now)
 }
 func DefaultEngine(c config.Config) (Engine, error) {
@@ -73,14 +77,20 @@ func DefaultEngine(c config.Config) (Engine, error) {
 	if c.Analysis.Engine != "auto" && c.Analysis.Engine != "" && c.Analysis.Engine != id {
 		return nil, errors.New("analysis.engine does not match enabled strategy")
 	}
-	return builtinEngine{EngineDescriptor{ID: id, Version: 1, Periods: []string{"day"}, Adjust: c.Daily.Adjust, RawRequired: c.Strategy.Enabled, FinalOnly: true, MissingPolicy: "exclude"}}, nil
+	periods := []string{"day"}
+	if c.Strategy.Enabled {
+		periods = append(periods, "5")
+	}
+	return builtinEngine{EngineDescriptor{ID: id, Version: 1, Periods: periods, Adjust: c.Daily.Adjust, RawRequired: c.Strategy.Enabled, FinalOnly: true, MissingPolicy: "exclude"}}, nil
 }
 func Execute(ctx context.Context, e Engine, in Input, build string) (Report, error) {
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
 	}
 	d := e.Descriptor()
-	if d.ID == "" || d.Version != 1 || len(d.Periods) != 1 || d.Periods[0] != "day" || d.Adjust != in.Config.Daily.Adjust || !d.FinalOnly || d.MissingPolicy != "exclude" {
+	minuteContract := len(d.Periods) == 2 && d.Periods[0] == "day" && d.Periods[1] == "5"
+	dailyContract := len(d.Periods) == 1 && d.Periods[0] == "day"
+	if d.ID == "" || d.Version != 1 || (!dailyContract && !minuteContract) || (len(in.Minutes) > 0 && !minuteContract) || d.Adjust != in.Config.Daily.Adjust || !d.FinalOnly || d.MissingPolicy != "exclude" {
 		return Report{}, errors.New("unsupported algorithm input contract")
 	}
 	if d.RawRequired && len(in.Raw) == 0 {
@@ -124,6 +134,18 @@ func Execute(ctx context.Context, e Engine, in Input, build string) (Report, err
 	for _, h := range append(append([]market.History{}, frozen.Histories...), frozen.Raw...) {
 		if h.AsOf != in.AsOf || h.Validate() != nil {
 			return Report{}, errors.New("invalid algorithm input history")
+		}
+	}
+	minuteCodes := map[string]bool{}
+	for _, h := range frozen.Minutes {
+		if !available[h.Code] || minuteCodes[h.Code] || h.Validate() != nil {
+			return Report{}, errors.New("invalid algorithm minute history")
+		}
+		minuteCodes[h.Code] = true
+		for _, bar := range h.Bars {
+			if !bar.Final || bar.End.In(market.Shanghai).Format("2006-01-02") > in.AsOf {
+				return Report{}, errors.New("algorithm minute history is not final as of report date")
+			}
 		}
 	}
 	result, err := e.Analyze(ctx, frozen)

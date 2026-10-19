@@ -38,6 +38,7 @@ type SyncItem struct {
 	Stock    config.Stock
 	Adjusted *market.History
 	Raw      *market.History
+	Minutes  *market.MinuteHistory `json:",omitempty"`
 	Status   string
 	Reason   string
 }

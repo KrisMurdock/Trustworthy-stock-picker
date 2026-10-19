@@ -67,3 +67,33 @@ func TestEngineBoundaryCopiesInputsAndRejectsInvalidResults(t *testing.T) {
 		t.Fatal("misconfigured production algorithm accepted")
 	}
 }
+
+func TestBuiltinEnginePreservesChanGateAndRejectsNonFinalMinutes(t *testing.T) {
+	c, histories, raw := executionFixture()
+	asof := histories[0].AsOf
+	h := singleDayMinuteHistory(asof, raw[0].Bars[len(raw[0].Bars)-1])
+	engine, err := DefaultEngine(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := Input{Config: c, Histories: histories, Raw: raw, Minutes: []market.MinuteHistory{h}, AsOf: asof, Target: "2026-10-20", Now: time.Now()}
+	report, err := Execute(context.Background(), engine, in, "merge-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Ranking) != 1 || report.Ranking[0].Chan == nil || report.Ranking[0].Chan.Status != "unknown" || report.Ranking[0].Recommended {
+		t.Fatalf("engine bypassed Chan gate: %+v", report.Ranking)
+	}
+	in.Minutes[0].Bars[0].Final = false
+	if _, err := Execute(context.Background(), engine, in, "merge-test"); err == nil {
+		t.Fatal("forming minute bar accepted")
+	}
+	in.Minutes[0].Bars[0].Final = true
+	for i := range in.Minutes[0].Bars {
+		in.Minutes[0].Bars[i].End = in.Minutes[0].Bars[i].End.AddDate(0, 0, 7)
+	}
+	in.Minutes[0].FetchedAt = in.Minutes[0].FetchedAt.AddDate(0, 0, 7)
+	if _, err := Execute(context.Background(), engine, in, "merge-test"); err == nil || !strings.Contains(err.Error(), "not final as of report date") {
+		t.Fatal("future minute input did not fail the as-of guard", err)
+	}
+}
