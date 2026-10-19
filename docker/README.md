@@ -57,6 +57,10 @@ docker compose --env-file .env -f docker/compose.yaml down
 
 停止不会删除宿主机数据。回滚到保留的旧镜像标签并重建服务；先确认配置与持久账本格式兼容。共享故障排查、凭证加载和部署验收见[部署文档](../docs/deployment.md)。
 
-网页没有账号或写入接口，远程访问需通过受控网络或已有认证反向代理，根路径、`/api/` 和 `/assets/` 应保持一致。
+网页提供全量股池、摘要快照、每日排名和复盘回看。网页没有账号体系；除受写模式约束的 AI 配置外均为只读，远程访问需通过受控网络或已有认证反向代理，根路径、`/api/` 和 `/assets/` 应保持一致。
 
-行情库升级、只读健康、报告重放、停机备份和回滚流程见[部署说明](../docs/deployment.md#框架升级与恢复)。
+行情库 schema 6 升级、只读健康、报告重放、停机备份和回滚流程见 [部署说明](../docs/deployment.md#框架升级与恢复)。
+
+## AI 配置卷
+
+Compose 将命名卷 `llm-config` 挂载到容器内 `/config`，并固定 `STOCK_WATCHER_LLM_CONFIG_FILE=/config/llm.config`，因此在只读根文件系统下仍可由网页保存 AI 配置。该卷独立于 `/data`，备份与迁移时应单独保留。默认 `STOCK_WATCHER_LLM_WRITE_MODE=loopback`；容器外的浏览器请求通常来自桥接网络而非回环地址，需要在运行变量文件中显式设为 `all` 才允许网页保存。`all` 不提供认证，远程开放前必须配置受控网络或认证反向代理。

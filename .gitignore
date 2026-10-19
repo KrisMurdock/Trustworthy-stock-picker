@@ -5,6 +5,7 @@
 /config.yaml
 /config.runtime.yaml
 /feishu.config
+/llm.config
 /docker/.env
 
 # Go runtime and remote data

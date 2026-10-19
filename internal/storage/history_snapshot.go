@@ -24,7 +24,7 @@ func (m *MarketDB) initSnapshotSchema() error {
  CREATE TABLE IF NOT EXISTS history_snapshot(id TEXT PRIMARY KEY, payload BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS history_revision(code TEXT NOT NULL,adjust TEXT NOT NULL,as_of TEXT NOT NULL,snapshot_id TEXT NOT NULL REFERENCES history_snapshot(id),PRIMARY KEY(code,adjust,as_of));
  CREATE TABLE IF NOT EXISTS report_input(id TEXT PRIMARY KEY,payload BLOB NOT NULL);
- CREATE TABLE IF NOT EXISTS report_archive(id TEXT PRIMARY KEY,report_json BLOB NOT NULL);
+ CREATE TABLE IF NOT EXISTS report_archive(id TEXT PRIMARY KEY,report_json BLOB NOT NULL,as_of TEXT NOT NULL DEFAULT '',generated_at TEXT NOT NULL DEFAULT '',schema_version INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS sync_task(id TEXT PRIMARY KEY,as_of TEXT NOT NULL,fingerprint TEXT NOT NULL,phase TEXT NOT NULL,status TEXT NOT NULL,completed INTEGER NOT NULL,total INTEGER NOT NULL,started_at TEXT NOT NULL,updated_at TEXT NOT NULL,error_kind TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS sync_checkpoint(task_id TEXT NOT NULL REFERENCES sync_task(id),code TEXT NOT NULL,digest TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(task_id,code));
  PRAGMA user_version=4;`)

@@ -20,6 +20,7 @@ services:
       - path: ${STOCK_WATCHER_ENV_FILE:-../.env}
     environment:
       STOCK_WATCHER_DATA_DIR: /data
+      STOCK_WATCHER_LLM_CONFIG_FILE: /config/llm.config
       STOCK_WATCHER_LOG_DIR: /logs
       STOCK_WATCHER_LOG_COLOR: "off"
       STOCK_WATCHER_WEB_ADDR: "0.0.0.0:8080"
@@ -42,6 +43,9 @@ services:
         target: /logs
         bind:
           create_host_path: false
+      - type: volume
+        source: llm-config
+        target: /config
     command: [run]
     healthcheck:
       test: [CMD, stock-watcher, health]
@@ -54,3 +58,5 @@ services:
       options:
         max-size: 10m
         max-file: "3"
+volumes:
+  llm-config:

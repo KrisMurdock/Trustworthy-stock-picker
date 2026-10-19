@@ -28,17 +28,26 @@ type Plan struct {
 }
 
 type Outcome struct {
-	Status      string     `json:"status"`
-	EntryDate   string     `json:"entry_date,omitempty"`
-	ExitDate    string     `json:"exit_date,omitempty"`
-	ExitPrice   float64    `json:"exit_price,omitempty"`
-	NetPct      float64    `json:"net_pct"`
-	HoldingDays int        `json:"holding_days"`
-	MFE         float64    `json:"max_favorable_net_pct"`
-	MAE         float64    `json:"max_adverse_net_pct"`
-	Ambiguous   bool       `json:"ambiguous"`
-	HighTouch   *HighTouch `json:"high_touch,omitempty"`
-	EntryDay    *EntryDay  `json:"entry_day,omitempty"`
+	Status      string       `json:"status"`
+	EntryDate   string       `json:"entry_date,omitempty"`
+	ExitDate    string       `json:"exit_date,omitempty"`
+	ExitPrice   float64      `json:"exit_price,omitempty"`
+	NetPct      float64      `json:"net_pct"`
+	HoldingDays int          `json:"holding_days"`
+	MFE         float64      `json:"max_favorable_net_pct"`
+	MAE         float64      `json:"max_adverse_net_pct"`
+	Ambiguous   bool         `json:"ambiguous"`
+	HighTouch   *HighTouch   `json:"high_touch,omitempty"`
+	EntryDay    *EntryDay    `json:"entry_day,omitempty"`
+	Checkpoints []Checkpoint `json:"checkpoints,omitempty"`
+}
+
+// Checkpoint records the signal-relative close without implying that the
+// position was still open or sellable at that time.
+type Checkpoint struct {
+	Day         int     `json:"signal_day"`
+	Date        string  `json:"date"`
+	CloseNetPct float64 `json:"close_net_pct"`
 }
 
 func tickUp(p float64) float64   { return math.Ceil(p*100-1e-8) / 100 }
@@ -161,6 +170,7 @@ func Simulate(s config.Strategy, cal *calendar.Calendar, code string, signal mar
 	}
 	out.EntryDate = entry.Date
 	out.EntryDay = entryDayValue(s, p, entry.Close, "", "opening_price")
+	out.Checkpoints = append(out.Checkpoints, Checkpoint{Day: 1, Date: entry.Date, CloseNetPct: out.EntryDay.CloseNetPct})
 	out.HighTouch = &HighTouch{Version: 1}
 	out.MAE = math.Min(0, netPct(s, p, entry.Low))
 	previous := entry
@@ -178,6 +188,9 @@ func Simulate(s config.Strategy, cal *calendar.Calendar, code string, signal mar
 			return out, nil
 		}
 		out.HoldingDays = day
+		if signalDay := day + 1; signalDay == 3 || signalDay == 5 {
+			out.Checkpoints = append(out.Checkpoints, Checkpoint{Day: signalDay, Date: b.Date, CloseNetPct: netPct(s, p, tickDown(b.Close*(1-s.SlippageRate)))})
+		}
 		out.MFE = math.Max(out.MFE, netPct(s, p, b.High))
 		out.MAE = math.Min(out.MAE, netPct(s, p, b.Low))
 		rule := PriceLimitFor(code, b.Date)

@@ -106,6 +106,47 @@ func applyEnvironment(c *Config) error {
 			*target = parsed
 		}
 	}
+	c.LLM.Locked = map[string]bool{}
+	if c.LLM.Sources == nil {
+		c.LLM.Sources = map[string]string{}
+	}
+	for name, field := range map[string]string{
+		"STOCK_WATCHER_LLM_BASE_URL":    "base_url",
+		"STOCK_WATCHER_LLM_API_KEY":     "api_key",
+		"STOCK_WATCHER_LLM_MODEL":       "model",
+		"STOCK_WATCHER_LLM_TIMEOUT":     "timeout",
+		"STOCK_WATCHER_LLM_CONFIG_FILE": "config_file",
+		"STOCK_WATCHER_LLM_WRITE_MODE":  "write_mode",
+	} {
+		value, ok := os.LookupEnv(name)
+		if !ok {
+			continue
+		}
+		switch field {
+		case "base_url":
+			c.LLM.BaseURL = value
+		case "api_key":
+			c.LLM.APIKey = value
+		case "model":
+			c.LLM.Model = value
+		case "timeout":
+			c.LLM.Timeout = value
+		case "config_file":
+			c.LLM.ConfigFile = value
+		case "write_mode":
+			c.LLM.WriteMode = value
+		}
+		c.LLM.Locked[field] = true
+		c.LLM.Sources[field] = "env"
+	}
+	if value, ok := os.LookupEnv("STOCK_WATCHER_LLM_ENABLED"); ok {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return errors.New("invalid boolean environment variable: STOCK_WATCHER_LLM_ENABLED")
+		}
+		c.LLM.Enabled = parsed
+		c.LLM.Locked["enabled"] = true
+	}
 	if value, ok := os.LookupEnv("STOCK_WATCHER_CALENDAR_HOLIDAYS"); ok {
 		c.Calendar.Holidays = splitList(value)
 	}

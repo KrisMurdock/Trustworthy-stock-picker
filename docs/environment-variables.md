@@ -108,7 +108,6 @@
 | STOCK_WATCHER_FEISHU_CREDENTIALS_FILE | 空 | 显式启用旧版 `feishu.config` 兼容；新部署应改用环境变量 |
 | STOCK_WATCHER_NOTIFY_CHANNELS | 空 | 可选多通道；格式见下 |
 | TUSHARE_TOKEN | 空 | Tushare Token；缺失时跳过 Tushare |
-
 命名通道使用 `name|type|enabled|webhook_env|secret_env`，条目之间用 `;` 分隔；`type` 当前只支持 `feishu`。例如：
 
 ```dotenv
@@ -117,6 +116,26 @@ STOCK_WATCHER_NOTIFY_CHANNELS="feishu-main|feishu|true|FEISHU_WEBHOOK|FEISHU_SEC
 ```
 
 凭证只来自环境变量，不写入日志、镜像或仓库。关闭通知时显式设置 `STOCK_WATCHER_FEISHU_ENABLED=false`，并确保没有设置 `STOCK_WATCHER_NOTIFY_CHANNELS` 的启用通道。
+
+## AI 与大师复盘配置
+
+| 变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| STOCK_WATCHER_LLM_ENABLED | true | 是否允许 AI 问答与归因；关闭后仍可使用确定性复盘，但不能生成模型回答 |
+| STOCK_WATCHER_LLM_BASE_URL | https://api.openai.com/v1 | OpenAI 兼容端点；生产必须 HTTPS，HTTP 仅允许回环主机 |
+| STOCK_WATCHER_LLM_API_KEY | 空 | 模型 API Key；必须同时配置端点和模型才能问答 |
+| STOCK_WATCHER_LLM_MODEL | gpt-4.1-mini | 模型名称 |
+| STOCK_WATCHER_LLM_TIMEOUT | 60s | 单次模型请求超时，允许 1s～5m |
+| STOCK_WATCHER_LLM_CONFIG_FILE | llm.config | 网页保存配置的私有文件，相对当前工作目录解析；不要放在 CIFS 数据目录内 |
+| STOCK_WATCHER_LLM_WRITE_MODE | loopback | 网页写配置范围：off / loopback / all；容器或反向代理远程使用时通常需显式设为 all |
+
+AI 配置按字段合并，优先级为环境变量 > `llm.config` > 内置默认值。环境变量提供的字段会被锁定，网页只能修改未锁定的字段；页面的“测试连接”只发送固定探测请求，不包含用户问题或复盘证据。默认模型为 OpenAI 兼容接口，也可填写自建网关的 HTTPS `base_url`。
+
+`llm.config` 使用 `schema_version: 1`，最多包含 `base_url`、`api_key`、`model` 和 `timeout`；文件权限应为 `0600`。它独立于 `STOCK_WATCHER_DATA_DIR`，不会随行情库进入 CIFS，也不得提交到 Git。网页只显示密钥是否已配置和末四位，不会回显明文；保存采用同目录临时文件、`fsync` 和原子替换。备份或迁移时应把该文件与数据目录、`feishu.config` 一并纳入，并保持权限。
+
+网页写配置受 `STOCK_WATCHER_LLM_WRITE_MODE` 控制：`off` 禁止写入和测试，`loopback` 只允许回环来源，`all` 允许所有来源写入。`all` 不提供认证，远程部署必须同时使用受控网络或已有认证反向代理，并在代理层验证未登录与无权限请求。所有写请求还要求同源、JSON 和固定动作头；跨站请求会被拒绝。
+
+问答与复盘归因只在用户点击后发起。上下文只包含选定的报告修订、复盘事件证据、试验档案摘要和最近三轮可见对话；不会读取网页、新闻、公告或隐藏提示词，也不会生成 SQL。模型请求默认 60 秒超时，流式回答可取消；未配置模型时页面会保留确定性证据，并明确提示无法生成回答。
 
 ## 日志
 
@@ -143,6 +162,6 @@ STOCK_WATCHER_NOTIFY_CHANNELS="feishu-main|feishu|true|FEISHU_WEBHOOK|FEISHU_SEC
 
 Compose 固定容器内数据 `/data`、股池 `/app/leaders.yaml`、日志 `/logs`，并关闭颜色。绑定挂载的相对路径按 Compose 文件所在目录解析，默认示例使用 `../` 指回仓库根目录；生产建议改为绝对路径。宿主路径必须预先存在，Compose 不会自动创建。本地目录部署保持 `STOCK_WATCHER_REQUIRE_CIFS=false`，共享盘部署设为 `true`。
 
-`run` 同时启动监控任务和网页，默认只允许本机访问。设置 `STOCK_WATCHER_WEB_ENABLED=false` 可以关闭网页；网页没有账号或写入接口，需要远程访问时通过受控网络或已有认证反向代理开放。容器内固定监听 `0.0.0.0:8080`，并用 `STOCK_WATCHER_WEB_BIND` 控制宿主机入口。应用使用根路径 `/`，反向代理应保留 `/api/` 和 `/assets/` 路径；不支持直接挂到子路径前缀。
+`run` 同时启动监控任务和网页，默认只允许本机访问。设置 `STOCK_WATCHER_WEB_ENABLED=false` 可以关闭网页；网页没有账号体系，除受 `STOCK_WATCHER_LLM_WRITE_MODE` 约束的 AI 配置外均为只读，需要远程访问时通过受控网络或已有认证反向代理开放。容器内固定监听 `0.0.0.0:8080`，并用 `STOCK_WATCHER_WEB_BIND` 控制宿主机入口。应用使用根路径 `/`，反向代理应保留 `/api/` 和 `/assets/` 路径；不支持直接挂到子路径前缀。
 
 Compose 长挂载与 env_file 语义参见 [Docker 官方服务配置](https://docs.docker.com/reference/compose-file/services/)。本配置要求 Docker Compose 2.30.0 或更高版本。

@@ -27,6 +27,7 @@ type Stock struct {
 type Config struct {
 	Analysis       Analysis       `yaml:"analysis"`
 	Intraday       Intraday       `yaml:"intraday"`
+	LLM            LLM            `yaml:"llm"`
 	Market         Market         `yaml:"market"`
 	Strategy       Strategy       `yaml:"strategy"`
 	StructureGuard StructureGuard `yaml:"structure_guard"`
@@ -104,6 +105,7 @@ func ValidCode(s string) bool { return stockCode.MatchString(s) }
 func Defaults() Config {
 	c := Config{Version: 1, DataDir: "data", RequireCIFS: false, PollInterval: "5m", Timeout: "10s"}
 	c.Analysis = Analysis{Engine: "auto", Timeout: "10m", SyncTimeout: "90m"}
+	c.LLM = DefaultLLM()
 	c.Strategy = DefaultStrategy()
 	c.StructureGuard.Mode = "shadow"
 	c.Market = DefaultMarket()
@@ -174,6 +176,9 @@ func loadFile(path string) (Config, error) {
 
 func resolve(c Config, baseDir string) (Config, error) {
 	if err := applyEnvironment(&c); err != nil {
+		return Config{}, err
+	}
+	if err := loadLLMFile(&c, baseDir); err != nil {
 		return Config{}, err
 	}
 	if c.PoolFile != "" {
@@ -253,6 +258,16 @@ func finalize(c Config, baseDir string) (Config, error) {
 	}
 	c.DataDir = absolute
 	c.Market.loadCredentials()
+	if c.LLM.ConfigFile != "" {
+		if !filepath.IsAbs(c.LLM.ConfigFile) {
+			c.LLM.ConfigFile = filepath.Join(baseDir, c.LLM.ConfigFile)
+		}
+		llmPath, err := filepath.Abs(c.LLM.ConfigFile)
+		if err != nil {
+			return Config{}, errors.New("invalid llm config file path")
+		}
+		c.LLM.ConfigFile = llmPath
+	}
 	c.prepared = true
 	return c, c.Validate()
 }
@@ -268,6 +283,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Market.Validate(); err != nil {
+		return err
+	}
+	if err := c.LLM.Validate(); err != nil {
 		return err
 	}
 	if c.Web.Enabled {

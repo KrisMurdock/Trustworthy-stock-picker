@@ -52,9 +52,17 @@ func TestBuyDayCannotTakeProfitAndDeadline(t *testing.T) {
 	if err != nil || out.Status != "timeout" || out.ExitDate != "2026-10-20" || out.HoldingDays != 5 || out.NetPct >= 0 {
 		t.Fatalf("buy day target or deadline %+v %v", out, err)
 	}
+	if len(out.Checkpoints) != 3 || out.Checkpoints[0].Day != 1 || out.Checkpoints[0].Date != "2026-10-13" ||
+		out.Checkpoints[1].Day != 3 || out.Checkpoints[1].Date != "2026-10-15" ||
+		out.Checkpoints[2].Day != 5 || out.Checkpoints[2].Date != "2026-10-19" {
+		t.Fatalf("signal-relative checkpoints missing: %+v", out.Checkpoints)
+	}
 	first, err := Simulate(s, cal, "sz000001", signal, future, 1)
 	if err != nil || first.ExitDate != "2026-10-14" {
 		t.Fatal("one day horizon was not first sellable day")
+	}
+	if len(first.Checkpoints) != 1 || first.Checkpoints[0].Day != 1 {
+		t.Fatalf("short horizon synthesized unavailable checkpoints: %+v", first.Checkpoints)
 	}
 }
 func TestStopWinsAmbiguousBarsAndGapsExceedStop(t *testing.T) {

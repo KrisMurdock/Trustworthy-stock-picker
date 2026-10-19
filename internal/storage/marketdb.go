@@ -15,13 +15,14 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
 const marketDBName = "market.db"
-const marketSchemaVersion = 5
+const marketSchemaVersion = 6
 
 type MarketDB struct {
 	db          *sql.DB
@@ -238,9 +239,84 @@ func verifySchema(reader sqlReader) error {
 		found[name] = true
 	}
 	if err := rows.Err(); err != nil || len(found) != 18 {
+		rows.Close()
 		return errors.New("market database schema is incomplete")
 	}
-	return nil
+	rows.Close()
+	columns := map[string]bool{}
+	rows, err = reader.QueryContext(context.Background(), "PRAGMA table_info(report_archive)")
+	if err != nil {
+		return errors.New("cannot inspect market database schema")
+	}
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, kind string
+		var fallback sql.NullString
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &fallback, &pk); err != nil {
+			rows.Close()
+			return errors.New("cannot inspect market database schema")
+		}
+		columns[strings.ToLower(name)] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return errors.New("cannot inspect market database schema")
+	}
+	rows.Close()
+	for _, column := range []string{"as_of", "generated_at", "schema_version"} {
+		if !columns[column] {
+			return errors.New("market database schema is incomplete")
+		}
+	}
+	rows, err = reader.QueryContext(context.Background(), `
+		SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='report_archive'
+	`)
+	if err != nil {
+		return errors.New("cannot inspect market database schema")
+	}
+	var indexes []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return errors.New("cannot inspect market database schema")
+		}
+		indexes = append(indexes, name)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return errors.New("cannot inspect market database schema")
+	}
+	rows.Close()
+	for _, index := range indexes {
+		rows, err = reader.QueryContext(context.Background(), "PRAGMA index_info("+quoteSQLiteIdentifier(index)+")")
+		if err != nil {
+			return errors.New("cannot inspect market database schema")
+		}
+		var indexColumns []string
+		for rows.Next() {
+			var seq, cid int
+			var name string
+			if err := rows.Scan(&seq, &cid, &name); err != nil {
+				rows.Close()
+				return errors.New("cannot inspect market database schema")
+			}
+			indexColumns = append(indexColumns, strings.ToLower(name))
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return errors.New("cannot inspect market database schema")
+		}
+		rows.Close()
+		if len(indexColumns) == 2 && indexColumns[0] == "as_of" && indexColumns[1] == "generated_at" {
+			return nil
+		}
+	}
+	return errors.New("market database schema is incomplete")
+}
+
+func quoteSQLiteIdentifier(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 func (m *MarketDB) initSchema() error {
@@ -248,7 +324,7 @@ func (m *MarketDB) initSchema() error {
 	if err := m.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return errors.New("cannot read market database version")
 	}
-	if version != 0 && version != 2 && version != 3 && version != 4 && version != marketSchemaVersion {
+	if version != 0 && version != 2 && version != 3 && version != 4 && version != 5 && version != marketSchemaVersion {
 		return errors.New("unsupported market database version")
 	}
 	_, err := m.db.Exec(`
@@ -327,7 +403,10 @@ func (m *MarketDB) initSchema() error {
 	if err := m.initSnapshotSchema(); err != nil {
 		return err
 	}
-	return m.initStatusSchema()
+	if err := m.initStatusSchema(); err != nil {
+		return err
+	}
+	return m.initReviewSchema(version < marketSchemaVersion)
 }
 
 func (m *MarketDB) Close() error {
@@ -491,7 +570,10 @@ func (m *MarketDB) commitMarketMode(ctx context.Context, run SyncRun, items []Sy
 	if err != nil {
 		return rollback(err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO report_archive(id,report_json) VALUES(?,?) ON CONFLICT(id) DO NOTHING`, report.Revision, reportJSON); err != nil {
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO report_archive(id, report_json, as_of, generated_at, schema_version)
+		VALUES(?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING
+	`, report.Revision, reportJSON, report.AsOf, report.GeneratedAt.UTC().Format(time.RFC3339Nano), report.Version); err != nil {
 		return rollback(err)
 	}
 	if _, err := tx.ExecContext(ctx, `

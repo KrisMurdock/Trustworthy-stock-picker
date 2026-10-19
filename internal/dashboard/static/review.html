@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#164d59">
+    <meta name="description" content="回看已冻结的推荐、模拟交易路径与 AI 归因证据。">
+    <title>复盘回看 · Stock Watcher</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/assets/style.css">
+    <link rel="stylesheet" href="/assets/review.css">
+    <script src="/assets/common.js" defer></script>
+    <script src="/assets/review.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳转至复盘回看</a>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="/" aria-label="Stock Watcher 股池观察首页">
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M6 24V15m10 9V8m10 16V4"/><path d="m5 12 10-7 8 5 5-7"/></svg></span>
+          <span><strong>STOCK WATCHER</strong><span class="brand-caption">把每次结果，对照当时的依据</span></span>
+        </a>
+        <nav class="header-nav" aria-label="主导航"><a href="/">摘要快照</a><a href="/stocks">全部股票</a><a href="/chart">个股 K 线</a><a href="/rankings">日推排名</a><a href="/review" aria-current="page">复盘回看</a><a href="/experiments">策略实验室</a><a href="/calculator">仓位计算</a></nav>
+        <span class="market-label">A 股 · 证据复盘</span>
+      </div>
+    </header>
+    <main id="main-content" class="page review-page" data-testid="review-page">
+      <section class="page-heading" aria-labelledby="review-title">
+        <div>
+          <p class="eyebrow">REVIEW / TRACE EVERY OUTCOME</p>
+          <h1 id="review-title">复盘回看<span class="heading-dot">.</span></h1>
+          <p class="intro">把冻结的推荐放回之后的行情里，查看目标、止损、未入场与缺失证据。</p>
+        </div>
+        <div class="review-heading-actions">
+          <button id="master-open" class="button button-secondary" type="button" data-testid="master-open" aria-controls="master-drawer" aria-expanded="false">问问大师</button>
+          <button id="review-refresh" class="button button-primary" type="button" data-testid="review-refresh">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.3 7a6.5 6.5 0 1 0 .1 5M16.3 3v4h-4"/></svg>
+            <span>刷新复盘</span>
+          </button>
+        </div>
+      </section>
+
+      <div id="review-loading" class="loading-state" role="status" data-testid="review-loading">
+        <span class="spinner" aria-hidden="true"></span>
+        <div><strong>正在读取复盘快照</strong><p>定位最近报告日期与冻结修订…</p></div>
+      </div>
+      <div id="review-error" class="notice notice-error" role="alert" data-testid="review-error" hidden>
+        <div><strong id="review-error-title">复盘快照加载失败</strong><p id="review-error-message"></p></div>
+        <button id="review-retry" class="button button-secondary" type="button">重新加载</button>
+      </div>
+      <div id="review-empty" class="section-empty review-empty-state" role="status" data-testid="review-empty" hidden>
+        <span class="empty-symbol" aria-hidden="true">↺</span>
+        <strong>暂无可用复盘</strong>
+        <p>生成并保存短周期报告后，这里会按报告日期展示之后的模拟结果。</p>
+      </div>
+      <noscript><p class="notice notice-error">请启用 JavaScript，以加载复盘快照与 AI 对话。</p></noscript>
+
+      <div id="review-content" hidden>
+        <section class="panel review-day-panel" aria-labelledby="review-day-title">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">FROZEN SNAPSHOT / READ ONLY</p>
+              <h2 id="review-day-title">复盘快照</h2>
+              <p id="review-snapshot-note" class="section-description">读取已保存报告与之后的本地行情，不重新计算推荐。</p>
+            </div>
+            <div class="review-controls">
+              <label for="review-date-select">报告日期</label>
+              <select id="review-date-select" data-testid="review-date-select" disabled><option value="">暂无报告</option></select>
+              <div class="review-revision-control">
+                <label for="review-revision-select">修订版本</label>
+                <select id="review-revision-select" data-testid="review-revision-select" disabled><option value="">暂无修订</option></select>
+                <span id="review-revision-count" class="count-tag" aria-label="修订数量">—</span>
+              </div>
+            </div>
+          </div>
+          <div class="review-topline" aria-label="复盘报告信息">
+            <span>数据截止 <strong id="review-data-as-of">—</strong></span>
+            <span>报告修订 <code id="review-report-revision">—</code></span>
+            <span>生成时间 <time id="review-generated-at">—</time></span>
+            <span>目标交易日 <strong id="review-target-date">—</strong></span>
+            <span>策略 <strong id="review-strategy">—</strong></span>
+          </div>
+          <p id="review-calendar-note" class="review-calendar-note"></p>
+          <div id="review-warnings" class="notice notice-info review-warning" role="status" hidden></div>
+        </section>
+
+        <section id="review-aggregate" class="panel review-aggregate-panel" data-testid="review-aggregate" aria-labelledby="review-aggregate-title" hidden>
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">DAILY OUTCOME / MATURE VS PENDING</p>
+              <h2 id="review-aggregate-title">当日结果</h2>
+              <p id="review-aggregate-note" class="section-description">收益指标只统计已成熟样本；样本不足时不把少量结果当作结论。</p>
+            </div>
+            <span id="review-event-count" class="count-tag" aria-label="事件数量">—</span>
+          </div>
+          <div id="review-aggregate-body" class="review-aggregate-body"></div>
+        </section>
+
+        <div class="review-layout">
+          <section class="panel review-events-panel" aria-labelledby="review-events-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">EVENT LEDGER / SELECT ONE</p>
+                <h2 id="review-events-title">事件列表</h2>
+                <p class="section-description">点击任一事件查看冻结信号、模拟路径和证据。</p>
+              </div>
+              <span id="review-events-count" class="count-tag" aria-label="事件数量">—</span>
+            </div>
+            <div id="review-events-loading" class="section-empty" role="status" hidden><span class="spinner" aria-hidden="true"></span><p>正在刷新事件…</p></div>
+            <div id="review-events-empty" class="section-empty" hidden><span class="empty-symbol" aria-hidden="true">—</span><strong>该日没有事件</strong><p>报告已保存，但没有可展示的候选或观察记录。</p></div>
+            <div id="review-events" class="table-scroll review-table-scroll" role="region" aria-label="复盘事件表，可横向滚动" tabindex="0" data-testid="review-events" hidden>
+              <table class="review-table">
+                <caption class="sr-only">所选报告日期的推荐、模拟状态、收益与风险</caption>
+                <thead><tr><th scope="col" class="review-rank-column">排名</th><th scope="col">股票</th><th scope="col">推荐状态</th><th scope="col">信号日</th><th scope="col">模拟买入</th><th scope="col">退出日</th><th scope="col">状态</th><th scope="col" class="numeric">净收益</th><th scope="col">关键风险</th></tr></thead>
+                <tbody id="review-event-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="review-detail" class="panel review-detail-panel" data-testid="review-detail" aria-labelledby="review-detail-title">
+            <div class="panel-heading">
+              <div><p class="eyebrow">EVIDENCE VIEW</p><h2 id="review-detail-title">事件详情</h2><p id="review-detail-description" class="section-description">默认不选中事件，避免先入为主。</p></div>
+              <span id="review-detail-state" class="count-tag" hidden>—</span>
+            </div>
+            <div id="review-detail-empty" class="section-empty"><span class="empty-symbol" aria-hidden="true">◎</span><strong>选择一个事件</strong><p>查看参考计划、冻结信号、T+1／T+3／T+5、结构门控与证据。</p></div>
+            <div id="review-detail-loading" class="section-empty" role="status" hidden><span class="spinner" aria-hidden="true"></span><p>正在读取事件证据…</p></div>
+            <div id="review-detail-error" class="notice notice-error review-detail-error" role="alert" hidden><div><strong>事件详情加载失败</strong><p id="review-detail-error-message"></p></div><button id="review-detail-retry" class="button button-secondary" type="button">重试</button></div>
+            <div id="review-detail-body" class="review-detail-body" hidden></div>
+          </section>
+        </div>
+
+        <section class="panel review-analysis-panel" aria-labelledby="review-analysis-title">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">AI ATTRIBUTION / MANUAL ONLY</p>
+              <h2 id="review-analysis-title">AI 复盘归因</h2>
+              <p class="section-description">只在点击按钮后生成；结论必须能回指本地证据。</p>
+            </div>
+            <div class="review-analysis-actions">
+              <button id="review-analysis-cancel" class="button button-secondary" type="button" hidden>取消生成</button>
+              <button id="review-analysis-button" class="button button-primary" type="button" data-testid="review-analysis-button" disabled>AI 复盘归因</button>
+            </div>
+          </div>
+          <div id="review-analysis-notice" class="notice notice-info review-analysis-notice" role="status">
+            <div><strong>默认不自动生成</strong><p>选择报告日期或事件后，点击“AI 复盘归因”才会发送当前复盘范围。</p></div>
+            <button id="review-analysis-settings" class="button button-secondary" type="button" hidden>打开 AI 设置</button>
+          </div>
+          <div id="review-analysis-state" class="review-analysis-state" role="status" hidden></div>
+          <div id="review-analysis-output" class="review-analysis-output" hidden>
+            <div class="master-message assistant">
+              <span class="master-message-role">AI 复盘归因</span>
+              <div id="review-analysis-answer" class="master-answer-text" aria-live="polite"></div>
+              <div id="review-analysis-chain-slot"></div>
+              <p id="review-analysis-citations" class="citation-status" role="status"></p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <footer class="site-footer"><span>STOCK WATCHER <span class="footer-separator">/</span> 结果回看，依据可追溯</span><span>仅供研究参考 · 不构成投资建议</span></footer>
+      <p id="review-live-status" class="sr-only" aria-live="polite" aria-atomic="true"></p>
+    </main>
+
+    <div id="master-scrim" class="master-scrim" hidden></div>
+    <aside id="master-drawer" class="master-drawer" role="dialog" aria-modal="true" aria-labelledby="master-title" data-testid="master-drawer" tabindex="-1" hidden>
+      <header class="master-header">
+        <div><p class="eyebrow">MASTER / ASK WITH EVIDENCE</p><h2 id="master-title">问问大师</h2></div>
+        <button id="master-close" class="button button-secondary master-close" type="button" data-testid="master-close" aria-label="关闭问问大师">关闭</button>
+      </header>
+      <div class="master-toolbar">
+        <label for="master-role-select">角色</label>
+        <select id="master-role-select" data-testid="master-role-select" disabled><option value="">角色加载中</option></select>
+        <button id="llm-settings-open" class="button button-secondary" type="button" data-testid="llm-settings-open">AI 设置</button>
+      </div>
+      <p id="master-role-description" class="master-role-description">读取可用角色后开始对话。</p>
+      <div id="master-ai-status" class="notice review-ai-status" role="status">正在读取 AI 配置…</div>
+      <div id="master-answer" class="master-messages" data-testid="master-answer" aria-live="polite" aria-relevant="additions text">
+        <div id="master-empty" class="master-empty"><strong>从当前复盘开始提问</strong><p>可以追问为什么推荐、为什么未入场，或某个风险证据是否成立。</p></div>
+      </div>
+      <div id="master-stream-status" class="master-stream-status" role="status" hidden></div>
+      <details id="master-payload-details" class="payload-disclosure">
+        <summary>查看将发送的数据</summary>
+        <p class="payload-note">只读预览，不包含 API Key；发送时会带上当前日期、修订和本页会话。</p>
+        <pre id="llm-payload-preview" data-testid="llm-payload-preview" tabindex="0"></pre>
+      </details>
+      <div class="master-composer">
+        <label class="sr-only" for="master-input">向大师提问</label>
+        <textarea id="master-input" data-testid="master-input" rows="3" placeholder="例如：这只股票为什么没有进入正式推荐？" disabled></textarea>
+        <div class="master-composer-actions">
+          <p id="master-input-help">切换角色或日期会开启新的对话线程。</p>
+          <div><button id="master-cancel" class="button button-secondary" type="button" data-testid="master-cancel" disabled>取消</button><button id="master-send" class="button button-primary" type="button" data-testid="master-send" disabled>发送</button></div>
+        </div>
+      </div>
+    </aside>
+
+    <dialog id="llm-settings-dialog" class="llm-settings-dialog" data-testid="llm-settings-dialog" aria-labelledby="llm-settings-title">
+      <div class="llm-settings-inner">
+        <header class="llm-settings-header"><div><p class="eyebrow">AI CONNECTION</p><h2 id="llm-settings-title">AI 设置</h2></div><button id="llm-settings-close" class="button button-secondary" type="button" data-testid="llm-settings-close">关闭</button></header>
+        <p id="llm-config-status" class="llm-config-status" role="status">正在读取配置…</p>
+        <div id="llm-config-error" class="notice notice-error" role="alert" hidden></div>
+        <div class="llm-fields">
+          <div class="llm-field"><label for="llm-base-url">Base URL</label><input id="llm-base-url" data-testid="llm-base-url" type="url" inputmode="url" autocomplete="url" placeholder="https://api.example.com/v1"><small id="llm-base-url-source" class="llm-field-source"></small></div>
+          <div class="llm-field"><label for="llm-api-key">API Key</label><input id="llm-api-key" data-testid="llm-api-key" type="password" autocomplete="new-password" placeholder="留空则不修改已保存的密钥"><small id="llm-api-key-source" class="llm-field-source"></small></div>
+          <div class="llm-field"><label for="llm-model">模型</label><input id="llm-model" data-testid="llm-model" type="text" autocomplete="off" placeholder="模型名称"><small id="llm-model-source" class="llm-field-source"></small></div>
+          <div class="llm-field"><label for="llm-timeout">超时</label><input id="llm-timeout" data-testid="llm-timeout" type="text" inputmode="text" autocomplete="off" placeholder="60s"><small id="llm-timeout-source" class="llm-field-source"></small></div>
+        </div>
+        <p id="llm-api-key-help" class="llm-help">不会回显明文密钥。留空表示保留现有密钥；状态只展示是否配置和尾号。</p>
+        <p id="llm-write-note" class="llm-help" hidden></p>
+        <div class="llm-settings-actions"><button id="llm-test" class="button button-secondary" type="button" data-testid="llm-test">测试连接</button><button id="llm-save" class="button button-primary" type="button" data-testid="llm-save">保存设置</button></div>
+        <p id="llm-test-status" class="llm-test-status" role="status" hidden></p>
+      </div>
+    </dialog>
+  </body>
+</html>
