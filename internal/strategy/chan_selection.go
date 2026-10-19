@@ -113,6 +113,20 @@ func applyStructureGuard(result *Result, c config.Config, histories, raw []marke
 		for i := range eligible {
 			eligible[i].EligibleRank = i + 1
 		}
+		eligibleByCode := make(map[string]Candidate, len(eligible))
+		for _, candidate := range eligible {
+			eligibleByCode[candidate.Code] = candidate
+		}
+		for i := range observation {
+			reranked, ok := eligibleByCode[observation[i].Code]
+			if !ok {
+				continue
+			}
+			observation[i].EligibleRank = reranked.EligibleRank
+			observation[i].EligibleScore = reranked.EligibleScore
+			observation[i].EligibleScoreBreakdown = reranked.EligibleScoreBreakdown
+			observation[i].EligibleRecommended = reranked.EligibleRecommended
+		}
 	}
 
 	if mode != StructureGuardEnforce {

@@ -188,4 +188,7 @@ func TestStructureGuardRanksOnlyPassingPoolAndKeepsObservationView(t *testing.T)
 	if shadow.Ranking[1].Code != codes[1] || !shadow.Ranking[1].Recommended {
 		t.Fatalf("shadow mode changed the legacy recommendation: %+v", shadow.Ranking)
 	}
+	if shadow.Ranking[0].EligibleRank != 1 || shadow.Ranking[0].EligibleScore == 0 || shadow.Ranking[1].EligibleRank != 0 {
+		t.Fatalf("shadow mode did not retain the eligible view: %+v", shadow.Ranking)
+	}
 }
