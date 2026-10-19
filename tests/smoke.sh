@@ -28,6 +28,11 @@ trap cleanup EXIT
 mkdir "$FIXTURE/data" "$FIXTURE/logs"
 printf '%s\n' 'schema_version: 1' 'stocks:' '  - code: sz000001' '    name: 平安银行' > "$FIXTURE/leaders.yaml"
 if [[ "$MODE" == container ]]; then
+  # The CI Docker daemon may map container root to another host user.
+  # Keep the temporary bind mount readable and writable for smoke commands.
+  chmod 755 "$FIXTURE"
+  chmod 777 "$FIXTURE/data" "$FIXTURE/logs"
+  chmod 644 "$FIXTURE/leaders.yaml"
   DATA=/fixture/data
   LOGS=/fixture/logs
   POOL_FILE=/fixture/leaders.yaml
