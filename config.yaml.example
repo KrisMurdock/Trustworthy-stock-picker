@@ -54,7 +54,9 @@ selection:
   max_day_change_pct: 7
 
 sync:
-  min_coverage_pct: 95 # Recommendation gate; validated histories are saved below this threshold.
+  min_coverage_pct: 95 # Ten-year completeness gate; validated histories are saved below this threshold.
+  min_analyzable_pct: 90 # Current-session analyzability gate; suspended stocks do not enter reports.
+  status_refresh_days: 30 # Re-check recent suspension/calendar facts on every sync (5-250 days).
   incremental_bars: 5
 
 # Set enabled=true to replace legacy filtering with full-pool short-horizon ranking.

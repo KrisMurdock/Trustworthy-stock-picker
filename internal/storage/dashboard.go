@@ -29,25 +29,37 @@ type DashboardSnapshot struct {
 }
 
 type DashboardSummary struct {
-	PoolSize    int     `json:"pool_size"`
-	Available   int     `json:"available"`
-	Missing     int     `json:"missing"`
-	Eligible    int     `json:"eligible"`
-	Selected    int     `json:"selected"`
-	CoveragePct float64 `json:"coverage_pct"`
+	PoolSize      int     `json:"pool_size"`
+	Available     int     `json:"available"`
+	Missing       int     `json:"missing"`
+	Eligible      int     `json:"eligible"`
+	Selected      int     `json:"selected"`
+	CoveragePct   float64 `json:"coverage_pct"`
+	Complete      int     `json:"complete"`
+	CompletePct   float64 `json:"complete_pct"`
+	Analyzable    int     `json:"analyzable"`
+	AnalyzablePct float64 `json:"analyzable_pct"`
+	Suspended     int     `json:"suspended"`
+	Gaps          int     `json:"gaps"`
 }
 
 type DashboardStock struct {
-	Source    string              `json:"source"`
-	Code      string              `json:"code"`
-	Name      string              `json:"name"`
-	Sector    string              `json:"sector"`
-	Status    string              `json:"status"`
-	Reason    string              `json:"reason"`
-	LastDate  string              `json:"last_date"`
-	Bar       *DashboardBar       `json:"bar"`
-	ChangePct *float64            `json:"change_pct"`
-	Metrics   *indicators.Metrics `json:"metrics"`
+	Source       string              `json:"source"`
+	Code         string              `json:"code"`
+	Name         string              `json:"name"`
+	Sector       string              `json:"sector"`
+	Status       string              `json:"status"`
+	Reason       string              `json:"reason"`
+	LastDate     string              `json:"last_date"`
+	Bar          *DashboardBar       `json:"bar"`
+	ChangePct    *float64            `json:"change_pct"`
+	Metrics      *indicators.Metrics `json:"metrics"`
+	Complete     bool                `json:"complete"`
+	Analyzable   bool                `json:"analyzable"`
+	Sessions     int                 `json:"sessions"`
+	Suspended    int                 `json:"suspended"`
+	Gaps         int                 `json:"gaps"`
+	SessionState string              `json:"session_state,omitempty"`
 }
 
 type DashboardBar struct {
@@ -61,11 +73,12 @@ type DashboardBar struct {
 }
 
 type DashboardSync struct {
-	AsOf        string    `json:"as_of"`
-	Status      string    `json:"status"`
-	FinishedAt  time.Time `json:"finished_at"`
-	CoveragePct float64   `json:"coverage_pct"`
-	ErrorKind   string    `json:"error_kind"`
+	AsOf          string    `json:"as_of"`
+	Status        string    `json:"status"`
+	FinishedAt    time.Time `json:"finished_at"`
+	CoveragePct   float64   `json:"coverage_pct"`
+	AnalyzablePct float64   `json:"analyzable_pct"`
+	ErrorKind     string    `json:"error_kind"`
 }
 
 // LoadDashboard reads market windows and published reports in one transaction.
@@ -106,9 +119,9 @@ func (m *MarketDB) LoadDashboard(ctx context.Context, stocks []config.Stock, adj
 	}
 	var sync DashboardSync
 	var finished string
-	err = tx.QueryRowContext(ctx, `SELECT as_of, status, finished_at, coverage_pct, error_kind
+	err = tx.QueryRowContext(ctx, `SELECT as_of, status, finished_at, coverage_pct, analyzable_pct, error_kind
 		FROM sync_run ORDER BY julianday(finished_at) DESC, rowid DESC LIMIT 1`).Scan(
-		&sync.AsOf, &sync.Status, &finished, &sync.CoveragePct, &sync.ErrorKind)
+		&sync.AsOf, &sync.Status, &finished, &sync.CoveragePct, &sync.AnalyzablePct, &sync.ErrorKind)
 	if err == nil {
 		sync.FinishedAt, err = time.Parse(time.RFC3339Nano, finished)
 		if err != nil {
@@ -164,11 +177,25 @@ func (m *MarketDB) LoadDashboard(ctx context.Context, stocks []config.Stock, adj
 			if row.Bar != nil {
 				out.Summary.Available++
 			}
+			if row.Complete {
+				out.Summary.Complete++
+			}
+			if row.Analyzable {
+				out.Summary.Analyzable++
+			}
+			if row.Complete && !row.Analyzable && row.SessionState == "suspended" {
+				out.Summary.Suspended++
+			}
+			if row.Gaps > 0 {
+				out.Summary.Gaps++
+			}
 		}
 		out.Summary.Missing = len(stocks) - out.Summary.Available
 		if len(stocks) > 0 {
-			out.Summary.CoveragePct = float64(out.Summary.Available) * 100 / float64(len(stocks))
+			out.Summary.CompletePct = float64(out.Summary.Complete) * 100 / float64(len(stocks))
+			out.Summary.AnalyzablePct = float64(out.Summary.Analyzable) * 100 / float64(len(stocks))
 		}
+		out.Summary.CoveragePct = out.Summary.CompletePct
 	}
 	if err := tx.Commit(); err != nil {
 		return out, dashboardReadError(ctx)
@@ -180,10 +207,11 @@ func readDashboardStock(ctx context.Context, reader sqlReader, stock config.Stoc
 	row := DashboardStock{Code: stock.Code, Name: stock.Name, Sector: stock.Sector, Status: "missing", Reason: "missing_data"}
 	var name, sector string
 	var status, reason sql.NullString
-	err := reader.QueryRowContext(ctx, `SELECT stock.name, stock.sector, sync.status, sync.reason
+	var analyzable, sessions, suspended, gaps sql.NullInt64
+	err := reader.QueryRowContext(ctx, `SELECT stock.name, stock.sector, sync.status, sync.reason, sync.analyzable, sync.sessions, sync.suspended, sync.gaps
 		FROM stock LEFT JOIN stock_sync AS sync
 		ON sync.code=stock.code AND sync.adjust=? AND sync.as_of=? WHERE stock.code=?`,
-		report.Adjust, report.AsOf, stock.Code).Scan(&name, &sector, &status, &reason)
+		report.Adjust, report.AsOf, stock.Code).Scan(&name, &sector, &status, &reason, &analyzable, &sessions, &suspended, &gaps)
 	if errors.Is(err, sql.ErrNoRows) {
 		return row, nil
 	}
@@ -206,7 +234,20 @@ func readDashboardStock(ctx context.Context, reader sqlReader, stock config.Stoc
 			row.Name = candidate.Name
 		}
 	}
+	row.Analyzable = analyzable.Int64 == 1
+	row.Sessions, row.Suspended, row.Gaps = int(sessions.Int64), int(suspended.Int64), int(gaps.Int64)
+	row.Complete = row.Gaps == 0 && row.Sessions > 0
+	if err := reader.QueryRowContext(ctx, "SELECT state FROM session_status WHERE code=? AND trade_date=?", stock.Code, report.AsOf).Scan(&row.SessionState); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return row, dashboardReadError(ctx)
+	}
 	if status.String != "ok" {
+		if row.Gaps > 0 {
+			row.Status = "gap"
+		} else if row.SessionState == "suspended" && row.Complete {
+			row.Status, row.Reason = "suspended", "complete_not_analyzable"
+		} else if status.String != "" {
+			row.Status = status.String
+		}
 		if reason.String != "" {
 			row.Reason = reason.String
 		}
@@ -229,6 +270,14 @@ func readDashboardStock(ctx context.Context, reader sqlReader, stock config.Stoc
 	row.Source = history.Source
 	row.Bar = &DashboardBar{Date: last.Date, Open: last.Open, High: last.High, Low: last.Low, Close: last.Close, Volume: last.Volume, VolumeShares: market.ProviderVolumeShares(history.Source, history.Code, last.Volume)}
 	row.LastDate, row.Status, row.Reason = last.Date, "available", ""
+	// Rows written before schema 5 have no completeness counters. Preserve the
+	// legacy read contract until the next synchronization fills them.
+	if row.Sessions == 0 {
+		row.Complete = true
+		if last.Date == report.AsOf {
+			row.Analyzable = true
+		}
+	}
 	if report.Version > 0 {
 		row.Status = "eligible"
 	}
@@ -252,6 +301,16 @@ func readDashboardStock(ctx context.Context, reader sqlReader, stock config.Stoc
 	for _, candidate := range report.Selected {
 		if candidate.Code == stock.Code {
 			row.Status, row.Reason = "selected", ""
+		}
+	}
+	if row.Gaps > 0 {
+		row.Status, row.Reason = "gap", "history_gap"
+	} else if !row.Analyzable {
+		switch {
+		case row.SessionState == "suspended" && row.Complete:
+			row.Status, row.Reason = "suspended", "complete_not_analyzable"
+		case status.String == "ok":
+			row.Status, row.Reason = "isolated", "adjusted_history_unavailable"
 		}
 	}
 	return row, nil

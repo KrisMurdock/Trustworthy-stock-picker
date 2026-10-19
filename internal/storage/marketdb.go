@@ -20,7 +20,7 @@ import (
 )
 
 const marketDBName = "market.db"
-const marketSchemaVersion = 4
+const marketSchemaVersion = 5
 
 type MarketDB struct {
 	db          *sql.DB
@@ -35,22 +35,31 @@ type sqlReader interface {
 }
 
 type SyncItem struct {
-	Stock    config.Stock
-	Adjusted *market.History
-	Raw      *market.History
-	Minutes  *market.MinuteHistory `json:",omitempty"`
-	Status   string
-	Reason   string
+	Stock         config.Stock
+	Adjusted      *market.History
+	Raw           *market.History
+	Minutes       *market.MinuteHistory `json:",omitempty"`
+	Status        string
+	Reason        string
+	Analyzable    bool
+	Complete      bool
+	Sessions      int
+	Suspended     int
+	Gaps          int
+	RawStatus     string
+	RawReason     string
+	RawAnalyzable bool
 }
 
 type SyncRun struct {
-	ID          string
-	AsOf        string
-	StartedAt   time.Time
-	FinishedAt  time.Time
-	Status      string
-	CoveragePct float64
-	ErrorKind   string
+	ID            string
+	AsOf          string
+	StartedAt     time.Time
+	FinishedAt    time.Time
+	Status        string
+	CoveragePct   float64
+	AnalyzablePct float64
+	ErrorKind     string
 }
 
 func OpenMarket(root string, requireCIFS bool) (*MarketDB, error) {
@@ -187,7 +196,7 @@ func (m *MarketDB) configure() error {
 func verifySchema(reader sqlReader) error {
 	rows, err := reader.QueryContext(context.Background(), `
 		SELECT name FROM sqlite_master
-		WHERE type='table' AND name IN ('stock', 'daily_bar', 'stock_sync', 'sync_run', 'selection_run', 'selection_result', 'intraday_bar', 'intraday_sync', 'history_snapshot', 'history_revision', 'report_input', 'report_archive', 'sync_task', 'sync_checkpoint')
+		WHERE type='table' AND name IN ('stock', 'daily_bar', 'stock_sync', 'sync_run', 'selection_run', 'selection_result', 'intraday_bar', 'intraday_sync', 'history_snapshot', 'history_revision', 'report_input', 'report_archive', 'sync_task', 'sync_checkpoint', 'session_status', 'status_sync', 'market_calendar', 'calendar_sync')
 	`)
 	if err != nil {
 		return errors.New("cannot inspect market database schema")
@@ -201,7 +210,7 @@ func verifySchema(reader sqlReader) error {
 		}
 		found[name] = true
 	}
-	if err := rows.Err(); err != nil || len(found) != 14 {
+	if err := rows.Err(); err != nil || len(found) != 18 {
 		return errors.New("market database schema is incomplete")
 	}
 	return nil
@@ -212,7 +221,7 @@ func (m *MarketDB) initSchema() error {
 	if err := m.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return errors.New("cannot read market database version")
 	}
-	if version != 0 && version != 2 && version != 3 && version != marketSchemaVersion {
+	if version != 0 && version != 2 && version != 3 && version != 4 && version != marketSchemaVersion {
 		return errors.New("unsupported market database version")
 	}
 	_, err := m.db.Exec(`
@@ -249,6 +258,10 @@ func (m *MarketDB) initSchema() error {
 			fetched_at TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL CHECK (status IN ('ok', 'isolated', 'failed')),
 			reason TEXT NOT NULL DEFAULT '',
+			analyzable INTEGER NOT NULL DEFAULT 0 CHECK (analyzable IN (0, 1)),
+			sessions INTEGER NOT NULL DEFAULT 0 CHECK (sessions >= 0),
+			suspended INTEGER NOT NULL DEFAULT 0 CHECK (suspended >= 0),
+			gaps INTEGER NOT NULL DEFAULT 0 CHECK (gaps >= 0),
 			PRIMARY KEY (code, adjust, as_of)
 		);
 		CREATE TABLE IF NOT EXISTS sync_run (
@@ -258,6 +271,7 @@ func (m *MarketDB) initSchema() error {
 			finished_at TEXT NOT NULL,
 			status TEXT NOT NULL CHECK (status IN ('running', 'published', 'failed')),
 			coverage_pct REAL NOT NULL CHECK (coverage_pct >= 0 AND coverage_pct <= 100),
+			analyzable_pct REAL NOT NULL DEFAULT 0 CHECK (analyzable_pct >= 0 AND analyzable_pct <= 100),
 			error_kind TEXT NOT NULL DEFAULT ''
 		);
 		CREATE TABLE IF NOT EXISTS selection_run (
@@ -283,7 +297,10 @@ func (m *MarketDB) initSchema() error {
 			return err
 		}
 	}
-	return m.initSnapshotSchema()
+	if err := m.initSnapshotSchema(); err != nil {
+		return err
+	}
+	return m.initStatusSchema()
 }
 
 func (m *MarketDB) Close() error {
@@ -339,51 +356,83 @@ func (m *MarketDB) commitMarketMode(ctx context.Context, run SyncRun, items []Sy
 		`, item.Stock.Code, item.Stock.Name, item.Stock.Sector, run.FinishedAt.UTC().Format(time.RFC3339Nano)); err != nil {
 			return rollback(errors.New("cannot persist stock metadata"))
 		}
+		analyzable, complete := item.Analyzable, item.Complete
+		sessions, suspended, gaps := item.Sessions, item.Suspended, item.Gaps
 		if item.Adjusted != nil {
 			if err := insertHistory(ctx, tx, *item.Adjusted); err != nil {
 				return rollback(err)
 			}
-			if item.Raw != nil {
-				if err := insertHistory(ctx, tx, *item.Raw); err != nil {
-					return rollback(err)
-				}
+			if sessions == 0 && complete == false {
+				complete = true
+			}
+			if !item.Analyzable {
+				analyzable = historyHasDate(*item.Adjusted, run.AsOf)
 			}
 			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO stock_sync(code, adjust, as_of, window_start, window_hash, bars, data_field, source, fetched_at, status, reason)
-				VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				INSERT INTO stock_sync(code, adjust, as_of, window_start, window_hash, bars, data_field, source, fetched_at, status, reason, analyzable, sessions, suspended, gaps)
+				VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT(code, adjust, as_of) DO UPDATE SET window_start=excluded.window_start, window_hash=excluded.window_hash, bars=excluded.bars,
 					data_field=excluded.data_field, source=excluded.source, fetched_at=excluded.fetched_at,
-					status=excluded.status, reason=excluded.reason
+					status=excluded.status, reason=excluded.reason, analyzable=excluded.analyzable,
+					sessions=excluded.sessions, suspended=excluded.suspended, gaps=excluded.gaps
 			`, item.Stock.Code, item.Adjusted.Adjust, item.Adjusted.AsOf, item.Adjusted.Bars[0].Date, historyHash(*item.Adjusted), len(item.Adjusted.Bars),
-				item.Adjusted.DataField, item.Adjusted.Source, item.Adjusted.FetchedAt.UTC().Format(time.RFC3339Nano), item.Status, item.Reason); err != nil {
+				item.Adjusted.DataField, item.Adjusted.Source, item.Adjusted.FetchedAt.UTC().Format(time.RFC3339Nano), item.Status, item.Reason,
+				boolInt(analyzable), sessions, suspended, gaps); err != nil {
 				return rollback(errors.New("cannot persist adjusted sync status"))
-			}
-			if item.Raw != nil {
-				if _, err := tx.ExecContext(ctx, `
-					INSERT INTO stock_sync(code, adjust, as_of, window_start, window_hash, bars, data_field, source, fetched_at, status, reason)
-					VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-					ON CONFLICT(code, adjust, as_of) DO UPDATE SET window_start=excluded.window_start, window_hash=excluded.window_hash, bars=excluded.bars,
-						data_field=excluded.data_field, source=excluded.source, fetched_at=excluded.fetched_at,
-						status=excluded.status, reason=excluded.reason
-				`, item.Stock.Code, item.Raw.Adjust, item.Raw.AsOf, item.Raw.Bars[0].Date, historyHash(*item.Raw), len(item.Raw.Bars),
-					item.Raw.DataField, item.Raw.Source, item.Raw.FetchedAt.UTC().Format(time.RFC3339Nano), item.Status, item.Reason); err != nil {
-					return rollback(errors.New("cannot persist raw sync status"))
-				}
 			}
 		} else {
 			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO stock_sync(code, adjust, as_of, status, reason)
-				VALUES(?, ?, ?, ?, ?)
-				ON CONFLICT(code, adjust, as_of) DO UPDATE SET status=excluded.status, reason=excluded.reason
-			`, item.Stock.Code, adjust, run.AsOf, item.Status, item.Reason); err != nil {
+				INSERT INTO stock_sync(code, adjust, as_of, status, reason, analyzable, sessions, suspended, gaps)
+				VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT(code, adjust, as_of) DO UPDATE SET status=excluded.status, reason=excluded.reason,
+					analyzable=excluded.analyzable, sessions=excluded.sessions, suspended=excluded.suspended, gaps=excluded.gaps
+			`, item.Stock.Code, adjust, run.AsOf, item.Status, item.Reason,
+				boolInt(analyzable), sessions, suspended, gaps); err != nil {
 				return rollback(errors.New("cannot persist isolated sync status"))
+			}
+		}
+		if adjust == "none" {
+			continue
+		}
+		rawStatus, rawReason := item.RawStatus, item.RawReason
+		if rawStatus == "" {
+			if item.Raw != nil {
+				rawStatus = "ok"
+			} else {
+				rawStatus, rawReason = "isolated", "raw_history_unavailable"
+			}
+		}
+		if item.Raw != nil {
+			if err := insertHistory(ctx, tx, *item.Raw); err != nil {
+				return rollback(err)
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO stock_sync(code, adjust, as_of, window_start, window_hash, bars, data_field, source, fetched_at, status, reason, analyzable, sessions, suspended, gaps)
+				VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT(code, adjust, as_of) DO UPDATE SET window_start=excluded.window_start, window_hash=excluded.window_hash, bars=excluded.bars,
+					data_field=excluded.data_field, source=excluded.source, fetched_at=excluded.fetched_at,
+					status=excluded.status, reason=excluded.reason, analyzable=excluded.analyzable,
+					sessions=excluded.sessions, suspended=excluded.suspended, gaps=excluded.gaps
+			`, item.Stock.Code, item.Raw.Adjust, item.Raw.AsOf, item.Raw.Bars[0].Date, historyHash(*item.Raw), len(item.Raw.Bars),
+				item.Raw.DataField, item.Raw.Source, item.Raw.FetchedAt.UTC().Format(time.RFC3339Nano), rawStatus, rawReason,
+				boolInt(item.RawAnalyzable || historyHasDate(*item.Raw, run.AsOf)), sessions, suspended, gaps); err != nil {
+				return rollback(errors.New("cannot persist raw sync status"))
+			}
+		} else if item.Adjusted != nil || rawStatus != "" {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO stock_sync(code, adjust, as_of, status, reason, analyzable, sessions, suspended, gaps)
+				VALUES(?, ?, ?, ?, ?, 0, ?, ?, ?)
+				ON CONFLICT(code, adjust, as_of) DO UPDATE SET status=excluded.status, reason=excluded.reason,
+					analyzable=excluded.analyzable, sessions=excluded.sessions, suspended=excluded.suspended, gaps=excluded.gaps
+			`, item.Stock.Code, "none", run.AsOf, rawStatus, rawReason, sessions, suspended, gaps); err != nil {
+				return rollback(errors.New("cannot persist raw sync status"))
 			}
 		}
 	}
 	if report == nil {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO sync_run(id, as_of, started_at, finished_at, status, coverage_pct, error_kind)
-			VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET finished_at=excluded.finished_at,status=excluded.status,coverage_pct=excluded.coverage_pct,error_kind=excluded.error_kind`, run.ID, run.AsOf, run.StartedAt.UTC().Format(time.RFC3339Nano),
-			run.FinishedAt.UTC().Format(time.RFC3339Nano), run.Status, run.CoveragePct, run.ErrorKind); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO sync_run(id, as_of, started_at, finished_at, status, coverage_pct, analyzable_pct, error_kind)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET finished_at=excluded.finished_at,status=excluded.status,coverage_pct=excluded.coverage_pct,analyzable_pct=excluded.analyzable_pct,error_kind=excluded.error_kind`, run.ID, run.AsOf, run.StartedAt.UTC().Format(time.RFC3339Nano),
+			run.FinishedAt.UTC().Format(time.RFC3339Nano), run.Status, run.CoveragePct, run.AnalyzablePct, run.ErrorKind); err != nil {
 			return rollback(errors.New("cannot persist market data run"))
 		}
 		if err := tx.Commit(); err != nil {
@@ -405,9 +454,9 @@ func (m *MarketDB) commitMarketMode(ctx context.Context, run SyncRun, items []Sy
 		return rollback(errors.New("cannot encode selection report"))
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO sync_run(id, as_of, started_at, finished_at, status, coverage_pct, error_kind)
-		VALUES(?, ?, ?, ?, 'published', ?, '') ON CONFLICT(id) DO UPDATE SET finished_at=excluded.finished_at,status='published',coverage_pct=excluded.coverage_pct,error_kind=''
-	`, run.ID, run.AsOf, run.StartedAt.UTC().Format(time.RFC3339Nano), run.FinishedAt.UTC().Format(time.RFC3339Nano), run.CoveragePct); err != nil {
+		INSERT INTO sync_run(id, as_of, started_at, finished_at, status, coverage_pct, analyzable_pct, error_kind)
+		VALUES(?, ?, ?, ?, 'published', ?, ?, '') ON CONFLICT(id) DO UPDATE SET finished_at=excluded.finished_at,status='published',coverage_pct=excluded.coverage_pct,analyzable_pct=excluded.analyzable_pct,error_kind=''
+	`, run.ID, run.AsOf, run.StartedAt.UTC().Format(time.RFC3339Nano), run.FinishedAt.UTC().Format(time.RFC3339Nano), run.CoveragePct, run.AnalyzablePct); err != nil {
 		return rollback(errors.New("cannot persist sync run"))
 	}
 	report.Revision = sha256Sum(reportJSON)
@@ -442,10 +491,10 @@ func (m *MarketDB) RecordFailedRun(ctx context.Context, run SyncRun) error {
 		return err
 	}
 	_, err := m.db.ExecContext(ctx, `
-		INSERT INTO sync_run(id, as_of, started_at, finished_at, status, coverage_pct, error_kind)
-		VALUES(?, ?, ?, ?, 'failed', ?, ?) ON CONFLICT(id) DO UPDATE SET finished_at=excluded.finished_at,status='failed',coverage_pct=excluded.coverage_pct,error_kind=excluded.error_kind
+		INSERT INTO sync_run(id, as_of, started_at, finished_at, status, coverage_pct, analyzable_pct, error_kind)
+		VALUES(?, ?, ?, ?, 'failed', ?, ?, ?) ON CONFLICT(id) DO UPDATE SET finished_at=excluded.finished_at,status='failed',coverage_pct=excluded.coverage_pct,analyzable_pct=excluded.analyzable_pct,error_kind=excluded.error_kind
 	`, run.ID, run.AsOf, run.StartedAt.UTC().Format(time.RFC3339Nano), run.FinishedAt.UTC().Format(time.RFC3339Nano),
-		run.CoveragePct, run.ErrorKind)
+		run.CoveragePct, run.AnalyzablePct, run.ErrorKind)
 	if err != nil {
 		return errors.New("cannot persist failed sync run")
 	}
@@ -521,6 +570,18 @@ func boolInt(value bool) int {
 
 func micros(value float64) int64 {
 	return int64(math.Round(value * 1_000_000))
+}
+
+func historyHasDate(h market.History, date string) bool {
+	for i := len(h.Bars) - 1; i >= 0; i-- {
+		if h.Bars[i].Date == date {
+			return true
+		}
+		if h.Bars[i].Date < date {
+			return false
+		}
+	}
+	return false
 }
 
 func historyHash(h market.History) string {
@@ -720,9 +781,9 @@ func (m *MarketDB) LatestRun(ctx context.Context, asof string) (SyncRun, error) 
 	var run SyncRun
 	var started, finished string
 	err := m.db.QueryRowContext(ctx, `
-		SELECT id, as_of, started_at, finished_at, status, coverage_pct, error_kind
+		SELECT id, as_of, started_at, finished_at, status, coverage_pct, analyzable_pct, error_kind
 		FROM sync_run WHERE as_of=? ORDER BY finished_at DESC LIMIT 1
-	`, asof).Scan(&run.ID, &run.AsOf, &started, &finished, &run.Status, &run.CoveragePct, &run.ErrorKind)
+	`, asof).Scan(&run.ID, &run.AsOf, &started, &finished, &run.Status, &run.CoveragePct, &run.AnalyzablePct, &run.ErrorKind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return run, fs.ErrNotExist
 	}

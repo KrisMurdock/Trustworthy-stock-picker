@@ -27,6 +27,24 @@ func NewTushareClient(timeout, interval time.Duration, token string) *TushareCli
 func (c *TushareClient) Close() { c.HTTP.CloseIdleConnections() }
 
 func (c *TushareClient) query(ctx context.Context, api, code, start, end, fields string) ([]map[string]json.RawMessage, error) {
+	rows, err := c.queryParams(ctx, api, map[string]string{"ts_code": code, "start_date": compactDate(start), "end_date": compactDate(end)}, fields, false)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		var actual, date string
+		if json.Unmarshal(row["ts_code"], &actual) != nil || actual != code || json.Unmarshal(row["trade_date"], &date) != nil {
+			return nil, &DataError{Reason: "tushare_stock_mismatch"}
+		}
+		parsed, err := parseCompactDate(date)
+		if err != nil || parsed < start || parsed > end {
+			return nil, &DataError{Reason: "tushare_date_outside_request"}
+		}
+	}
+	return rows, nil
+}
+
+func (c *TushareClient) queryParams(ctx context.Context, api string, params map[string]string, fields string, allowEmpty bool) ([]map[string]json.RawMessage, error) {
 	if strings.TrimSpace(c.token) == "" {
 		return nil, &Failure{Status: 401, Kind: "missing_token"}
 	}
@@ -34,7 +52,7 @@ func (c *TushareClient) query(ctx context.Context, api, code, start, end, fields
 		return nil, err
 	}
 	body, _ := json.Marshal(map[string]any{"api_name": api, "token": c.token,
-		"params": map[string]string{"ts_code": code, "start_date": compactDate(start), "end_date": compactDate(end)}, "fields": fields})
+		"params": params, "fields": fields})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, &Failure{Status: 400, Kind: "request"}
@@ -69,8 +87,17 @@ func (c *TushareClient) query(ctx context.Context, api, code, start, end, fields
 		}
 		return nil, &Failure{Status: status, Kind: "tushare_api"}
 	}
-	if response.Data == nil || len(response.Data.Items) >= 6000 {
+	if response.Data == nil {
+		if allowEmpty {
+			return nil, nil
+		}
 		return nil, &DataError{Reason: "missing_or_truncated_tushare_data"}
+	}
+	if len(response.Data.Items) >= 6000 {
+		return nil, &DataError{Reason: "missing_or_truncated_tushare_data"}
+	}
+	if allowEmpty && len(response.Data.Items) == 0 {
+		return nil, nil
 	}
 	seen := map[string]bool{}
 	for _, name := range response.Data.Fields {
@@ -93,17 +120,83 @@ func (c *TushareClient) query(ctx context.Context, api, code, start, end, fields
 		for i, field := range response.Data.Fields {
 			row[field] = values[i]
 		}
-		var actual, date string
-		if json.Unmarshal(row["ts_code"], &actual) != nil || actual != code || json.Unmarshal(row["trade_date"], &date) != nil {
-			return nil, &DataError{Reason: "tushare_stock_mismatch"}
-		}
-		parsed, err := parseCompactDate(date)
-		if err != nil || parsed < start || parsed > end {
-			return nil, &DataError{Reason: "tushare_date_outside_request"}
-		}
 		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+func (c *TushareClient) FetchStatus(ctx context.Context, stock config.Stock, start, end string) (StatusWindow, error) {
+	window := StatusWindow{Code: stock.Code, Start: start, End: end, Source: "tushare", FetchedAt: time.Now().In(Shanghai)}
+	if !config.ValidCode(stock.Code) {
+		return window, &DataError{Reason: "invalid_status_stock_code"}
+	}
+	first, e1 := time.Parse("2006-01-02", start)
+	last, e2 := time.Parse("2006-01-02", end)
+	if e1 != nil || e2 != nil || first.After(last) {
+		return window, &DataError{Reason: "invalid_status_window"}
+	}
+	code := stock.Code[2:] + "." + strings.ToUpper(stock.Code[:2])
+	rows, err := c.queryParams(ctx, "suspend_d", map[string]string{"ts_code": code, "start_date": compactDate(start), "end_date": compactDate(end)}, "ts_code,trade_date,suspend_type", true)
+	if err != nil {
+		return StatusWindow{}, err
+	}
+	for _, row := range rows {
+		var actual, date, kind string
+		if json.Unmarshal(row["ts_code"], &actual) != nil || actual != code || json.Unmarshal(row["trade_date"], &date) != nil || json.Unmarshal(row["suspend_type"], &kind) != nil {
+			return StatusWindow{}, &DataError{Reason: "tushare_status_mismatch"}
+		}
+		parsed, err := parseCompactDate(date)
+		if err != nil || parsed < start || parsed > end {
+			return StatusWindow{}, &DataError{Reason: "tushare_status_date_outside_request"}
+		}
+		state := SessionUnknown
+		switch kind {
+		case "S":
+			state = SessionSuspended
+		case "R":
+			state = SessionTraded
+		default:
+			return StatusWindow{}, &DataError{Reason: "invalid_tushare_suspend_type"}
+		}
+		window.Statuses = append(window.Statuses, SessionStatus{Code: stock.Code, Date: parsed, State: state, Source: "tushare", FetchedAt: window.FetchedAt})
+	}
+	sort.Slice(window.Statuses, func(i, j int) bool { return window.Statuses[i].Date < window.Statuses[j].Date })
+	if err := window.Validate(); err != nil {
+		return StatusWindow{}, &DataError{Reason: err.Error()}
+	}
+	return window, nil
+}
+
+func (c *TushareClient) FetchTradingDays(ctx context.Context, start, end string) ([]string, error) {
+	first, e1 := time.Parse("2006-01-02", start)
+	last, e2 := time.Parse("2006-01-02", end)
+	if e1 != nil || e2 != nil || first.After(last) {
+		return nil, &DataError{Reason: "invalid_calendar_window"}
+	}
+	rows, err := c.queryParams(ctx, "trade_cal", map[string]string{"exchange": "SSE", "start_date": compactDate(start), "end_date": compactDate(end)}, "exchange,cal_date,is_open", false)
+	if err != nil {
+		return nil, err
+	}
+	days := make([]string, 0, len(rows))
+	for _, row := range rows {
+		var exchange, date, open string
+		if json.Unmarshal(row["exchange"], &exchange) != nil || exchange != "SSE" || json.Unmarshal(row["cal_date"], &date) != nil || json.Unmarshal(row["is_open"], &open) != nil {
+			return nil, &DataError{Reason: "tushare_calendar_mismatch"}
+		}
+		parsed, err := parseCompactDate(date)
+		if err != nil || parsed < start || parsed > end {
+			return nil, &DataError{Reason: "tushare_calendar_date_outside_request"}
+		}
+		switch open {
+		case "1":
+			days = append(days, parsed)
+		case "0":
+		default:
+			return nil, &DataError{Reason: "invalid_tushare_calendar_flag"}
+		}
+	}
+	sort.Strings(days)
+	return days, nil
 }
 
 func (c *TushareClient) Fetch(ctx context.Context, stock config.Stock, start, end, adjust string) (History, error) {

@@ -49,6 +49,8 @@ func seed(root string, empty, partial, gates bool) error {
 		{Code: "sz000001", Name: "测试银行", Sector: "银行"},
 		{Code: "sh600519", Name: "测试消费", Sector: "消费"},
 		{Code: "sz000002", Name: "测试缺失", Sector: "地产"},
+		{Code: "sz000004", Name: "测试停牌", Sector: "运输"},
+		{Code: "sz000005", Name: "测试缺口", Sector: "工业"},
 	}
 	for _, stock := range []config.Stock{stocks[0], stocks[2]} {
 		if err := seedMinutes(db, stock); err != nil {
@@ -76,10 +78,14 @@ func seed(root string, empty, partial, gates bool) error {
 			items = append(items, storage.SyncItem{Stock: stock, Adjusted: &adjusted, Raw: &raw, Status: "ok"})
 		}
 		items = append(items, storage.SyncItem{Stock: stocks[2], Status: "isolated", Reason: "missing_data"})
+		items = append(items, storage.SyncItem{Stock: stocks[3], Status: "isolated", Reason: "complete_not_analyzable", Sessions: 80, Suspended: 1, Complete: true})
+		gapAdjusted, gapRaw := history(stocks[4], day, at, 0, 80), history(stocks[4], day, at, 0, 2700)
+		gapRaw.Adjust, gapRaw.DataField = "none", "day"
+		items = append(items, storage.SyncItem{Stock: stocks[4], Adjusted: &gapAdjusted, Raw: &gapRaw, Status: "ok", RawStatus: "ok", Sessions: 80, Gaps: 1, Analyzable: true, RawAnalyzable: true})
 		report := selection.Report{
 			Version: 1, ID: "dashboard-" + day, AsOf: day, Target: at.AddDate(0, 0, 1).Format("2006-01-02"),
 			GeneratedAt: at, Strategy: "leader_daily_v1", SelectionEnabled: true, Adjust: "qfq",
-			TopN: 5, PoolSize: 3, Eligible: 2, Passed: 1,
+			TopN: 5, PoolSize: 5, Eligible: 3, Passed: 1,
 			Rules:    []string{"浏览器测试快照"},
 			Selected: []selection.Candidate{{Code: stocks[1].Code, Name: stocks[1].Name, Sector: stocks[1].Sector, Close: 198, ChangePct: -1, Metrics: selection.Metrics{Score: 77}}},
 			Excluded: []selection.Excluded{{Code: stocks[2].Code, Reason: "missing_data"}}, Filtered: []selection.Excluded{},
@@ -118,6 +124,15 @@ func seed(root string, empty, partial, gates bool) error {
 		if err := db.CommitSnapshot(context.Background(), storage.SyncRun{ID: "dashboard-run-" + day, AsOf: day, StartedAt: at.Add(-time.Minute), FinishedAt: at, CoveragePct: 200.0 / 3}, items, report); err != nil {
 			return err
 		}
+	}
+	at, _ := time.ParseInLocation("2006-01-02", "2026-10-13", market.Shanghai)
+	at = at.Add(19 * time.Hour)
+	suspended := stocks[3]
+	if err := db.SaveStatusWindow(context.Background(), suspended, market.StatusWindow{
+		Code: suspended.Code, Start: "2026-10-13", End: "2026-10-13", Source: "baostock", FetchedAt: at, Full: true,
+		Statuses: []market.SessionStatus{{Code: suspended.Code, Date: "2026-10-13", State: market.SessionSuspended, Source: "baostock", FetchedAt: at}},
+	}); err != nil {
+		return err
 	}
 	return nil
 }

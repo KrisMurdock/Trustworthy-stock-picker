@@ -56,8 +56,10 @@ type Config struct {
 		MinDayChange   float64 `yaml:"min_day_change_pct"`
 	} `yaml:"selection"`
 	Sync struct {
-		MinCoveragePct  float64 `yaml:"min_coverage_pct"`
-		IncrementalBars int     `yaml:"incremental_bars"`
+		MinCoveragePct    float64 `yaml:"min_coverage_pct"`
+		MinAnalyzablePct  float64 `yaml:"min_analyzable_pct"`
+		IncrementalBars   int     `yaml:"incremental_bars"`
+		StatusRefreshDays int     `yaml:"status_refresh_days"`
 	} `yaml:"sync"`
 	Notify struct {
 		Channels []NotifyChannel `yaml:"channels"`
@@ -109,7 +111,9 @@ func Defaults() Config {
 	c.Selection.MinDayChange = -3
 	c.Selection.MaxDayChange = 7
 	c.Sync.MinCoveragePct = 95
+	c.Sync.MinAnalyzablePct = 90
 	c.Sync.IncrementalBars = 5
+	c.Sync.StatusRefreshDays = 30
 	return c
 }
 
@@ -315,8 +319,11 @@ func (c Config) Validate() error {
 	}
 	if math.IsNaN(c.Sync.MinCoveragePct) || math.IsInf(c.Sync.MinCoveragePct, 0) ||
 		c.Sync.MinCoveragePct < 0 || c.Sync.MinCoveragePct > 100 ||
-		c.Sync.IncrementalBars < 2 || c.Sync.IncrementalBars > 30 {
-		return errors.New("invalid sync coverage or incremental bars")
+		math.IsNaN(c.Sync.MinAnalyzablePct) || math.IsInf(c.Sync.MinAnalyzablePct, 0) ||
+		c.Sync.MinAnalyzablePct < 0 || c.Sync.MinAnalyzablePct > 100 ||
+		c.Sync.IncrementalBars < 2 || c.Sync.IncrementalBars > 30 ||
+		c.Sync.StatusRefreshDays < 5 || c.Sync.StatusRefreshDays > 250 {
+		return errors.New("invalid sync coverage, incremental bars or status refresh days")
 	}
 	for _, channel := range c.NotificationChannels() {
 		if channel.Type != "feishu" {

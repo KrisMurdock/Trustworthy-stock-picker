@@ -35,7 +35,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-intraday|preview|research|experiment|plan|run|once|status|retry [channel] [-config config.yaml] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-intraday|status-backfill|status-refresh|status-audit|preview|research|experiment|plan|run|once|status|retry [channel] [-config config.yaml] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -45,7 +45,7 @@ func run(args []string) error {
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
 	path := f.String("config", "config.yaml", "configuration file")
 	revision := f.String("revision", "", "saved report revision (replay only)")
-	asof := f.String("as-of", "", "completed data date (sync/preview/research/experiment only)")
+	asof := f.String("as-of", "", "completed data date (sync/status/preview/research/experiment only)")
 	code := f.String("code", "", "stock code (plan only)")
 	parent := f.String("parent", "", "parent experiment ID (experiment only)")
 	policy := f.String("policy", "baseline", "conditional-{entry,rsi,macd,bollinger,confluence,all-three,guard,confluence-guard,chan-5-15-30}, baseline, upper-wick, risk-qualified or next-day-{baseline,upper-wick,low-volatility,pullback,breakout,momentum,volume-recovery,balanced,risk-qualified} (experiment only)")
@@ -62,7 +62,7 @@ func run(args []string) error {
 		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
-	case "check-config", "init", "check", "health", "replay", "sync", "sync-intraday", "preview", "research", "experiment", "plan", "run", "once", "status", "retry":
+	case "check-config", "init", "check", "health", "replay", "sync", "sync-intraday", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "plan", "run", "once", "status", "retry":
 	default:
 		return errors.New("unknown command")
 	}
@@ -72,8 +72,8 @@ func run(args []string) error {
 	if command != "replay" && *revision != "" {
 		return errors.New("revision requires replay")
 	}
-	if *asof != "" && command != "sync" && command != "preview" && command != "research" && command != "experiment" {
-		return errors.New("as-of is supported by sync, preview, research and experiment only")
+	if *asof != "" && command != "sync" && command != "status-backfill" && command != "status-refresh" && command != "status-audit" && command != "preview" && command != "research" && command != "experiment" {
+		return errors.New("as-of is supported by sync, status commands, preview, research and experiment only")
 	}
 	if command != "plan" && (*code != "" || *entry != 0) {
 		return errors.New("trade price flags require the plan command")
@@ -148,7 +148,7 @@ func run(args []string) error {
 	}
 	openStore := storage.Open
 	readOnly := false
-	if command == "replay" || command == "status" || command == "preview" || command == "research" || command == "check" {
+	if command == "replay" || command == "status" || command == "status-audit" || command == "preview" || command == "research" || command == "check" {
 		openStore = storage.OpenView
 		readOnly = true
 	}
@@ -232,7 +232,7 @@ func run(args []string) error {
 			return err
 		}
 		return printJSON(s)
-	case "sync", "preview", "research":
+	case "sync", "status-backfill", "status-refresh", "status-audit", "preview", "research":
 		day := *asof
 		if day == "" {
 			day, err = cal.Completed(time.Now())
@@ -240,8 +240,27 @@ func run(args []string) error {
 				return err
 			}
 		}
-		if command == "sync" {
+		switch command {
+		case "sync":
 			r, err := m.Sync(ctx, day)
+			if err != nil {
+				return err
+			}
+			return printJSON(r)
+		case "status-backfill":
+			r, err := m.StatusBackfill(ctx, day)
+			if err != nil {
+				return err
+			}
+			return printJSON(r)
+		case "status-refresh":
+			r, err := m.StatusRefresh(ctx, day)
+			if err != nil {
+				return err
+			}
+			return printJSON(r)
+		case "status-audit":
+			r, err := m.StatusAudit(ctx, day)
 			if err != nil {
 				return err
 			}

@@ -71,7 +71,9 @@ h1 { font-size: 36px; font-weight: 650; line-height: 1.45; letter-spacing: -1px;
 .tag-selected, .tag-recommended { background: #e8f3ef; color: #246c54; }
 .tag-eligible { background: #eaf1f6; color: #365b76; }
 .tag-filtered, .tag-observe { background: #f2f3f2; color: #66716e; }
-.tag-excluded, .tag-missing { background: #fcf2e6; color: #8b6427; }
+.tag-excluded, .tag-missing, .tag-isolated { background: #fcf2e6; color: #8b6427; }
+.tag-suspended { background: #eef3f8; color: #48627d; }
+.tag-gap { background: #fdf0e4; color: #9a5b1f; }
 .summary-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 16px; }
 .summary-card { min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 20px 22px 19px; box-shadow: 0 2px 3px #263d2c02; }
 .entry-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; margin-bottom: 24px; }

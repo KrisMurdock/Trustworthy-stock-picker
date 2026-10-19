@@ -41,7 +41,7 @@
     const query = byId("stock-search").value.trim().toLocaleLowerCase();
     const sector = byId("pool-filter").value;
     const status = byId("data-filter").value;
-    const visible = stocks.filter((stock) => (!query || `${stock.name || ""} ${stock.code || ""}`.toLocaleLowerCase().includes(query)) && (!sector || (stock.sector || "未分类") === sector) && (!status || (status === "available" ? !!stock.bar : !stock.bar))).sort(compareStocks);
+    const visible = stocks.filter((stock) => (!query || `${stock.name || ""} ${stock.code || ""}`.toLocaleLowerCase().includes(query)) && (!sector || (stock.sector || "未分类") === sector) && (!status || (status === "available" ? !!stock.bar : status === "missing" ? !stock.bar && stock.status !== "suspended" && stock.status !== "gap" : stock.status === status))).sort(compareStocks);
     const fragment = document.createDocumentFragment();
     for (const stock of visible) {
       const row = el("tr");
@@ -88,7 +88,7 @@
 
   function applyStatusFromURL() {
     const status = new URLSearchParams(location.search).get("status");
-    byId("data-filter").value = ["available", "missing"].includes(status) ? status : "";
+    byId("data-filter").value = ["available", "missing", "suspended", "gap", "isolated"].includes(status) ? status : "";
   }
 
   async function refreshStocks() {

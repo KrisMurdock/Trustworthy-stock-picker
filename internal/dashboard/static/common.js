@@ -2,7 +2,7 @@
 
 (() => {
   const byId = (id) => document.getElementById(id);
-  const statusLabels = { available: "已同步 · 未发布推荐", selected: "已入选", eligible: "有效数据", filtered: "未通过筛选", excluded: "暂不参与", missing: "数据缺失" };
+  const statusLabels = { available: "已同步 · 未发布推荐", selected: "已入选", eligible: "有效数据", filtered: "未通过筛选", excluded: "暂不参与", suspended: "当日停牌", gap: "数据缺口", isolated: "数据隔离", missing: "数据缺失" };
   const labels = {
     missing_data: "尚无行情数据", invalid_or_stale_data: "数据无效或已过期", no_history: "暂无历史数据",
     stale_or_suspended: "数据滞后或停牌", no_trading_volume: "当日无成交量", insufficient_or_invalid_history: "历史数据不足或无效",
@@ -14,6 +14,9 @@
     baseline: "股池基准", pullback: "趋势回踩", momentum: "趋势动量", breakout: "突破形态", volume_recovery: "量能恢复",
     coverage: "覆盖率未达推荐门槛，已保存有效行情", network: "行情网络请求失败", timeout: "行情请求超时", canceled: "同步已取消", storage: "存储不可用", sync: "同步异常",
     http_403: "行情访问被拒绝", http_429: "行情请求受限", qfq_adjustment_missing: "缺少前复权数据", calendar_window: "交易日历覆盖不足", window_gap: "历史数据存在缺口",
+    complete_not_analyzable: "当日停牌，不计入排名", history_gap: "缺少可解释的交易日", missing_raw_history: "缺少十年原始日线",
+    invalid_history: "历史数据未通过校验", missing_bar: "状态显示交易但缺少日线", calendar_conflict: "日线与交易日历冲突",
+    status_unavailable: "停牌状态源不可用", missing_or_mismatched_data: "前复权或不复权数据缺失",
   };
   const number = (value, digits = 0) => typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("zh-CN", { minimumFractionDigits: digits, maximumFractionDigits: digits }) : "—";
   const isNumber = (value) => typeof value === "number" && Number.isFinite(value);

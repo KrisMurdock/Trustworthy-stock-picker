@@ -47,6 +47,12 @@ stocks:
   - code: sz000002
     name: 测试缺失
     sector: 地产
+  - code: sz000004
+    name: 测试停牌
+    sector: 运输
+  - code: sz000005
+    name: 测试缺口
+    sector: 工业
 """
 
 
@@ -239,15 +245,27 @@ def populated_checks(context, page, url, args, directory, env):
     payload = wait_ready(context, url)
     assert payload["schema_version"] == 1
     assert payload["as_of"] == LATEST
-    assert payload["summary"]["pool_size"] == 3
-    assert payload["summary"]["available"] == 2
-    assert payload["summary"]["missing"] == 1
+    assert payload["summary"]["pool_size"] == 5
+    assert payload["summary"]["available"] == 3
+    assert payload["summary"]["missing"] == 2
+    assert payload["summary"]["complete"] == 3
+    assert payload["summary"]["analyzable"] == 3
+    assert payload["summary"]["suspended"] == 1
+    assert payload["summary"]["gaps"] == 1
+    assert payload["summary"]["complete_pct"] == 60
+    assert payload["summary"]["analyzable_pct"] == 60
     assert payload["summary"]["selected"] == 1
     assert payload["dates"] == [LATEST, PREVIOUS]
     assert len(payload["report"]["ranking"]) == 2
-    assert {row["code"] for row in payload["stocks"]} == {"sz000001", "sz000002", "sh600519"}
+    assert {row["code"] for row in payload["stocks"]} == {"sz000001", "sz000002", "sh600519", "sz000004", "sz000005"}
     missing = next(row for row in payload["stocks"] if row["code"] == "sz000002")
-    assert missing["status"] == "missing" and missing["bar"] is None
+    assert missing["status"] == "isolated" and missing["reason"] == "missing_data" and missing["bar"] is None
+    suspended = next(row for row in payload["stocks"] if row["code"] == "sz000004")
+    assert suspended["status"] == "suspended" and suspended["reason"] == "complete_not_analyzable"
+    assert suspended["session_state"] == "suspended" and suspended["complete"] and not suspended["analyzable"] and suspended["bar"] is None
+    gap = next(row for row in payload["stocks"] if row["code"] == "sz000005")
+    assert gap["status"] == "gap" and gap["reason"] == "history_gap" and gap["gaps"] == 1
+    assert gap["complete"] is False and gap["analyzable"] is True and gap["bar"] is not None
     assert context.request.post(url + "/api/dashboard").status == 405
     assert context.request.get(url + "/api/reports?as_of=invalid").status == 400
     assert context.request.get(url + "/api/reports?as_of=2026-09-01").status == 404
@@ -264,7 +282,7 @@ def populated_checks(context, page, url, args, directory, env):
     # The fixture deliberately closes 40 sessions to prevent background writes.
     # Exercise successful business status rendering with an explicit HTTP mock.
     healthy = {"schema_version": 1, "ready": True, "business": "syncing", "issues": [],
-               "expected_date": LATEST, "available": 2, "pool_size": 3,
+               "expected_date": LATEST, "available": 3, "pool_size": 5,
                "minute_enabled": False, "task": {"phase": "analyzing", "completed": 3,
                "total": 3, "updated_at": "2026-10-13T19:00:00+08:00"}}
     page.route("**/api/status", lambda route: route.fulfill(json=healthy))
@@ -273,6 +291,10 @@ def populated_checks(context, page, url, args, directory, env):
     page.unroute("**/api/status")
     expect(page.get_by_test_id("snapshot-summary")).to_contain_text("3")
     assert page.locator('nav.header-nav [aria-current="page"]').inner_text() == "摘要快照"
+    expect(page.locator("#complete-count")).to_have_text("3")
+    expect(page.locator("#analyzable-count")).to_have_text("3")
+    expect(page.locator("#suspended-count")).to_have_text("1")
+    expect(page.locator("#gaps-count")).to_have_text("1")
     screenshots = ROOT / ".scratch" / "dashboard-verification"
     screenshots.mkdir(parents=True, exist_ok=True)
     kind = "container" if args.image else "native"
@@ -294,10 +316,13 @@ def populated_checks(context, page, url, args, directory, env):
     expect(page).to_have_title("全部股票 · Stock Watcher")
     assert page.locator('nav.header-nav [aria-current="page"]').inner_text() == "全部股票"
     check_page_assets(context, page, url)
-    expect(page.get_by_test_id("stock-row")).to_have_count(3)
-    expect(page.get_by_test_id("stock-row").filter(has_text="测试缺失")).to_contain_text("缺")
+    expect(page.get_by_test_id("stock-row")).to_have_count(5)
+    expect(page.get_by_test_id("stock-row").filter(has_text="测试缺失")).to_contain_text("数据隔离")
+    expect(page.get_by_test_id("stock-row").filter(has_text="测试缺失")).to_contain_text("尚无行情数据")
+    expect(page.get_by_test_id("stock-row").filter(has_text="测试停牌")).to_contain_text("当日停牌")
+    expect(page.get_by_test_id("stock-row").filter(has_text="测试缺口")).to_contain_text("数据缺口")
     expect(page.get_by_test_id("stock-row").filter(has_text="测试银行")).to_contain_text("10.25")
-    expect(page.locator('#stock-body td[title$="（股）"]')).to_have_count(2)
+    expect(page.locator('#stock-body td[title$="（股）"]')).to_have_count(3)
 
     actual = context.request.get(url + "/api/dashboard")
     assert "no-store" in actual.headers.get("cache-control", "")
@@ -318,8 +343,8 @@ def populated_checks(context, page, url, args, directory, env):
     page.locator("#view-synced").click()
     expect(page).to_have_url(url + "/stocks?status=available")
     expect(page.locator("#data-filter")).to_have_value("available")
-    expect(page.get_by_test_id("stock-row")).to_have_count(2)
-    assert "sz000002" not in stock_codes(page)
+    expect(page.get_by_test_id("stock-row")).to_have_count(3)
+    assert "sz000002" not in stock_codes(page) and "sz000004" not in stock_codes(page)
     search.fill("银行")
     assert stock_codes(page) == ["sz000001"]
     page.locator("#data-filter").select_option("missing")
@@ -327,19 +352,23 @@ def populated_checks(context, page, url, args, directory, env):
     page.locator("#clear-filters").click()
     expect(page.locator("#data-filter")).to_have_value("")
     expect(search).to_have_value("")
-    expect(page.get_by_test_id("stock-row")).to_have_count(3)
+    expect(page.get_by_test_id("stock-row")).to_have_count(5)
     expect(page).to_have_url(url + "/stocks")
     page.locator("#data-filter").select_option("missing")
     assert stock_codes(page) == ["sz000002"]
+    page.locator("#data-filter").select_option("suspended")
+    assert stock_codes(page) == ["sz000004"]
+    page.locator("#data-filter").select_option("gap")
+    assert stock_codes(page) == ["sz000005"]
     page.locator("#data-filter").select_option("")
     page.get_by_test_id("stock-sort").select_option("close")
-    expect(page.get_by_test_id("stock-row")).to_have_count(3)
+    expect(page.get_by_test_id("stock-row")).to_have_count(5)
     before = stock_codes(page)
     page.get_by_test_id("sort-direction").click()
     after = stock_codes(page)
     assert before != after, "sort direction did not change stock order"
     assert before.index("sz000001") < before.index("sh600519") or after.index("sz000001") < after.index("sh600519")
-    assert before[-1] == after[-1] == "sz000002", "missing price must remain last"
+    assert set(before[-2:]) == set(after[-2:]) == {"sz000002", "sz000004"}, "rows without prices must remain last"
     page.screenshot(path=str(screenshots / f"{kind}-stocks-desktop.png"), full_page=True)
     page.set_viewport_size({"width": 390, "height": 844})
     expect(page.get_by_test_id("stock-search")).to_be_visible()
@@ -573,11 +602,11 @@ def error_checks(page, url, state):
         expect(page.get_by_test_id("error-state")).to_be_visible(timeout=5000)
         if status == 403:
             expect(page.get_by_test_id("error-state")).to_contain_text("授权")
-        expect(page.get_by_test_id("stock-row")).to_have_count(3)
+        expect(page.get_by_test_id("stock-row")).to_have_count(5)
         page.unroute(pattern)
         page.get_by_test_id("retry-button").click()
         expect(page.get_by_test_id("error-state")).to_be_hidden()
-        expect(page.get_by_test_id("stock-row")).to_have_count(3)
+        expect(page.get_by_test_id("stock-row")).to_have_count(5)
 
     # A real HTTP connection stalls until the browser's own timeout fires.
     with stalled_endpoint() as stalled_url:
@@ -585,7 +614,7 @@ def error_checks(page, url, state):
         page.get_by_test_id("refresh-button").click()
         expect(page.get_by_test_id("error-state")).to_be_visible(timeout=15000)
         expect(page.get_by_test_id("error-state")).to_contain_text("超时")
-        expect(page.get_by_test_id("stock-row")).to_have_count(3)
+        expect(page.get_by_test_id("stock-row")).to_have_count(5)
         page.unroute(pattern)
     page.get_by_test_id("retry-button").click()
     expect(page.get_by_test_id("error-state")).to_be_hidden()
@@ -790,7 +819,7 @@ def main():
                 page.goto(url, wait_until="networkidle")
                 expect(page.get_by_test_id("empty-state")).to_be_visible()
                 page.goto(url + "/stocks", wait_until="networkidle")
-                expect(page.get_by_test_id("stock-row")).to_have_count(3)
+                expect(page.get_by_test_id("stock-row")).to_have_count(5)
                 page.goto(url + "/rankings", wait_until="networkidle")
                 expect(page.get_by_test_id("ranking-empty-state")).to_be_visible()
                 page.get_by_role("link", name="策略实验室", exact=True).click()
@@ -804,7 +833,7 @@ def main():
                 page.goto("about:blank")
             with service(args, partial=True) as (url, _, _):
                 payload = wait_ready(context, url)
-                assert payload["report"] is None and payload["summary"]["available"] == 2
+                assert payload["report"] is None and payload["summary"]["available"] == 3
                 assert payload["latest_sync"]["status"] == "failed" and not payload["report_current"]
                 page.goto(url, wait_until="networkidle")
                 expect(page.locator("#market-notice")).to_contain_text("尚无对应推荐报告")

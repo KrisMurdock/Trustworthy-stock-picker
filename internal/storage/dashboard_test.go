@@ -95,7 +95,7 @@ func TestDashboardPublishedPoolAndFailedSync(t *testing.T) {
 	if got.Stocks[0].Status != "selected" || got.Stocks[0].Metrics == nil || got.Stocks[0].ChangePct == nil || got.Stocks[0].Bar.Close != report.Selected[0].Close || got.Stocks[0].Bar.Volume != 200 {
 		t.Fatalf("published market values missing: %+v", got.Stocks[0])
 	}
-	if got.Stocks[1].Status != "missing" || got.Stocks[2].Status != "missing" || got.Stocks[2].Reason != "http_403" {
+	if got.Stocks[1].Status != "missing" || got.Stocks[2].Status != "isolated" || got.Stocks[2].Reason != "http_403" {
 		t.Fatalf("incomplete stocks were hidden: %+v", got.Stocks)
 	}
 }
