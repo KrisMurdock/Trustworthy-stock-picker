@@ -25,4 +25,9 @@
 /.claude/tdd/
 /CONTEXT.md
 
+# Local optimization drafts; keep the published reference documents
+/optimize_plans/*
+!/optimize_plans/README.md
+!/optimize_plans/theories.md
+
 tmp/
