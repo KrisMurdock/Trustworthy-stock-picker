@@ -35,6 +35,12 @@ const (
 	StructureGuardUnknown = guardUnknown
 )
 
+const (
+	StructureSignalNotEvaluated = "not_evaluated"
+	StructureSignalBlocked      = "blocked"
+	StructureSignalUnknown      = "unknown"
+)
+
 type StructureLevelEvidence struct {
 	Period          string            `json:"period"`
 	Bars            int               `json:"bars"`
@@ -70,11 +76,12 @@ func evaluateStructureGuard(mode, code, asof string, adjusted, raw market.Histor
 	if mode == "" {
 		mode = StructureGuardShadow
 	}
-	evidence := StructureGuardEvidence{Version: 1, Rule: StructureGuardRule, Mode: mode, AsOf: asof, DataStatus: guardDataOK, GuardStatus: guardUnknown, SignalStatus: "not_evaluated", ReasonCode: "guard_unknown", Reason: "结构未知", Levels: []StructureLevelEvidence{}}
+	evidence := StructureGuardEvidence{Version: 1, Rule: StructureGuardRule, Mode: mode, AsOf: asof, DataStatus: guardDataOK, GuardStatus: guardUnknown, SignalStatus: StructureSignalNotEvaluated, ReasonCode: "guard_unknown", Reason: "结构未知", Levels: []StructureLevelEvidence{}}
 	dailyLevel, _, dailyOK := analyzeDailyGuard(adjusted, asof)
 	evidence.Levels = append(evidence.Levels, dailyLevel)
 	if !dailyOK {
 		evidence.DataStatus = guardDataInvalid
+		evidence.SignalStatus = StructureSignalUnknown
 		evidence.ReasonCode = dailyLevel.ReasonCode
 		evidence.Reason = dailyLevel.Reason
 		return evidence
@@ -84,6 +91,7 @@ func evaluateStructureGuard(mode, code, asof string, adjusted, raw market.Histor
 	}
 	if dailyLevel.Status == guardFail {
 		evidence.GuardStatus = guardFail
+		evidence.SignalStatus = StructureSignalBlocked
 		evidence.ReasonCode = dailyLevel.ReasonCode
 		evidence.Reason = dailyLevel.Reason
 		return evidence
@@ -91,6 +99,7 @@ func evaluateStructureGuard(mode, code, asof string, adjusted, raw market.Histor
 	if dailyLevel.Status != guardPass {
 		evidence.GuardStatus = guardUnknown
 		evidence.DataStatus = guardDataInsufficient
+		evidence.SignalStatus = StructureSignalUnknown
 		evidence.ReasonCode = dailyLevel.ReasonCode
 		evidence.Reason = dailyLevel.Reason
 		return evidence
@@ -100,6 +109,7 @@ func evaluateStructureGuard(mode, code, asof string, adjusted, raw market.Histor
 	if !factorOK {
 		evidence.GuardStatus = guardUnknown
 		evidence.DataStatus = guardDataInvalid
+		evidence.SignalStatus = StructureSignalUnknown
 		evidence.ReasonCode = "price_scale_unknown"
 		evidence.Reason = "信号日复权换算不可用"
 		return evidence
@@ -113,6 +123,7 @@ func evaluateStructureGuard(mode, code, asof string, adjusted, raw market.Histor
 			_ = existing
 			evidence.GuardStatus = guardUnknown
 			evidence.DataStatus = guardDataInvalid
+			evidence.SignalStatus = StructureSignalUnknown
 			evidence.ReasonCode = "minute_snapshot_invalid"
 			evidence.Reason = "分钟周期重复"
 			return evidence
@@ -125,6 +136,7 @@ func evaluateStructureGuard(mode, code, asof string, adjusted, raw market.Histor
 		if err := market.ValidateMinutePair(base, context); err != nil {
 			evidence.GuardStatus = guardUnknown
 			evidence.DataStatus = guardDataInvalid
+			evidence.SignalStatus = StructureSignalUnknown
 			evidence.ReasonCode = "minute_snapshot_invalid"
 			evidence.Reason = "30m/5m 分钟快照不一致"
 			return evidence
@@ -139,6 +151,7 @@ func evaluateStructureGuard(mode, code, asof string, adjusted, raw market.Histor
 	if !contextOK || !hasContext {
 		evidence.GuardStatus = guardUnknown
 		evidence.DataStatus = guardLevelDataStatus(contextLevel.ReasonCode)
+		evidence.SignalStatus = StructureSignalUnknown
 		evidence.ReasonCode = contextLevel.ReasonCode
 		evidence.Reason = contextLevel.Reason
 		return evidence
@@ -146,6 +159,7 @@ func evaluateStructureGuard(mode, code, asof string, adjusted, raw market.Histor
 	if !fiveOK || !hasBase {
 		evidence.GuardStatus = guardUnknown
 		evidence.DataStatus = guardLevelDataStatus(fiveLevel.ReasonCode)
+		evidence.SignalStatus = StructureSignalUnknown
 		evidence.ReasonCode = fiveLevel.ReasonCode
 		evidence.Reason = fiveLevel.Reason
 		return evidence
@@ -157,6 +171,7 @@ func evaluateStructureGuard(mode, code, asof string, adjusted, raw market.Histor
 	if err != nil {
 		evidence.GuardStatus = guardUnknown
 		evidence.DataStatus = guardDataInvalid
+		evidence.SignalStatus = StructureSignalUnknown
 		evidence.ReasonCode = "minute_30_invalid"
 		evidence.Reason = "30m 结构计算失败"
 		return evidence
@@ -167,6 +182,7 @@ func evaluateStructureGuard(mode, code, asof string, adjusted, raw market.Histor
 		contextLevel.Reason = "30m 收盘跌破日线笔重叠区下沿"
 		evidence.Levels[1] = contextLevel
 		evidence.GuardStatus = guardFail
+		evidence.SignalStatus = StructureSignalBlocked
 		evidence.ReasonCode = contextLevel.ReasonCode
 		evidence.Reason = contextLevel.Reason
 		return evidence
@@ -180,6 +196,7 @@ func evaluateStructureGuard(mode, code, asof string, adjusted, raw market.Histor
 		evidence.Levels[1] = contextLevel
 		evidence.GuardStatus = guardUnknown
 		evidence.DataStatus = guardDataInsufficient
+		evidence.SignalStatus = StructureSignalUnknown
 		evidence.ReasonCode = contextLevel.ReasonCode
 		evidence.Reason = contextLevel.Reason
 		return evidence
@@ -190,6 +207,7 @@ func evaluateStructureGuard(mode, code, asof string, adjusted, raw market.Histor
 	if err != nil || len(fiveConv) == 0 {
 		evidence.GuardStatus = guardUnknown
 		evidence.DataStatus = guardDataInvalid
+		evidence.SignalStatus = StructureSignalUnknown
 		evidence.ReasonCode = "minute_5_invalid"
 		evidence.Reason = "5m 结构计算失败"
 		return evidence
@@ -200,6 +218,7 @@ func evaluateStructureGuard(mode, code, asof string, adjusted, raw market.Histor
 		fiveLevel.Reason = "5m 收盘跌破 30m 最近完成底分型低点"
 		evidence.Levels[2] = fiveLevel
 		evidence.GuardStatus = guardFail
+		evidence.SignalStatus = StructureSignalBlocked
 		evidence.ReasonCode = fiveLevel.ReasonCode
 		evidence.Reason = fiveLevel.Reason
 		return evidence
@@ -214,6 +233,7 @@ func evaluateStructureGuard(mode, code, asof string, adjusted, raw market.Histor
 	evidence.Levels[1], evidence.Levels[2] = contextLevel, fiveLevel
 	evidence.GuardStatus = guardPass
 	evidence.DataStatus = guardDataOK
+	evidence.SignalStatus = StructureSignalNotEvaluated
 	evidence.ReasonCode = "daily_structure_ok"
 	evidence.Reason = "日线结构未逆向，低级别未触发失效"
 	return evidence

@@ -68,7 +68,7 @@ func TestEngineBoundaryCopiesInputsAndRejectsInvalidResults(t *testing.T) {
 	}
 }
 
-func TestBuiltinEnginePreservesChanGateAndRejectsNonFinalMinutes(t *testing.T) {
+func TestBuiltinEngineKeepsLegacyChanDiagnosticAndRejectsNonFinalMinutes(t *testing.T) {
 	c, histories, raw := executionFixture()
 	asof := histories[0].AsOf
 	h := singleDayMinuteHistory(asof, raw[0].Bars[len(raw[0].Bars)-1])
@@ -82,7 +82,10 @@ func TestBuiltinEnginePreservesChanGateAndRejectsNonFinalMinutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(report.Ranking) != 1 || report.Ranking[0].Chan == nil || report.Ranking[0].Chan.Status != "unknown" || report.Ranking[0].Recommended {
-		t.Fatalf("engine bypassed Chan gate: %+v", report.Ranking)
+		t.Fatalf("engine produced an executable shadow recommendation: %+v", report.Ranking)
+	}
+	if report.ExecutionMode != "shadow" || len(report.Selected) != 0 {
+		t.Fatalf("shadow report selected an executable candidate: %+v", report)
 	}
 	in.Minutes[0].Bars[0].Final = false
 	if _, err := Execute(context.Background(), engine, in, "merge-test"); err == nil {

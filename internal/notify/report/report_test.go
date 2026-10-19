@@ -454,7 +454,7 @@ func TestShortDetailsPaginateAndAppendSelectedOutsideTop10(t *testing.T) {
 			t.Errorf("candidate detail repeats price field %q", forbidden)
 		}
 	}
-	if !lineHasPrefix(supplement.Lines, "缠论门控：") || !lineHasPrefix(supplement.Lines, "评分推导：") {
+	if !lineHasPrefix(supplement.Lines, "旧 5/15/30 诊断：") || !lineHasPrefix(supplement.Lines, "评分推导：") {
 		t.Errorf("candidate detail is missing Chan/score lines: %#v", supplement.Lines)
 	}
 	riskLine := lineWithPrefix(supplement.Lines, "风险：")
@@ -568,8 +568,8 @@ func TestShortCandidateExplainsChanGateAndScoreDerivation(t *testing.T) {
 		evidence *strategy.ChanEvidence
 		want     string
 	}{
-		{name: "passed", evidence: &strategy.ChanEvidence{Status: strategy.ChanPass}, want: "未被过滤"},
-		{name: "unknown", evidence: &strategy.ChanEvidence{Status: strategy.ChanUnknown, Reason: "30m 尚无完成笔"}, want: "仅观察"},
+		{name: "passed", evidence: &strategy.ChanEvidence{Status: strategy.ChanPass}, want: "仅诊断，不构成买点"},
+		{name: "unknown", evidence: &strategy.ChanEvidence{Status: strategy.ChanUnknown, Reason: "30m 尚无完成笔"}, want: "仅诊断，不影响正式结论"},
 		{name: "failed", evidence: &strategy.ChanEvidence{Status: strategy.ChanFail, Reason: "15m 最近分型不是底分型"}, want: "15m 最近分型不是底分型"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -589,7 +589,7 @@ func TestShortCandidateExplainsChanGateAndScoreDerivation(t *testing.T) {
 				t.Fatal(err)
 			}
 			section := detailSectionByCode(t, cards, "sh600900")
-			chanLine := lineWithPrefix(section.Lines, "缠论门控：")
+			chanLine := lineWithPrefix(section.Lines, "旧 5/15/30 诊断：")
 			if !strings.Contains(chanLine, test.want) {
 				t.Errorf("Chan gate = %q, want contains %q", chanLine, test.want)
 			}
@@ -610,7 +610,7 @@ func TestChanSummaryNamesPassingLevelEvidence(t *testing.T) {
 		{Period: 15, Status: strategy.ChanPass, LastFractal: "bottom"},
 		{Period: 5, Status: strategy.ChanPass, LastFractal: "bottom"},
 	}})
-	for _, want := range []string{"30m最近完成笔向上", "15m底分型收复", "5m底分型收复", "未被过滤"} {
+	for _, want := range []string{"30m最近完成笔向上", "15m底分型收复", "5m底分型收复", "仅诊断，不构成买点"} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("summary %q missing %q", summary, want)
 		}
@@ -808,34 +808,36 @@ func TestShadowStructureGuardWordingDoesNotClaimFiltering(t *testing.T) {
 
 	report := shortReport("shadow-guard")
 	report.Version = 3
+	report.ExecutionMode = strategy.StructureGuardShadow
 	report.GuardPassed = 0
 	report.Ranking = []strategy.Candidate{shadowFail, shadowUnknown, enforceFail}
-	report.Selected = []selection.Candidate{{Code: shadowFail.Code, Name: shadowFail.Name, Ranking: &shadowFail}}
 	cards, err := FromSelection(report)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got := shortCandidateStatus(report, shadowFail); got != "旧路径通过·影子未过" {
+	if got := shortCandidateStatus(report, shadowFail); got != "结构未过·仅观察" {
 		t.Fatalf("shadow fail status = %q", got)
 	}
 	if got := shortCandidateStatus(report, shadowUnknown); got != "结构未知·仅观察" {
 		t.Fatalf("shadow unknown status = %q", got)
 	}
-	if got := shortCandidateStatus(report, enforceFail); got != "结构未过" {
+	enforceReport := report
+	enforceReport.ExecutionMode = strategy.StructureGuardEnforce
+	if got := shortCandidateStatus(enforceReport, enforceFail); got != "结构未过" {
 		t.Fatalf("enforce fail status = %q", got)
 	}
 	table := cards.Main.Sections[0].Table
-	if got := cellText(table.Rows[0], 1); got != "旧路径通过·影子未过" {
+	if got := cellText(table.Rows[0], 1); got != "结构未过·仅观察" {
 		t.Fatalf("main table shadow status = %q", got)
 	}
 
 	shadowLine := lineWithPrefix(detailSectionByCode(t, cards, shadowFail.Code).Lines, "结构门控：")
-	if !strings.Contains(shadowLine, "影子期仅记录，不改变正式推荐") || strings.Contains(shadowLine, "已过滤") {
+	if !strings.Contains(shadowLine, "影子期仅记录，不产生可执行推荐") || strings.Contains(shadowLine, "已过滤") {
 		t.Fatalf("shadow summary claims filtering: %q", shadowLine)
 	}
 	unknownLine := lineWithPrefix(detailSectionByCode(t, cards, shadowUnknown.Code).Lines, "结构门控：")
-	if !strings.Contains(unknownLine, "影子期仅记录，不改变正式推荐") || strings.Contains(unknownLine, "已过滤") {
+	if !strings.Contains(unknownLine, "影子期仅记录，不产生可执行推荐") || strings.Contains(unknownLine, "已过滤") {
 		t.Fatalf("shadow unknown summary claims filtering: %q", unknownLine)
 	}
 	enforceLine := lineWithPrefix(detailSectionByCode(t, cards, enforceFail.Code).Lines, "结构门控：")
@@ -855,4 +857,37 @@ func detailSectionByHeading(t *testing.T, cards Cards, heading string) notify.Se
 	}
 	t.Fatalf("no detail section headed %q", heading)
 	return notify.Section{}
+}
+
+func TestShadowReportNeverUsesExecutableWording(t *testing.T) {
+	candidate := shortCandidate("sz000001", "影子观察", 1, 88, false)
+	candidate.DailyRecommended = true
+	candidate.StructureGuard = &strategy.StructureGuardEvidence{
+		Version: 1, Rule: strategy.StructureGuardRule, Mode: strategy.StructureGuardShadow,
+		DataStatus: "ok", GuardStatus: strategy.StructureGuardPass, SignalStatus: strategy.StructureSignalNotEvaluated,
+	}
+	report := shortReport("shadow-title")
+	report.Version = 3
+	report.ExecutionMode = strategy.StructureGuardShadow
+	report.Ranking = []strategy.Candidate{candidate}
+	cards, err := FromSelection(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cards.Main.Title, "仅观察（结构影子期）") {
+		t.Fatalf("shadow title = %q", cards.Main.Title)
+	}
+	conclusion := cards.Main.Sections[0].Lines[0]
+	if !strings.Contains(conclusion, "不产生可执行推荐") || strings.Contains(conclusion, "可执行 1 只") {
+		t.Fatalf("shadow conclusion = %q", conclusion)
+	}
+	table := cards.Main.Sections[0].Table
+	if len(table.Rows) != 1 {
+		t.Fatalf("shadow table rows = %d", len(table.Rows))
+	}
+	for _, column := range []int{3, 4, 5} {
+		if got := cellText(table.Rows[0], column); got != "—" {
+			t.Fatalf("shadow table column %d = %q, want dash", column, got)
+		}
+	}
 }

@@ -7,9 +7,10 @@ import (
 	"stock-watcher/internal/market"
 )
 
-// AnalyzeWithChan adds the fixed 5/15/30-minute Chan check to the daily
-// ranking. Chan is an eligibility gate for recommendations, not a replacement
-// for the daily opportunity score or its full-pool relative strength.
+// AnalyzeWithChan attaches the legacy 5/15/30-minute Chan diagnostic and the
+// auditable structure guard to the daily ranking. The legacy path never changes
+// the formal recommendation; only enforce mode can promote guard-passing
+// candidates to executable recommendations.
 func AnalyzeWithChan(ctx context.Context, c config.Config, histories, raw []market.History, minutes []market.MinuteHistory, asof string) (Result, error) {
 	result, err := analyze(ctx, c, histories, raw, asof, nil)
 	if err != nil {
@@ -19,17 +20,15 @@ func AnalyzeWithChan(ctx context.Context, c config.Config, histories, raw []mark
 	if mode == "" {
 		mode = StructureGuardShadow
 	}
-	if mode != StructureGuardEnforce {
-		applyChanGate(&result, raw, minutes, asof)
-	}
+	attachLegacyChanEvidence(&result, raw, minutes, asof)
 	applyStructureGuard(&result, c, histories, raw, minutes, asof)
 	return result, nil
 }
 
 // applyStructureGuard attaches the auditable structure gate and derives the
-// eligible-pool ranking. Shadow mode records both views but leaves the legacy
-// recommendation path untouched; enforce mode makes the eligible ranking the
-// only source of formal recommendations.
+// eligible-pool ranking. Shadow mode records both views but never promotes a
+// candidate to executable. Enforce mode makes the eligible ranking the only
+// source of formal recommendations.
 func applyStructureGuard(result *Result, c config.Config, histories, raw []market.History, minutes []market.MinuteHistory, asof string) {
 	if result == nil {
 		return
@@ -91,10 +90,11 @@ func applyStructureGuard(result *Result, c config.Config, histories, raw []marke
 			reranked.Rank = base.Rank
 			reranked.ObservationScore = base.ObservationScore
 			reranked.ObservationScoreBreakdown = base.ObservationScoreBreakdown
+			reranked.DailyRecommended = base.DailyRecommended
 			reranked.EligibleScore = reranked.Score
 			reranked.EligibleScoreBreakdown = reranked.ScoreBreakdown
 			hardGate := containsString(base.Risks, "holdout_validation_not_passed") || containsString(base.Risks, "cash_insufficient")
-			reranked.EligibleRecommended = reranked.Recommended && !hardGate
+			reranked.EligibleRecommended = base.DailyRecommended && !hardGate
 			if hardGate {
 				for _, risk := range []string{"holdout_validation_not_passed", "cash_insufficient"} {
 					if containsString(base.Risks, risk) && !containsString(reranked.Risks, risk) {
@@ -129,7 +129,11 @@ func applyStructureGuard(result *Result, c config.Config, histories, raw []marke
 		}
 	}
 
+	result.ExecutionMode = mode
 	if mode != StructureGuardEnforce {
+		for i := range observation {
+			observation[i].Recommended = false
+		}
 		result.Ranking = observation
 		return
 	}
@@ -161,10 +165,10 @@ func applyStructureGuard(result *Result, c config.Config, histories, raw []marke
 	result.Ranking = append(append([]Candidate(nil), eligible...), nonEligible...)
 }
 
-// applyChanGate is intentionally separate from scoring so the pushed report
-// can state both facts: the score was computed by the daily ranking rule, and
-// the recommendation was or was not filtered by Chan structure.
-func applyChanGate(result *Result, raw []market.History, minutes []market.MinuteHistory, asof string) {
+// attachLegacyChanEvidence keeps the retired 5/15/30 gate as report evidence
+// only. It must not change Recommended or add filtering risks; those decisions
+// belong to the structure guard.
+func attachLegacyChanEvidence(result *Result, raw []market.History, minutes []market.MinuteHistory, asof string) {
 	if result == nil || len(minutes) == 0 {
 		return
 	}
@@ -208,15 +212,6 @@ func applyChanGate(result *Result, raw []market.History, minutes []market.Minute
 			}
 		}
 		candidate.Chan = &evidence
-		if evidence.Status == chanPass {
-			continue
-		}
-		candidate.Recommended = false
-		risk := "chan_filtered"
-		if evidence.Status == chanUnknown {
-			risk = "chan_unknown"
-		}
-		candidate.Risks = append(candidate.Risks, risk)
 	}
 }
 

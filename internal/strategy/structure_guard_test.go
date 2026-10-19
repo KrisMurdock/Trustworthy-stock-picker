@@ -142,9 +142,9 @@ func TestStructureGuardRanksOnlyPassingPoolAndKeepsObservationView(t *testing.T)
 	baseC, contextC := guardMinuteHistories(codes[2], 1)
 	minutes = append(minutes, contextA, baseA, contextC, baseC)
 	result := Result{Ranking: []Candidate{
-		{Code: codes[0], Name: "A", Score: 90, Features: Features{Return5: 1}, Recommended: true, Risks: []string{"holdout_validation_not_passed"}},
-		{Code: codes[1], Name: "B", Score: 80, Features: Features{Return5: 9}, Recommended: true},
-		{Code: codes[2], Name: "C", Score: 70, Features: Features{Return5: 3}, Recommended: true},
+		{Code: codes[0], Name: "A", Score: 90, Features: Features{Return5: 1}, Recommended: true, DailyRecommended: true, Risks: []string{"holdout_validation_not_passed"}},
+		{Code: codes[1], Name: "B", Score: 80, Features: Features{Return5: 9}, Recommended: true, DailyRecommended: true},
+		{Code: codes[2], Name: "C", Score: 70, Features: Features{Return5: 3}, Recommended: true, DailyRecommended: true},
 	}}
 	c := config.Defaults()
 	c.StructureGuard.Mode = StructureGuardEnforce
@@ -177,16 +177,25 @@ func TestStructureGuardRanksOnlyPassingPoolAndKeepsObservationView(t *testing.T)
 		if candidate.Code == codes[0] && (candidate.EligibleRecommended || !containsString(candidate.Risks, "holdout_validation_not_passed")) {
 			t.Fatalf("eligible rerank bypassed the holdout gate: %+v", candidate)
 		}
+		if candidate.Code == codes[2] && (!candidate.EligibleRecommended || !candidate.Recommended) {
+			t.Fatalf("guard-passing eligible candidate was not executable: %+v", candidate)
+		}
+	}
+	if result.Ranking[2].Recommended {
+		t.Fatalf("guard-filtered candidate remained executable: %+v", result.Ranking[2])
 	}
 
 	shadow := Result{Ranking: []Candidate{
-		{Code: codes[0], Name: "A", Score: 90, Features: Features{Return5: 1}, Recommended: true},
-		{Code: codes[1], Name: "B", Score: 80, Features: Features{Return5: 9}, Recommended: true},
+		{Code: codes[0], Name: "A", Score: 90, Features: Features{Return5: 1}, Recommended: true, DailyRecommended: true},
+		{Code: codes[1], Name: "B", Score: 80, Features: Features{Return5: 9}, Recommended: true, DailyRecommended: true},
 	}}
 	c.StructureGuard.Mode = StructureGuardShadow
 	applyStructureGuard(&shadow, c, histories, raw, minutes, guardTestAsOf)
-	if shadow.Ranking[1].Code != codes[1] || !shadow.Ranking[1].Recommended {
-		t.Fatalf("shadow mode changed the legacy recommendation: %+v", shadow.Ranking)
+	if shadow.ExecutionMode != StructureGuardShadow || shadow.Ranking[0].Recommended || shadow.Ranking[1].Recommended {
+		t.Fatalf("shadow mode produced an executable recommendation: %+v", shadow)
+	}
+	if !shadow.Ranking[0].DailyRecommended || !shadow.Ranking[1].DailyRecommended {
+		t.Fatalf("shadow mode lost the daily recommendation audit: %+v", shadow.Ranking)
 	}
 	if shadow.Ranking[0].EligibleRank != 1 || shadow.Ranking[0].EligibleScore == 0 || shadow.Ranking[1].EligibleRank != 0 {
 		t.Fatalf("shadow mode did not retain the eligible view: %+v", shadow.Ranking)
