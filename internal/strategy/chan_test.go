@@ -128,7 +128,7 @@ func TestConditionalChanUnknownIsNotSafeAndKeepsReason(t *testing.T) {
 		t.Fatalf("unknown chan structure was selected: %+v %v", x.Selection, err)
 	}
 	for _, trade := range x.Trades {
-		if trade.Selected || trade.Chan == nil || trade.Chan.Status != chanUnknown || trade.Outcome.Status != "chan_unknown" {
+		if trade.Selected || trade.Rank != 1 || trade.Chan == nil || trade.Chan.Status != chanUnknown || trade.Chan.AsOf != trade.Date || trade.Outcome.Status != "chan_unknown" {
 			t.Fatalf("unknown evidence not retained: %+v", trade)
 		}
 	}

@@ -108,8 +108,8 @@ func TestIndicatorSelectionPrecedesFuturePathAndRetainsFilteredEvidence(t *testi
 		t.Fatalf("filter coverage lost: %+v %v", x.Selection, err)
 	}
 	for _, trade := range x.Trades {
-		if trade.Code == h2.Code && (trade.Selected || trade.Outcome.Status != "signal_filtered" || trade.Outcome.EntryDate != "") {
-			t.Fatal("rejected stock became a hypothetical entry")
+		if trade.Code == h2.Code && (trade.Selected || trade.Outcome.Status != "signal_filtered" || trade.Outcome.EntryDate != "" || trade.Rank < 1 || trade.Rank > 2 || trade.Features.Return5 == 0) {
+			t.Fatalf("rejected stock lost audit evidence or became a hypothetical entry: %+v", trade)
 		}
 	}
 	// Reset to identical features, leave only the second stock's minute path.

@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Engine = "indicator_selection_v6"
+const Engine = "indicator_selection_v7"
 
 type Calendar struct {
 	From     string   `json:"from"`
@@ -310,7 +310,7 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 	record.Verdict = developmentVerdict(*record, parent)
 	if record.Spec.EntryMode != "" {
 		if selection := x.Selection; selection != nil {
-			result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("信号日候选 %d 条，指标规则通过 %d 条，预先选入 %d 条；原排序前N中被过滤 %d 条。未触发不按次日行情补选。", selection.Candidates, selection.Eligible, selection.Selected, selection.FilteredOriginalTop), []string{}})
+			result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("信号日候选 %d 条，信号规则通过 %d 条，合格池内预先选入 %d 条；原全池排序前N中被过滤 %d 条。未触发不按次日行情补选。", selection.Candidates, selection.Eligible, selection.Selected, selection.FilteredOriginalTop), []string{}})
 		}
 		result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("买入日收盘扣成本浮盈为正 %d 笔，不为正 %d 笔，未知 %d 笔；入场路径缺失 %d 条。买入日为正且第三天触达2.5%% / 3%%的联合成功样本 %d / %d，入场分母 %d。", stats.EntryDayPositive, stats.EntryDayNonPositive, stats.EntryDayUnknown, stats.UnknownEntries, stats.Joint25, stats.Joint30, stats.Samples), []string{}})
 		result.Findings = append(result.Findings, Finding{"limitation", "本轮为固定分钟规则试运行。早期分钟日期可能与旧日线留出期重叠，已查看日期不得再声称是旧策略未见样本；后续最终验证须重新冻结新数据。", []string{}})
@@ -346,7 +346,10 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 		result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("相对父实验：平均净收益变化 %+.4f 个百分点，入场样本变化 %+d，最差单笔变化 %+.4f 个百分点，平均持有天数变化 %+.2f。", stats.MeanNet-before.MeanNet, stats.Samples-before.Samples, stats.WorstNet-before.WorstNet, stats.MeanDays-before.MeanDays), []string{}})
 		result.Next = append(result.Next, "检查按月、行业与个股分组，确认差异是否集中在少数日期或股票；未验证前不继续收紧阈值。")
 	}
-	if record.Spec.SignalRule != "" {
+	if record.Spec.SignalRule == strategy.ChanSignalRule {
+		result.Findings = append(result.Findings, Finding{"limitation", "缠论分型、笔和中枢只描述已完成的价格结构，不预测未来方向；三级同时通过不代表独立证据或未来成功概率，须核对样本覆盖和未通过样本。", []string{}})
+		result.Next = append(result.Next, "在固定区间内与无过滤基线对照：收益变化来自结构过滤还是样本减少；保持 5/15/30 分钟参数冻结，积累新交易日后重新验证。")
+	} else if record.Spec.SignalRule != "" {
 		result.Findings = append(result.Findings, Finding{"limitation", "RSI、MACD和布林线都是同一价格历史的变换，组合满足不代表独立证据或未来成功概率；同时核对样本覆盖和遗漏的机会。", []string{}})
 		result.Next = append(result.Next, "在固定区间内与无过滤基线对照：收益变化来自指标过滤还是样本减少；保持参数冻结，积累新交易日后再验证稳定性。")
 	} else if record.Spec.RequireEvidence {

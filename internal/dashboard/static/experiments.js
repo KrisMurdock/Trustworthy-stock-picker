@@ -24,7 +24,7 @@
     const risk = r.current_review?.risk;
     if (risk?.status === "breached") return "risk_rejected";
     if (risk?.status !== "observed_pass") return "risk_unverified";
-    return r.engine !== "indicator_selection_v6" ? "historical" : r.verdict;
+    return r.engine !== "indicator_selection_v7" ? "historical" : r.verdict;
   };
   const comparable = (a, b) => a?.status === "completed" && b?.status === "completed" && a.data.id === b.data.id && a.engine === b.engine && a.code_version === b.code_version && !!a.spec.next_day_rule === !!b.spec.next_day_rule && (a.spec.entry_mode || "") === (b.spec.entry_mode || "") && (a.spec.signal_range?.from || "") === (b.spec.signal_range?.from || "") && (a.spec.signal_range?.through || "") === (b.spec.signal_range?.through || "");
   function button(label, action, cls = "evidence-link") { const b = node("button", label, cls); b.type = "button"; b.addEventListener("click", action); return b; }
@@ -220,7 +220,7 @@
     const r = state.current, same = comparable(r, state.parent), baseSame = comparable(r, state.baseline);
     text("comparison-note", r.parent_id ? same ? "数据快照、代码版本与评价口径一致，可以逐项比较。先检查 3% 亏损硬条件，再比较最高价触达率与首次触达天数，实际退出收益另列。" : "与父实验的代码或数据口径不同，不展示提升差值；请在相同口径下重跑基线。" : "本轮建立基线，后续实验将在此基础上比较。指定区间请单独核对验证状态。");
     const selection = r.result?.development?.signal_selection;
-    text("signal-selection-summary", selection ? `信号日候选 ${selection.candidates} 条 → 规则通过 ${selection.eligible} 条 → 预先入选 ${selection.selected} 条；原 Top N 被过滤 ${selection.filtered_original_top} 条。未触发不按未来行情补选，实际入场数见下方。` : "旧档案没有保存规则筛选覆盖统计，不能补造过滤数量。");
+    text("signal-selection-summary", selection ? `信号日候选 ${selection.candidates} 条 → 规则通过 ${selection.eligible} 条（合格池内评分） → 预先入选 ${selection.selected} 条；原全池 Top N 被过滤 ${selection.filtered_original_top} 条。未触发不按未来行情补选，实际入场数见下方。` : "旧档案没有保存规则筛选覆盖统计，不能补造过滤数量。");
     const metrics = [["买入日收盘扣成本浮盈为正", "entry_day_positive_rate", 100, "%", 2], ["买入日为正且第三天触达 ≥2.5%", "joint_2_5_rate", 100, "%", 2], ["买入日为正且第三天触达 ≥3%", "joint_3_rate", 100, "%", 2], ["买入日浮盈不为正", "entry_day_nonpositive", 1, "", 0], ["买入日浮盈未知", "entry_day_unknown", 1, "", 0], ["入场分钟路径未知", "unknown_entry_paths", 1, "", 0], ["次日确认触达 ≥2.5%（含未决）", "next_day_2_5_rate", 100, "%", 2], ["次日确认触达 ≥3%（含未决）", "next_day_3_rate", 100, "%", 2], ["次日确认触达 2.5% 笔数", "next_day_2_5_count", 1, "", 0], ["次日确认触达 3% 笔数", "next_day_3_count", 1, "", 0], ["完成交易数", "resolved", 1, "", 0], ["入场样本数", "samples", 1, "", 0], ["独立信号日期", "distinct_signal_dates", 1, "", 0], ["平均单笔净收益", "mean_resolved_net_pct", 1, "%", 3], ["盈利比例（已完成）", "resolved_profit_rate", 100, "%", 2], ["模拟止盈成交率（含未决）", "target_rate", 100, "%", 2], ["最差单笔净收益", "worst_resolved_net_pct", 1, "%", 3], ["最差持仓不利变动", "worst_max_adverse_net_pct", 1, "%", 3], ["止损次数", "stops", 1, "", 0], ["未决交易", "unresolved", 1, "", 0], ["跳过入场", "skipped_entries", 1, "", 0], ["净亏损达到或超过 3%", "net_loss_limit_breaches", 1, "", 0], ["实际退出净盈利 ≥2.5%（含未决）", "net_profit_2_5_rate", 100, "%", 2], ["实际退出净盈利 ≥3%（含未决）", "net_profit_3_rate", 100, "%", 2], ["平均持仓（买入后交易日）", "mean_resolved_holding_days", 1, " 天", 2], ["已确认最高价触达 ≥2.5%（含未决）", "high_touch_2_5_rate", 100, "%", 2], ["已确认最高价触达 ≥3%（含未决）", "high_touch_3_rate", 100, "%", 2], ["首次触达 2.5% 平均天数", "mean_first_high_touch_2_5_days", 1, " 天", 2], ["首次触达 3% 平均天数", "mean_first_high_touch_3_days", 1, " 天", 2], ["触达证据缺失 / 未决", "high_touch_unknown", 1, "", 0], ["退出日触达先后顺序不明", "high_touch_order_unknown", 1, "", 0]];
     $("comparison-body").replaceChildren(...metrics.map(([label, key, scale, unit, digits]) => {
       const row = node("tr"); row.append(node("td", label));
