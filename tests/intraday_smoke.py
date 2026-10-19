@@ -116,7 +116,9 @@ calendar:
             assert r.returncode==(1 if fail else 0),r.stdout+r.stderr
             return r
         def reset_attempt():
-            with sqlite3.connect(root/"data/market.db") as db: db.execute("UPDATE intraday_sync SET attempt_at='2020-01-01T00:00:00+08:00',calibrated_date=''")
+            # Force a pending retry even during lunch, when a successful target
+            # is intentionally not fetched again by the production scheduler.
+            with sqlite3.connect(root/"data/market.db") as db: db.execute("UPDATE intraday_sync SET attempt_at='2020-01-01T00:00:00+08:00',calibrated_date='',status='failed'")
         def saved():
             with sqlite3.connect(root/"data/market.db") as db:
                 return db.execute("SELECT end_unix,close_micros,volume_raw FROM intraday_bar ORDER BY end_unix").fetchall()
@@ -149,7 +151,7 @@ calendar:
                         assert data["base_period_minutes"]==5 and data["period_minutes"]==period
                         if not target()[1] and target()[0].hour==15: assert len(data["bars"])==240//period
                     with sqlite3.connect(root/"data/market.db") as db:
-                        assert db.execute("PRAGMA user_version").fetchone()==(3,)
+                        assert db.execute("PRAGMA user_version").fetchone()==(4,)
                         assert db.execute("PRAGMA integrity_check").fetchone()==("ok",)
                         assert db.execute("SELECT count(*) FROM daily_bar").fetchone()==(0,)
                 finally:
