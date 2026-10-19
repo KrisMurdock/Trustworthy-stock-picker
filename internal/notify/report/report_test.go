@@ -789,6 +789,61 @@ func TestStructureGuardMessageExplainsPassFilterAndScore(t *testing.T) {
 	}
 }
 
+func TestShadowStructureGuardWordingDoesNotClaimFiltering(t *testing.T) {
+	shadowFail := shortCandidate("sz000011", "影子未过", 1, 91, true)
+	shadowFail.StructureGuard = &strategy.StructureGuardEvidence{
+		Version: 1, Rule: strategy.StructureGuardRule, Mode: strategy.StructureGuardShadow,
+		DataStatus: "ok", GuardStatus: strategy.StructureGuardFail, ReasonCode: "daily_zone_broken", Reason: "日线收盘跌破笔重叠区下沿",
+	}
+	shadowUnknown := shortCandidate("sz000012", "影子未知", 2, 82, false)
+	shadowUnknown.StructureGuard = &strategy.StructureGuardEvidence{
+		Version: 1, Rule: strategy.StructureGuardRule, Mode: strategy.StructureGuardShadow,
+		DataStatus: "insufficient", GuardStatus: strategy.StructureGuardUnknown, ReasonCode: "minute_insufficient", Reason: "5m 样本不足",
+	}
+	enforceFail := shortCandidate("sz000013", "正式过滤", 3, 73, false)
+	enforceFail.StructureGuard = &strategy.StructureGuardEvidence{
+		Version: 1, Rule: strategy.StructureGuardRule, Mode: strategy.StructureGuardEnforce,
+		DataStatus: "ok", GuardStatus: strategy.StructureGuardFail, ReasonCode: "daily_zone_broken", Reason: "日线收盘跌破笔重叠区下沿",
+	}
+
+	report := shortReport("shadow-guard")
+	report.Version = 3
+	report.GuardPassed = 0
+	report.Ranking = []strategy.Candidate{shadowFail, shadowUnknown, enforceFail}
+	report.Selected = []selection.Candidate{{Code: shadowFail.Code, Name: shadowFail.Name, Ranking: &shadowFail}}
+	cards, err := FromSelection(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := shortCandidateStatus(report, shadowFail); got != "旧路径通过·影子未过" {
+		t.Fatalf("shadow fail status = %q", got)
+	}
+	if got := shortCandidateStatus(report, shadowUnknown); got != "结构未知·仅观察" {
+		t.Fatalf("shadow unknown status = %q", got)
+	}
+	if got := shortCandidateStatus(report, enforceFail); got != "结构未过" {
+		t.Fatalf("enforce fail status = %q", got)
+	}
+	table := cards.Main.Sections[0].Table
+	if got := cellText(table.Rows[0], 1); got != "旧路径通过·影子未过" {
+		t.Fatalf("main table shadow status = %q", got)
+	}
+
+	shadowLine := lineWithPrefix(detailSectionByCode(t, cards, shadowFail.Code).Lines, "结构门控：")
+	if !strings.Contains(shadowLine, "影子期仅记录，不改变正式推荐") || strings.Contains(shadowLine, "已过滤") {
+		t.Fatalf("shadow summary claims filtering: %q", shadowLine)
+	}
+	unknownLine := lineWithPrefix(detailSectionByCode(t, cards, shadowUnknown.Code).Lines, "结构门控：")
+	if !strings.Contains(unknownLine, "影子期仅记录，不改变正式推荐") || strings.Contains(unknownLine, "已过滤") {
+		t.Fatalf("shadow unknown summary claims filtering: %q", unknownLine)
+	}
+	enforceLine := lineWithPrefix(detailSectionByCode(t, cards, enforceFail.Code).Lines, "结构门控：")
+	if !strings.Contains(enforceLine, "已过滤") || strings.Contains(enforceLine, "影子期仅记录") {
+		t.Fatalf("enforce summary missing filtering: %q", enforceLine)
+	}
+}
+
 func detailSectionByHeading(t *testing.T, cards Cards, heading string) notify.Section {
 	t.Helper()
 	for _, detail := range cards.Details {

@@ -269,8 +269,20 @@ func shortCandidateStatus(r selection.Report, candidate strategy.Candidate) stri
 		shadow := candidate.StructureGuard.Mode == strategy.StructureGuardShadow
 		switch candidate.StructureGuard.GuardStatus {
 		case strategy.StructureGuardFail:
+			if shadow {
+				if candidate.Recommended {
+					return "旧路径通过·影子未过"
+				}
+				return "结构未过·仅观察"
+			}
 			return "结构未过"
 		case strategy.StructureGuardUnknown:
+			if shadow {
+				if candidate.Recommended {
+					return "旧路径通过·影子未知"
+				}
+				return "结构未知·仅观察"
+			}
 			return "结构未知"
 		case strategy.StructureGuardPass:
 			if candidate.Recommended {
@@ -495,15 +507,22 @@ func structureGuardSummary(evidence strategy.StructureGuardEvidence) string {
 	case strategy.StructureGuardPass:
 		return "pass：日线结构未逆向，30m/5m 未触发失效；仅代表未被过滤，不是买点"
 	case strategy.StructureGuardFail:
-		return "fail：" + escape(evidence.Reason) + "；已过滤"
+		return "fail：" + escape(evidence.Reason) + "；" + structureGuardConsequence(evidence)
 	case strategy.StructureGuardUnknown:
 		if evidence.Reason == "" {
-			return "unknown：结构证据不足；已过滤"
+			return "unknown：结构证据不足；" + structureGuardConsequence(evidence)
 		}
-		return "unknown：" + escape(evidence.Reason) + "；已过滤"
+		return "unknown：" + escape(evidence.Reason) + "；" + structureGuardConsequence(evidence)
 	default:
-		return "unknown：未评估；已过滤"
+		return "unknown：未评估；" + structureGuardConsequence(evidence)
 	}
+}
+
+func structureGuardConsequence(evidence strategy.StructureGuardEvidence) string {
+	if evidence.Mode == strategy.StructureGuardShadow {
+		return "影子期仅记录，不改变正式推荐"
+	}
+	return "已过滤"
 }
 
 func candidateScoreFormula(breakdown *strategy.ScoreBreakdown) string {
