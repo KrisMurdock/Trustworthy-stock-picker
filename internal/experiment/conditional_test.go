@@ -2,6 +2,7 @@ package experiment
 
 import (
 	"stock-watcher/internal/market"
+	"stock-watcher/internal/strategy"
 	"testing"
 )
 
@@ -34,6 +35,14 @@ func TestIndicatorPoliciesCompareOnlyOnCompatibleFrozenBaseline(t *testing.T) {
 		if !Comparable(current, child) {
 			t.Fatal("indicator change should be comparable")
 		}
+	}
+	chanSpec, err := Specification("conditional-chan-5-15-30")
+	if err != nil || chanSpec.SignalRule != strategy.ChanSignalRule || chanSpec.EntryMode != base.EntryMode {
+		t.Fatalf("missing chan policy: %+v %v", chanSpec, err)
+	}
+	chanChild, err := NewRecord(snapshot, chanSpec, &current, "new-version")
+	if err != nil || chanChild.BaselineID != current.ID {
+		t.Fatal("chan policy changed baseline", err)
 	}
 	if _, err := Specification("conditional-unknown"); err == nil {
 		t.Fatal("unknown indicator accepted")

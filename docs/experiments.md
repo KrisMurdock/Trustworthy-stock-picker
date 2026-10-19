@@ -72,6 +72,7 @@
 | `conditional-all-three` | 上述三个指标条件全部满足 |
 | `conditional-guard` | ATR14 ≤3%，距MA20在−5%～5%，量比0.8～2.5 |
 | `conditional-confluence-guard` | 至少两项指标满足，并通过波动量能约束 |
+| `conditional-chan-5-15-30` | 30m 中枢下沿/最近完成笔、15m 与 5m 底分型收复共同确认；缺失保持未知 |
 
 MACD沿用EMA12/26、DEA为DIF的EMA9，初值使用对应窗口SMA；柱值为2×(DIF−DEA)。布林线使用20日收盘SMA±2倍总体标准差，%B=(收盘−下轨)/(上轨−下轨)，带宽=(上轨−下轨)/中轨；零带宽的%B记为未定义，不产生修复信号。前一日指标只计算到前一交易日。全部特征使用信号时可见的前复权窗口，成交价格继续使用不复权数据。
 
@@ -90,6 +91,8 @@ MACD沿用EMA12/26、DEA为DIF的EMA9，初值使用对应窗口SMA；柱值为2
 七个指标对照要求父实验。页面支持选择这些规则并生成命令；没有分钟快照时提示先创建条件低吸基线。查看样本可读出RSI及MACD柱的昨日/今日值、DIF/DEA、布林上下中轨/%B/带宽及ATR/量比。旧记录没有这些值时明确显示未记录，不从同步后的行情补造证据。
 
 这些门槛是实验假设，不是从指标定义推出的胜率。[Fidelity RSI说明](https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/RSI)与[MACD说明](https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/macd)用于核对口径；[John Bollinger的规则说明](https://www.bollingerbands.com/bollinger-band-rules)也强调触及轨道本身不是买卖信号，相关指标叠加不能当作独立证据。参数在本轮结果前固定，所有组使用相同快照、区间、成本及成交方式，全部保留结果，不把最佳小样本比例解释成未来成功率。
+
+缠论结构对照使用同一条件低吸成交路径，只增加固定 5/15/30 分钟结构过滤；实现口径、周期选择依据和首次开发结果见[缠论多级别实验](experiments-chan.md)。
 
 ## 次日触达目标
 
@@ -184,3 +187,5 @@ MACD沿用EMA12/26、DEA为DIF的EMA9，初值使用对应窗口SMA；柱值为2
 新增的[个股与板块大盘两组对照](sector-market-comparison.md)固定每日名额、批次、费用和止损，对比行业过滤及大盘弱信号的整体效果。该轮使用当前行业归属做回溯探索，历史分类偏差、样本减少和未决均单列。
 
 RSI、MACD、布林线及组合的8组同区间对照见[指标实验记录](experiments-indicators.md)。
+
+缠论 5/15/30 分钟结构过滤的首轮开发结果见[缠论多级别实验](experiments-chan.md)。

@@ -10,6 +10,15 @@ func conditionalSpecification(rule string) (Spec, error) {
 	if rule == "" {
 		return spec, nil
 	}
+	if rule == strategy.ChanSignalRule {
+		spec.Title = "条件低吸 · 5/15/30 分钟缠论共振"
+		spec.Direction = "检验多级别底分型确认与中枢未破位是否改善低吸入场质量"
+		spec.Hypothesis = "用固定、可复现的缠论结构过滤原机会排序：30 分钟保持中枢下沿之上或最近完成笔向上，15 分钟最近分型为已确认底分型且被收盘收复，5 分钟最近分型为已确认底分型且被收盘收复，再进入原有低吸路径。"
+		spec.SignalRule = rule
+		spec.Change = "信号日只读取截至 15:00 的已完成 5 分钟 K 线；15/30 分钟由这些 5 分钟线逐日聚合，不保存独立派生表。包含关系按前两根合并 K 线方向处理，分型要求三根合并 K 线高低点严格成立；笔固定最少 6 根合并 K 线，中枢由至少 3 笔重叠区间构成。30m 有中枢时要求收盘不低于下沿，没有中枢时要求最近完成笔向上；15m 与 5m 均要求最近分型为底分型且收盘收复其高点。结构缺失或样本不足记为 unknown，不当作通过。" + spec.Change
+		spec.Criteria = "所有级别必须通过才进入原 Top N 排序；被过滤的原 Top N 保留逐级状态、最近笔方向、分型位置和中枢上下沿。任一必要级别缺失、信号日 5 分钟路径不完整或尚无有效结构时不补选。沿用原有买入日浮盈、次日 2.5%／3% 触达、净亏损严格<3%及样本门槛。" + spec.Criteria
+		return spec, nil
+	}
 	labels := map[string][2]string{
 		"rsi":              {"RSI 回升", "Wilder RSI14 为40～65，且高于前一交易日。"},
 		"macd":             {"MACD 增强", "DIF>DEA，且2×(DIF−DEA)高于前一交易日；EMA12/26，信号EMA9，沿用SMA初始化。"},

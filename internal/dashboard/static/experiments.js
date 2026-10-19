@@ -4,7 +4,7 @@
   const state = { records: [], current: null, parent: null, baseline: null, id: "", request: 0, page: 0, evidenceRequest: 0 };
   const verdicts = { research: "研究结果快照", entry_day_rejected: "买入日浮盈不达标", entry_day_unverified: "买入日证据待核实", below_goal: "次日目标未达到", goal_25_only: "仅 2.5% 档观察达标", goal_observed: "两档观察达标 · 待独立验证", risk_rejected: "风险不达标", risk_unverified: "风险待核实", tradeoff: "收益／周期有取舍", historical: "旧口径结论", baseline: "基线", promising: "开发候选", no_improvement: "未改善", insufficient: "证据不足", not_comparable: "口径不同", pending: "尚无结论" };
   const statuses = { running: "运行中", completed: "运行成功", failed: "运行失败", canceled: "已取消", interrupted: "运行中断" };
-  const outcomes = { signal_filtered: "信号日指标过滤，未入场", entry_path_unknown: "买入分钟缺失，路径未知", entry_invalidated: "跌破买入区间，放弃", entry_price_outside_zone: "触发后跳出区间，放弃", entry_not_triggered: "未满足到价反弹，放弃", target: "达到目标", stop: "止损", stop_gap: "跳空止损", timeout: "到期退出", unresolved: "无法判定", corporate_action: "除权窗口未决", entry_skipped: "跳过入场", missing_entry_session: "入场日缺失", missing_exit_session: "退出日缺失", cash_insufficient: "预算不足", risk_budget_insufficient: "交易成本已占满亏损额度" };
+  const outcomes = { signal_filtered: "信号日指标过滤，未入场", chan_filtered: "缠论结构不通过，未入场", chan_unknown: "缠论结构缺失，未入场", entry_path_unknown: "买入分钟缺失，路径未知", entry_invalidated: "跌破买入区间，放弃", entry_price_outside_zone: "触发后跳出区间，放弃", entry_not_triggered: "未满足到价反弹，放弃", target: "达到目标", stop: "止损", stop_gap: "跳空止损", timeout: "到期退出", unresolved: "无法判定", corporate_action: "除权窗口未决", entry_skipped: "跳过入场", missing_entry_session: "入场日缺失", missing_exit_session: "退出日缺失", cash_insufficient: "预算不足", risk_budget_insufficient: "交易成本已占满亏损额度" };
   const fmt = (v, digits = 2) => Number.isFinite(v) ? v.toLocaleString("zh-CN", { minimumFractionDigits: digits, maximumFractionDigits: digits }) : "—";
   const timestamp = v => v ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", dateStyle: "short", timeStyle: "short", hour12: false }).format(new Date(v)) : "—";
   const node = (tag, text, cls) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (cls) n.className = cls; return n; };
@@ -220,7 +220,7 @@
     const r = state.current, same = comparable(r, state.parent), baseSame = comparable(r, state.baseline);
     text("comparison-note", r.parent_id ? same ? "数据快照、代码版本与评价口径一致，可以逐项比较。先检查 3% 亏损硬条件，再比较最高价触达率与首次触达天数，实际退出收益另列。" : "与父实验的代码或数据口径不同，不展示提升差值；请在相同口径下重跑基线。" : "本轮建立基线，后续实验将在此基础上比较。指定区间请单独核对验证状态。");
     const selection = r.result?.development?.signal_selection;
-    text("signal-selection-summary", selection ? `信号日候选 ${selection.candidates} 条 → 指标通过 ${selection.eligible} 条 → 预先入选 ${selection.selected} 条；原 Top N 被过滤 ${selection.filtered_original_top} 条。未触发不按未来行情补选，实际入场数见下方。` : "旧档案没有保存指标筛选覆盖统计，不能补造过滤数量。");
+    text("signal-selection-summary", selection ? `信号日候选 ${selection.candidates} 条 → 规则通过 ${selection.eligible} 条 → 预先入选 ${selection.selected} 条；原 Top N 被过滤 ${selection.filtered_original_top} 条。未触发不按未来行情补选，实际入场数见下方。` : "旧档案没有保存规则筛选覆盖统计，不能补造过滤数量。");
     const metrics = [["买入日收盘扣成本浮盈为正", "entry_day_positive_rate", 100, "%", 2], ["买入日为正且第三天触达 ≥2.5%", "joint_2_5_rate", 100, "%", 2], ["买入日为正且第三天触达 ≥3%", "joint_3_rate", 100, "%", 2], ["买入日浮盈不为正", "entry_day_nonpositive", 1, "", 0], ["买入日浮盈未知", "entry_day_unknown", 1, "", 0], ["入场分钟路径未知", "unknown_entry_paths", 1, "", 0], ["次日确认触达 ≥2.5%（含未决）", "next_day_2_5_rate", 100, "%", 2], ["次日确认触达 ≥3%（含未决）", "next_day_3_rate", 100, "%", 2], ["次日确认触达 2.5% 笔数", "next_day_2_5_count", 1, "", 0], ["次日确认触达 3% 笔数", "next_day_3_count", 1, "", 0], ["完成交易数", "resolved", 1, "", 0], ["入场样本数", "samples", 1, "", 0], ["独立信号日期", "distinct_signal_dates", 1, "", 0], ["平均单笔净收益", "mean_resolved_net_pct", 1, "%", 3], ["盈利比例（已完成）", "resolved_profit_rate", 100, "%", 2], ["模拟止盈成交率（含未决）", "target_rate", 100, "%", 2], ["最差单笔净收益", "worst_resolved_net_pct", 1, "%", 3], ["最差持仓不利变动", "worst_max_adverse_net_pct", 1, "%", 3], ["止损次数", "stops", 1, "", 0], ["未决交易", "unresolved", 1, "", 0], ["跳过入场", "skipped_entries", 1, "", 0], ["净亏损达到或超过 3%", "net_loss_limit_breaches", 1, "", 0], ["实际退出净盈利 ≥2.5%（含未决）", "net_profit_2_5_rate", 100, "%", 2], ["实际退出净盈利 ≥3%（含未决）", "net_profit_3_rate", 100, "%", 2], ["平均持仓（买入后交易日）", "mean_resolved_holding_days", 1, " 天", 2], ["已确认最高价触达 ≥2.5%（含未决）", "high_touch_2_5_rate", 100, "%", 2], ["已确认最高价触达 ≥3%（含未决）", "high_touch_3_rate", 100, "%", 2], ["首次触达 2.5% 平均天数", "mean_first_high_touch_2_5_days", 1, " 天", 2], ["首次触达 3% 平均天数", "mean_first_high_touch_3_days", 1, " 天", 2], ["触达证据缺失 / 未决", "high_touch_unknown", 1, "", 0], ["退出日触达先后顺序不明", "high_touch_order_unknown", 1, "", 0]];
     $("comparison-body").replaceChildren(...metrics.map(([label, key, scale, unit, digits]) => {
       const row = node("tr"); row.append(node("td", label));
@@ -246,9 +246,20 @@
   }
   function emptyRow(id, columns, message) { const row = node("tr"), cell = node("td", message, "muted"); cell.colSpan = columns; row.append(cell); $(id).replaceChildren(row); }
   const signalIndicators = f => f?.signal_indicators?.schema_version === 1 ? f.signal_indicators : null;
+  const chanEvidence = t => t?.chan?.schema_version === 1 ? t.chan : null;
   function indicatorSummary(f) {
     const x = signalIndicators(f);
     return x ? `RSI ${fmt(f.trend_metrics.rsi14)} · MACD柱 ${fmt(x.macd_histogram, 4)} · 布林 %B ${fmt(x.bollinger.percent_b, 3)}` : "未记录";
+  }
+  function chanSummary(t) {
+    const c = chanEvidence(t);
+    return c ? c.levels.map(l => `${l.period_minutes}m ${l.status === "pass" ? "通过" : l.status === "unknown" ? "缺失" : "不通过"}`).join(" · ") : null;
+  }
+  function chanDetail(t) {
+    const c = chanEvidence(t);
+    if (!c) return "";
+    const levels = c.levels.map(l => { const z = l.latest_zone; return `${l.period_minutes}m：${l.status === "pass" ? "通过" : l.status === "unknown" ? "缺失" : "不通过"}；完成笔 ${l.finished_strokes}，最近笔 ${l.last_finished_stroke || "—"}${l.last_fractal ? `，最近分型 ${l.last_fractal === "bottom" ? "底" : "顶"} @ ${fmt(l.last_fractal_high)}` : ""}${z ? `，中枢 ${fmt(z.lower)}～${fmt(z.upper)}` : ""}${l.reason ? `；${l.reason}` : ""}`; });
+    return `缠论 ${c.rule}（信号日收盘截止）：${levels.join("；")}。总体${c.status === "pass" ? "通过" : c.status === "unknown" ? "缺失" : "不通过"}${c.reason ? `：${c.reason}` : ""}。`;
   }
   function renderTrades() {
     const filter = $("trade-filter").value;
@@ -256,7 +267,7 @@
     const pages = Math.max(1, Math.ceil(trades.length / 20)); state.page = Math.min(state.page, pages - 1);
     $("trade-body").replaceChildren(...trades.slice(state.page * 20, state.page * 20 + 20).map(t => {
       const tr = node("tr"); tr.dataset.trade = t.id;
-      tr.append(node("td", `${t.date} · ${t.code}`), node("td", t.selected ? outcomes[t.outcome.status] || t.outcome.status : "被本轮过滤"), node("td", indicatorSummary(t.features)), node("td", entryMark(t) ? `${fmt(entryMark(t).close_net_pct, 3)}%` : "未知"), node("td", resolved(t.outcome) ? `${fmt(t.outcome.net_pct, 3)}%` : "—"), node("td", touch(t) ? `${fmt(touch(t).max_net_pct, 3)}%` : "未记录 / 待核实"), node("td", touchDays(touch(t))), node("td", `${fmt(t.features.upper_wick_ratio * 100)}%`));
+      tr.append(node("td", `${t.date} · ${t.code}`), node("td", t.selected ? outcomes[t.outcome.status] || t.outcome.status : "被本轮过滤"), node("td", chanSummary(t) || indicatorSummary(t.features)), node("td", entryMark(t) ? `${fmt(entryMark(t).close_net_pct, 3)}%` : "未知"), node("td", resolved(t.outcome) ? `${fmt(t.outcome.net_pct, 3)}%` : "—"), node("td", touch(t) ? `${fmt(touch(t).max_net_pct, 3)}%` : "未记录 / 待核实"), node("td", touchDays(touch(t))), node("td", `${fmt(t.features.upper_wick_ratio * 100)}%`));
       const cell = node("td"); cell.append(button("查看 K 线", () => evidence(t))); tr.append(cell); return tr;
     }));
     if (!trades.length) emptyRow("trade-body", 9, "当前筛选条件下没有交易记录。");
@@ -267,7 +278,8 @@
     state.evidenceController?.abort(); state.evidenceController = new AbortController(); const sequence = ++state.evidenceRequest, id = state.id;
     show("evidence-panel", true); $("evidence-chart").replaceChildren(); text("evidence-detail", "");
     const indicators = signalIndicators(trade.features), m = trade.features.trend_metrics;
-    text("evidence-indicators", indicators ? `信号日已完成前复权日线指标（图中成交证据是不复权价）：RSI14 ${fmt(indicators.previous_rsi14)} → ${fmt(m.rsi14)}；MACD DIF ${fmt(m.dif, 4)}，DEA ${fmt(m.dea, 4)}，柱 ${fmt(indicators.previous_macd_histogram, 4)} → ${fmt(indicators.macd_histogram, 4)}。布林线(20,2) 下轨 ${fmt(indicators.bollinger.lower, 4)}，中轨 ${fmt(indicators.bollinger.middle, 4)}，上轨 ${fmt(indicators.bollinger.upper, 4)}；%B ${fmt(indicators.previous_percent_b, 3)} → ${fmt(indicators.bollinger.percent_b, 3)}，带宽 ${fmt(indicators.bollinger.width_pct)}%；—表示零带宽等导致未定义。ATR14 ${fmt(trade.features.atr14_pct)}%，距MA20 ${fmt(trade.features.ma20_distance_pct)}%，量比 ${fmt(trade.features.volume_ratio)}。` : "旧档案未保存信号日 RSI/MACD 变化与布林线证据，不从未来行情补算。");
+    const indicatorText = indicators ? `信号日已完成前复权日线指标（图中成交证据是不复权价）：RSI14 ${fmt(indicators.previous_rsi14)} → ${fmt(m.rsi14)}；MACD DIF ${fmt(m.dif, 4)}，DEA ${fmt(m.dea, 4)}，柱 ${fmt(indicators.previous_macd_histogram, 4)} → ${fmt(indicators.macd_histogram, 4)}。布林线(20,2) 下轨 ${fmt(indicators.bollinger.lower, 4)}，中轨 ${fmt(indicators.bollinger.middle, 4)}，上轨 ${fmt(indicators.bollinger.upper, 4)}；%B ${fmt(indicators.previous_percent_b, 3)} → ${fmt(indicators.bollinger.percent_b, 3)}，带宽 ${fmt(indicators.bollinger.width_pct)}%；—表示零带宽等导致未定义。ATR14 ${fmt(trade.features.atr14_pct)}%，距MA20 ${fmt(trade.features.ma20_distance_pct)}%，量比 ${fmt(trade.features.volume_ratio)}。` : "旧档案未保存信号日 RSI/MACD 变化与布林线证据，不从未来行情补算。";
+    text("evidence-indicators", `${indicatorText}${chanDetail(trade) ? ` ${chanDetail(trade)}` : ""}`);
     text("evidence-title", `${trade.code} · 信号 ${trade.date} · ${trade.selected ? "本轮入选" : "本轮过滤，显示原候选模拟结果"}`);
     text("evidence-status", "正在读取固定快照中的原始日线…"); $("evidence-panel").scrollIntoView({ block: "center", behavior: "smooth" });
     try {

@@ -34,6 +34,7 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 		return result, errors.New("conditional entry requires saved minute paths")
 	}
 	byCode := map[string]map[string][]market.MinuteBar{}
+	minuteByCode := map[string]market.MinuteHistory{}
 	days := map[string]bool{}
 	for _, h := range minutes {
 		if err := h.Validate(); err != nil {
@@ -42,6 +43,7 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 		if _, ok := byCode[h.Code]; ok {
 			return result, errors.New("duplicate minute history")
 		}
+		minuteByCode[h.Code] = h
 		byCode[h.Code] = map[string][]market.MinuteBar{}
 		for _, b := range h.Bars {
 			date := b.End.In(market.Shanghai).Format("2006-01-02")
@@ -77,12 +79,19 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 		"Entry uses next five-minute open after a completed rebound; entry-day close is an outcome, never an entry filter.",
 		"Same-candle target/stop ordering remains conservative; mark-to-close reserves exit fees and slippage but is not a T+0 sale.",
 	}}
+	if rule == ChanSignalRule {
+		research.Limitations = append(research.Limitations,
+			"Chan rule uses fixed 5m entry, 15m setup and 30m context levels; 15m/30m are derived from saved 5m bars at each signal-day close.",
+			"Only completed 5m bars are used; missing minute paths, an incomplete signal session or insufficient fractals/strokes/zones remain unknown and never pass the filter.",
+			"Chan structure confirms prior price movement, not future direction; the fixed rule has not been optimized or independently validated.")
+	}
 	type signal struct {
-		code      string
-		features  Features
-		bar       market.Bar
-		future    []market.Bar
-		corporate bool
+		code         string
+		features     Features
+		bar          market.Bar
+		future       []market.Bar
+		corporate    bool
+		chanEvidence *ChanEvidence
 	}
 	signals := map[string][]signal{}
 	cal := calendar.New(c)
@@ -111,6 +120,14 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 			if err != nil {
 				return result, err
 			}
+			var chanEvidence *ChanEvidence
+			if rule == ChanSignalRule {
+				evidence, err := chanSignalEvidence(minuteByCode[h.Code], date, r.Bars[i])
+				if err != nil {
+					return result, err
+				}
+				chanEvidence = &evidence
+			}
 			end := min(i+3, len(r.Bars))
 			future := r.Bars[i+1 : end]
 			corporate := false
@@ -120,7 +137,7 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 					corporate = true
 				}
 			}
-			signals[date] = append(signals[date], signal{h.Code, f, r.Bars[i], future, corporate})
+			signals[date] = append(signals[date], signal{h.Code, f, r.Bars[i], future, corporate, chanEvidence})
 		}
 	}
 	signalDates := []string{}
@@ -158,8 +175,12 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 		evaluation.SignalDates++
 		picked := 0
 		for i, x := range candidates {
+			sample := lookup[x.Code]
 			result.Selection.Candidates++
 			allowed := matchesSignalRule(rule, x.Features)
+			if rule == ChanSignalRule {
+				allowed = sample.chanEvidence != nil && sample.chanEvidence.Status == chanPass
+			}
 			if allowed {
 				result.Selection.Eligible++
 			}
@@ -167,7 +188,14 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 			if !allowed {
 				if i < c.Selection.TopN {
 					result.Selection.FilteredOriginalTop++
-					result.Trades = append(result.Trades, ExperimentTrade{ID: date + "/" + x.Code, Code: x.Code, Date: date, Rank: i + 1, Features: x.Features, Outcome: Outcome{Status: "signal_filtered"}, EntryZone: &zone})
+					status := "signal_filtered"
+					if rule == ChanSignalRule {
+						status = "chan_filtered"
+						if sample.chanEvidence == nil || sample.chanEvidence.Status == chanUnknown {
+							status = "chan_unknown"
+						}
+					}
+					result.Trades = append(result.Trades, ExperimentTrade{ID: date + "/" + x.Code, Code: x.Code, Date: date, Rank: i + 1, Features: x.Features, Outcome: Outcome{Status: status}, EntryZone: &zone, Chan: sample.chanEvidence})
 				}
 				continue
 			}
@@ -176,7 +204,6 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 			}
 			picked++
 			result.Selection.Selected++
-			sample := lookup[x.Code]
 			entryDate, _ := cal.Next(date)
 			exitDate, _ := cal.Next(entryDate)
 			out, err := SimulateConditional(s, cal, x.Code, sample.bar, sample.future, byCode[x.Code][entryDate], byCode[x.Code][exitDate])
@@ -186,7 +213,7 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 			if sample.corporate && out.EntryDate != "" {
 				out.Status = "corporate_action"
 			}
-			result.Trades = append(result.Trades, ExperimentTrade{ID: date + "/" + x.Code, Code: x.Code, Date: date, Rank: i + 1, Selected: true, Features: x.Features, Outcome: out, EntryZone: &zone})
+			result.Trades = append(result.Trades, ExperimentTrade{ID: date + "/" + x.Code, Code: x.Code, Date: date, Rank: i + 1, Selected: true, Features: x.Features, Outcome: out, EntryZone: &zone, Chan: sample.chanEvidence})
 		}
 	}
 	evaluation.TopRanked = SummarizeExperimentTrades(result.Trades, s)
