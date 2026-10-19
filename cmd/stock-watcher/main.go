@@ -113,6 +113,9 @@ func run(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(p)
 	}
 	if command == "init" {
+		if err := storage.EnsureRoot(c.DataDir, c.RequireCIFS); err != nil {
+			return err
+		}
 		store, err := storage.Open(c.DataDir, c.RequireCIFS)
 		if err != nil {
 			return err

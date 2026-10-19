@@ -28,7 +28,7 @@ services:
       - "${STOCK_WATCHER_WEB_BIND:-127.0.0.1:8080}:8080"
     volumes:
       - type: bind
-        source: ${STOCK_WATCHER_HOST_DATA:?Set the existing CIFS mount path}
+        source: ${STOCK_WATCHER_HOST_DATA:?Set the existing data directory or CIFS mount path}
         target: /data
         bind:
           create_host_path: false

@@ -239,7 +239,7 @@ func TestNamedChannelCredentialsFileAndEnvironment(t *testing.T) {
 
 func TestBuiltinConfiguration(t *testing.T) {
 	c := Builtin()
-	if c.Version != 1 || !c.RequireCIFS || c.PoolFile != "leaders.yaml" {
+	if c.Version != 1 || c.RequireCIFS || c.PoolFile != "leaders.yaml" {
 		t.Fatalf("unexpected builtin identity: %+v", c)
 	}
 	if !c.Strategy.Enabled || !c.Selection.Enabled || !c.Feishu.Enabled || c.Feishu.CredentialsFile != "feishu.config" {
@@ -272,5 +272,24 @@ func TestLoadBuiltinUsesEnvironmentAndPool(t *testing.T) {
 	}
 	if c.Calendar.ValidFrom != "2020-01-01" || len(c.Calendar.Holidays) != 0 {
 		t.Fatalf("calendar environment not applied: %+v", c.Calendar)
+	}
+}
+
+func TestBuiltinCIFSModeCanBeEnabled(t *testing.T) {
+	root := t.TempDir()
+	pool := filepath.Join(root, "leaders.yaml")
+	if err := os.WriteFile(pool, []byte("schema_version: 1\nstocks:\n  - code: sz000001\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STOCK_WATCHER_DATA_DIR", root)
+	t.Setenv("STOCK_WATCHER_REQUIRE_CIFS", "true")
+	t.Setenv("STOCK_WATCHER_FEISHU_ENABLED", "false")
+	t.Setenv("STOCK_WATCHER_POOL_FILE", pool)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.RequireCIFS {
+		t.Fatal("CIFS requirement not enabled")
 	}
 }

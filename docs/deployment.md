@@ -4,9 +4,9 @@
 
 ## 共同准备
 
-1. 保持 Windows 在线及 SSH 反向隧道可用，由宿主机把共享挂载至 `/mnt/windows_database`。确认 `findmnt -T /mnt/windows_database -o TARGET,FSTYPE` 显示 cifs。容器不会建立隧道或挂载 SMB。
-2. 业务配置已编译进二进制，启动不再需要 `config.yaml`。确认 `leaders.yaml` 位于工作目录，`data_dir` 默认 `data`；在源码目录创建指向现有共享的软链接，或通过 `STOCK_WATCHER_DATA_DIR` 指定共享绝对路径。生产保持 `STOCK_WATCHER_REQUIRE_CIFS=true`。
-3. 按[环境变量说明](environment-variables.md)配置通知及滚动日志。目录 `logs/` 在宿主机；行情与状态在 Windows。先关闭通知完成检查，再按实际需要启用通道。
+1. 默认使用本地存储，无需 Windows 或 SSH 隧道。使用 Windows/CIFS 共享盘时，保持 Windows 在线及 SSH 反向隧道可用，由宿主机把共享挂载至 `/mnt/windows_database`，并确认 `findmnt -T /mnt/windows_database -o TARGET,FSTYPE` 显示 cifs。容器不会建立隧道或挂载 SMB。
+2. 业务配置已编译进二进制，启动不再需要 `config.yaml`。确认 `leaders.yaml` 位于工作目录。本地模式使用默认 `data/`，显式 `init` 会自动创建；共享盘模式通过 `STOCK_WATCHER_DATA_DIR` 指向挂载目录，并设置 `STOCK_WATCHER_REQUIRE_CIFS=true`。
+3. 按[环境变量说明](environment-variables.md)配置通知及滚动日志。默认行情与状态在本地 `data/`，也可放在 Windows 共享；先关闭通知完成检查，再按实际需要启用通道。
 4. 记录提交 SHA、镜像 ID 或包校验和。升级前备份配置与共享盘状态，保留旧制品。
 
 ## 原生与 systemd
@@ -36,7 +36,7 @@ journalctl -u stock-watcher.service -n 50 --no-pager
 ## 部署后验收与排障
 
 - `version` 与预期提交一致；`check` 返回 `status: ready`；`status` 能读取账本；检查启动日志及退出码。Compose 使用 `ps` 核对 healthy，systemd 使用 `is-active`。
-- 报“CIFS”或路径不存在：检查 Windows/隧道/宿主机挂载。共享重新挂载后，容器可能仍持有旧 bind mount，应重建容器。不要关闭 CIFS 校验或创建本地 data 目录绕过故障。
+- 报“CIFS”或路径不存在：共享盘模式检查 Windows/隧道/宿主机挂载；本地模式检查 `STOCK_WATCHER_DATA_DIR` 和目录权限。共享重新挂载后，容器可能仍持有旧 bind mount，应重建容器。不要在共享盘模式关闭 CIFS 校验或创建本地 data 目录绕过故障。
 - 报权限不足：确认运行 UID、`feishu.config` 可读及共享可写。SELinux 拒绝时检查宿主机审计日志与专用策略，不要对整个 Windows 盘递归重标记。
 - 报缺少 webhook：检查 `STOCK_WATCHER_FEISHU_ENABLED`、凭证文件或 `FEISHU_WEBHOOK` 是否生效，只检查是否设置，不输出值。检查通知权限前先设置 `STOCK_WATCHER_FEISHU_ENABLED=false`；真实发送需单独确认。
 - 报日历越界：内置官方交易日历当前覆盖 2026 年，需在年底前升级二进制；测试可用 `STOCK_WATCHER_CALENDAR_*` 覆盖，不得用于生产。
@@ -62,6 +62,6 @@ curl --fail http://127.0.0.1:8080/api/status
 
 整池采集时，每只股票只有完整通过校验后才进入检查点；尚未完成的批次不能发布推荐。重启后同日期、同参数任务复用已完成股票，覆盖失败会重新尝试隔离股票。行情发布和分析分离，分析失败可基于已采集窗口重试。成功任务之后的新启动仍刷新全池。默认整轮期限 90 分钟、分析期限 10 分钟，每 30 秒更新心跳；算法须遵守 context 取消，框架不在进程内强杀任意 Go 函数。
 
-备份必须覆盖 `market.db`、`experiments.db`、`calendar.db`、`state/`、上市信息缓存及私有配置，保留权限；备份也应放在 Windows 或指定备份盘，不复制到服务器行情目录。安全的最小流程是停止所有 systemd／容器／CLI 写入进程，确认数据库连接关闭，再在 Windows 对共享目录完整复制，记录构建 SHA、库版本和校验和。不要在线仅复制一个 SQLite 主文件或删除 journal 文件。恢复先到隔离目录，在通知关闭、独占锁、匹配构建的环境执行 `init/check/health`，抽查 `replay` 与 K 线，再停服务替换生产目录并恢复挂载。Windows 断线／重挂载和真实备份恢复需在部署环境演练；本地 mock 不能证明网络文件系统锁和 fsync 可靠。
+备份必须覆盖 `market.db`、`experiments.db`、`calendar.db`、`state/`、上市信息缓存及私有配置，保留权限；本地模式备份到指定备份盘，共享盘模式在 Windows 端完整复制，不复制到服务器行情目录。安全的最小流程是停止所有 systemd／容器／CLI 写入进程，确认数据库连接关闭，再完整复制数据目录，记录构建 SHA、库版本和校验和。不要在线仅复制一个 SQLite 主文件或删除 journal 文件。恢复先到隔离目录，在通知关闭、独占锁、匹配构建的环境执行 `init/check/health`，抽查 `replay` 与 K 线，再停服务替换生产目录并恢复挂载。Windows 断线／重挂载和真实备份恢复需在部署环境演练；本地 mock 不能证明网络文件系统锁和 fsync 可靠。
 
 不可变窗口会增加磁盘占用；目前不自动删除历史修订，运维需监测容量并制定归档策略。不要在 CIFS 上开启 WAL，也不要在共享故障时退回服务器本地数据目录。

@@ -19,13 +19,13 @@ make status
 make run
 ```
 
-业务配置已内置，启动不读取 `config.yaml`；`leaders.yaml` 和 `feishu.config` 仍按当前工作目录解析。运行依赖可用 Windows 挂载；本地测试才设置 `STOCK_WATCHER_REQUIRE_CIFS=false`。`make run` 用于前台运行，会构建并加载开发 `.env`。若 `stock-watcher.service` 已运行同一个仓库二进制，则先用原生 `check-config` 校验内置配置与日志环境变量，通过后正常停止后台服务，确认 MainPID 为 0，再进入前台运行。构建或配置校验失败时不停止原服务；停止失败或超时时中止前台启动并报错。
+业务配置已内置，启动不读取 `config.yaml`；`leaders.yaml` 和 `feishu.config` 仍按当前工作目录解析。默认使用本地 `data/` 存储，`init` 会自动创建；使用 Windows 挂载盘时设置 `STOCK_WATCHER_REQUIRE_CIFS=true` 和对应 `STOCK_WATCHER_DATA_DIR`。`make run` 用于前台运行，会构建并加载开发 `.env`。若 `stock-watcher.service` 已运行同一个仓库二进制，则先用原生 `check-config` 校验内置配置与日志环境变量，通过后正常停止后台服务，确认 MainPID 为 0，再进入前台运行。构建或配置校验失败时不停止原服务；停止失败或超时时中止前台启动并报错。
 
 Go `run` 启动后立即同步最近已收盘交易日的完整股池、生成分析并投递尚未过期的 T+1 消息，之后进入定时轮询；已送达的同日同通道消息不重复发送。盘中不会推送已过买入时点的旧推荐。同步失败会自动重试，原始行情和报告保持在数据目录。`once` 仍仅执行一次受内置 `daily.run_at` 限制的定时流程。
 
 没有匹配服务时直接 exec Go；其他仓库或不同 `CONFIG` 不会触发服务停止，仍由数据目录写锁判断是否冲突。每次 systemd 查询限时 3 秒，停止服务限时 30 秒。查询不可用时继续原生启动，由 CLI 返回真实结果。容器和 systemd 均直接启动 Go。`make -n run` 只预演命令，不启动或停止进程。
 
-前台进程通过 Ctrl+C 退出，之后可执行 `systemctl start stock-watcher.service` 恢复后台运行；SELinux 环境先按部署文档恢复二进制标签。前台使用当前 shell 和开发 `.env`，后台使用服务 EnvironmentFile，凭证须按对应方式配置。`check-config` 只校验配置，不代表共享盘或外部服务健康；完整健康检查仍使用 `check`。不要删除 `.stock-watcher.lock` 文件绕过正在运行的实例。
+前台进程通过 Ctrl+C 退出，之后可执行 `systemctl start stock-watcher.service` 恢复后台运行；SELinux 环境先按部署文档恢复二进制标签。前台使用当前 shell 和开发 `.env`，后台使用服务 EnvironmentFile，凭证须按对应方式配置。`check-config` 只校验配置，不代表数据目录或外部服务健康；完整健康检查仍使用 `check`。不要删除 `.stock-watcher.lock` 文件绕过正在运行的实例。
 
 ## 发布制品
 

@@ -68,15 +68,28 @@ func TestCLIProductionShapeAndMissingMount(t *testing.T) {
 func TestCLIInitCreatesMarketDatabase(t *testing.T) {
 	root := t.TempDir()
 	data := filepath.Join(root, "data")
-	if err := os.Mkdir(data, 0700); err != nil {
-		t.Fatal(err)
-	}
 	useBuiltinConfig(t, data, "sz000001")
 	if err := run([]string{"init"}); err != nil {
 		t.Fatal(err)
 	}
+	if info, err := os.Stat(data); err != nil || !info.IsDir() {
+		t.Fatalf("local data directory was not created: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(data, "market.db")); err != nil {
 		t.Fatalf("market database was not initialized: %v", err)
+	}
+}
+
+func TestCLIInitRequiresExistingCIFSMount(t *testing.T) {
+	root := t.TempDir()
+	data := filepath.Join(root, "missing-mount")
+	useBuiltinConfig(t, data, "sz000001")
+	t.Setenv("STOCK_WATCHER_REQUIRE_CIFS", "true")
+	if err := run([]string{"init"}); err == nil {
+		t.Fatal("initialized without a required CIFS mount")
+	}
+	if _, err := os.Stat(data); !os.IsNotExist(err) {
+		t.Fatal("created a local fallback for a required CIFS mount")
 	}
 }
 

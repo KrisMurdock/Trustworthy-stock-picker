@@ -4,10 +4,10 @@
 
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
-| STOCK_WATCHER_DATA_DIR | data | 行情与状态目录；生产必须指向已挂载 CIFS |
+| STOCK_WATCHER_DATA_DIR | data | 行情与状态目录；默认本地 `data`，也可指向已挂载的 CIFS |
 | STOCK_WATCHER_WEB_ADDR | 127.0.0.1:8080 | `run` 的只读网页监听地址；IP 或 localhost 加端口。容器默认 0.0.0.0:8080 |
 | STOCK_WATCHER_POOL_FILE | leaders.yaml | 股池文件，相对当前工作目录解析 |
-| STOCK_WATCHER_REQUIRE_CIFS | true | 是否要求数据目录位于 CIFS；仅本地测试设为 false |
+| STOCK_WATCHER_REQUIRE_CIFS | false | 默认本地存储；使用 Windows/CIFS 挂载盘时设为 true |
 | STOCK_WATCHER_FEISHU_ENABLED | true | 是否启用飞书投递 |
 | STOCK_WATCHER_FEISHU_CREDENTIALS_FILE | feishu.config | 飞书凭证文件，相对当前工作目录解析；设为空串可跳过文件 |
 | FEISHU_WEBHOOK | 凭证文件值 | 默认飞书通道 webhook；显式空值也会覆盖文件 |
@@ -62,15 +62,15 @@
 | STOCK_WATCHER_IMAGE | stock-watcher:local | 构建、启动所用镜像；发布使用明确提交 SHA 标签 |
 | STOCK_WATCHER_VERSION | development | 写入二进制与镜像 revision 的版本；发布设为完整提交 SHA |
 | STOCK_WATCHER_WEB_BIND | 127.0.0.1:8080 | Compose 网页的宿主机绑定地址与端口，容器内固定 8080 |
-| STOCK_WATCHER_HOST_DATA | 必填 | 已挂载 Windows 共享的宿主机绝对路径 |
+| STOCK_WATCHER_HOST_DATA | 必填 | 宿主机数据目录绝对路径；本地目录或已挂载 Windows 共享 |
 | STOCK_WATCHER_HOST_POOL | 必填 | leaders.yaml 绝对路径 |
 | STOCK_WATCHER_HOST_LOGS | 必填 | 已创建的本地日志目录绝对路径 |
 | STOCK_WATCHER_RUNTIME_ENV | 必填 | 独立运行变量文件绝对路径 |
 
-Compose 固定容器内数据 `/data`、股池 `/app/leaders.yaml`、日志 `/logs`，并关闭颜色。运行变量文件负责提供 `STOCK_WATCHER_REQUIRE_CIFS=false`、`STOCK_WATCHER_FEISHU_ENABLED`、`STOCK_WATCHER_CALENDAR_*` 等测试或部署覆盖；生产保持 `STOCK_WATCHER_REQUIRE_CIFS=true`。
+Compose 固定容器内数据 `/data`、股池 `/app/leaders.yaml`、日志 `/logs`，并关闭颜色。运行变量文件负责提供 `STOCK_WATCHER_FEISHU_ENABLED`、`STOCK_WATCHER_CALENDAR_*` 等测试或部署覆盖；本地目录部署保持 `STOCK_WATCHER_REQUIRE_CIFS=false`，共享盘部署设为 `true`。
 
 `run` 同时启动监控任务和网页，默认只允许本机访问。设置 `STOCK_WATCHER_WEB_ENABLED=false` 可以关闭网页；网页没有账号或写入接口，需要远程访问时通过受控网络或已有认证反向代理开放。Compose 固定容器监听 `0.0.0.0:8080`，并用 `STOCK_WATCHER_WEB_BIND` 控制宿主机入口。应用使用根路径 `/`，反向代理应保留 `/api/` 和 `/assets/` 路径；不支持直接挂到子路径前缀。
 
-路径不自动创建，股池只读挂载。容器根文件系统只读，不需要 SMB 凭证或挂载权限。CIFS 由宿主机负责，生产保持启用。不要运行会展开凭证的 `docker compose config` 普通输出；用 `config --quiet` 检查。
+宿主机数据路径和股池只读挂载路径必须预先存在；`init` 会在已挂载的数据根内创建数据库，但不会创建缺失的宿主机绑定路径。容器根文件系统只读，不需要 SMB 凭证或挂载权限。CIFS 由宿主机负责；启用共享盘模式时设置 `STOCK_WATCHER_REQUIRE_CIFS=true`。不要运行会展开凭证的 `docker compose config` 普通输出；用 `config --quiet` 检查。
 
 Compose 长挂载与 raw 环境文件语义参见 [Docker 官方服务配置](https://docs.docker.com/reference/compose-file/services/)。本配置要求 Docker Compose 2.30.0 或更高版本。

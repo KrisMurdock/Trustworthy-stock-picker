@@ -23,7 +23,7 @@
   <a href="#license">License</a>
 </p>
 
-Stock Watcher 是一个用纯 Go 构建的 A 股研究型行情引擎。它从多个公开行情源同步龙头股池，校验交易日、复权窗口和十年历史完整性，将行情、报告与投递状态事务化保存到 Windows 共享盘上的 SQLite，并生成下一交易日的观察排名、短线研究结果、内嵌看板和飞书通知。
+Stock Watcher 是一个用纯 Go 构建的 A 股研究型行情引擎。它从多个公开行情源同步龙头股池，校验交易日、复权窗口和十年历史完整性，将行情、报告与投递状态事务化保存到本地磁盘或挂载的 Windows/CIFS 共享盘上的 SQLite，并生成下一交易日的观察排名、短线研究结果、内嵌看板和飞书通知。
 
 整个生产链路只有一个原生二进制：行情下载、数据校验、指标计算、策略研究、网页服务和消息投递都在同一进程内完成，不依赖 Python、Node.js、AKShare 或独立前端服务。
 
@@ -40,14 +40,14 @@ Stock Watcher 是一个用纯 Go 构建的 A 股研究型行情引擎。它从�
 - **可复核的短线研究**：前复权特征、真实费用与滑点、T+1 成交模拟、滚动验证和独立留出样本。
 - **内嵌只读看板**：提供全池、个股 K 线、分钟周期、历史排名、策略实验室和仓位计算。
 - **可恢复的通知投递**：飞书通道采用持久账本和至少一次语义，失败重试不会重新下载整池行情。
-- **生产级运行约束**：默认要求 CIFS，拒绝本地磁盘回退；日志统一文本/JSON、stdout/文件双通道和滚动压缩。
+- **生产级运行约束**：默认本地存储，也可显式要求 CIFS；挂载盘不可用时拒绝本地回退。日志统一文本/JSON、stdout/文件双通道和滚动压缩。
 
 ## 快速开始
 
 ### 环境要求
 
 - Linux、Go 1.26.4+、Git、GNU Make、Bash。
-- 生产运行需要已挂载的 CIFS 共享目录，并将 `data` 链接到共享盘；本地测试可临时设置 `STOCK_WATCHER_REQUIRE_CIFS=false`。
+- 默认将行情与状态保存到当前目录的 `data/`（本地磁盘）；需要 Windows 共享盘时，先挂载并设置 `STOCK_WATCHER_DATA_DIR` 与 `STOCK_WATCHER_REQUIRE_CIFS=true`。
 - 默认读取当前目录的 `leaders.yaml` 股池和 `feishu.config` 私有凭证；无需通知时设置 `STOCK_WATCHER_FEISHU_ENABLED=false`。
 - Docker Engine 与 Compose ≥ 2.30.0 仅用于容器部署和容器验收。
 
@@ -118,7 +118,7 @@ make run
   Eastmoney┘                          │
                                       ▼
                             ┌──────────────────┐
-                            │ market.db (CIFS) │
+                            │ market.db (本地/CIFS) │
                             └───────┬──────────┘
                                     │
              ┌──────────────────────┼──────────────────────┐
@@ -150,7 +150,7 @@ make run
 - 推荐要求十年完整性覆盖率默认不低于 95%，当日可分析覆盖率默认不低于 90%。
 - 交易日 15:00 前使用上一已收盘交易日；目标买入日 09:30 后不再推送旧推荐。
 - 内置交易日历当前覆盖 2026 年，必须在到期前按交易所新年度通知升级二进制。
-- 生产保持 `STOCK_WATCHER_REQUIRE_CIFS=true`。共享盘不可用时停止本轮写入，不回退到服务器本地行情目录。
+- 默认使用本地 `data/` 目录；使用 Windows/CIFS 共享盘时设置 `STOCK_WATCHER_REQUIRE_CIFS=true`。挂载盘不可用时停止本轮写入，不回退到服务器本地目录。
 
 行情源协议、分页、复权和回退细节见[数据源接入与回退](docs/data-sources.md)。
 
@@ -204,8 +204,8 @@ make run
 | --- | --- |
 | `leaders.yaml` | 已确认股池；股票代码必须带 `sh`/`sz` 市场前缀 |
 | `feishu.config` | 可选飞书凭证文件，权限应为 `600`，不得提交 |
-| `STOCK_WATCHER_DATA_DIR` | 行情与状态目录；默认 `data`，生产指向 CIFS |
-| `STOCK_WATCHER_REQUIRE_CIFS` | 是否强制 CIFS；生产保持 `true` |
+| `STOCK_WATCHER_DATA_DIR` | 行情与状态目录；默认本地 `data`，也可指向已挂载的 CIFS |
+| `STOCK_WATCHER_REQUIRE_CIFS` | 是否强制数据目录位于 CIFS；默认 `false`，挂载盘模式设为 `true` |
 | `STOCK_WATCHER_WEB_ADDR` | 网页监听地址，默认 `127.0.0.1:8080` |
 | `STOCK_WATCHER_FEISHU_ENABLED` | 是否启用飞书投递 |
 | `STOCK_WATCHER_STRATEGY_ENABLED` | 是否启用全池短周期排名 |
@@ -241,7 +241,7 @@ make image
 make docker-smoke
 ```
 
-Compose 将宿主机共享盘映射到 `/data`、日志映射到 `/logs`，容器监听 `0.0.0.0:8080`，宿主机默认只绑定 `127.0.0.1:8080`。容器根文件系统只读，仅 `/data` 和 `/logs` 可写。操作步骤见[Compose 部署](docker/README.md)。
+Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/data`、日志映射到 `/logs`，容器监听 `0.0.0.0:8080`，宿主机默认只绑定 `127.0.0.1:8080`。容器根文件系统只读，仅 `/data` 和 `/logs` 可写。操作步骤见[Compose 部署](docker/README.md)。
 
 发布前记录完整提交 SHA、镜像标识或发布包校验和。镜像 tag 建议使用提交 SHA，部署后用真实 URL 验证健康检查、页面、API、权限边界和退出行为。
 
@@ -275,7 +275,7 @@ Compose 将宿主机共享盘映射到 `/data`、日志映射到 `/logs`，容�
 | `internal/config` | 内置生产配置、环境变量覆盖和严格校验 |
 | `internal/calendar` | 北京时间交易日、节假日、T+1 与过期窗口 |
 | `internal/market` | 行情源协议、分页、复权、超时与回退 |
-| `internal/storage` | CIFS 检查、SQLite、原子状态与只读看板查询 |
+| `internal/storage` | 本地/CIFS 存储策略、SQLite、原子状态与只读看板查询 |
 | `internal/monitor` | 整池同步、启动刷新、调度、重试和账本迁移 |
 | `internal/selection` | 趋势筛选与报告事件组装 |
 | `internal/strategy` | 前复权特征、成交模拟、排名、滚动验证和留出样本 |

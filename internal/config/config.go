@@ -101,7 +101,7 @@ var stockCode = regexp.MustCompile(`^(sh(60|68)[0-9]{4}|sz(00|30)[0-9]{4})$`)
 func ValidCode(s string) bool { return stockCode.MatchString(s) }
 
 func Defaults() Config {
-	c := Config{Version: 1, DataDir: "data", RequireCIFS: true, PollInterval: "5m", Timeout: "10s"}
+	c := Config{Version: 1, DataDir: "data", RequireCIFS: false, PollInterval: "5m", Timeout: "10s"}
 	c.Analysis = Analysis{Engine: "auto", Timeout: "10m", SyncTimeout: "90m"}
 	c.Strategy = DefaultStrategy()
 	c.StructureGuard.Mode = "shadow"

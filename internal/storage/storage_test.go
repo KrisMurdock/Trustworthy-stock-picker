@@ -56,6 +56,24 @@ func TestMissingRootIsNotCreated(t *testing.T) {
 	}
 }
 
+func TestEnsureRootCreatesOnlyLocalDirectory(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "local-data")
+	if err := EnsureRoot(root, false); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		t.Fatalf("local data root not created: %v", err)
+	}
+
+	missingMount := filepath.Join(t.TempDir(), "missing-mount")
+	if err := EnsureRoot(missingMount, true); err == nil {
+		t.Fatal("created a required CIFS mount")
+	}
+	if _, err := os.Stat(missingMount); !os.IsNotExist(err) {
+		t.Fatal("created local fallback for required CIFS")
+	}
+}
+
 func TestReadOnlyViewWithActiveWriter(t *testing.T) {
 	root := t.TempDir()
 	writer, err := Open(root, false)

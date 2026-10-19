@@ -1,4 +1,5 @@
-// Package storage owns all durable market data. Linux CIFS is required by default.
+// Package storage owns all durable market data. Local storage is the default;
+// callers can require Linux CIFS explicitly for mounted Windows shares.
 package storage
 
 import (
@@ -39,6 +40,22 @@ func Open(root string, requireCIFS bool) (*Store, error) {
 	}
 	s.lock = f
 	return s, nil
+}
+
+// EnsureRoot prepares a data root for explicit initialization. Local mode may
+// create the directory, but a required CIFS mount must already exist. This
+// keeps a missing share from being replaced by a local fallback directory.
+func EnsureRoot(root string, requireCIFS bool) error {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return errors.New("invalid data directory")
+	}
+	if !requireCIFS {
+		if err := os.MkdirAll(root, 0700); err != nil {
+			return errors.New("cannot create local data directory")
+		}
+	}
+	return (&Store{root: root, requireCIFS: requireCIFS}).Check()
 }
 
 // OpenView allows atomic read-only status queries while the single writer runs.

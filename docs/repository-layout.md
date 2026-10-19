@@ -1,6 +1,6 @@
 # 工程目录与补齐范围
 
-以 `/root/data/codebase/support-agent` 为工程组织参考，按 stock_watcher 的 Go CLI、Windows CIFS 存储和定时任务形态补齐。
+以 `/root/data/codebase/support-agent` 为工程组织参考，按 stock_watcher 的 Go CLI、本地/Windows CIFS 存储和定时任务形态补齐。
 
 | 工程能力 | 原有 stock_watcher | support-agent 参考 | 本仓库落点 |
 | --- | --- | --- | --- |
@@ -34,7 +34,7 @@ docs/                    工程、配置与运维说明
 bin/                     本机二进制（忽略）
 .builds/                 发布包（忽略）
 logs/                    有限滚动日志（忽略）
-data/                    Windows 共享盘链接或挂载（忽略）
+data/                    本地数据目录或 Windows 共享盘链接/挂载（忽略）
 ```
 
 scripts/ 只组织构建或 exec Go 二进制，生产容器和 systemd 直接运行 Go；没有恢复旧 Python 启动链路。业务配置已内置，外部股池和私有凭证保持当前根目录路径。
