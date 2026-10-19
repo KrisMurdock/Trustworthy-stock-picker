@@ -9,11 +9,15 @@ import (
 )
 
 type Message struct {
-	Version   int       `json:"version"`
-	EventID   string    `json:"event_id"`
-	Title     string    `json:"title"`
-	Sections  []Section `json:"sections"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Version        int       `json:"version"`
+	EventID        string    `json:"event_id"`
+	DisplayEventID string    `json:"display_event_id,omitempty"`
+	PartLabel      string    `json:"part_label,omitempty"`
+	Title          string    `json:"title"`
+	Sections       []Section `json:"sections"`
+	Template       string    `json:"template,omitempty"`
+	TrimPolicy     string    `json:"trim_policy,omitempty"`
+	ExpiresAt      time.Time `json:"expires_at"`
 }
 
 type Field struct {
@@ -21,12 +25,51 @@ type Field struct {
 	Value string `json:"value"`
 }
 
+type TableColumnKind string
+
+const (
+	TableText   TableColumnKind = "text"
+	TableStatus TableColumnKind = "status"
+	TableChange TableColumnKind = "change"
+)
+
+type TableTone string
+
+const (
+	ToneDefault  TableTone = ""
+	TonePositive TableTone = "positive"
+	ToneNegative TableTone = "negative"
+)
+
+type TableColumn struct {
+	Key   string          `json:"key"`
+	Label string          `json:"label"`
+	Kind  TableColumnKind `json:"kind"`
+	Width string          `json:"width,omitempty"`
+}
+
+type TableCell struct {
+	Text string    `json:"text"`
+	Tone TableTone `json:"tone,omitempty"`
+}
+
+type Table struct {
+	PageSize          int           `json:"page_size,omitempty"`
+	RowHeight         string        `json:"row_height,omitempty"`
+	FreezeFirstColumn bool          `json:"freeze_first_column,omitempty"`
+	Columns           []TableColumn `json:"columns"`
+	Rows              [][]TableCell `json:"rows"`
+}
+
 type Section struct {
 	Heading  string   `json:"heading,omitempty"`
 	Lines    []string `json:"lines"`
 	Fields   []Field  `json:"fields,omitempty"`
+	Table    *Table   `json:"table,omitempty"`
 	Optional bool     `json:"optional,omitempty"`
 }
+
+const TrimNone = "none"
 
 type Kind string
 
@@ -86,6 +129,9 @@ type ChannelState struct {
 type Event struct {
 	AsOf      string                  `json:"as_of"`
 	ExpiresAt time.Time               `json:"expires_at"`
+	Part      string                  `json:"part,omitempty"`
+	Sequence  int                     `json:"sequence,omitempty"`
+	DependsOn string                  `json:"depends_on,omitempty"`
 	Message   Message                 `json:"message"`
 	Channels  map[string]ChannelState `json:"channels"`
 }
@@ -131,13 +177,17 @@ func (l *Ledger) Normalize(now time.Time) bool {
 }
 
 func (l *Ledger) Enqueue(asof string, message Message, channels []string) error {
+	return l.EnqueuePart(asof, message, channels, "", 0, "")
+}
+
+func (l *Ledger) EnqueuePart(asof string, message Message, channels []string, part string, sequence int, dependsOn string) error {
 	if l.Version == 0 {
 		l.Version = 2
 	}
 	if l.Version != 2 {
 		return errors.New("unsupported delivery ledger version")
 	}
-	if !supportedMessageVersion(message.Version) || message.EventID == "" || asof == "" || message.ExpiresAt.IsZero() {
+	if !supportedMessageVersion(message.Version) || message.EventID == "" || asof == "" || message.ExpiresAt.IsZero() || sequence < 0 || dependsOn == message.EventID {
 		return errors.New("invalid notification message")
 	}
 	if l.Events == nil {
@@ -148,6 +198,9 @@ func (l *Ledger) Enqueue(asof string, message Message, channels []string) error 
 		event = Event{
 			AsOf:      asof,
 			ExpiresAt: message.ExpiresAt,
+			Part:      part,
+			Sequence:  sequence,
+			DependsOn: dependsOn,
 			Message:   message,
 			Channels:  map[string]ChannelState{},
 		}
@@ -202,7 +255,7 @@ func (l *Ledger) Prune(now time.Time, keep time.Duration) bool {
 				terminal = false
 			}
 		}
-		if terminal {
+		if terminal && !l.dependencyPending(eventID) {
 			delete(l.Events, eventID)
 			changed = true
 		}
@@ -210,12 +263,37 @@ func (l *Ledger) Prune(now time.Time, keep time.Duration) bool {
 	return changed
 }
 
+func (l Ledger) dependencyPending(eventID string) bool {
+	for _, event := range l.Events {
+		if event.DependsOn != eventID {
+			continue
+		}
+		for _, state := range event.Channels {
+			switch state.Status {
+			case Delivered, Blocked, Expired:
+			default:
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (l Ledger) Due(now time.Time) []Delivery {
 	eventIDs := make([]string, 0, len(l.Events))
 	for eventID := range l.Events {
 		eventIDs = append(eventIDs, eventID)
 	}
-	sort.Strings(eventIDs)
+	sort.Slice(eventIDs, func(i, j int) bool {
+		left, right := l.Events[eventIDs[i]], l.Events[eventIDs[j]]
+		if left.AsOf != right.AsOf {
+			return left.AsOf < right.AsOf
+		}
+		if left.Sequence != right.Sequence {
+			return left.Sequence < right.Sequence
+		}
+		return eventIDs[i] < eventIDs[j]
+	})
 	out := []Delivery{}
 	for _, eventID := range eventIDs {
 		event := l.Events[eventID]
@@ -236,6 +314,19 @@ func (l Ledger) Due(now time.Time) []Delivery {
 		}
 	}
 	return out
+}
+
+func (l Ledger) CanDeliver(eventID, channel string) bool {
+	event, ok := l.Events[eventID]
+	if !ok || event.DependsOn == "" {
+		return ok
+	}
+	dependency, ok := l.Events[event.DependsOn]
+	if !ok {
+		return false
+	}
+	state, ok := dependency.Channels[channel]
+	return ok && state.Status == Delivered
 }
 
 func (l *Ledger) MarkInFlight(eventID, channel string, now time.Time) error {
@@ -330,7 +421,7 @@ func (l Ledger) Validate() error {
 		return errors.New("unsupported delivery ledger version")
 	}
 	for eventID, event := range l.Events {
-		if eventID == "" || event.AsOf == "" || !supportedMessageVersion(event.Message.Version) || event.Message.EventID != eventID || event.ExpiresAt.IsZero() || len(event.Channels) == 0 {
+		if eventID == "" || event.AsOf == "" || !supportedMessageVersion(event.Message.Version) || event.Message.EventID != eventID || event.ExpiresAt.IsZero() || len(event.Channels) == 0 || event.Sequence < 0 || event.DependsOn == eventID {
 			return errors.New("invalid persisted delivery ledger")
 		}
 		if _, err := time.Parse("2006-01-02", event.AsOf); err != nil {
@@ -338,6 +429,15 @@ func (l Ledger) Validate() error {
 		}
 		if event.Message.ExpiresAt.IsZero() || !event.Message.ExpiresAt.Equal(event.ExpiresAt) {
 			return errors.New("delivery message expiry does not match event")
+		}
+		if event.DependsOn != "" {
+			if dependency, ok := l.Events[event.DependsOn]; ok {
+				if dependency.Sequence >= event.Sequence {
+					return errors.New("invalid delivery dependency order")
+				}
+			} else if !terminalEvent(event) {
+				return errors.New("missing delivery dependency")
+			}
 		}
 		for channel, state := range event.Channels {
 			if channel == "" || state.Attempts < 0 {
@@ -351,6 +451,17 @@ func (l Ledger) Validate() error {
 		}
 	}
 	return nil
+}
+
+func terminalEvent(event Event) bool {
+	for _, state := range event.Channels {
+		switch state.Status {
+		case Delivered, Blocked, Expired:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func supportedMessageVersion(version int) bool {

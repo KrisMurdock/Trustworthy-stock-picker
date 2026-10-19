@@ -152,3 +152,105 @@ func TestLedgerPrunesOldTerminalEvents(t *testing.T) {
 		t.Fatal("pruned event remains in ledger")
 	}
 }
+
+func TestLedgerOrdersDependentCardParts(t *testing.T) {
+	now := time.Date(2026, 10, 13, 19, 0, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
+	expires := now.Add(time.Hour)
+	main := Message{Version: 2, EventID: "z:main", Title: "main", ExpiresAt: expires}
+	detail1 := Message{Version: 2, EventID: "a:detail:01", Title: "detail 1", ExpiresAt: expires}
+	detail2 := Message{Version: 2, EventID: "a:detail:02", Title: "detail 2", ExpiresAt: expires}
+	ledger := NewLedger()
+	if err := ledger.EnqueuePart("2026-10-13", main, []string{"a"}, "main", 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.EnqueuePart("2026-10-13", detail1, []string{"a"}, "detail", 1, main.EventID); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.EnqueuePart("2026-10-13", detail2, []string{"a"}, "detail", 2, detail1.EventID); err != nil {
+		t.Fatal(err)
+	}
+	due := ledger.Due(now)
+	if len(due) != 3 || due[0].EventID != main.EventID || due[1].EventID != detail1.EventID || due[2].EventID != detail2.EventID {
+		t.Fatalf("unexpected delivery order: %+v", due)
+	}
+	if !ledger.CanDeliver(main.EventID, "a") || ledger.CanDeliver(detail1.EventID, "a") || ledger.CanDeliver(detail2.EventID, "a") {
+		t.Fatal("dependencies were not enforced before main delivery")
+	}
+	if err := ledger.MarkDelivered(main.EventID, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if !ledger.CanDeliver(detail1.EventID, "a") || ledger.CanDeliver(detail2.EventID, "a") {
+		t.Fatal("detail 1 should depend only on main")
+	}
+	if err := ledger.MarkDelivered(detail1.EventID, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if !ledger.CanDeliver(detail2.EventID, "a") {
+		t.Fatal("detail 2 should be deliverable after detail 1")
+	}
+	if err := ledger.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLedgerKeepsDependencyUntilDependentIsTerminal(t *testing.T) {
+	now := time.Date(2026, 10, 13, 19, 0, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
+	expires := now.Add(-31 * 24 * time.Hour)
+	main := Message{Version: 2, EventID: "main", Title: "main", ExpiresAt: expires}
+	detail := Message{Version: 2, EventID: "detail", Title: "detail", ExpiresAt: expires}
+	ledger := NewLedger()
+	if err := ledger.EnqueuePart("2026-09-12", main, []string{"a"}, "main", 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.EnqueuePart("2026-09-12", detail, []string{"a"}, "detail", 1, main.EventID); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.MarkDelivered(main.EventID, "a"); err != nil {
+		t.Fatal(err)
+	}
+	ledger.Prune(now, 30*24*time.Hour)
+	if _, ok := ledger.Events[main.EventID]; !ok {
+		t.Fatal("dependency was pruned while detail was still pending")
+	}
+	if err := ledger.MarkDelivered(detail.EventID, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if !ledger.Prune(now, 30*24*time.Hour) {
+		t.Fatal("terminal card family was not pruned")
+	}
+	if len(ledger.Events) != 0 {
+		t.Fatalf("terminal card family remains: %+v", ledger.Events)
+	}
+}
+
+func TestLedgerOrdersCardFamiliesByDateBeforeSequence(t *testing.T) {
+	now := time.Date(2026, 10, 13, 19, 0, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
+	expires := now.Add(24 * time.Hour)
+	ledger := NewLedger()
+	for _, card := range []struct {
+		asof     string
+		eventID  string
+		sequence int
+		depends  string
+	}{
+		{"2026-10-13", "second:main", 0, ""},
+		{"2026-10-13", "second:detail:01", 1, "second:main"},
+		{"2026-10-12", "first:main", 0, ""},
+		{"2026-10-12", "first:detail:01", 1, "first:main"},
+	} {
+		message := Message{Version: 2, EventID: card.eventID, Title: card.eventID, ExpiresAt: expires}
+		if err := ledger.EnqueuePart(card.asof, message, []string{"a"}, "card", card.sequence, card.depends); err != nil {
+			t.Fatal(err)
+		}
+	}
+	due := ledger.Due(now)
+	want := []string{"first:main", "first:detail:01", "second:main", "second:detail:01"}
+	if len(due) != len(want) {
+		t.Fatalf("due deliveries = %+v", due)
+	}
+	for index, eventID := range want {
+		if due[index].EventID != eventID {
+			t.Fatalf("delivery %d = %s, want %s", index, due[index].EventID, eventID)
+		}
+	}
+}

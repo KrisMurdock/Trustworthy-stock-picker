@@ -23,15 +23,15 @@ func (f sourceFunc) Fetch(ctx context.Context, s config.Stock, start, end, adjus
 func TestStartupUsesCompletedSessionAndPublicationWindow(t *testing.T) {
 	for _, tc := range []struct {
 		name, now, asof, target string
-		queued                  int
+		wantSends               int
 	}{
-		{"before open", "2026-10-13T09:29:00+08:00", "2026-10-12", "2026-10-13", 1},
+		{"before open", "2026-10-13T09:29:00+08:00", "2026-10-12", "2026-10-13", 2},
 		{"at open", "2026-10-13T09:30:00+08:00", "2026-10-12", "2026-10-13", 0},
 		{"intraday UTC clock", "2026-10-13T06:59:00Z", "2026-10-12", "2026-10-13", 0},
-		{"at close", "2026-10-13T15:00:00+08:00", "2026-10-13", "2026-10-14", 1},
-		{"before scheduled time", "2026-10-13T17:00:00+08:00", "2026-10-13", "2026-10-14", 1},
-		{"weekend", "2026-10-17T19:00:00+08:00", "2026-10-16", "2026-10-19", 1},
-		{"holiday", "2026-10-01T19:00:00+08:00", "2026-09-30", "2026-10-09", 1},
+		{"at close", "2026-10-13T15:00:00+08:00", "2026-10-13", "2026-10-14", 2},
+		{"before scheduled time", "2026-10-13T17:00:00+08:00", "2026-10-13", "2026-10-14", 2},
+		{"weekend", "2026-10-17T19:00:00+08:00", "2026-10-16", "2026-10-19", 2},
+		{"holiday", "2026-10-01T19:00:00+08:00", "2026-09-30", "2026-10-09", 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, source, channel := fixture(t)
@@ -59,8 +59,8 @@ func TestStartupUsesCompletedSessionAndPublicationWindow(t *testing.T) {
 			if err := m.Cycle(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			if source.calls != 1 || channel.calls != tc.queued {
-				t.Fatalf("downloads=%d sends=%d, want 1/%d", source.calls, channel.calls, tc.queued)
+			if source.calls != 1 || channel.calls != tc.wantSends {
+				t.Fatalf("downloads=%d sends=%d, want 1/%d", source.calls, channel.calls, tc.wantSends)
 			}
 		})
 	}
@@ -173,9 +173,16 @@ func TestStartupRefreshPreservesDeliveryForChangedReport(t *testing.T) {
 				channel.err = &notify.DeliveryError{Kind: kind, Reason: "test"}
 			}
 			_ = m.Cycle(context.Background())
+			wantInitialCalls := 2
+			if kind != "" {
+				wantInitialCalls = 1
+			}
 			before, err := m.Status()
 			if err != nil {
 				t.Fatal(err)
+			}
+			if len(before.Events) != 2 || channel.calls != wantInitialCalls {
+				t.Fatalf("unexpected initial card family: calls=%d state=%+v", channel.calls, before)
 			}
 			oldState := channelState(t, before, channel.name)
 			m.Config.Selection.TopN++ // Changes the content-derived report ID.
@@ -189,14 +196,14 @@ func TestStartupRefreshPreservesDeliveryForChangedReport(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(after.Events) != 1 || channelState(t, after, channel.name) != oldState || channel.calls != 1 || source.calls != 2 {
+			if len(after.Events) != 2 || channelState(t, after, channel.name) != oldState || channel.calls != wantInitialCalls || source.calls != 2 {
 				t.Fatalf("refresh reset delivery: before=%+v after=%+v", before, after)
 			}
 			var refreshed selection.Report
 			if err := m.Store.Read("reports/2026-10-13.json", &refreshed); err != nil {
 				t.Fatal(err)
 			}
-			if _, exists := before.Events[refreshed.ID]; exists {
+			if _, exists := before.Events[refreshed.ID+":main"]; exists {
 				t.Fatal("test did not change report identity")
 			}
 			second := &fakeChannel{name: "new-channel"}
@@ -207,8 +214,8 @@ func TestStartupRefreshPreservesDeliveryForChangedReport(t *testing.T) {
 			if err := m.Cycle(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			if second.calls != 1 || channel.calls != 1 {
-				t.Fatal("new channel not delivered independently")
+			if second.calls != 2 || channel.calls != wantInitialCalls || source.calls != 3 {
+				t.Fatalf("new channel not delivered independently: old=%d new=%d source=%d", channel.calls, second.calls, source.calls)
 			}
 		})
 	}
@@ -284,7 +291,7 @@ func TestStartupRechecksSessionAfterDownload(t *testing.T) {
 	if err := m.Cycle(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if source.calls != 2 || channel.calls != 1 {
+	if source.calls != 2 || channel.calls != 2 {
 		t.Fatal("new completed session not processed")
 	}
 }

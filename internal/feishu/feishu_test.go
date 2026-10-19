@@ -4,10 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"stock-watcher/internal/config"
 	"stock-watcher/internal/notify"
+	reportmessage "stock-watcher/internal/notify/report"
+	"stock-watcher/internal/selection"
+	"stock-watcher/internal/strategy"
 	"strconv"
 	"strings"
 	"testing"
@@ -73,6 +78,259 @@ func TestStructuredCardRendersFieldsAndEventID(t *testing.T) {
 	}
 	if fieldCount != 4 || !foundEventID {
 		t.Fatalf("structured card missing fields or event id: fields=%d event=%v payload=%s", fieldCount, foundEventID, data)
+	}
+}
+
+func TestStructuredCardRendersNativeTable(t *testing.T) {
+	payload := Card(notify.Message{
+		Version: 2,
+		EventID: "event-table",
+		Title:   "title",
+		Sections: []notify.Section{{
+			Heading: "决策",
+			Lines:   []string{"先看结论"},
+			Table: &notify.Table{
+				PageSize:          10,
+				FreezeFirstColumn: true,
+				Columns: []notify.TableColumn{
+					{Key: "stock", Label: "标的", Kind: notify.TableText, Width: "26%"},
+					{Key: "status", Label: "状态", Kind: notify.TableStatus},
+					{Key: "change", Label: "涨跌", Kind: notify.TableChange},
+				},
+				Rows: [][]notify.TableCell{
+					{{Text: "1 · sz000001 名称"}, {Text: "可执行"}, {Text: "+1.20%", Tone: notify.TonePositive}},
+					{{Text: ""}, {Text: "观察"}, {Text: "-0.50%", Tone: notify.ToneNegative}},
+					{{Text: "sz000002"}, {Text: "未启用"}},
+				},
+			},
+		}},
+	})
+	card, elements := decodeCard(t, payload)
+	tableIndex := -1
+	lineIndex := -1
+	var table map[string]any
+	for i, rawElement := range elements {
+		element, ok := rawElement.(map[string]any)
+		if !ok {
+			continue
+		}
+		if text, ok := element["text"].(map[string]any); ok && text["content"] == "先看结论" {
+			lineIndex = i
+		}
+		if element["tag"] == "table" {
+			tableIndex = i
+			table = element
+		}
+	}
+	if table == nil || lineIndex < 0 || tableIndex < lineIndex {
+		t.Fatalf("table missing or ordered before conclusion line: %s", card)
+	}
+	if table["page_size"] != float64(10) || table["row_height"] != "middle" || table["freeze_first_column"] != true {
+		t.Fatalf("unexpected table layout: %+v", table)
+	}
+	headerStyle, _ := table["header_style"].(map[string]any)
+	if headerStyle["background_style"] != "grey" || headerStyle["bold"] != true || headerStyle["lines"] != float64(2) {
+		t.Fatalf("unexpected table header style: %+v", headerStyle)
+	}
+	columns, _ := table["columns"].([]any)
+	if len(columns) != 3 {
+		t.Fatalf("unexpected columns: %+v", columns)
+	}
+	assertColumn := func(index int, name, display, dataType, width string) {
+		t.Helper()
+		column, _ := columns[index].(map[string]any)
+		actualWidth, _ := column["width"].(string)
+		if column["name"] != name || column["display_name"] != display || column["data_type"] != dataType || actualWidth != width {
+			t.Fatalf("unexpected column %d: %+v", index, column)
+		}
+	}
+	assertColumn(0, "stock", "标的", "text", "26%")
+	assertColumn(1, "status", "状态", "options", "")
+	assertColumn(2, "change", "涨跌", "lark_md", "")
+	rows, _ := table["rows"].([]any)
+	if len(rows) != 3 {
+		t.Fatalf("unexpected rows: %+v", rows)
+	}
+	firstRow, _ := rows[0].(map[string]any)
+	statusCell, _ := firstRow["status"].([]any)
+	status, _ := statusCell[0].(map[string]any)
+	if firstRow["stock"] != "1 · sz000001 名称" || status["text"] != "可执行" || status["color"] != "green" || firstRow["change"] != "<font color=red>+1.20%</font>" {
+		t.Fatalf("unexpected first row: %+v", firstRow)
+	}
+	secondRow, _ := rows[1].(map[string]any)
+	statusCell, _ = secondRow["status"].([]any)
+	status, _ = statusCell[0].(map[string]any)
+	if secondRow["stock"] != "—" || status["text"] != "观察" || status["color"] != "neutral" || secondRow["change"] != "<font color=green>-0.50%</font>" {
+		t.Fatalf("unexpected second row: %+v", secondRow)
+	}
+	thirdRow, _ := rows[2].(map[string]any)
+	statusCell, _ = thirdRow["status"].([]any)
+	status, _ = statusCell[0].(map[string]any)
+	if status["text"] != "未启用" || status["color"] != "neutral" || thirdRow["change"] != "—" {
+		t.Fatalf("unexpected third row: %+v", thirdRow)
+	}
+}
+
+func TestTableLayoutDefaults(t *testing.T) {
+	table := tableElement(&notify.Table{
+		Columns: []notify.TableColumn{{Key: "stock", Label: "标的", Kind: notify.TableText}},
+		Rows:    [][]notify.TableCell{{{Text: "sz000001"}}},
+	})
+	if table["page_size"] != 5 || table["row_height"] != "middle" || table["freeze_first_column"] != false {
+		t.Fatalf("unexpected table defaults: %+v", table)
+	}
+}
+
+func TestStructuredCardUsesMessageTemplate(t *testing.T) {
+	for _, tt := range []struct{ template, want string }{
+		{"", "blue"},
+		{"green", "green"},
+		{"blue", "blue"},
+		{"grey", "grey"},
+		{"orange", "orange"},
+	} {
+		t.Run(tt.template, func(t *testing.T) {
+			card, _ := decodeCard(t, Card(notify.Message{Version: 2, Template: tt.template, Title: "title"}))
+			header, _ := card["header"].(map[string]any)
+			if header["template"] != tt.want {
+				t.Fatalf("template=%q got=%v want=%q", tt.template, header["template"], tt.want)
+			}
+		})
+	}
+}
+
+func TestStructuredCardRendersDisplayEventIDAndPartLabel(t *testing.T) {
+	_, elements := decodeCard(t, Card(notify.Message{
+		Version:        2,
+		EventID:        "internal-event",
+		DisplayEventID: "SW-20261019-1",
+		PartLabel:      "主卡",
+		Title:          "title",
+	}))
+	marker := ""
+	for _, rawElement := range elements {
+		element, _ := rawElement.(map[string]any)
+		notes, _ := element["elements"].([]any)
+		for _, rawNote := range notes {
+			note, _ := rawNote.(map[string]any)
+			if note["tag"] == "plain_text" {
+				marker, _ = note["content"].(string)
+			}
+		}
+	}
+	if marker != "事件 ID：SW-20261019-1 · 主卡" {
+		t.Fatalf("unexpected event marker %q", marker)
+	}
+}
+
+func TestDecisionCardsFitFeishuPayloadLimit(t *testing.T) {
+	parameters := config.DefaultStrategy()
+	parameters.Enabled = true
+	research := &strategy.Research{
+		Version:         1,
+		Strategy:        "short_horizon_v1",
+		AsOf:            "2026-10-16",
+		Parameters:      parameters,
+		TrainingThrough: "2026-09-30",
+		SampleCount:     120,
+		Development:     strategy.Evaluation{From: "2026-01-02", Through: "2026-08-31", SignalDates: 80, Method: "rolling"},
+		Holdout:         strategy.Evaluation{From: "2026-09-01", Through: "2026-09-30", SignalDates: 20, Method: "frozen_holdout"},
+		Rules: []strategy.Stats{
+			{Rule: "baseline", Target: parameters.TargetNetPct, Horizon: parameters.MaxHoldingDays, Samples: 500, Dates: 100, Resolved: 480, MeanNet: .32, HitRate: .41},
+			{Rule: "momentum", Target: parameters.TargetNetPct, Horizon: parameters.MaxHoldingDays, Samples: 180, Dates: 60, Resolved: 176, MeanNet: .85, HitRate: .52, WorstNet: -2.1, LossLimitPct: 3},
+		},
+	}
+	r := selection.Report{
+		Version: 2, ID: "payload-limit", AsOf: "2026-10-16", Target: "2026-10-19",
+		SelectionEnabled: true, Strategy: "short_horizon_v1", PoolSize: 20, Eligible: 20, TopN: 10, Research: research,
+	}
+	for index := 1; index <= 10; index++ {
+		candidate := strategy.Candidate{
+			Code: fmt.Sprintf("sz%06d", index), Name: fmt.Sprintf("候选股票%d", index), Rank: index,
+			Score: 90 - float64(index), Recommended: true,
+			Rules: []string{"baseline", "momentum"}, Reasons: []string{"historical_rule_breakout", "rising_ma20", "strong_close"},
+			Risks:    []string{"upper_wick", "large_daily_range", "extended_price"},
+			Evidence: &strategy.Stats{Samples: 180, Dates: 60, Resolved: 176, HitRate: .52, MeanNet: .85, LowerBound: .12},
+			Plan:     &strategy.Plan{EntryPrice: 10 + float64(index)/100, TakeProfit: 10.5 + float64(index)/100, StopPrice: 9.7},
+			ScoreBreakdown: &strategy.ScoreBreakdown{
+				Formula: fmt.Sprintf("%d + 4.2(日线17×0.25) + 10(量能适中) + 8(30m结构通过) + 5(15m底分型) - 2(上影线) = %.1f", 60-index, 80-float64(index)),
+			},
+		}
+		r.Ranking = append(r.Ranking, candidate)
+		ranking := &r.Ranking[len(r.Ranking)-1]
+		r.Selected = append(r.Selected, selection.Candidate{Code: candidate.Code, Name: candidate.Name, Ranking: ranking})
+	}
+	for index := 1; index <= 12; index++ {
+		r.Excluded = append(r.Excluded, selection.Excluded{Code: fmt.Sprintf("ex%06d", index), Reason: "missing_data", LastDate: "2026-10-16"})
+	}
+	for index := 1; index <= 10; index++ {
+		r.Filtered = append(r.Filtered, selection.Excluded{Code: fmt.Sprintf("flt%06d", index), Reason: "score_below_threshold"})
+	}
+
+	cards, err := reportmessage.FromSelection(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cards.Details) != 2 {
+		t.Fatalf("details = %d, want 2 pages", len(cards.Details))
+	}
+	messages := append([]notify.Message{cards.Main}, cards.Details...)
+	for _, message := range messages {
+		data, err := json.Marshal(Card(message))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%s payload = %d bytes", message.PartLabel, len(data))
+		if len(data) > maxPayloadBytes {
+			t.Fatalf("%s payload = %d bytes, limit %d", message.PartLabel, len(data), maxPayloadBytes)
+		}
+	}
+}
+
+func TestStructuredCardKeepsLongLinesFullWidth(t *testing.T) {
+	longLine := strings.Repeat("长", 4000)
+	_, elements := decodeCard(t, Card(notify.Message{
+		Version:  2,
+		EventID:  "event-line",
+		Title:    "title",
+		Sections: []notify.Section{{Lines: []string{longLine}}},
+	}))
+	for _, rawElement := range elements {
+		element, _ := rawElement.(map[string]any)
+		text, _ := element["text"].(map[string]any)
+		if text["content"] != longLine {
+			continue
+		}
+		if _, hasFields := element["fields"]; hasFields || text["tag"] != "lark_md" {
+			t.Fatalf("long line was not rendered as a full-width div: %+v", element)
+		}
+		return
+	}
+	t.Fatal("long line was not rendered")
+}
+
+func TestRenderContentFallsBackToPlainTextTable(t *testing.T) {
+	content := renderContent(notify.Message{
+		Version: 2,
+		Sections: []notify.Section{{
+			Heading: "决策",
+			Table: &notify.Table{
+				Columns: []notify.TableColumn{
+					{Key: "stock", Label: "标的"},
+					{Key: "status", Label: "状态"},
+					{Key: "change", Label: "涨跌"},
+				},
+				Rows: [][]notify.TableCell{
+					{{Text: "sz000001"}, {Text: "可执行"}, {Text: "+1.20%"}},
+					{{Text: ""}, {Text: "观察"}, {Text: "-0.50%"}},
+				},
+			},
+		}},
+	})
+	for _, want := range []string{"决策", "标的 | 状态 | 涨跌", "sz000001 | 可执行 | +1.20%", "— | 观察 | -0.50%"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("plain text fallback missing %q: %q", want, content)
+		}
 	}
 }
 
@@ -226,6 +484,31 @@ func TestOversizedStructuredCardDropsOptionalSectionsAndPreservesSummary(t *test
 	}
 }
 
+func TestTrimNoneDoesNotDropOptionalSections(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Write([]byte("{\"code\":0}"))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "", time.Second)
+	defer c.Close()
+	err := c.Send(context.Background(), notify.Message{
+		Version:    2,
+		EventID:    "event-no-trim",
+		Title:      "title",
+		TrimPolicy: notify.TrimNone,
+		Sections: []notify.Section{
+			{Heading: "摘要", Fields: []notify.Field{{Label: "状态", Value: "保留摘要"}}},
+			{Heading: "长尾股票", Optional: true, Lines: []string{strings.Repeat("长", 30000)}},
+		},
+	})
+	var failure *notify.DeliveryError
+	if !errors.As(err, &failure) || failure.Kind != notify.Permanent || failure.Reason != "payload_limit" || calls != 0 {
+		t.Fatalf("trim-none oversized card should fail without trimming or request: err=%v calls=%d", err, calls)
+	}
+}
+
 func TestOversizedMandatoryStructuredCardFailsBeforeRequest(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -286,4 +569,48 @@ func TestCardRendersMessageWithoutSelectionDependency(t *testing.T) {
 			t.Fatalf("card does not contain %q: %s", want, text)
 		}
 	}
+}
+
+func TestCardRendersSelectionReportMainCard(t *testing.T) {
+	_, elements := decodeCard(t, Card(selection.Report{
+		Version: 2,
+		ID:      "selection-event",
+		AsOf:    "2026-10-16",
+		Target:  "2026-10-19",
+	}))
+	marker := ""
+	for _, rawElement := range elements {
+		element, _ := rawElement.(map[string]any)
+		notes, _ := element["elements"].([]any)
+		for _, rawNote := range notes {
+			note, _ := rawNote.(map[string]any)
+			if note["tag"] == "plain_text" {
+				marker, _ = note["content"].(string)
+			}
+		}
+	}
+	if marker != "事件 ID：selection-event · 主卡" {
+		t.Fatalf("selection report did not render its main card: marker=%q", marker)
+	}
+}
+
+func decodeCard(t *testing.T, payload map[string]any) (map[string]any, []any) {
+	t.Helper()
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	card, ok := envelope["card"].(map[string]any)
+	if !ok {
+		t.Fatalf("card missing from payload: %s", data)
+	}
+	elements, ok := card["elements"].([]any)
+	if !ok {
+		t.Fatalf("elements missing from card: %s", data)
+	}
+	return card, elements
 }

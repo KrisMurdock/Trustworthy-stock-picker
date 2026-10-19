@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"sort"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/notify"
@@ -50,19 +51,25 @@ func (f *fakeSource) Fetch(ctx context.Context, s config.Stock, start, end, adju
 }
 
 type fakeChannel struct {
-	name   string
-	calls  int
-	err    error
-	cancel func()
+	name       string
+	calls      int
+	err        error
+	failOnPart string
+	cancel     func()
+	sent       []notify.Message
 }
 
 func (f *fakeChannel) Name() string { return f.name }
 
-func (f *fakeChannel) Send(ctx context.Context, _ notify.Message) error {
+func (f *fakeChannel) Send(ctx context.Context, message notify.Message) error {
 	f.calls++
+	f.sent = append(f.sent, message)
 	if f.cancel != nil {
 		f.cancel()
 		return ctx.Err()
+	}
+	if f.failOnPart != "" && message.PartLabel != f.failOnPart {
+		return nil
 	}
 	return f.err
 }
@@ -94,12 +101,46 @@ func fixture(t *testing.T) (*Monitor, *fakeSource, *fakeChannel) {
 func channelState(t *testing.T, state notify.Ledger, channel string) notify.ChannelState {
 	t.Helper()
 	for _, event := range state.Events {
-		if value, ok := event.Channels[channel]; ok {
-			return value
+		if event.Part == "main" {
+			return eventChannelState(t, state, event.Message.EventID, channel)
+		}
+	}
+	if len(state.Events) == 1 {
+		for eventID := range state.Events {
+			return eventChannelState(t, state, eventID, channel)
 		}
 	}
 	t.Fatal("channel state not found")
 	return notify.ChannelState{}
+}
+
+func eventChannelState(t *testing.T, state notify.Ledger, eventID, channel string) notify.ChannelState {
+	t.Helper()
+	event, ok := state.Events[eventID]
+	if !ok {
+		t.Fatalf("event %s not found", eventID)
+	}
+	value, ok := event.Channels[channel]
+	if !ok {
+		t.Fatalf("channel %s not found for event %s", channel, eventID)
+	}
+	return value
+}
+
+func detailEventIDs(t *testing.T, state notify.Ledger) []string {
+	t.Helper()
+	events := make([]notify.Event, 0)
+	for _, event := range state.Events {
+		if event.Part == "detail" {
+			events = append(events, event)
+		}
+	}
+	sort.Slice(events, func(i, j int) bool { return events[i].Sequence < events[j].Sequence })
+	ids := make([]string, len(events))
+	for index, event := range events {
+		ids[index] = event.Message.EventID
+	}
+	return ids
 }
 
 func TestDurableRetryAndRestartDedupe(t *testing.T) {
@@ -116,6 +157,10 @@ func TestDurableRetryAndRestartDedupe(t *testing.T) {
 	if pending.Status != notify.Pending || pending.Attempts != 1 {
 		t.Fatalf("missing durable pending: %+v", pending)
 	}
+	details := detailEventIDs(t, state)
+	if len(details) != 1 || eventChannelState(t, state, details[0], channel.name).Status != notify.Pending {
+		t.Fatalf("detail page should wait for the main card: %+v", state.Events)
+	}
 	if err := m.Cycle(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -129,14 +174,65 @@ func TestDurableRetryAndRestartDedupe(t *testing.T) {
 	if err := restarted.Cycle(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if channel.calls != 2 || source.calls != 1 {
+	if channel.calls != 3 || source.calls != 1 {
 		t.Fatal("pending not reused after restart")
+	}
+	for _, eventID := range details {
+		if got := eventChannelState(t, state, eventID, channel.name); got.Status != notify.Pending {
+			t.Fatalf("detail sent before retry: %+v", got)
+		}
 	}
 	if err := restarted.Cycle(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if channel.calls != 2 {
+	if channel.calls != 3 {
 		t.Fatal("duplicate recommendation")
+	}
+}
+
+func TestDetailFailureStopsLaterPagesAndRetriesOnlyFailedPage(t *testing.T) {
+	m, _, channel := fixture(t)
+	expires := m.Now().Add(14 * time.Hour)
+	cards := reportmessage.Cards{
+		Main: notify.Message{Version: 2, EventID: "event:main", Title: "main", ExpiresAt: expires},
+		Details: []notify.Message{
+			{Version: 2, EventID: "event:detail:01", PartLabel: "详情 1/2", Title: "detail 1", ExpiresAt: expires},
+			{Version: 2, EventID: "event:detail:02", PartLabel: "详情 2/2", Title: "detail 2", ExpiresAt: expires},
+		},
+	}
+	state := notify.NewLedger()
+	if err := enqueueCards(&state, "2026-10-13", cards, []string{channel.name}); err != nil {
+		t.Fatal(err)
+	}
+	channel.failOnPart = "详情 1/2"
+	channel.err = &notify.DeliveryError{Kind: notify.Retryable, Reason: "temporary"}
+	if err := m.flushState(context.Background(), &state); err == nil {
+		t.Fatal("expected detail page failure")
+	}
+	if channel.calls != 2 {
+		t.Fatalf("main and failed detail should be attempted once, calls=%d", channel.calls)
+	}
+	if got := eventChannelState(t, state, cards.Main.EventID, channel.name); got.Status != notify.Delivered {
+		t.Fatalf("main card was not delivered: %+v", got)
+	}
+	if got := eventChannelState(t, state, cards.Details[0].EventID, channel.name); got.Status != notify.Pending {
+		t.Fatalf("failed detail should be pending: %+v", got)
+	}
+	if got := eventChannelState(t, state, cards.Details[1].EventID, channel.name); got.Status != notify.Pending {
+		t.Fatalf("later detail should stay pending: %+v", got)
+	}
+
+	now := m.Now().Add(3 * time.Minute)
+	m.Now = func() time.Time { return now }
+	channel.err = nil
+	if err := m.flushState(context.Background(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if channel.calls != 4 {
+		t.Fatalf("retry should send only detail 1 then detail 2, calls=%d", channel.calls)
+	}
+	if channel.sent[2].EventID != cards.Details[0].EventID || channel.sent[3].EventID != cards.Details[1].EventID {
+		t.Fatalf("unexpected retry order: %+v", channel.sent)
 	}
 }
 
@@ -160,6 +256,10 @@ func TestPermanentRetryAndExpiredPending(t *testing.T) {
 	if err := m.Cycle(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	state, _ = m.Status()
+	if channel.calls != 3 || channelState(t, state, channel.name).Status != notify.Delivered {
+		t.Fatalf("main and detail were not delivered after retry: calls=%d state=%+v", channel.calls, state.Events)
+	}
 	m, _, channel = fixture(t)
 	channel.err = &notify.DeliveryError{Kind: notify.Retryable, Reason: "temporary"}
 	_ = m.Cycle(context.Background())
@@ -171,6 +271,11 @@ func TestPermanentRetryAndExpiredPending(t *testing.T) {
 	state, _ = m.Status()
 	if got := channelState(t, state, channel.name); got.Status != notify.Expired || channel.calls != 1 {
 		t.Fatalf("expired recommendation sent: %+v", got)
+	}
+	for _, eventID := range detailEventIDs(t, state) {
+		if got := eventChannelState(t, state, eventID, channel.name); got.Status != notify.Expired {
+			t.Fatalf("detail page did not expire with the main card: %+v", got)
+		}
 	}
 }
 
@@ -318,12 +423,14 @@ func TestStrategySyncRawResearchPersistenceAndRetry(t *testing.T) {
 		t.Fatal("raw execution history not fetched")
 	}
 	state, err := m.Status()
-	if err != nil || len(state.Events) != 1 {
+	if err != nil || len(state.Events) != 2 {
 		t.Fatalf("new report not persisted %+v %v", state, err)
 	}
 	var event notify.Event
 	for _, candidate := range state.Events {
-		event = candidate
+		if candidate.Part == "main" {
+			event = candidate
+		}
 	}
 	if event.Message.Version != 2 {
 		t.Fatalf("new report message was not persisted: %+v", event.Message)
@@ -335,8 +442,17 @@ func TestStrategySyncRawResearchPersistenceAndRetry(t *testing.T) {
 	now := m.Now().Add(3 * time.Minute)
 	m.Now = func() time.Time { return now }
 	sender.err = nil
-	if err := m.Cycle(context.Background()); err != nil || source.calls != 2 || sender.calls != 2 {
+	if err := m.Cycle(context.Background()); err != nil || source.calls != 2 || sender.calls != 3 {
 		t.Fatal("v2 pending was not reused")
+	}
+	state, err = m.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for eventID := range state.Events {
+		if got := eventChannelState(t, state, eventID, sender.name); got.Status != notify.Delivered {
+			t.Fatalf("card %s was not delivered: %+v", eventID, got)
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -370,7 +486,7 @@ func TestChannelsDeliverIndependently(t *testing.T) {
 	if err := m.Cycle(context.Background()); err == nil {
 		t.Fatal("expected secondary delivery failure")
 	}
-	if first.calls != 1 || second.calls != 1 || source.calls != 1 {
+	if first.calls != 2 || second.calls != 1 || source.calls != 1 {
 		t.Fatalf("unexpected initial fanout: first=%d second=%d source=%d", first.calls, second.calls, source.calls)
 	}
 	first.calls = 0
@@ -380,7 +496,7 @@ func TestChannelsDeliverIndependently(t *testing.T) {
 	if err := m.Cycle(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if first.calls != 0 || second.calls != 1 || source.calls != 1 {
+	if first.calls != 0 || second.calls != 2 || source.calls != 1 {
 		t.Fatalf("successful channel was resent: first=%d second=%d source=%d", first.calls, second.calls, source.calls)
 	}
 }
@@ -405,7 +521,7 @@ func TestReportOnlyCanBeDeliveredAfterChannelEnablement(t *testing.T) {
 	if err := m.Cycle(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if source.calls != 1 || channel.calls != 1 {
+	if source.calls != 1 || channel.calls != 2 {
 		t.Fatalf("report was not delivered from disk: source=%d channel=%d", source.calls, channel.calls)
 	}
 }
@@ -472,7 +588,7 @@ func TestMigratesV1PendingDelivery(t *testing.T) {
 		t.Fatal("migration did not persist schema v2")
 	}
 	msg, err := reportmessage.FromSelection(legacy)
-	if err != nil || persisted.Events[msg.EventID].AsOf != legacy.AsOf {
+	if err != nil || persisted.Events[msg.Main.EventID].AsOf != legacy.AsOf {
 		t.Fatal("migrated event is incomplete")
 	}
 }

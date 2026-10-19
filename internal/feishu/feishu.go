@@ -74,8 +74,9 @@ func Card(value any) map[string]any {
 	case notify.Message:
 		return cardPayload(value, renderContent(value))
 	case selection.Report:
-		message, err := reportmessage.FromSelection(value)
+		cards, err := reportmessage.FromSelection(value)
 		if err == nil {
+			message := cards.Main
 			return cardPayload(message, renderContent(message))
 		}
 	}
@@ -97,6 +98,37 @@ func renderContent(message notify.Message) string {
 			lines = append(lines, section.Heading)
 		}
 		lines = append(lines, section.Lines...)
+		if section.Table != nil {
+			tableLines := make([]string, 0, len(section.Table.Rows)+1)
+			headers := make([]string, 0, len(section.Table.Columns))
+			for _, column := range section.Table.Columns {
+				headers = append(headers, column.Label)
+			}
+			if len(headers) > 0 {
+				tableLines = append(tableLines, strings.Join(headers, " | "))
+			}
+			for _, row := range section.Table.Rows {
+				cellCount := len(section.Table.Columns)
+				if cellCount == 0 {
+					cellCount = len(row)
+				}
+				cells := make([]string, 0, cellCount)
+				for i := 0; i < cellCount; i++ {
+					text := ""
+					if i < len(row) {
+						text = escape(row[i].Text)
+					}
+					if text == "" {
+						text = "—"
+					}
+					cells = append(cells, text)
+				}
+				tableLines = append(tableLines, strings.Join(cells, " | "))
+			}
+			if len(tableLines) > 0 {
+				lines = append(lines, strings.Join(tableLines, "\n"))
+			}
+		}
 	}
 	return strings.Join(lines, "\n\n")
 }
@@ -133,14 +165,126 @@ func structuredElements(message notify.Message) []any {
 				"text": map[string]any{"tag": "lark_md", "content": escape(line)},
 			})
 		}
+		if section.Table != nil {
+			elements = append(elements, tableElement(section.Table))
+		}
 	}
-	if message.EventID != "" {
+	if marker := eventMarker(message); marker != "" {
 		elements = append(elements, map[string]any{
 			"tag":      "note",
-			"elements": []any{map[string]any{"tag": "plain_text", "content": "事件 ID：" + message.EventID}},
+			"elements": []any{map[string]any{"tag": "plain_text", "content": marker}},
 		})
 	}
 	return elements
+}
+
+func tableElement(table *notify.Table) map[string]any {
+	pageSize := table.PageSize
+	if pageSize <= 0 {
+		pageSize = 5
+	}
+	rowHeight := table.RowHeight
+	if rowHeight == "" {
+		rowHeight = "middle"
+	}
+	columns := make([]any, 0, len(table.Columns))
+	for _, column := range table.Columns {
+		rendered := map[string]any{
+			"name":         column.Key,
+			"display_name": escape(column.Label),
+			"data_type":    tableDataType(column.Kind),
+		}
+		if column.Width != "" {
+			rendered["width"] = column.Width
+		}
+		columns = append(columns, rendered)
+	}
+	rows := make([]any, 0, len(table.Rows))
+	for _, row := range table.Rows {
+		rendered := make(map[string]any, len(table.Columns))
+		for i, column := range table.Columns {
+			cell := notify.TableCell{}
+			if i < len(row) {
+				cell = row[i]
+			}
+			rendered[column.Key] = tableCellValue(column.Kind, cell)
+		}
+		rows = append(rows, rendered)
+	}
+	return map[string]any{
+		"tag":                 "table",
+		"page_size":           pageSize,
+		"row_height":          rowHeight,
+		"freeze_first_column": table.FreezeFirstColumn,
+		"header_style": map[string]any{
+			"background_style": "grey",
+			"bold":             true,
+			"lines":            2,
+		},
+		"columns": columns,
+		"rows":    rows,
+	}
+}
+
+func tableDataType(kind notify.TableColumnKind) string {
+	switch kind {
+	case notify.TableStatus:
+		return "options"
+	case notify.TableChange:
+		return "lark_md"
+	default:
+		return "text"
+	}
+}
+
+func tableCellValue(kind notify.TableColumnKind, cell notify.TableCell) any {
+	text := escape(cell.Text)
+	if text == "" {
+		text = "—"
+	}
+	switch kind {
+	case notify.TableStatus:
+		color := "neutral"
+		if strings.TrimSpace(cell.Text) == "可执行" {
+			color = "green"
+		}
+		return []any{map[string]any{"text": text, "color": color}}
+	case notify.TableChange:
+		switch cell.Tone {
+		case notify.TonePositive:
+			return "<font color=red>" + text + "</font>"
+		case notify.ToneNegative:
+			return "<font color=green>" + text + "</font>"
+		default:
+			return text
+		}
+	default:
+		return text
+	}
+}
+
+func eventMarker(message notify.Message) string {
+	display := message.DisplayEventID
+	if display == "" {
+		display = message.EventID
+	}
+	if display == "" {
+		return ""
+	}
+	marker := "事件 ID：" + display
+	if message.PartLabel != "" {
+		marker += " · " + message.PartLabel
+	}
+	return marker
+}
+
+func cardTemplate(template string) string {
+	switch template {
+	case "green", "blue", "grey", "orange":
+		return template
+	default:
+		return "blue"
+	}
 }
 
 func cardPayload(message notify.Message, content string) map[string]any {
@@ -159,7 +303,7 @@ func cardPayload(message notify.Message, content string) map[string]any {
 		"msg_type": "interactive",
 		"card": map[string]any{
 			"header": map[string]any{
-				"template": "blue",
+				"template": cardTemplate(message.Template),
 				"title":    map[string]any{"tag": "plain_text", "content": title},
 			},
 			"elements": elements,
@@ -279,6 +423,13 @@ func (c *Client) fitPayload(message notify.Message, timestamp int64, content str
 }
 
 func (c *Client) fitStructuredPayload(message notify.Message, timestamp int64) []byte {
+	if message.TrimPolicy == notify.TrimNone {
+		data, err := c.marshal(message, "", timestamp)
+		if err != nil {
+			return nil
+		}
+		return data
+	}
 	candidate := message
 	candidate.Sections = append([]notify.Section(nil), message.Sections...)
 	for {

@@ -141,16 +141,16 @@ func (m *Monitor) migrateLegacy(raw persistedState) (State, error) {
 			if validateLegacyReport(report, 0) != nil || report.AsOf != raw.LastDelivered || report.Target != target {
 				return state, errors.New("invalid legacy delivered report")
 			}
-			message, err := reportmessage.FromSelection(report)
+			cards, err := reportmessage.FromSelection(report)
 			if err != nil {
 				return state, err
 			}
 			channels := m.legacyChannels()
-			if err := state.Enqueue(report.AsOf, message, channels); err != nil {
+			if err := enqueueCards(&state, report.AsOf, cards, channels); err != nil {
 				return state, err
 			}
 			for _, name := range channels {
-				if err := state.MarkDelivered(message.EventID, name); err != nil {
+				if err := markCardsDelivered(&state, cards, name); err != nil {
 					return state, err
 				}
 			}
@@ -165,15 +165,15 @@ func (m *Monitor) migrateLegacy(raw persistedState) (State, error) {
 		if targetErr != nil || target != pending.Report.Target {
 			return state, errors.New("pending report has an invalid T+1 date")
 		}
-		message, err := reportmessage.FromSelection(pending.Report)
+		cards, err := reportmessage.FromSelection(pending.Report)
 		if err != nil {
 			return state, errors.New("pending report has an invalid T+1 date")
 		}
 		channels := m.legacyChannels()
-		if err := state.Enqueue(pending.Report.AsOf, message, channels); err != nil {
+		if err := enqueueCards(&state, pending.Report.AsOf, cards, channels); err != nil {
 			return state, err
 		}
-		event := state.Events[message.EventID]
+		event := state.Events[cards.Main.EventID]
 		for _, channel := range channels {
 			channelState := event.Channels[channel]
 			channelState.Attempts = pending.Attempts
@@ -184,12 +184,38 @@ func (m *Monitor) migrateLegacy(raw persistedState) (State, error) {
 			}
 			event.Channels[channel] = channelState
 		}
-		state.Events[message.EventID] = event
+		state.Events[cards.Main.EventID] = event
 	}
 	if err := state.Validate(); err != nil {
 		return state, err
 	}
 	return state, nil
+}
+
+func enqueueCards(state *State, asof string, cards reportmessage.Cards, channels []string) error {
+	if err := state.EnqueuePart(asof, cards.Main, channels, "main", 0, ""); err != nil {
+		return err
+	}
+	previous := cards.Main.EventID
+	for i, detail := range cards.Details {
+		if err := state.EnqueuePart(asof, detail, channels, "detail", i+1, previous); err != nil {
+			return err
+		}
+		previous = detail.EventID
+	}
+	return nil
+}
+
+func markCardsDelivered(state *State, cards reportmessage.Cards, channel string) error {
+	if err := state.MarkDelivered(cards.Main.EventID, channel); err != nil {
+		return err
+	}
+	for _, detail := range cards.Details {
+		if err := state.MarkDelivered(detail.EventID, channel); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *Monitor) legacyChannels() []string {
@@ -845,8 +871,14 @@ func (m *Monitor) flushState(ctx context.Context, state *State) error {
 	}
 	var firstErr error
 	for _, delivery := range state.Due(m.Now()) {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		channel := channels[delivery.Channel]
 		if channel == nil {
+			continue
+		}
+		if !state.CanDeliver(delivery.EventID, delivery.Channel) {
 			continue
 		}
 		if err := m.Store.Check(); err != nil {
@@ -880,6 +912,9 @@ func (m *Monitor) flushState(ctx context.Context, state *State) error {
 				return err
 			}
 			m.Log.Info("Recommendation delivered", "channel", delivery.Channel, "as_of", state.Events[delivery.EventID].AsOf, "event_id", delivery.EventID)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			continue
 		}
 		if sendErr != nil {
@@ -908,9 +943,9 @@ func (m *Monitor) flushState(ctx context.Context, state *State) error {
 			return saveErr
 		}
 		if failure.Kind == notify.Permanent {
-			m.Log.Error("["+delivery.Channel+"] Recommendation delivery blocked", "channel", delivery.Channel, "as_of", state.Events[delivery.EventID].AsOf, "event_id", delivery.EventID, "attempts", state.Events[delivery.EventID].Channels[delivery.Channel].Attempts, "kind", failure.Kind)
+			m.Log.Error("["+delivery.Channel+"] Recommendation delivery blocked", "channel", delivery.Channel, "as_of", state.Events[delivery.EventID].AsOf, "event_id", delivery.EventID, "attempts", state.Events[delivery.EventID].Channels[delivery.Channel].Attempts, "kind", failure.Kind, "reason", failure.Reason)
 		} else {
-			m.Log.Warn("["+delivery.Channel+"] Recommendation delivery failed", "channel", delivery.Channel, "as_of", state.Events[delivery.EventID].AsOf, "event_id", delivery.EventID, "attempts", state.Events[delivery.EventID].Channels[delivery.Channel].Attempts, "kind", failure.Kind)
+			m.Log.Warn("["+delivery.Channel+"] Recommendation delivery failed", "channel", delivery.Channel, "as_of", state.Events[delivery.EventID].AsOf, "event_id", delivery.EventID, "attempts", state.Events[delivery.EventID].Channels[delivery.Channel].Attempts, "kind", failure.Kind, "reason", failure.Reason)
 		}
 		if firstErr == nil {
 			firstErr = failure

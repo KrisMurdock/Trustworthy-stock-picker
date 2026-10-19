@@ -76,11 +76,11 @@ func (m *Monitor) enqueueReport(state *State, report selection.Report) (int, err
 		m.Log.Info("Report enqueue skipped", "as_of", report.AsOf, "target", report.Target, "reason", reason)
 		return 0, nil
 	}
-	message, err := reportmessage.FromSelection(report)
+	cards, err := reportmessage.FromSelection(report)
 	if err != nil {
 		return 0, err
 	}
-	if err := state.Enqueue(report.AsOf, message, channels); err != nil {
+	if err := enqueueCards(state, report.AsOf, cards, channels); err != nil {
 		return 0, err
 	}
 	if err := m.writeState(*state); err != nil {

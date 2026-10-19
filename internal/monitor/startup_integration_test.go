@@ -12,6 +12,7 @@ import (
 	"stock-watcher/internal/notify"
 	"stock-watcher/internal/selection"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,6 +37,8 @@ func TestStartupHTTPPipeline(t *testing.T) {
 			m.Config.Daily.Adjust = "qfq"
 			m.Now = func() time.Time { return time.Date(2026, 10, 13, 17, 0, 0, 0, market.Shanghai) }
 			var downloads, posts atomic.Int32
+			var bodiesMu sync.Mutex
+			bodies := []string{}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/market":
@@ -73,9 +76,16 @@ func TestStartupHTTPPipeline(t *testing.T) {
 						t.Error("analysis not persisted before notification")
 					}
 					body, err := io.ReadAll(r.Body)
-					if err != nil || !json.Valid(body) || !strings.Contains(string(body), "2026-10-14") || !strings.Contains(string(body), "interactive") {
+					var payload map[string]any
+					if err != nil || !json.Valid(body) || json.Unmarshal(body, &payload) != nil || payload["msg_type"] != "interactive" {
 						t.Error("invalid Feishu card payload")
 					}
+					if posts.Load() == 1 && !strings.Contains(string(body), "2026-10-14") {
+						t.Error("main card is missing the target date")
+					}
+					bodiesMu.Lock()
+					bodies = append(bodies, string(body))
+					bodiesMu.Unlock()
 					w.WriteHeader(tc.status)
 					_, _ = w.Write([]byte(`{"code":0}`))
 				default:
@@ -108,8 +118,24 @@ func TestStartupHTTPPipeline(t *testing.T) {
 			if err := m.Cycle(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			if downloads.Load() != 4 || posts.Load() != 1 {
+			wantPosts := int32(1)
+			if tc.want == notify.Delivered {
+				wantPosts = 2
+			}
+			if downloads.Load() != 4 || posts.Load() != wantPosts {
 				t.Fatalf("unexpected repetition: downloads=%d posts=%d", downloads.Load(), posts.Load())
+			}
+			bodiesMu.Lock()
+			gotBodies := append([]string(nil), bodies...)
+			bodiesMu.Unlock()
+			if len(gotBodies) != int(wantPosts) {
+				t.Fatalf("recorded bodies = %d, want %d", len(gotBodies), wantPosts)
+			}
+			if !strings.Contains(gotBodies[0], "主卡") {
+				t.Fatalf("first card is not marked as main: %s", gotBodies[0])
+			}
+			if wantPosts == 2 && !strings.Contains(gotBodies[1], "详情 1/1") {
+				t.Fatalf("second card is not the detail page: %s", gotBodies[1])
 			}
 		})
 	}
