@@ -24,3 +24,5 @@
 /.superpowers/
 /.claude/tdd/
 /CONTEXT.md
+
+tmp/
