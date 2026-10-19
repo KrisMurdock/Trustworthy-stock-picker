@@ -638,17 +638,77 @@ func researchSection(research *strategy.Research, diagnosis diagnostics.Validati
 		Fields: []notify.Field{
 			{Label: "训练截至", Value: research.TrainingThrough},
 			{Label: "研究样本", Value: fmt.Sprint(research.SampleCount)},
+			{Label: "可用/已评估样本", Value: fmt.Sprintf("%d / %d（过滤候选 %d）", research.AvailableSamples, research.EvaluatedSamples, research.AuditCandidates)},
 			{Label: "开发区间", Value: evaluationRange(research.Development)},
 			{Label: "开发表现", Value: conciseStats(research.Development.Recommended)},
+			{Label: "开发 cohort", Value: conciseCohort(research.Development.Cohort)},
 			{Label: "独立验证区间", Value: evaluationRange(research.Holdout)},
 			{Label: "独立验证表现", Value: conciseStats(research.Holdout.Recommended)},
+			{Label: "独立验证 cohort", Value: conciseCohort(research.Holdout.Cohort)},
 			{Label: "独立验证结论", Value: conclusion},
+			{Label: "验证状态", Value: flagLabel(research.Verdict)},
+			{Label: "日历覆盖", Value: calendarLabel(research.Calendar)},
+			{Label: "限制标记", Value: flagList(research.Flags)},
 		},
 	}
 	for _, failure := range diagnosis.Failures {
 		section.Lines = append(section.Lines, failure.Message)
 	}
 	return section
+}
+
+func conciseCohort(stats strategy.CohortStats) string {
+	if stats.Version == 0 || stats.SignalDates == 0 {
+		return "尚无完整信号日 cohort"
+	}
+	paired := ""
+	if stats.PairedDates > 0 {
+		paired = fmt.Sprintf("/配对%d日", stats.PairedDates)
+	}
+	return fmt.Sprintf("%d信号日/%d计划槽位/%d已成交%s · 日均净收益%+.2f%% · 2.5%%触达%.1f%%",
+		stats.SignalDates, stats.PlannedSlots, stats.FilledSlots, paired, stats.MeanNet, stats.Rate25*100)
+}
+
+func calendarLabel(c strategy.CalendarCoverage) string {
+	if c.Source == "" {
+		return "来源未记录"
+	}
+	state := "完整"
+	if !c.Complete {
+		state = "不完整"
+	}
+	return fmt.Sprintf("%s · %s～%s · %s", state, c.From, c.Through, c.Source)
+}
+
+func flagList(flags []string) string {
+	if len(flags) == 0 {
+		return "无"
+	}
+	out := make([]string, len(flags))
+	for i, flag := range flags {
+		out[i] = flagLabel(flag)
+	}
+	return strings.Join(out, " / ")
+}
+
+func flagLabel(flag string) string {
+	labels := map[string]string{
+		"validated":                    "通过独立验证",
+		"exploratory":                  "探索性结果",
+		"exploratory_current_universe": "当前股池探索性验证",
+		"validation_failed":            "独立验证失败",
+		"insufficient_evidence":        "证据不足",
+		"partial_calendar":             "交易日历不完整",
+		"configured_calendar":          "使用配置日历",
+		"current_universe_bias":        "当前股池幸存者偏差",
+		"incomplete_signal_date":       "存在不完整信号日",
+		"contaminated":                 "保留区间已污染",
+		"corporate_action":             "公司行为未决",
+	}
+	if text := labels[flag]; text != "" {
+		return text
+	}
+	return strings.ReplaceAll(flag, "_", " ")
 }
 
 func evaluationRange(evaluation strategy.Evaluation) string {

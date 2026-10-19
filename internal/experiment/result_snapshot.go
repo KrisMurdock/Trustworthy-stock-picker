@@ -104,6 +104,13 @@ func SnapshotResult(r Record) *ResultSnapshot {
 	}
 	d := r.Result.Development.Research
 	x := d.Development.TopRanked
+	evaluation := d.Development
+	period := "开发验证"
+	if r.Stage == "holdout" {
+		x = d.Holdout.TopRanked
+		evaluation = d.Holdout
+		period = "保留验证"
+	}
 	p := d.Parameters
 	if p.MaxHoldingDays < 1 {
 		p = r.Data.Parameters
@@ -118,7 +125,7 @@ func SnapshotResult(r Record) *ResultSnapshot {
 		"未决样本保留在触达率分母；全部已结束交易的平均持仓和仅达标交易的平均持仓分别展示。",
 	}}
 	for i, target := range []float64{2.5, 3} {
-		row := ResultRow{ID: []string{"target25", "target30"}[i], Label: r.Spec.Title, Period: "开发验证", From: d.Development.From, Through: d.Development.Through, Rule: r.Spec.Change, Target: target, Stop: Value(math.Abs(p.StopNetPct)), Horizon: p.MaxHoldingDays, Batches: 1, Samples: x.Samples, Resolved: x.Resolved, Unresolved: x.Samples - x.Resolved, Skipped: x.SkippedEntries}
+		row := ResultRow{ID: []string{"target25", "target30"}[i], Label: r.Spec.Title, Period: period, From: evaluation.From, Through: evaluation.Through, Rule: r.Spec.Change, Target: target, Stop: Value(math.Abs(p.StopNetPct)), Horizon: p.MaxHoldingDays, Batches: 1, Samples: x.Samples, Resolved: x.Resolved, Unresolved: x.Samples - x.Resolved, Skipped: x.SkippedEntries}
 		if x.HighTouchSamples > 0 && x.Samples > 0 {
 			n, days := x.HighTouch25, x.HighTouch25Days
 			if i == 1 {

@@ -82,6 +82,10 @@ func runExperiment(ctx context.Context, c config.Config, asof, parentID, policy 
 		if err != nil {
 			return err
 		}
+		snapshot, err = ensureSnapshotCalendar(ctx, c, snapshot)
+		if err != nil {
+			return err
+		}
 		if spec.EntryMode != "" {
 			minutes := []market.MinuteHistory{}
 			from := asof
@@ -111,6 +115,9 @@ func runExperiment(ctx context.Context, c config.Config, asof, parentID, policy 
 		frozen.Calendar.ValidFrom = snapshot.Calendar.From
 		frozen.Calendar.ValidThrough = snapshot.Calendar.Through
 		frozen.Calendar.Holidays = snapshot.Calendar.Holidays
+		frozen.Calendar.TradingDays = snapshot.Calendar.Days
+		frozen.Calendar.Source = snapshot.Calendar.Source
+		frozen.Calendar.Digest = snapshot.Calendar.Digest
 		horizon := snapshot.Parameters.MaxHoldingDays
 		if spec.NextDayRule != "" {
 			horizon = 1
@@ -145,6 +152,71 @@ func runExperiment(ctx context.Context, c config.Config, asof, parentID, policy 
 		return err
 	}
 	log.Info("Development experiment recorded", "experiment_id", record.ID, "status", record.Status, "verdict", record.Verdict)
+	if err = json.NewEncoder(os.Stdout).Encode(record); err != nil {
+		return err
+	}
+	return evaluationErr
+}
+
+// runHoldout consumes the reserved interval exactly once. The parent record is
+// immutable; every subsequent consumption is archived with a contamination flag.
+func runHoldout(ctx context.Context, c config.Config, parentID string, log *logging.Logger) error {
+	if !experiment.ValidID(parentID) {
+		return errors.New("invalid parent experiment ID")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	db, err := storage.OpenExperiments(ctx, c.DataDir, c.RequireCIFS, true)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	parent, err := db.Get(ctx, parentID)
+	if err != nil {
+		return err
+	}
+	if parent.Stage == "holdout" {
+		return errors.New("a holdout experiment cannot reserve another holdout")
+	}
+	if parent.Status != "completed" || parent.Result == nil || parent.Result.Development.HoldoutFrom == "" {
+		return errors.New("parent experiment has no reserved holdout interval")
+	}
+	snapshot, err := db.Snapshot(ctx, parent.Data.ID)
+	if err != nil {
+		return err
+	}
+	if len(snapshot.Calendar.Days) == 0 {
+		return errors.New("parent snapshot predates the frozen trading calendar; start a new development experiment")
+	}
+	consumed, err := db.HoldoutConsumed(ctx, parent.Data.ID)
+	if err != nil {
+		return err
+	}
+	record, err := experiment.NewHoldoutRecord(snapshot, parent, consumed)
+	if err != nil {
+		return err
+	}
+	if err = db.Start(ctx, snapshot, record); err != nil {
+		return err
+	}
+	log.Info("Holdout experiment started", "experiment_id", record.ID, "parent_id", parent.ID, "snapshot_id", snapshot.ID, "contaminated", consumed)
+	evaluationErr := experiment.Evaluate(ctx, snapshot, &record, &parent)
+	if evaluationErr != nil {
+		record.Status, record.Verdict, record.Error = "failed", "pending", "保留区间验证未完成，请检查数据覆盖、参数及运行日志。"
+		if errors.Is(evaluationErr, context.Canceled) || errors.Is(evaluationErr, context.DeadlineExceeded) {
+			record.Status = "canceled"
+			record.Error = "保留区间验证已取消或超过 10 分钟时限。"
+		}
+		now := time.Now().UTC()
+		record.FinishedAt = &now
+		log.Warn("Holdout experiment failed", "experiment_id", record.ID, "error", evaluationErr)
+	}
+	saveCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stop()
+	if err = db.Finish(saveCtx, record); err != nil {
+		return err
+	}
+	log.Info("Holdout experiment recorded", "experiment_id", record.ID, "status", record.Status, "verdict", record.Verdict)
 	if err = json.NewEncoder(os.Stdout).Encode(record); err != nil {
 		return err
 	}

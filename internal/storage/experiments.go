@@ -127,6 +127,9 @@ func (x *ExperimentDB) Start(ctx context.Context, snapshot experiment.Snapshot, 
 	if !experiment.ValidID(record.ID) || record.Version != 1 || record.Status != "running" || record.ResultSnapshot != nil || snapshot.ID != record.Data.ID || snapshot.Version != 1 {
 		return errors.New("invalid experiment record")
 	}
+	if record.Stage != "" && record.Stage != "development" && record.Stage != "holdout" {
+		return errors.New("invalid experiment stage")
+	}
 	if record.ParentID != "" {
 		parent, err := x.Get(ctx, record.ParentID)
 		if err != nil {
@@ -153,6 +156,21 @@ func (x *ExperimentDB) Start(ctx context.Context, snapshot experiment.Snapshot, 
 		return err
 	}
 	defer tx.Rollback()
+	if record.Stage == "holdout" {
+		if record.Holdout == nil {
+			return errors.New("invalid holdout record")
+		}
+		var consumed int
+		if err = tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM experiment_run
+			WHERE json_extract(payload, '$.data.id')=? AND json_extract(payload, '$.stage')='holdout'
+		`, record.Data.ID).Scan(&consumed); err != nil {
+			return errors.New("cannot inspect holdout consumption")
+		}
+		if record.Holdout.Contaminated != (consumed > 0) {
+			return errors.New("holdout contamination state is stale")
+		}
+	}
 	if _, err = tx.ExecContext(ctx, "INSERT INTO experiment_snapshot(id,payload) VALUES(?,?) ON CONFLICT(id) DO NOTHING", snapshot.ID, data); err != nil {
 		return err
 	}
@@ -240,7 +258,11 @@ func (x *ExperimentDB) List(ctx context.Context) ([]experiment.Record, error) {
 			if err = json.Unmarshal([]byte(statsJSON.String), &research); err != nil {
 				return nil, errors.New("invalid stored experiment statistics")
 			}
-			r.Review = experiment.ReviewStats(research.Development.TopRanked)
+			stats := research.Development.TopRanked
+			if r.Stage == "holdout" {
+				stats = research.Holdout.TopRanked
+			}
+			r.Review = experiment.ReviewStats(stats)
 			if r.ResultSnapshot == nil {
 				r.Result = &experiment.Results{Development: strategy.DevelopmentResult{Research: research}}
 				r.ResultSnapshot = experiment.SnapshotResult(r)
@@ -308,6 +330,27 @@ func (x *ExperimentDB) Snapshot(ctx context.Context, id string) (experiment.Snap
 		return s, err
 	}
 	return s, nil
+}
+
+// HoldoutConsumed reports whether any holdout child already used this frozen
+// snapshot. A later holdout remains inspectable but can no longer claim an
+// independent validation.
+func (x *ExperimentDB) HoldoutConsumed(ctx context.Context, dataID string) (bool, error) {
+	if err := x.check(ctx); err != nil {
+		return false, err
+	}
+	if x.db == nil {
+		return false, nil
+	}
+	var count int
+	err := x.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM experiment_run
+		WHERE json_extract(payload, '$.data.id')=? AND json_extract(payload, '$.stage')='holdout'
+	`, dataID).Scan(&count)
+	if err != nil {
+		return false, errors.New("cannot inspect holdout consumption")
+	}
+	return count > 0, nil
 }
 func (x *ExperimentDB) recoverInterrupted(ctx context.Context) error {
 	rows, err := x.db.QueryContext(ctx, "SELECT id FROM experiment_run WHERE status='running'")

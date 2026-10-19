@@ -7,6 +7,7 @@ import (
 	"stock-watcher/internal/calendar"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/market"
+	"time"
 )
 
 // ExperimentTrade retains the exact signal features and simulated execution.
@@ -50,6 +51,10 @@ type developmentOptions struct {
 	requireEvidence bool
 	nextDayRule     string
 	rangeFilter     *BacktestRange
+	holdout         bool
+	holdoutFrom     string
+	holdoutThrough  string
+	contaminated    bool
 	trades          []ExperimentTrade
 }
 
@@ -78,6 +83,9 @@ func AnalyzeDevelopment(ctx context.Context, c config.Config, histories, raw []m
 		return result, err
 	}
 	cal := calendar.New(c)
+	if err := requireCalendarCoverage(cal, data); err != nil {
+		return result, err
+	}
 	seen := map[string]bool{}
 	for _, d := range data {
 		h, r := d.Adjusted, d.Raw
@@ -117,6 +125,50 @@ func AnalyzeDevelopment(ctx context.Context, c config.Config, histories, raw []m
 	return result, nil
 }
 
+// AnalyzeHoldout consumes the final reserved interval once with the rule frozen
+// from the completed development experiment. It never re-trains inside the
+// interval: ranking evidence is cut off strictly before holdoutFrom.
+func AnalyzeHoldout(ctx context.Context, c config.Config, histories, raw []market.History, asof string, policy EntryPolicy, from, through string, contaminated bool) (DevelopmentResult, error) {
+	result := DevelopmentResult{Trades: []ExperimentTrade{}, HoldoutFrom: from, HoldoutThrough: through}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	if policy.Range != nil {
+		return result, errors.New("holdout cannot reuse an explicit signal range")
+	}
+	if err := validateHoldoutRange(c, asof, from, through); err != nil {
+		return result, err
+	}
+	if policy.MaxUpperWick != nil && !(*policy.MaxUpperWick >= 0 && *policy.MaxUpperWick <= 1) {
+		return result, errors.New("upper wick threshold must be between zero and one")
+	}
+	if !validNextDayRule(policy.NextDayRule) {
+		return result, errors.New("unknown next-day entry rule")
+	}
+	data, err := datasets(c, histories, raw, asof)
+	if err != nil {
+		return result, err
+	}
+	cal := calendar.New(c)
+	if err := requireCalendarCoverage(cal, data); err != nil {
+		return result, err
+	}
+	if policy.NextDayRule != "" {
+		c.Strategy.MaxHoldingDays = 1
+	}
+	options := &developmentOptions{
+		maxUpperWick: policy.MaxUpperWick, requireEvidence: policy.RequireEvidence,
+		nextDayRule: policy.NextDayRule, holdout: true, holdoutFrom: from,
+		holdoutThrough: through, contaminated: contaminated, trades: []ExperimentTrade{},
+	}
+	x, err := analyze(ctx, c, histories, raw, asof, options)
+	if err != nil {
+		return result, err
+	}
+	result.Research, result.Trades = x.Research, options.trades
+	return result, nil
+}
+
 func SummarizeExperimentTrades(trades []ExperimentTrade, parameters config.Strategy) Stats {
 	stats := Stats{Rule: "experiment_top_n", Target: parameters.TargetNetPct, Horizon: parameters.MaxHoldingDays}
 	for _, t := range trades {
@@ -125,4 +177,28 @@ func SummarizeExperimentTrades(trades []ExperimentTrade, parameters config.Strat
 		}
 	}
 	return finalize(stats)
+}
+
+// SummarizeExperimentTradesWithCohort keeps the legacy per-trade statistics
+// intact and attaches the signal-day cohort view used by acceptance gates.
+func SummarizeExperimentTradesWithCohort(trades []ExperimentTrade, parameters config.Strategy, topN int) Stats {
+	stats := SummarizeExperimentTrades(trades, parameters)
+	stats.Cohort = SummarizeExperimentCohorts(trades, parameters, topN)
+	return stats
+}
+
+// validateHoldoutRange checks the frozen signal window only. The caller already
+// built samples with complete exits, so reserve-through may equal as-of without
+// pretending the final sessions have future exits.
+func validateHoldoutRange(c config.Config, asof, from, through string) error {
+	for _, value := range []string{from, through} {
+		t, err := time.Parse("2006-01-02", value)
+		if err != nil || t.Format("2006-01-02") != value {
+			return errors.New("holdout requires YYYY-MM-DD dates")
+		}
+	}
+	if from > through || from < c.Calendar.ValidFrom || through > c.Calendar.ValidThrough || through > asof {
+		return errors.New("holdout range is reversed or outside the saved data/calendar")
+	}
+	return nil
 }

@@ -132,3 +132,19 @@ func TestTargetTouchDoesNotProveFillAndLockedLimitCensors(t *testing.T) {
 		t.Fatal("missing session counted as a trading day")
 	}
 }
+
+func TestSimulateUsesExitTradingDayPriceLimit(t *testing.T) {
+	c := config.Defaults()
+	c.Calendar.ValidFrom = "2020-08-21"
+	c.Calendar.ValidThrough = "2020-08-25"
+	cal := calendar.New(c)
+	signal := market.Bar{Date: "2020-08-21", Open: 10, High: 10.1, Low: 9.9, Close: 10, Volume: 1000}
+	future := []market.Bar{
+		{Date: "2020-08-24", Open: 10, High: 10.1, Low: 9.9, Close: 10, Volume: 1000},
+		{Date: "2020-08-25", Open: 9, High: 9, Low: 9, Close: 9, Volume: 1000},
+	}
+	out, err := Simulate(c.Strategy, cal, "sz300001", signal, future, 1)
+	if err != nil || out.Status != "stop_gap" {
+		t.Fatalf("exit day used the wrong price-limit version: %+v %v", out, err)
+	}
+}

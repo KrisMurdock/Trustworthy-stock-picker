@@ -2,7 +2,8 @@
 (() => {
   const $ = id => document.getElementById(id);
   const state = { records: [], current: null, parent: null, baseline: null, id: "", request: 0, page: 0, evidenceRequest: 0 };
-  const verdicts = { research: "研究结果快照", entry_day_rejected: "买入日浮盈不达标", entry_day_unverified: "买入日证据待核实", below_goal: "次日目标未达到", goal_25_only: "仅 2.5% 档观察达标", goal_observed: "两档观察达标 · 待独立验证", risk_rejected: "风险不达标", risk_unverified: "风险待核实", tradeoff: "收益／周期有取舍", historical: "旧口径结论", baseline: "基线", promising: "开发候选", no_improvement: "未改善", insufficient: "证据不足", not_comparable: "口径不同", pending: "尚无结论" };
+  const verdicts = { research: "研究结果快照", entry_day_rejected: "买入日浮盈不达标", entry_day_unverified: "买入日证据待核实", below_goal: "次日目标未达到", goal_25_only: "仅 2.5% 档观察达标", goal_observed: "两档观察达标 · 待独立验证", risk_rejected: "风险不达标", risk_unverified: "风险待核实", tradeoff: "收益／周期有取舍", historical: "旧口径结论", baseline: "基线", promising: "开发候选", no_improvement: "未改善", insufficient: "证据不足", not_comparable: "口径不同", pending: "尚无结论", exploratory: "探索性结果", validated: "通过独立验证", exploratory_current_universe: "当前股池探索性验证", validation_failed: "独立验证失败", contaminated: "保留区间已污染", insufficient_evidence: "证据不足", partial_calendar: "交易日历不完整", configured_calendar: "使用配置日历" };
+  const flagLabels = { current_universe_bias: "当前股池幸存者偏差", incomplete_signal_date: "存在不完整信号日", corporate_action: "公司行为未决", partial_calendar: "交易日历不完整", configured_calendar: "使用配置日历", contaminated: "保留区间已污染" };
   const statuses = { running: "运行中", completed: "运行成功", failed: "运行失败", canceled: "已取消", interrupted: "运行中断" };
   const outcomes = { signal_filtered: "信号日指标过滤，未入场", chan_filtered: "缠论结构不通过，未入场", chan_unknown: "缠论结构缺失，未入场", entry_path_unknown: "买入分钟缺失，路径未知", entry_invalidated: "跌破买入区间，放弃", entry_price_outside_zone: "触发后跳出区间，放弃", entry_not_triggered: "未满足到价反弹，放弃", target: "达到目标", stop: "止损", stop_gap: "跳空止损", timeout: "到期退出", unresolved: "无法判定", corporate_action: "除权窗口未决", entry_skipped: "跳过入场", missing_entry_session: "入场日缺失", missing_exit_session: "退出日缺失", cash_insufficient: "预算不足", risk_budget_insufficient: "交易成本已占满亏损额度" };
   const fmt = (v, digits = 2) => Number.isFinite(v) ? v.toLocaleString("zh-CN", { minimumFractionDigits: digits, maximumFractionDigits: digits }) : "—";
@@ -12,7 +13,10 @@
   const text = (id, value) => { $(id).textContent = value; };
   const list = value => Array.isArray(value) ? value : [];
   const short = id => (id || "").slice(0, 8);
-  const stats = r => r?.current_review?.stats || r?.result?.development?.research?.development?.top_ranked;
+  const stats = r => {
+    const research = r?.result?.development?.research;
+    return r?.current_review?.stats || (r?.stage === "holdout" ? research?.holdout?.top_ranked : research?.development?.top_ranked);
+  };
   const researchSnapshot = r => r?.result_snapshot?.source === "no_stop_speed";
   const resolved = outcome => ["target", "stop", "stop_gap", "timeout"].includes(outcome.status);
   const touch = trade => resolved(trade.outcome) && trade.outcome.high_touch?.schema_version === 1 && trade.outcome.high_touch.observed_days > 0 ? trade.outcome.high_touch : null;
@@ -20,13 +24,14 @@
   const breaches = trade => trade.selected && resolved(trade.outcome) && trade.outcome.net_pct <= -3 + 1e-9;
   const currentVerdict = r => {
     if (r.status !== "completed") return r.verdict;
+    if (r.stage === "holdout" || ["contaminated", "partial_calendar"].includes(r.verdict)) return r.verdict;
   if (researchSnapshot(r)) return "research";
     const risk = r.current_review?.risk;
     if (risk?.status === "breached") return "risk_rejected";
     if (risk?.status !== "observed_pass") return "risk_unverified";
     return r.engine !== "indicator_selection_v7" ? "historical" : r.verdict;
   };
-  const comparable = (a, b) => a?.status === "completed" && b?.status === "completed" && a.data.id === b.data.id && a.engine === b.engine && a.code_version === b.code_version && !!a.spec.next_day_rule === !!b.spec.next_day_rule && (a.spec.entry_mode || "") === (b.spec.entry_mode || "") && (a.spec.signal_range?.from || "") === (b.spec.signal_range?.from || "") && (a.spec.signal_range?.through || "") === (b.spec.signal_range?.through || "");
+  const comparable = (a, b) => a?.status === "completed" && b?.status === "completed" && (a.stage || "development") === (b.stage || "development") && a.data.id === b.data.id && a.engine === b.engine && a.code_version === b.code_version && !!a.spec.next_day_rule === !!b.spec.next_day_rule && (a.spec.entry_mode || "") === (b.spec.entry_mode || "") && (a.spec.signal_range?.from || "") === (b.spec.signal_range?.from || "") && (a.spec.signal_range?.through || "") === (b.spec.signal_range?.through || "");
   function button(label, action, cls = "evidence-link") { const b = node("button", label, cls); b.type = "button"; b.addEventListener("click", action); return b; }
   function badge(label, good = false) { return node("span", label, `tag ${good ? "tag-eligible" : "tag-neutral"}`); }
   async function request(url, signal) {
@@ -55,7 +60,7 @@
   }
   function renderList() {
     const query = $("experiment-search").value.trim().toLowerCase(), filter = $("experiment-filter").value;
-    const visible = state.records.filter(r => (!query || `${r.id} ${r.spec.title} ${r.spec.direction} ${r.spec.hypothesis}`.toLowerCase().includes(query)) && (!filter || filter === currentVerdict(r) || filter === r.status || (filter === "failed" && ["canceled", "interrupted"].includes(r.status))));
+    const visible = state.records.filter(r => (!query || `${r.id} ${r.spec.title} ${r.spec.direction} ${r.spec.hypothesis}`.toLowerCase().includes(query)) && (!filter || filter === currentVerdict(r) || filter === r.status || (filter === "holdout" && r.stage === "holdout") || (filter === "failed" && ["canceled", "interrupted"].includes(r.status))));
     $("experiment-list").replaceChildren(...visible.map(r => {
       const b = button("", () => select(r.id, true), "experiment-item");
       b.dataset.id = r.id; b.setAttribute("aria-current", String(r.id === state.id));
@@ -98,7 +103,7 @@
     finally { if (sequence === state.request) show("detail-loading", false); }
   }
   function renderDetail() {
-    const r = state.current, result = r.result, dev = result?.development, evaluation = dev?.research?.development;
+    const r = state.current, result = r.result, dev = result?.development, research = dev?.research, evaluation = r.stage === "holdout" ? research?.holdout : research?.development;
     text("run-id", `EXPERIMENT / ${short(r.id)}`); text("run-title", r.spec.title);
     text("run-time", `创建于 ${timestamp(r.created_at)}${r.finished_at ? ` · 结束于 ${timestamp(r.finished_at)}` : " · 等待运行结果"}`);
     $("run-tags").replaceChildren(badge(statuses[r.status] || r.status), badge(verdicts[currentVerdict(r)] || currentVerdict(r), currentVerdict(r) === "promising"));
@@ -108,8 +113,8 @@
     lineage.append(node("strong", `本轮 #${short(r.id)}`));
     text("run-coverage", `${r.data.included} / ${r.data.pool_size} 支`);
     text("run-dates", evaluation?.from ? `${evaluation.from} → ${evaluation.through}` : researchSnapshot(r) ? `${r.spec.signal_range.from} → ${r.spec.signal_range.through}` : "尚无有效验证区间");
-    text("run-validation-label", r.spec.signal_range ? "指定区间 · 未声明独立验证集" : "最终保留区间 · 本轮未评估");
-    text("run-holdout", r.spec.signal_range ? `${r.spec.signal_range.from} → ${r.spec.signal_range.through}（信号日）` : dev?.holdout_from ? `${dev.holdout_from} → ${dev.holdout_through}` : "待划分");
+    text("run-validation-label", r.stage === "holdout" ? (r.holdout?.contaminated ? "保留区间 · 已污染" : "保留区间 · 单次消费") : r.spec.signal_range ? "指定区间 · 未声明独立验证集" : "最终保留区间 · 本轮未评估");
+    text("run-holdout", r.stage === "holdout" ? `${evaluation?.from || r.holdout?.from || "待记录"} → ${evaluation?.through || r.holdout?.through || "待记录"}` : r.spec.signal_range ? `${r.spec.signal_range.from} → ${r.spec.signal_range.through}（信号日）` : dev?.holdout_from ? `${dev.holdout_from} → ${dev.holdout_through}` : "待划分");
     for (const field of ["direction", "hypothesis", "change", "criteria"]) text(`run-${field}`, r.spec[field]);
     const p = dev?.research?.parameters || r.data.parameters;
     if (r.spec.entry_mode) $("backtest-policy").value = `conditional-${r.spec.signal_rule || "entry"}`;
@@ -117,10 +122,11 @@
     if (!$("backtest-from").value) $("backtest-from").value = r.spec.signal_range?.from || evaluation?.from || "";
     if (!$("backtest-through").value) $("backtest-through").value = r.spec.signal_range?.through || evaluation?.through || "";
     $("run-data").replaceChildren(...[
-      `日线公共起始边界 ${r.data.from}，截止 ${r.data.as_of}；日历 ${r.data.calendar.from} 至 ${r.data.calendar.through}。实际信号区间还需扣除指标预热、训练与持仓边界。`,
+      `日线公共起始边界 ${r.data.from}，截止 ${r.data.as_of}；日历 ${r.data.calendar.from} 至 ${r.data.calendar.through}（${r.data.calendar.source || "来源未记录"}）。实际信号区间还需扣除指标预热、训练与持仓边界。`,
+      `状态 ${verdicts[research?.verdict] || research?.verdict || "未记录"}；限制 ${list(research?.flags).map(x => flagLabels[x] || x.replaceAll("_", " ")).join(" / ") || "无"}；可用 ${research?.available_samples ?? "未记录"} / 已评估 ${research?.evaluated_samples ?? "未记录"} / 过滤候选 ${research?.audit_candidates ?? "未记录"}。`,
       researchSnapshot(r) ? `每日选择前 ${r.data.top_n} 名；不设价格止损，净盈利目标、分批上限与期限见各结果分组。` : `每日选择前 ${r.data.top_n} 名；模拟止盈目标 ${fmt(p.target_net_pct)}%，配置止损目标 ${fmt(p.stop_net_pct)}%，买入后最多 ${p.max_holding_days} 个可卖出交易日。当前模型在 3% 硬限额内预留费用、滑点与价格取整；触发价不能保证实际成交价。`,
       `单股参考预算 ${fmt(p.trade_cash)} 元；双边佣金 ${fmt(p.commission_rate * 100, 4)}%，最低佣金 ${fmt(p.min_commission)} 元；过户费 ${fmt(p.transfer_rate * 100, 4)}%，卖出印花税 ${fmt(p.sell_stamp_rate * 100, 4)}%，滑点 ${fmt(p.slippage_rate * 100, 4)}%。`,
-      r.spec.signal_range ? `显式回测信号区间 ${r.spec.signal_range.from} 至 ${r.spec.signal_range.through}；指标预热和退出行情另外读取，没有声明独立留出集。` : r.spec.entry_mode ? `固定规则分钟试运行，最近 3 个分钟交易日留出；短历史不能证明 80% 成功率。` : `开发期使用前复权特征与不复权成交模拟；预留 ${p.holdout_days} 个末段信号日期，跨边界持仓样本剔除。最终区间未参与本轮评价。`,
+      r.stage === "holdout" ? `保留区间 ${evaluation?.from || r.holdout?.from} 至 ${evaluation?.through || r.holdout?.through} 使用父实验冻结规则一次性消费；${r.holdout?.contaminated ? "该快照已被查看，本次不具备独立样本外含义。" : "结果写入独立子记录，父记录保持不变。"}` : r.spec.signal_range ? `显式回测信号区间 ${r.spec.signal_range.from} 至 ${r.spec.signal_range.through}；指标预热和退出行情另外读取，没有声明独立留出集。` : r.spec.entry_mode ? `固定规则分钟试运行，最近 3 个分钟交易日留出；短历史不能证明 80% 成功率。` : `开发期使用前复权特征与不复权成交模拟；预留 ${p.holdout_days} 个末段信号日期，跨边界持仓样本剔除。最终区间未参与本轮评价。`,
       r.data.minute_stocks ? `冻结分钟行情 ${r.data.minute_from} 至 ${r.data.minute_through}，${r.data.minute_stocks} 支。` : "此快照没有分钟路径；开盘买入结果不能视作条件低吸的验证。",
       `引擎 ${r.engine} · 代码版本 ${r.code_version}`, `数据快照 ${r.data.id}`
     ].map(x => node("p", x)));
@@ -214,7 +220,7 @@
     }
     const verdict = r.current_review?.next_day_verdict;
     text("next-day-verdict", verdicts[verdict] || "证据待核实");
-    text("next-day-evidence", `已完成 ${s?.resolved ?? "未知"} 笔 / ${s?.distinct_signal_dates ?? "未知"} 个信号日；至少需要 30 笔 / 10 日。超限 ${s?.net_loss_limit_breaches ?? "未知"} 笔，未决 ${s?.unresolved ?? "未知"} 笔。`);
+    text("next-day-evidence", `已完成 ${s?.resolved ?? "未知"} 笔 / ${s?.distinct_signal_dates ?? "未知"} 个信号日；至少需要 30 笔 / 30 个完整信号日。超限 ${s?.net_loss_limit_breaches ?? "未知"} 笔，未决 ${s?.unresolved ?? "未知"} 笔。`);
   }
   function renderComparison() {
     const r = state.current, same = comparable(r, state.parent), baseSame = comparable(r, state.baseline);

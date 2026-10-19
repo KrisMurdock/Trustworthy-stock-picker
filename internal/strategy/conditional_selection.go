@@ -61,10 +61,17 @@ func scoreConditionalSignals(group []conditionalSignal) []conditionalScored {
 // eligible pool. The full-pool ranking is retained only for audit attribution of
 // an original Top-N sample rejected by the signal rule.
 func selectConditionalSignals(group []conditionalSignal, rule string, topN int) (selected, filteredOriginalTop []conditionalScored, eligible int) {
+	selected, filteredOriginalTop, _, eligible = selectConditionalSignalsWithBaseline(group, rule, topN)
+	return
+}
+
+// selectConditionalSignalsWithBaseline additionally returns the unfiltered
+// full-pool Top N so callers can verify whether the signal rule adds value.
+func selectConditionalSignalsWithBaseline(group []conditionalSignal, rule string, topN int) (selected, filteredOriginalTop, baseline []conditionalScored, eligible int) {
 	if topN < 0 {
 		topN = 0
 	}
-	baseline := scoreConditionalSignals(group)
+	fullRanking := scoreConditionalSignals(group)
 	allowed := make([]conditionalSignal, 0, len(group))
 	allowedByCode := make(map[string]bool, len(group))
 	for _, signal := range group {
@@ -76,10 +83,11 @@ func selectConditionalSignals(group []conditionalSignal, rule string, topN int) 
 	ranked := scoreConditionalSignals(allowed)
 	end := min(topN, len(ranked))
 	selected = append([]conditionalScored{}, ranked[:end]...)
-	for _, item := range baseline {
+	baseline = append([]conditionalScored{}, fullRanking[:min(topN, len(fullRanking))]...)
+	for _, item := range fullRanking {
 		if item.rank <= topN && !allowedByCode[item.signal.code] {
 			filteredOriginalTop = append(filteredOriginalTop, item)
 		}
 	}
-	return selected, filteredOriginalTop, len(allowed)
+	return selected, filteredOriginalTop, baseline, len(allowed)
 }

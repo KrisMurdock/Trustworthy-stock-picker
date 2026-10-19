@@ -117,7 +117,7 @@ func SimulateConditional(s config.Strategy, cal *calendar.Calendar, code string,
 				out.Status = "missing_exit_session"
 				return out, nil
 			}
-			if lockedDown(market.Bar{Open: sell.Open, High: sell.High, Low: sell.Low, Close: sell.Close, Volume: sell.Volume}, future[0].Close, code) {
+			if lockedDown(market.Bar{Date: exitDate, Open: sell.Open, High: sell.High, Low: sell.Low, Close: sell.Close, Volume: sell.Volume}, future[0].Close, code) {
 				continue
 			}
 			out.MAE = math.Min(out.MAE, netPct(s, p, tickDown(sell.Low*(1-s.SlippageRate))))

@@ -171,6 +171,9 @@ func TestConditionalHoldoutIsPurgedAndUnknownTopPickIsNotReplaced(t *testing.T) 
 	if err != nil || len(x.Trades) == 0 || x.HoldoutFrom != h[0].Bars[len(h[0].Bars)-3].Date {
 		t.Fatalf("missing reserved sessions: %+v %v", x, err)
 	}
+	if x.Research.Development.Cohort.IncrementBootstrap == nil || x.Research.Development.PoolBaseline.Cohort.Version == 0 {
+		t.Fatal("conditional entry did not produce a paired full-pool baseline")
+	}
 	for _, trade := range x.Trades {
 		if trade.Outcome.ExitDate >= x.HoldoutFrom {
 			t.Fatal("trade crossed holdout boundary")

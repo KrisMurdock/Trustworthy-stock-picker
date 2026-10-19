@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"stock-watcher/internal/calendar"
 	"stock-watcher/internal/config"
 	"stock-watcher/internal/market"
 	"stock-watcher/internal/strategy"
@@ -20,9 +21,13 @@ import (
 const Engine = "indicator_selection_v7"
 
 type Calendar struct {
+	Version  int      `json:"schema_version,omitempty"`
 	From     string   `json:"from"`
 	Through  string   `json:"through"`
 	Holidays []string `json:"holidays"`
+	Days     []string `json:"days,omitempty"`
+	Source   string   `json:"source,omitempty"`
+	Digest   string   `json:"digest,omitempty"`
 }
 type Excluded struct {
 	Code   string `json:"code"`
@@ -80,9 +85,15 @@ type Results struct {
 	Findings    []Finding                  `json:"findings"`
 	Next        []string                   `json:"next"`
 }
+type Holdout struct {
+	From         string `json:"from"`
+	Through      string `json:"through"`
+	Contaminated bool   `json:"contaminated,omitempty"`
+}
 type Record struct {
 	Version        int             `json:"schema_version"`
 	ID             string          `json:"id"`
+	Stage          string          `json:"stage,omitempty"`
 	ParentID       string          `json:"parent_id,omitempty"`
 	BaselineID     string          `json:"baseline_id"`
 	Engine         string          `json:"engine"`
@@ -97,6 +108,7 @@ type Record struct {
 	Result         *Results        `json:"result,omitempty"`
 	Review         *Review         `json:"current_review,omitempty"`
 	ResultSnapshot *ResultSnapshot `json:"result_snapshot,omitempty"`
+	Holdout        *Holdout        `json:"holdout,omitempty"`
 }
 
 func ValidID(id string) bool {
@@ -113,7 +125,7 @@ func Specification(policy string) (Spec, error) {
 	if strings.HasPrefix(policy, "next-day-") {
 		return nextDaySpecification(strings.TrimPrefix(policy, "next-day-"))
 	}
-	s := Spec{Direction: "建立基线", Title: "现有机会排序 · 开发期基线", Hypothesis: "测量现有机会排序在同一数据快照上的目标触达、实际退出收益、风险与样本覆盖，作为后续对照。", Change: "沿用现有机会评分与证据规则，每个信号日选择前 N 名。", Criteria: "硬条件：每笔扣费后净亏损严格低于实际投入的 3%，等于 3% 也否决；未决交易不能视为达标。至少 30 笔完成交易、10 个信号日后，按可卖出持仓窗口内最高价扣除成本及滑点是否触达 2.5%／3% 验证盈利机会，不要求收盘价达标；触达率越高、首次触达天数越短越好。日内先止损还是先触达不明时单独标记且不计触达成功，触达不等于实际成交。实际退出平均净收益须为正；软指标相互退让时标为取舍，不抵消风险超限。仅作开发候选，最终区间未验证。"}
+	s := Spec{Direction: "建立基线", Title: "现有机会排序 · 开发期基线", Hypothesis: "测量现有机会排序在同一数据快照上的目标触达、实际退出收益、风险与样本覆盖，作为后续对照。", Change: "沿用现有机会评分与证据规则，每个信号日选择前 N 名。", Criteria: "硬条件：每笔扣费后净亏损严格低于实际投入的 3%，等于 3% 也否决；未决交易不能视为达标。至少 30 个完整信号日和 30 笔完成交易后，按可卖出持仓窗口内最高价扣除成本及滑点是否触达 2.5%／3% 验证盈利机会，不要求收盘价达标；触达率越高、首次触达天数越短越好。固定 Top N 槽位不足按现金 0，数据未知使该信号日不完整。日内先止损还是先触达不明时单独标记且不计触达成功，触达不等于实际成交。实际退出平均净收益须为正；软指标相互退让时标为取舍，不抵消风险超限。仅作开发候选，最终区间未验证。"}
 	if policy == "baseline" {
 		return s, nil
 	}
@@ -137,7 +149,7 @@ func Specification(policy string) (Spec, error) {
 	return s, nil
 }
 func NewSnapshot(c config.Config, asof string, adjusted, raw []market.History) (Snapshot, error) {
-	s := Snapshot{Version: 1, DataSummary: DataSummary{AsOf: asof, PoolSize: len(c.Stocks), Excluded: []Excluded{}, Calendar: Calendar{c.Calendar.ValidFrom, c.Calendar.ValidThrough, append([]string{}, c.Calendar.Holidays...)}, Parameters: c.Strategy, TopN: c.Selection.TopN}, Stocks: append([]config.Stock{}, c.Stocks...), Adjusted: []market.History{}, Raw: []market.History{}}
+	s := Snapshot{Version: 1, DataSummary: DataSummary{AsOf: asof, PoolSize: len(c.Stocks), Excluded: []Excluded{}, Calendar: Calendar{From: c.Calendar.ValidFrom, Through: c.Calendar.ValidThrough, Holidays: append([]string{}, c.Calendar.Holidays...)}, Parameters: c.Strategy, TopN: c.Selection.TopN}, Stocks: append([]config.Stock{}, c.Stocks...), Adjusted: []market.History{}, Raw: []market.History{}}
 	if c.Daily.Adjust != "qfq" {
 		return s, errors.New("experiments require saved qfq and raw histories")
 	}
@@ -193,6 +205,18 @@ func NewSnapshot(c config.Config, asof string, adjusted, raw []market.History) (
 		}
 	}
 	s.Included = len(s.Adjusted)
+	// A newly created snapshot freezes the configured exchange calendar when it
+	// covers the full saved window. Production-scale history extends beyond the
+	// hand-maintained calendar, so the CLI replaces this with a provider-backed
+	// history before evaluation.
+	if days, err := calendar.New(c).TradingDays(s.From, asof); err == nil {
+		if history, err := calendar.NewHistory("configured", s.Calendar.From, s.Calendar.Through, days, time.Now()); err == nil {
+			s.Calendar.Version = 1
+			s.Calendar.Days = days
+			s.Calendar.Source = "configured"
+			s.Calendar.Digest = history.Digest
+		}
+	}
 	// The digest includes actual bars, sources, fetch metadata, universe, calendar,
 	// parameters and protocol version. Children reuse this payload without reloading.
 	data, err := json.Marshal(s)
@@ -211,7 +235,7 @@ func NewRecord(snapshot Snapshot, spec Spec, parent *Record, version string) (Re
 	if _, err := rand.Read(token); err != nil {
 		return Record{}, err
 	}
-	r := Record{Version: 1, ID: hex.EncodeToString(token), Engine: Engine, CodeVersion: version, CreatedAt: time.Now().UTC(), Status: "running", Verdict: "pending", Spec: spec, Data: snapshot.DataSummary}
+	r := Record{Version: 1, ID: hex.EncodeToString(token), Stage: "development", Engine: Engine, CodeVersion: version, CreatedAt: time.Now().UTC(), Status: "running", Verdict: "pending", Spec: spec, Data: snapshot.DataSummary}
 	r.BaselineID = r.ID
 	if parent != nil {
 		if parent.Status != "completed" || parent.Data.ID != snapshot.ID {
@@ -223,9 +247,50 @@ func NewRecord(snapshot Snapshot, spec Spec, parent *Record, version string) (Re
 	return r, nil
 }
 
+// NewHoldoutRecord creates a child that consumes the parent's reserved range
+// with the exact frozen rule. The parent development record is never mutated.
+func NewHoldoutRecord(snapshot Snapshot, parent Record, contaminated bool) (Record, error) {
+	if parent.Status != "completed" || parent.Result == nil || parent.Result.Development.HoldoutFrom == "" || parent.Result.Development.HoldoutThrough == "" {
+		return Record{}, errors.New("parent experiment has no reserved holdout interval")
+	}
+	if parent.Stage == "holdout" {
+		return Record{}, errors.New("a holdout experiment cannot reserve another holdout")
+	}
+	if parent.Data.ID != snapshot.ID {
+		return Record{}, errors.New("holdout snapshot differs from its parent")
+	}
+	if parent.Spec.EntryMode != "" && len(snapshot.Minutes) == 0 {
+		return Record{}, errors.New("conditional holdout requires the parent snapshot's saved minute paths")
+	}
+	token := make([]byte, 16)
+	if _, err := rand.Read(token); err != nil {
+		return Record{}, err
+	}
+	spec := parent.Spec
+	spec.Range = nil
+	baseline := parent.BaselineID
+	if baseline == "" {
+		baseline = parent.ID
+	}
+	return Record{
+		Version: 1, ID: hex.EncodeToString(token), Stage: "holdout",
+		ParentID: parent.ID, BaselineID: baseline, Engine: parent.Engine,
+		CodeVersion: parent.CodeVersion, CreatedAt: time.Now().UTC(),
+		Status: "running", Verdict: "pending", Spec: spec,
+		Data:    snapshot.DataSummary,
+		Holdout: &Holdout{From: parent.Result.Development.HoldoutFrom, Through: parent.Result.Development.HoldoutThrough, Contaminated: contaminated},
+	}, nil
+}
+
 // BaselineFor keeps a new execution/engine baseline separate while preserving
 // the parent snapshot and provenance. Storage uses this same lineage contract.
 func BaselineFor(record, parent Record) string {
+	if record.Stage == "holdout" {
+		if parent.BaselineID != "" {
+			return parent.BaselineID
+		}
+		return parent.ID
+	}
 	if record.Spec.NextDayRule == "baseline" && parent.Spec.NextDayRule == "" {
 		return record.ID
 	}
@@ -240,6 +305,9 @@ func Comparable(a, b Record) bool {
 	return a.Engine == b.Engine && a.CodeVersion == b.CodeVersion && a.Data.ID == b.Data.ID && a.Status == "completed" && b.Status == "completed" && (a.Spec.NextDayRule != "") == (b.Spec.NextDayRule != "") && a.Spec.EntryMode == b.Spec.EntryMode && sameRange(a.Spec.Range, b.Spec.Range)
 }
 func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Record) error {
+	if record.Stage == "holdout" {
+		return EvaluateHoldout(ctx, snapshot, record, parent)
+	}
 	c := config.Defaults()
 	c.Strategy = snapshot.Parameters
 	c.Stocks = snapshot.Stocks
@@ -247,6 +315,9 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 	c.Calendar.ValidFrom = snapshot.Calendar.From
 	c.Calendar.ValidThrough = snapshot.Calendar.Through
 	c.Calendar.Holidays = snapshot.Calendar.Holidays
+	c.Calendar.TradingDays = snapshot.Calendar.Days
+	c.Calendar.Source = snapshot.Calendar.Source
+	c.Calendar.Digest = snapshot.Calendar.Digest
 	var x strategy.DevelopmentResult
 	var err error
 	if record.Spec.EntryMode == strategy.ConditionalEntryMode {
@@ -282,7 +353,7 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 		for k[split] != '/' {
 			split++
 		}
-		result.Groups = append(result.Groups, Group{k[:split], k[split+1:], strategy.SummarizeExperimentTrades(groups[k], x.Research.Parameters)})
+		result.Groups = append(result.Groups, Group{k[:split], k[split+1:], strategy.SummarizeExperimentTradesWithCohort(groups[k], x.Research.Parameters, snapshot.TopN)})
 	}
 	stats := x.Research.Development.TopRanked
 	record.Result = result
@@ -371,6 +442,98 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 	return nil
 }
 
+// EvaluateHoldout evaluates only the reserved interval with frozen training
+// evidence. A repeated consumption stays inspectable but cannot pass validation.
+func EvaluateHoldout(ctx context.Context, snapshot Snapshot, record *Record, parent *Record) error {
+	if record.Stage != "holdout" || record.Holdout == nil || parent == nil {
+		return errors.New("invalid holdout evaluation")
+	}
+	if snapshot.Calendar.Version == 0 || len(snapshot.Calendar.Days) == 0 {
+		return errors.New("holdout requires a snapshot with a frozen trading calendar")
+	}
+	c := config.Defaults()
+	c.Strategy = snapshot.Parameters
+	c.Stocks = snapshot.Stocks
+	c.Selection.TopN = snapshot.TopN
+	c.Calendar.ValidFrom = snapshot.Calendar.From
+	c.Calendar.ValidThrough = snapshot.Calendar.Through
+	c.Calendar.Holidays = snapshot.Calendar.Holidays
+	c.Calendar.TradingDays = snapshot.Calendar.Days
+	c.Calendar.Source = snapshot.Calendar.Source
+	c.Calendar.Digest = snapshot.Calendar.Digest
+	var x strategy.DevelopmentResult
+	var err error
+	if record.Spec.EntryMode == strategy.ConditionalEntryMode {
+		interval := &strategy.BacktestRange{From: record.Holdout.From, Through: record.Holdout.Through}
+		x, err = strategy.AnalyzeConditional(ctx, c, snapshot.Adjusted, snapshot.Raw, snapshot.Minutes, snapshot.AsOf, interval, record.Spec.SignalRule)
+		if err == nil {
+			hold := x.Research.Development
+			hold.Method = "frozen_holdout"
+			x.Research.Holdout = hold
+			x.Research.Development = strategy.Evaluation{Method: "frozen_training"}
+			x.Research.ValidationPassed = !record.Holdout.Contaminated && x.Research.Calendar.Complete && len(strategy.HoldoutFailures(hold)) == 0
+			if record.Holdout.Contaminated {
+				x.Research.Flags = append(x.Research.Flags, "contaminated")
+			}
+			x.Research.Verdict = strategy.HoldoutVerdict(x.Research, record.Holdout.Contaminated)
+		}
+	} else {
+		policy := strategy.EntryPolicy{MaxUpperWick: parent.Spec.MaxUpperWick, RequireEvidence: parent.Spec.RequireEvidence, NextDayRule: parent.Spec.NextDayRule}
+		x, err = strategy.AnalyzeHoldout(ctx, c, snapshot.Adjusted, snapshot.Raw, snapshot.AsOf, policy, record.Holdout.From, record.Holdout.Through, record.Holdout.Contaminated)
+	}
+	if err != nil {
+		return err
+	}
+	result := &Results{Development: x, Groups: []Group{}, Findings: []Finding{}, Next: []string{}}
+	stockNames := map[string]config.Stock{}
+	for _, s := range snapshot.Stocks {
+		stockNames[s.Code] = s
+	}
+	groups := map[string][]strategy.ExperimentTrade{}
+	for _, t := range x.Trades {
+		if !t.Selected {
+			continue
+		}
+		s := stockNames[t.Code]
+		for _, k := range []string{"month/" + t.Date[:7], "stock/" + t.Code, "sector/" + s.Sector} {
+			groups[k] = append(groups[k], t)
+		}
+	}
+	keys := []string{}
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		split := 0
+		for k[split] != '/' {
+			split++
+		}
+		result.Groups = append(result.Groups, Group{k[:split], k[split+1:], strategy.SummarizeExperimentTradesWithCohort(groups[k], x.Research.Parameters, snapshot.TopN)})
+	}
+	hold := x.Research.Holdout
+	result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("保留区间 %s 至 %s 共 %d 个信号日、%d 个计划槽位、%d 个已成交槽位；平均净收益 %.2f%%。", hold.From, hold.Through, hold.Cohort.SignalDates, hold.Cohort.PlannedSlots, hold.Cohort.FilledSlots, hold.Cohort.MeanNet), []string{}})
+	if x.Research.ValidationPassed {
+		result.Findings = append(result.Findings, Finding{"measured", "冻结规则在保留区间通过最低证据、均值收益、相对基线与亏损约束。", []string{}})
+	} else {
+		result.Findings = append(result.Findings, Finding{"limitation", "保留区间未通过验证；结果保留为失败证据，不能据此发布推荐。", []string{}})
+	}
+	if record.Holdout.Contaminated {
+		result.Findings = append(result.Findings, Finding{"limitation", "该快照的保留区间此前已被查看；本次结果不具备独立样本外含义。", []string{}})
+	}
+	result.Findings = append(result.Findings, Finding{"limitation", "当前股池与行业名称来自今天，历史回溯存在幸存者偏差；即使通过保留区间，也只能标为当前股池下的探索性验证。", []string{}})
+	result.Next = append(result.Next, "只有未污染且通过验证的冻结规则才可进入发布评估；失败后应提出新假设并冻结新的未查看区间。")
+	record.Result = result
+	record.Status = "completed"
+	record.Verdict = x.Research.Verdict
+	if record.Holdout.Contaminated {
+		record.Verdict = "contaminated"
+	}
+	now := time.Now().UTC()
+	record.FinishedAt = &now
+	return nil
+}
+
 func sameRange(a, b *strategy.BacktestRange) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
@@ -389,5 +552,73 @@ func ValidateSnapshot(s Snapshot) error {
 	if s.Version != 1 || id != hex.EncodeToString(hash[:]) {
 		return errors.New("experiment snapshot digest mismatch")
 	}
+	if s.Calendar.Version != 0 {
+		if s.Calendar.Version != 1 || s.Calendar.From == "" || s.Calendar.Through == "" || s.Calendar.Source == "" || s.Calendar.Digest == "" {
+			return errors.New("invalid experiment trading calendar")
+		}
+		history, err := calendar.NewHistory(s.Calendar.Source, s.Calendar.From, s.Calendar.Through, s.Calendar.Days, time.Now())
+		if err != nil || history.Digest != s.Calendar.Digest {
+			return errors.New("invalid experiment trading calendar digest")
+		}
+		previous := ""
+		for _, day := range s.Calendar.Days {
+			if day < s.Calendar.From || day > s.Calendar.Through || day <= previous {
+				return errors.New("invalid experiment trading calendar days")
+			}
+			previous = day
+		}
+	}
 	return nil
+}
+
+// WithTradingCalendar freezes the provider-backed calendar into the snapshot.
+// The calendar must cover the whole warm-up and exit window; a partial history
+// is rejected instead of silently falling back to the configured calendar.
+func WithTradingCalendar(s Snapshot, history calendar.History) (Snapshot, error) {
+	if err := history.Validate(); err != nil {
+		return s, err
+	}
+	from, through, ok := snapshotRange(s)
+	if !ok {
+		return s, errors.New("snapshot has no saved market window")
+	}
+	covered, err := history.Covers(from, through)
+	if err != nil || !covered {
+		return s, errors.New("trading calendar does not cover the saved market window")
+	}
+	s.Calendar.Version = history.Version
+	s.Calendar.From = history.From
+	s.Calendar.Through = history.Through
+	s.Calendar.Days = append([]string{}, history.Days...)
+	s.Calendar.Source = history.Source
+	s.Calendar.Digest = history.Digest
+	s.ID = ""
+	data, err := json.Marshal(s)
+	if err != nil {
+		return s, err
+	}
+	hash := sha256.Sum256(data)
+	s.ID = hex.EncodeToString(hash[:])
+	return s, nil
+}
+
+func snapshotRange(s Snapshot) (string, string, bool) {
+	from, through := "", ""
+	for _, h := range append(append([]market.History{}, s.Adjusted...), s.Raw...) {
+		for _, bar := range h.Bars {
+			if from == "" || bar.Date < from {
+				from = bar.Date
+			}
+			if bar.Date > through {
+				through = bar.Date
+			}
+		}
+	}
+	return from, through, from != "" && through != ""
+}
+
+// SnapshotRange exposes the saved warm-up through exit window for calendar
+// resolution by the CLI without leaking the snapshot's internal layout.
+func SnapshotRange(s Snapshot) (string, string, bool) {
+	return snapshotRange(s)
 }

@@ -10,12 +10,24 @@ import (
 type Calendar struct {
 	start, end string
 	closed     map[string]bool
+	days       map[string]bool
+	source     string
+	digest     string
 }
 
 func New(c config.Config) *Calendar {
-	x := &Calendar{start: c.Calendar.ValidFrom, end: c.Calendar.ValidThrough, closed: map[string]bool{}}
+	x := &Calendar{start: c.Calendar.ValidFrom, end: c.Calendar.ValidThrough, closed: map[string]bool{}, source: c.Calendar.Source, digest: c.Calendar.Digest}
+	if x.source == "" {
+		x.source = "configured"
+	}
 	for _, d := range c.Calendar.Holidays {
 		x.closed[d] = true
+	}
+	if len(c.Calendar.TradingDays) > 0 {
+		x.days = make(map[string]bool, len(c.Calendar.TradingDays))
+		for _, day := range c.Calendar.TradingDays {
+			x.days[day] = true
+		}
 	}
 	return x
 }
@@ -24,11 +36,27 @@ func (c *Calendar) ValidFrom() string {
 	return c.start
 }
 
+func (c *Calendar) Source() string { return c.source }
+
+func (c *Calendar) Digest() string { return c.digest }
+
+// Covers reports whether the calendar bounds include the requested range. A
+// frozen calendar is trusted only inside its declared provider window.
+func (c *Calendar) Covers(start, end string) (bool, error) {
+	if err := ValidateRange(start, end); err != nil {
+		return false, err
+	}
+	return start >= c.start && end <= c.end, nil
+}
+
 func Date(t time.Time) string { return t.In(market.Shanghai).Format("2006-01-02") }
 func (c *Calendar) Trading(day string) (bool, error) {
 	t, err := time.ParseInLocation("2006-01-02", day, market.Shanghai)
 	if err != nil || day < c.start || day > c.end {
 		return false, errors.New("date outside configured exchange calendar coverage")
+	}
+	if c.days != nil {
+		return c.days[day], nil
 	}
 	return t.Weekday() != time.Saturday && t.Weekday() != time.Sunday && !c.closed[day], nil
 }

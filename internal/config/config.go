@@ -75,6 +75,9 @@ type Config struct {
 		ValidFrom    string   `yaml:"valid_from"`
 		ValidThrough string   `yaml:"valid_through"`
 		Holidays     []string `yaml:"holidays"`
+		TradingDays  []string `yaml:"-"`
+		Source       string   `yaml:"-"`
+		Digest       string   `yaml:"-"`
 	} `yaml:"calendar"`
 }
 

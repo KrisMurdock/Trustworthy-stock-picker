@@ -22,9 +22,12 @@ type Sample struct {
 	Code     string
 	Date     string
 	LabelEnd string
-	Features Features
-	Rules    []string
-	Outcomes map[string]Outcome
+	// LabelEnds records when each target/horizon label is actually mature.
+	// LabelEnd remains the longest-horizon marker for purge and legacy readers.
+	LabelEnds map[string]string
+	Features  Features
+	Rules     []string
+	Outcomes  map[string]Outcome
 }
 type Stats struct {
 	Rule                 string          `json:"rule"`
@@ -83,30 +86,49 @@ type Stats struct {
 	NetSum               float64         `json:"-"`
 	DaySum               int             `json:"-"`
 	DateSet              map[string]bool `json:"-"`
+	Cohort               CohortStats     `json:"cohort"`
 }
 type Evaluation struct {
-	Method       string `json:"method"`
-	From         string `json:"from,omitempty"`
-	Through      string `json:"through,omitempty"`
-	SignalDates  int    `json:"signal_dates"`
-	TopRanked    Stats  `json:"top_ranked"`
-	Recommended  Stats  `json:"recommended"`
-	PoolBaseline Stats  `json:"pool_baseline"`
-	LegacyTrend  Stats  `json:"legacy_trend_baseline"`
+	Method         string      `json:"method"`
+	From           string      `json:"from,omitempty"`
+	Through        string      `json:"through,omitempty"`
+	SignalDates    int         `json:"signal_dates"`
+	Cohort         CohortStats `json:"cohort"`
+	BaselineCohort CohortStats `json:"baseline_cohort"`
+	TopRanked      Stats       `json:"top_ranked"`
+	Recommended    Stats       `json:"recommended"`
+	PoolBaseline   Stats       `json:"pool_baseline"`
+	LegacyTrend    Stats       `json:"legacy_trend_baseline"`
 }
 type Research struct {
-	Version          int             `json:"schema_version"`
-	Strategy         string          `json:"strategy"`
-	AsOf             string          `json:"as_of"`
-	Parameters       config.Strategy `json:"parameters"`
-	TrainingThrough  string          `json:"training_label_through"`
-	Rules            []Stats         `json:"rule_statistics"`
-	Development      Evaluation      `json:"development"`
-	Holdout          Evaluation      `json:"holdout"`
-	ValidationPassed bool            `json:"holdout_validation_passed"`
-	SampleCount      int             `json:"sample_count"`
-	Skipped          map[string]int  `json:"skipped_samples"`
-	Limitations      []string        `json:"limitations"`
+	Version          int              `json:"schema_version"`
+	Strategy         string           `json:"strategy"`
+	AsOf             string           `json:"as_of"`
+	Parameters       config.Strategy  `json:"parameters"`
+	TrainingThrough  string           `json:"training_label_through"`
+	Rules            []Stats          `json:"rule_statistics"`
+	Development      Evaluation       `json:"development"`
+	Holdout          Evaluation       `json:"holdout"`
+	ValidationPassed bool             `json:"holdout_validation_passed"`
+	SampleCount      int              `json:"sample_count"`
+	AvailableSamples int              `json:"available_samples"`
+	EvaluatedSamples int              `json:"evaluated_samples"`
+	AuditCandidates  int              `json:"audit_candidates"`
+	Calendar         CalendarCoverage `json:"calendar_coverage"`
+	Flags            []string         `json:"flags,omitempty"`
+	Verdict          string           `json:"verdict"`
+	Skipped          map[string]int   `json:"skipped_samples"`
+	Limitations      []string         `json:"limitations"`
+}
+
+type CalendarCoverage struct {
+	Version   int      `json:"schema_version,omitempty"`
+	Complete  bool     `json:"complete"`
+	From      string   `json:"from,omitempty"`
+	Through   string   `json:"through,omitempty"`
+	Source    string   `json:"source,omitempty"`
+	Digest    string   `json:"digest,omitempty"`
+	Uncovered []string `json:"uncovered,omitempty"`
 }
 type Candidate struct {
 	Code                      string                  `json:"code"`
@@ -262,7 +284,9 @@ func finalize(s Stats) Stats {
 	if s.HighTouch30 > 0 {
 		s.HighTouch30Days = float64(s.Touch30DaySum) / float64(s.HighTouch30)
 	}
-	s.Dates = len(s.DateSet)
+	if s.DateSet != nil {
+		s.Dates = len(s.DateSet)
+	}
 	if s.Samples > 0 {
 		s.EntryDayPositiveRate = float64(s.EntryDayPositive) / float64(s.Samples)
 		s.Joint25Rate = float64(s.Joint25) / float64(s.Samples)
@@ -294,7 +318,8 @@ func statsFor(samples []Sample, cutoff string, s config.Strategy) []Stats {
 			for _, h := range horizons(s) {
 				x := Stats{Rule: rule, Target: target, Horizon: h}
 				for _, sample := range samples {
-					if sample.LabelEnd >= cutoff {
+					end := labelEnd(sample, target, h)
+					if end == "" || end >= cutoff {
 						continue
 					}
 					for _, matched := range sample.Rules {
@@ -309,6 +334,13 @@ func statsFor(samples []Sample, cutoff string, s config.Strategy) []Stats {
 		}
 	}
 	return stats
+}
+
+func labelEnd(sample Sample, target float64, horizon int) string {
+	if sample.LabelEnds != nil {
+		return sample.LabelEnds[key(target, horizon)]
+	}
+	return sample.LabelEnd
 }
 func find(stats []Stats, rule string, target float64, h int) Stats {
 	for _, s := range stats {
@@ -442,6 +474,97 @@ func datasets(c config.Config, histories, raw []market.History, asof string) ([]
 	return data, nil
 }
 
+func inspectCalendarCoverage(cal *calendar.Calendar, data []Dataset) CalendarCoverage {
+	seen := map[string]bool{}
+	out := CalendarCoverage{Version: 1, Complete: true, Source: cal.Source(), Digest: cal.Digest()}
+	for _, d := range data {
+		for _, b := range d.Adjusted.Bars {
+			if out.From == "" || b.Date < out.From {
+				out.From = b.Date
+			}
+			if b.Date > out.Through {
+				out.Through = b.Date
+			}
+			if _, err := cal.Trading(b.Date); err != nil && !seen[b.Date] {
+				seen[b.Date] = true
+				out.Uncovered = append(out.Uncovered, b.Date)
+			}
+		}
+	}
+	if out.From != "" {
+		covered, err := cal.Covers(out.From, out.Through)
+		if err != nil || !covered {
+			out.Complete = false
+		}
+	}
+	sort.Strings(out.Uncovered)
+	out.Complete = out.Complete && len(out.Uncovered) == 0
+	return out
+}
+
+func appendObservedFlags(research *Research) {
+	if research.Calendar.Source == "configured" && !hasFlag(research.Flags, "configured_calendar") {
+		research.Flags = append(research.Flags, "configured_calendar")
+	}
+	if research.Development.Cohort.IncompleteDates > 0 || research.Holdout.Cohort.IncompleteDates > 0 {
+		if !hasFlag(research.Flags, "incomplete_signal_date") {
+			research.Flags = append(research.Flags, "incomplete_signal_date")
+		}
+	}
+	if research.Skipped["corporate_action"] > 0 && !hasFlag(research.Flags, "corporate_action") {
+		research.Flags = append(research.Flags, "corporate_action")
+	}
+}
+
+func hasFlag(flags []string, want string) bool {
+	for _, flag := range flags {
+		if flag == want {
+			return true
+		}
+	}
+	return false
+}
+
+func researchVerdict(research Research, hasHoldout bool) string {
+	switch {
+	case !research.Calendar.Complete:
+		return "partial_calendar"
+	case hasFlag(research.Flags, "contaminated"):
+		return "contaminated"
+	case research.ValidationPassed && !hasFlag(research.Flags, "current_universe_bias"):
+		return "validated"
+	case research.ValidationPassed:
+		return "exploratory_current_universe"
+	case research.EvaluatedSamples == 0:
+		return "insufficient_evidence"
+	case hasHoldout && research.Holdout.Method == "frozen_holdout":
+		return "validation_failed"
+	default:
+		return "exploratory"
+	}
+}
+
+// HoldoutVerdict derives the persisted holdout status without mutating the
+// archived flags. Contamination outranks every measured outcome.
+func HoldoutVerdict(research Research, contaminated bool) string {
+	if contaminated {
+		return "contaminated"
+	}
+	return researchVerdict(research, true)
+}
+
+func requireCalendarCoverage(cal *calendar.Calendar, data []Dataset) error {
+	c := inspectCalendarCoverage(cal, data)
+	if c.Complete {
+		return nil
+	}
+	through := c.Uncovered[0]
+	if len(c.Uncovered) > 1 {
+		through = c.Uncovered[len(c.Uncovered)-1]
+	}
+	return fmt.Errorf("calendar coverage incomplete: %s through %s (%d uncovered dates)", c.Uncovered[0], through, len(c.Uncovered))
+}
+
 // Analyze never evaluates a historical signal using labels ending on or after that signal.
 // The latest holdout block freezes its evidence at the block boundary.
 func Analyze(ctx context.Context, c config.Config, histories, raw []market.History, asof string) (Result, error) {
@@ -478,6 +601,14 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 		"Minimum commission, cash and slippage need broker confirmation; aggregate observations overlap, not a funded portfolio or calibrated prediction.",
 		"The date-capped Wilson bound is a ranking heuristic, not a calibrated confidence interval. MAE/MFE are conservative whole-bar bounds, including the exit bar.",
 	}}
+	research.Calendar = inspectCalendarCoverage(cal, data)
+	if experiment != nil && !research.Calendar.Complete {
+		return result, requireCalendarCoverage(cal, data)
+	}
+	if !research.Calendar.Complete {
+		research.Flags = append(research.Flags, "partial_calendar")
+	}
+	research.Flags = append(research.Flags, "current_universe_bias")
 	samples := []Sample{}
 	latest := []Candidate{}
 	means := map[string]float64{}
@@ -517,33 +648,30 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 				latest = append(latest, Candidate{Code: h.Code, Name: h.Name, Features: f})
 				continue
 			}
-			if i+s.MaxHoldingDays+1 >= len(h.Bars) {
-				continue
-			}
 			date := h.Bars[i].Date
 			ok, err := cal.Trading(date)
 			if err != nil || !ok {
 				research.Skipped["outside_calendar"]++
 				continue
 			}
-			future := r.Bars[i+1 : i+s.MaxHoldingDays+2]
-			if experiment != nil && experiment.boundary != "" && future[len(future)-1].Date >= experiment.boundary {
-				continue // Never calculate outcomes touching the reserved final interval.
-			}
-			factor := h.Bars[i].Close / r.Bars[i].Close
+			sample := Sample{Code: h.Code, Date: date, LabelEnds: map[string]string{}, Features: f, Outcomes: map[string]Outcome{}}
 			corporate := false
-			for j := i + 1; j <= i+s.MaxHoldingDays+1; j++ {
-				if math.Abs(h.Bars[j].Close/r.Bars[j].Close/factor-1) > 0.002 {
-					corporate = true
-					break
-				}
-			}
-			if corporate {
-				research.Skipped["corporate_action"]++
-			}
-			sample := Sample{Code: h.Code, Date: date, LabelEnd: future[len(future)-1].Date, Features: f, Outcomes: map[string]Outcome{}}
 			for _, target := range []float64{2.5, 3} {
 				for _, days := range horizons(s) {
+					last := i + days + 1
+					if last >= len(r.Bars) {
+						continue
+					}
+					future := r.Bars[i+1 : last+1]
+					factor := h.Bars[i].Close / r.Bars[i].Close
+					windowCorporate := false
+					for j := i + 1; j <= last; j++ {
+						if math.Abs(h.Bars[j].Close/r.Bars[j].Close/factor-1) > 0.002 {
+							windowCorporate = true
+							break
+						}
+					}
+					corporate = corporate || windowCorporate
 					parameters := s
 					parameters.TargetNetPct = target
 					out, err := Simulate(parameters, cal, h.Code, r.Bars[i], future, days)
@@ -551,13 +679,23 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 						research.Skipped["outside_calendar"]++
 						continue
 					}
-					if corporate && out.EntryDate != "" {
+					if windowCorporate && out.EntryDate != "" {
 						out.Status = "corporate_action"
 					}
 					sample.Outcomes[key(target, days)] = out
+					end := future[len(future)-1].Date
+					sample.LabelEnds[key(target, days)] = end
+					if end > sample.LabelEnd {
+						sample.LabelEnd = end
+					}
 				}
 			}
-			samples = append(samples, sample)
+			if corporate {
+				research.Skipped["corporate_action"]++
+			}
+			if len(sample.Outcomes) > 0 {
+				samples = append(samples, sample)
+			}
 		}
 	}
 	// Relative strength uses the cross-section available at that date only.
@@ -566,17 +704,54 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 		samples[i].Rules = Matches(samples[i].Features)
 	}
 	if experiment != nil {
-		dates := []string{}
-		seen := map[string]bool{}
-		for _, sample := range samples {
-			if !seen[sample.Date] {
-				dates = append(dates, sample.Date)
-				seen[sample.Date] = true
+		if experiment.holdout {
+			holdoutDates := evaluationDates(samples, s.TargetNetPct, s.MaxHoldingDays, "", experiment.holdoutFrom, experiment.holdoutThrough)
+			if len(holdoutDates) == 0 {
+				return result, errors.New("no signal dates inside the reserved holdout interval")
+			}
+			research.Holdout = evaluateFiltered(ctx, samples, holdoutDates, s, experiment.holdoutFrom, c.Selection.TopN, experiment)
+			research.Holdout.Method = "frozen_holdout"
+			research.AvailableSamples = len(samples)
+			research.EvaluatedSamples = research.Holdout.TopRanked.Samples
+			research.SampleCount = research.AvailableSamples
+			for _, trade := range experiment.trades {
+				if !trade.Selected {
+					research.AuditCandidates++
+				}
+			}
+			for _, sample := range samples {
+				if sample.LabelEnd < experiment.holdoutFrom && sample.LabelEnd > research.TrainingThrough {
+					research.TrainingThrough = sample.LabelEnd
+				}
+			}
+			trainingFrom := ""
+			for _, sample := range samples {
+				if sample.LabelEnd < experiment.holdoutFrom && (trainingFrom == "" || sample.Date < trainingFrom) {
+					trainingFrom = sample.Date
+				}
+			}
+			research.Development = Evaluation{Method: "frozen_training", From: trainingFrom, Through: research.TrainingThrough}
+			if experiment.contaminated {
+				research.Flags = append(research.Flags, "contaminated")
+			}
+			appendObservedFlags(&research)
+			research.ValidationPassed = !experiment.contaminated && research.Calendar.Complete && len(HoldoutFailures(research.Holdout)) == 0
+			research.Verdict = researchVerdict(research, true)
+			result.Research = research
+			return result, ctx.Err()
+		}
+		dates := evaluationDates(samples, s.TargetNetPct, s.MaxHoldingDays, experiment.boundary, "", "")
+		research.Development = evaluateFiltered(ctx, samples, dates, s, "", c.Selection.TopN, experiment)
+		research.AvailableSamples = len(samples)
+		research.EvaluatedSamples = research.Development.TopRanked.Samples
+		research.SampleCount = research.AvailableSamples
+		for _, trade := range experiment.trades {
+			if !trade.Selected {
+				research.AuditCandidates++
 			}
 		}
-		sort.Strings(dates)
-		research.Development = evaluateFiltered(ctx, samples, dates, s, "", c.Selection.TopN, experiment)
-		research.SampleCount = len(samples)
+		appendObservedFlags(&research)
+		research.Verdict = researchVerdict(research, false)
 		if experiment.rangeFilter != nil {
 			research.Limitations = append(research.Limitations, "Explicit signal-date backtest; no independent holdout is declared. Inspected dates cannot be reused as unseen validation data.")
 		} else {
@@ -613,28 +788,23 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 	}
 	sortRank(result.Ranking)
 	research.Rules = stats
-	research.SampleCount = len(samples)
+	research.AvailableSamples = len(samples)
+	research.SampleCount = research.AvailableSamples
 	for _, sample := range samples {
 		if sample.LabelEnd < asof && sample.LabelEnd > research.TrainingThrough {
 			research.TrainingThrough = sample.LabelEnd
 		}
 	}
-	dateSet := map[string]bool{}
-	for _, sample := range samples {
-		dateSet[sample.Date] = true
-	}
-	dates := []string{}
-	for date := range dateSet {
-		dates = append(dates, date)
-	}
-	sort.Strings(dates)
+	dates := evaluationDates(samples, s.TargetNetPct, s.MaxHoldingDays, "", "", "")
 	boundary := ""
 	if len(dates) > s.MinTrainingDays+s.HoldoutDays {
 		boundary = dates[len(dates)-s.HoldoutDays]
 	}
 	if boundary != "" {
-		research.Development = evaluate(ctx, samples, dates[:len(dates)-s.HoldoutDays], s, "", c.Selection.TopN)
-		research.Holdout = evaluate(ctx, samples, dates[len(dates)-s.HoldoutDays:], s, boundary, c.Selection.TopN)
+		developmentDates := evaluationDates(samples, s.TargetNetPct, s.MaxHoldingDays, boundary, "", "")
+		holdoutDates := evaluationDates(samples, s.TargetNetPct, s.MaxHoldingDays, "", boundary, "")
+		research.Development = evaluate(ctx, samples, developmentDates, s, "", c.Selection.TopN)
+		research.Holdout = evaluate(ctx, samples, holdoutDates, s, boundary, c.Selection.TopN)
 	} else {
 		research.Development = evaluate(ctx, samples, dates, s, "", c.Selection.TopN)
 		research.Limitations = append(research.Limitations, "Insufficient signal dates for the configured untouched holdout; no out-of-sample claim.")
@@ -643,7 +813,10 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 		return result, err
 	}
 	hold := research.Holdout
-	research.ValidationPassed = len(HoldoutFailures(hold)) == 0
+	research.ValidationPassed = len(HoldoutFailures(hold)) == 0 && research.Calendar.Complete
+	research.EvaluatedSamples = research.Development.TopRanked.Samples + research.Holdout.TopRanked.Samples
+	appendObservedFlags(&research)
+	research.Verdict = researchVerdict(research, true)
 	if !research.ValidationPassed {
 		for i := range result.Ranking {
 			result.Ranking[i].Recommended = false
@@ -652,6 +825,36 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 	}
 	result.Research = research
 	return result, nil
+}
+
+// evaluationDates returns signal dates whose configured target/horizon label
+// is complete. A date is excluded when any stock's label crosses the optional
+// boundary, so development results cannot consume holdout outcomes.
+func evaluationDates(samples []Sample, target float64, horizon int, before, from, through string) []string {
+	endByDate := map[string]string{}
+	invalid := map[string]bool{}
+	for _, sample := range samples {
+		end := labelEnd(sample, target, horizon)
+		if end == "" || from != "" && sample.Date < from || through != "" && sample.Date > through {
+			continue
+		}
+		if before != "" && end >= before {
+			invalid[sample.Date] = true
+			continue
+		}
+		if previous, ok := endByDate[sample.Date]; !ok || end > previous {
+			endByDate[sample.Date] = end
+		}
+	}
+	dates := make([]string, 0, len(endByDate))
+	for date := range endByDate {
+		if invalid[date] {
+			continue
+		}
+		dates = append(dates, date)
+	}
+	sort.Strings(dates)
+	return dates
 }
 
 func evaluate(ctx context.Context, samples []Sample, dates []string, s config.Strategy, frozen string, topN int) Evaluation {
@@ -665,6 +868,13 @@ func evaluateFiltered(ctx context.Context, samples []Sample, dates []string, s c
 		e.Method = "frozen_holdout"
 		frozenStats = statsFor(samples, frozen, s)
 	}
+	timeline := map[string][]Stats(nil)
+	if frozen == "" {
+		timeline = statsTimeline(samples, dates, s)
+	}
+	cohortObs := []cohortObservation{}
+	baselineObs := []cohortObservation{}
+	recommendedObs := []cohortObservation{}
 	for _, date := range dates {
 		if experiment != nil && !experiment.rangeFilter.Includes(date) {
 			continue
@@ -674,7 +884,7 @@ func evaluateFiltered(ctx context.Context, samples []Sample, dates []string, s c
 		}
 		stats := frozenStats
 		if frozen == "" {
-			stats = statsFor(samples, date, s)
+			stats = timeline[date]
 		}
 		base := find(stats, "baseline", s.TargetNetPct, s.MaxHoldingDays)
 		if base.Dates < s.MinTrainingDays {
@@ -696,16 +906,26 @@ func evaluateFiltered(ctx context.Context, samples []Sample, dates []string, s c
 		}
 		sortRank(ranked)
 		recommended, picked := 0, 0
+		dayCohort := &cohortObservation{date: date, planned: topN}
+		dayBaseline := &cohortObservation{date: date, planned: topN}
+		dayRecommended := &cohortObservation{date: date, planned: topN}
 		for i, x := range ranked {
 			sample := byCode[x.Code]
-			out := sample.Outcomes[key(s.TargetNetPct, s.MaxHoldingDays)]
+			out, ok := sample.Outcomes[key(s.TargetNetPct, s.MaxHoldingDays)]
+			if !ok {
+				out = Outcome{Status: "missing_exit_session"}
+			}
 			add(&e.PoolBaseline, sample, out)
 			allowed := experiment == nil || experiment.maxUpperWick == nil || x.Features.UpperWick <= *experiment.maxUpperWick
 			allowed = allowed && (experiment == nil || !experiment.requireEvidence || x.Recommended)
 			allowed = allowed && (experiment == nil || matchesNextDay(experiment.nextDayRule, x.Features))
 			selected := allowed && picked < topN
+			if i < topN {
+				dayBaseline.add(out)
+			}
 			if selected {
 				add(&e.TopRanked, sample, out)
+				dayCohort.add(out)
 				picked++
 			}
 			if experiment != nil && (selected || i < topN) {
@@ -713,16 +933,24 @@ func evaluateFiltered(ctx context.Context, samples []Sample, dates []string, s c
 			}
 			if allowed && x.Recommended && recommended < topN {
 				add(&e.Recommended, sample, out)
+				dayRecommended.add(out)
 				recommended++
 			}
 			if sample.Features.Metrics.Score >= 70 && sample.Features.Metrics.MA5 > sample.Features.Metrics.MA10 && sample.Features.Metrics.MA10 > sample.Features.Metrics.MA20 && sample.Features.VolumeRatio >= 1.2 && sample.Features.Metrics.DIF > sample.Features.Metrics.DEA && sample.Features.Metrics.RSI14 >= 50 && sample.Features.Metrics.RSI14 <= 80 && sample.Features.Return1 >= -3 && sample.Features.Return1 <= 7 {
 				add(&e.LegacyTrend, sample, out)
 			}
 		}
+		cohortObs = append(cohortObs, dayCohort.finish())
+		baselineObs = append(baselineObs, dayBaseline.finish())
+		recommendedObs = append(recommendedObs, dayRecommended.finish())
 	}
 	e.TopRanked = finalize(e.TopRanked)
 	e.Recommended = finalize(e.Recommended)
 	e.PoolBaseline = finalize(e.PoolBaseline)
 	e.LegacyTrend = finalize(e.LegacyTrend)
+	e.BaselineCohort = summarizeCohorts(baselineObs, s.MaxHoldingDays)
+	e.Cohort = summarizeCohorts(cohortObs, s.MaxHoldingDays).WithBaseline(e.BaselineCohort)
+	e.TopRanked.Cohort = e.Cohort
+	e.Recommended.Cohort = summarizeCohorts(recommendedObs, s.MaxHoldingDays).WithBaseline(e.BaselineCohort)
 	return e
 }

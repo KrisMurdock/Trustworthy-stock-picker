@@ -27,6 +27,10 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 	if err != nil {
 		return result, err
 	}
+	cal := calendar.New(c)
+	if err := requireCalendarCoverage(cal, data); err != nil {
+		return result, err
+	}
 	if len(data) == 0 {
 		return result, errors.New("no aligned daily data for conditional entry")
 	}
@@ -52,6 +56,7 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 			}
 		}
 		for date, bars := range byCode[h.Code] {
+			sort.Slice(bars, func(i, j int) bool { return bars[i].End.Before(bars[j].End) })
 			if len(bars) == 48 {
 				days[date] = true
 			}
@@ -89,11 +94,14 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 		"Relative strength and the opportunity score are computed within the signal-rule-eligible pool; an excluded stock cannot change the eligible pool's cross-sectional mean.",
 		"The original full-pool Top N is retained only to attribute which samples the rule removed, not to score or replace eligible candidates.")
 	signals := map[string][]conditionalSignal{}
-	cal := calendar.New(c)
 	for _, d := range data {
 		h, r := d.Adjusted, d.Raw
 		if special(h.Name) {
 			continue
+		}
+		dailyIndex := map[string]int{}
+		for i, bar := range r.Bars {
+			dailyIndex[bar.Date] = i
 		}
 		for i := 59; i < len(h.Bars); i++ {
 			if err := ctx.Err(); err != nil {
@@ -108,7 +116,9 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 				continue
 			}
 			exitDate, err := cal.Next(entryDate)
-			if err != nil || (interval == nil && !days[entryDate]) || (result.HoldoutFrom != "" && exitDate >= result.HoldoutFrom) {
+			entryIndex, entryOK := dailyIndex[entryDate]
+			exitIndex, exitOK := dailyIndex[exitDate]
+			if err != nil || !entryOK || !exitOK || entryIndex <= i || exitIndex <= entryIndex || (result.HoldoutFrom != "" && exitDate >= result.HoldoutFrom) {
 				continue
 			}
 			f, err := extractSignalFeatures(h.Bars[:i+1])
@@ -123,11 +133,10 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 				}
 				chanEvidence = &evidence
 			}
-			end := min(i+3, len(r.Bars))
-			future := r.Bars[i+1 : end]
+			future := r.Bars[i+1 : exitIndex+1]
 			corporate := false
 			factor := h.Bars[i].Close / r.Bars[i].Close
-			for j := i + 1; j < end; j++ {
+			for j := i + 1; j <= exitIndex; j++ {
 				if math.Abs(h.Bars[j].Close/r.Bars[j].Close/factor-1) > .002 {
 					corporate = true
 				}
@@ -145,6 +154,7 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 		evaluation.Method = "explicit_range_minute_backtest"
 		research.Limitations[0] = "Explicit signal-date interval; no independent holdout declared. Missing minute entry paths remain unknown, never safe skips."
 	}
+	baselineTrades := []ExperimentTrade{}
 	for _, date := range signalDates {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -155,7 +165,7 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 		}
 		evaluation.Through = date
 		evaluation.SignalDates++
-		selected, filtered, eligible := selectConditionalSignals(group, rule, c.Selection.TopN)
+		selected, filtered, baseline, eligible := selectConditionalSignalsWithBaseline(group, rule, c.Selection.TopN)
 		result.Selection.Candidates += len(group)
 		result.Selection.Eligible += eligible
 		result.Selection.FilteredOriginalTop += len(filtered)
@@ -186,10 +196,37 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 			}
 			result.Trades = append(result.Trades, ExperimentTrade{ID: date + "/" + sample.code, Code: sample.code, Date: date, Rank: item.rank, Selected: true, Features: item.candidate.Features, Outcome: out, EntryZone: &zone, Chan: sample.chanEvidence})
 		}
+		for _, item := range baseline {
+			sample := item.signal
+			zone := ConditionalZone(sample.bar.Close)
+			entryDate, _ := cal.Next(date)
+			exitDate, _ := cal.Next(entryDate)
+			out, err := SimulateConditional(s, cal, sample.code, sample.bar, sample.future, byCode[sample.code][entryDate], byCode[sample.code][exitDate])
+			if err != nil {
+				return result, err
+			}
+			if sample.corporate && out.EntryDate != "" {
+				out.Status = "corporate_action"
+			}
+			baselineTrades = append(baselineTrades, ExperimentTrade{ID: date + "/" + sample.code, Code: sample.code, Date: date, Rank: item.rank, Selected: true, Features: item.candidate.Features, Outcome: out, EntryZone: &zone, Chan: sample.chanEvidence})
+		}
 	}
-	evaluation.TopRanked = SummarizeExperimentTrades(result.Trades, s)
+	evaluation.TopRanked = SummarizeExperimentTradesWithCohort(result.Trades, s, c.Selection.TopN)
+	evaluation.PoolBaseline = SummarizeExperimentTradesWithCohort(baselineTrades, s, c.Selection.TopN)
+	evaluation.PoolBaseline.Rule = "pool_baseline"
+	evaluation.BaselineCohort = evaluation.PoolBaseline.Cohort
+	evaluation.Cohort = evaluation.TopRanked.Cohort.WithBaseline(evaluation.BaselineCohort)
+	evaluation.TopRanked.Cohort = evaluation.Cohort
+	evaluation.Recommended = evaluation.TopRanked
 	research.Development = evaluation
-	research.SampleCount = len(result.Trades)
+	research.Calendar = inspectCalendarCoverage(cal, data)
+	research.Flags = append(research.Flags, "current_universe_bias")
+	research.AvailableSamples = result.Selection.Candidates
+	research.EvaluatedSamples = research.Development.TopRanked.Samples
+	research.AuditCandidates = len(result.Trades) - result.Selection.Selected
+	research.SampleCount = research.AvailableSamples
+	appendObservedFlags(&research)
+	research.Verdict = researchVerdict(research, false)
 	result.Research = research
 	return result, nil
 }

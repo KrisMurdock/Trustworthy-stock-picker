@@ -148,6 +148,14 @@ calendar:
 	if err != nil || inherited.Spec.Range == nil || *inherited.Spec.Range != *interval {
 		t.Fatal("child lost parent range", err)
 	}
+	if err = run([]string{"experiment", "-config", path, "-parent", parent.ID, "-holdout"}); err != nil {
+		t.Fatal(err)
+	}
+	items, _ = view.List(ctx)
+	holdoutRecord := items[0]
+	if holdoutRecord.Stage != "holdout" || holdoutRecord.ParentID != parent.ID || holdoutRecord.Holdout == nil || holdoutRecord.Holdout.Contaminated {
+		t.Fatal("holdout CLI did not create a clean child record", holdoutRecord)
+	}
 	for _, args := range [][]string{
 		{"experiment", "-config", path, "-policy", "unknown"},
 		{"experiment", "-config", path, "-policy", "upper-wick"},
@@ -158,7 +166,10 @@ calendar:
 		{"experiment", "-config", path, "-parent", parent.ID, "-policy", "conditional-macd"},
 		{"experiment", "-config", path, "-parent", "invalid"},
 		{"experiment", "-config", path, "-parent", parent.ID, "-as-of", "2026-01-01"},
+		{"experiment", "-config", path, "-holdout"},
+		{"experiment", "-config", path, "-parent", parent.ID, "-holdout", "-from", "2026-04-01", "-through", "2026-05-01"},
 		{"sync", "-config", path, "-policy", "upper-wick"},
+		{"sync", "-config", path, "-holdout"},
 		{"experiment", "-config", path + ".missing"},
 		{"experiment", "-config", path, "-from", "2026-04-01"},
 		{"experiment", "-config", path, "-parent", nextDay.ID, "-from", "2026-05-02", "-through", "2026-05-01"},
@@ -171,7 +182,7 @@ calendar:
 		}
 	}
 	items, _ = view.List(ctx)
-	if len(items) != 8 {
+	if len(items) != 9 {
 		t.Fatal("validation error created an experiment")
 	}
 }

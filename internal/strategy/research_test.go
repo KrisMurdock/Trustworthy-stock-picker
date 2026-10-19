@@ -83,6 +83,38 @@ func TestResearchMissingRawCancellationAndCorporateActions(t *testing.T) {
 		t.Fatal("corporate action simulated as profit/loss")
 	}
 }
+
+func TestShortHorizonsUseTheirOwnMaturityWindow(t *testing.T) {
+	c, h, raw := researchFixture()
+	x, err := Analyze(context.Background(), c, h, raw, h[0].AsOf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	short := find(x.Research.Rules, "baseline", 2.5, 1)
+	long := find(x.Research.Rules, "baseline", 2.5, 5)
+	if short.Samples <= long.Samples {
+		t.Fatalf("short labels were still gated by the longest horizon: short=%d long=%d", short.Samples, long.Samples)
+	}
+}
+
+func TestMissingHorizonLabelIsNotCountedAsSkippedEntry(t *testing.T) {
+	p := config.DefaultStrategy()
+	p.MaxHoldingDays = 5
+	samples := []Sample{{
+		Code: "sz000001", Date: "2026-01-05",
+		LabelEnds: map[string]string{key(3, 1): "2026-01-06"},
+		Rules:     []string{"baseline"},
+		Outcomes: map[string]Outcome{
+			key(3, 1): {Status: "timeout", EntryDate: "2026-01-06", NetPct: 1, HoldingDays: 1},
+		},
+	}}
+	short := find(statsFor(samples, "2026-02-01", p), "baseline", 3, 1)
+	long := find(statsFor(samples, "2026-02-01", p), "baseline", 3, 5)
+	if short.Samples != 1 || long.Samples != 0 || long.SkippedEntries != 0 {
+		t.Fatalf("missing long label polluted statistics: short=%+v long=%+v", short, long)
+	}
+}
+
 func TestEvidenceGatesAndDeterministicTies(t *testing.T) {
 	s := config.DefaultStrategy()
 	f := Features{ClosePosition: 0.9, Return1: 1, VolumeRatio: 1.4, MA20Distance: 2, MA20Slope: 1, ATR14Pct: 2}
@@ -147,5 +179,17 @@ func TestFrozenEvaluationDoesNotLearnLaterHoldoutOutcomes(t *testing.T) {
 	after := evaluate(context.Background(), samples, dates, s, boundary, 1)
 	if after.Recommended.Samples != before.Recommended.Samples || after.Recommended.Targets != before.Recommended.Targets+1 {
 		t.Fatal("changing a test label changed held-out selection rather than just its result")
+	}
+}
+
+func TestDevelopmentPurgesSamplesCrossingHoldoutBoundary(t *testing.T) {
+	samples := []Sample{
+		{Code: "a", Date: "2026-01-05", LabelEnds: map[string]string{key(3, 5): "2026-01-12"}},
+		{Code: "b", Date: "2026-01-05", LabelEnds: map[string]string{key(3, 5): "2026-01-13"}},
+		{Code: "c", Date: "2026-01-06", LabelEnds: map[string]string{key(3, 5): "2026-01-12"}},
+	}
+	dates := evaluationDates(samples, 3, 5, "2026-01-13", "", "")
+	if len(dates) != 1 || dates[0] != "2026-01-06" {
+		t.Fatalf("purged signal dates leaked into development: %+v", dates)
 	}
 }

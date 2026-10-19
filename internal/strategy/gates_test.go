@@ -38,7 +38,7 @@ func TestEvidenceGateBoundaries(t *testing.T) {
 }
 
 func TestHoldoutGateRetainsMinimumSamplesAndLossPolicy(t *testing.T) {
-	valid := Evaluation{Method: "frozen_holdout", Recommended: Stats{Samples: 30, Dates: 10, Resolved: 30, WorstNet: -2.99, MeanNet: .5, HitRate: .5, LossLimitPct: 3}, PoolBaseline: Stats{MeanNet: .4, HitRate: .4}}
+	valid := Evaluation{Method: "frozen_holdout", Recommended: Stats{Samples: 30, Dates: 30, Resolved: 30, WorstNet: -2.99, MeanNet: .5, HitRate: .5, LossLimitPct: 3}, PoolBaseline: Stats{MeanNet: .4, HitRate: .4}}
 	if got := HoldoutFailures(valid); len(got) != 0 {
 		t.Fatalf("valid validation rejected: %+v", got)
 	}
@@ -48,7 +48,7 @@ func TestHoldoutGateRetainsMinimumSamplesAndLossPolicy(t *testing.T) {
 	}{
 		{"no held-out period", "holdout_unavailable", func(e *Evaluation) { e.Method = "purged_walk_forward" }},
 		{"too few entries", "samples", func(e *Evaluation) { e.Recommended.Samples = 29 }},
-		{"too few dates", "signal_dates", func(e *Evaluation) { e.Recommended.Dates = 9 }},
+		{"too few dates", "signal_dates", func(e *Evaluation) { e.Recommended.Dates = 29 }},
 		{"unresolved", "unresolved", func(e *Evaluation) { e.Recommended.Unresolved = 1 }},
 		{"no exits", "resolved_samples", func(e *Evaluation) { e.Recommended.Resolved = 0 }},
 		{"exact loss limit", "loss_limit", func(e *Evaluation) { e.Recommended.WorstNet = -3 }},

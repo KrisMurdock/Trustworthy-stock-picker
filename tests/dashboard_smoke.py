@@ -791,7 +791,7 @@ def main():
                 panel = page.locator("#report-diagnostics")
                 expect(panel).to_contain_text("无合格推荐样本")
                 expect(panel).to_contain_text("入场样本 0 / 要求 ≥30")
-                expect(panel).to_contain_text("不同信号日 0 / 要求 ≥10")
+                expect(panel).to_contain_text("不同信号日 0 / 要求 ≥30")
                 expect(panel).not_to_contain_text("达标率0.00%")
                 failed = page.get_by_test_id("ranking-row").filter(has_text="测试银行")
                 expect(failed).to_contain_text("历史单笔净亏损超限")

@@ -107,14 +107,18 @@ func NewPlan(s config.Strategy, code string, fill float64) (Plan, error) {
 	return p, nil
 }
 
-func limitPct(code string) float64 {
-	if strings.HasPrefix(code, "sh68") || strings.HasPrefix(code, "sz30") {
-		return 20
-	}
-	return 10
-}
 func lockedDown(b market.Bar, previous float64, code string) bool {
-	limit := math.Round(previous*(1-limitPct(code)/100)*100) / 100
+	rule := PriceLimitFor(code, b.Date)
+	if !rule.Known {
+		// Intraday callers may pass a synthetic bar without its trading date.
+		// Use the narrowest supported band so an unknown regime cannot make a
+		// locked day appear sellable. Non-empty unknown dates remain unresolved.
+		if b.Date != "" {
+			return false
+		}
+		rule.Pct = 10
+	}
+	limit := math.Round(previous*(1-rule.Pct/100)*100) / 100
 	return b.Volume == 0 || (b.High-b.Low < 0.005 && b.Low <= limit+0.005)
 }
 
@@ -175,12 +179,16 @@ func Simulate(s config.Strategy, cal *calendar.Calendar, code string, signal mar
 		out.HoldingDays = day
 		out.MFE = math.Max(out.MFE, netPct(s, p, b.High))
 		out.MAE = math.Min(out.MAE, netPct(s, p, b.Low))
+		rule := PriceLimitFor(code, b.Date)
+		if !rule.Known {
+			return out, ErrPriceLimitUnknown
+		}
 		if lockedDown(b, previous.Close, code) {
 			previous = b
 			continue
 		}
-		upper := math.Round(previous.Close*(1+limitPct(code)/100)*100) / 100
-		lower := math.Round(previous.Close*(1-limitPct(code)/100)*100) / 100
+		upper := math.Round(previous.Close*(1+rule.Pct/100)*100) / 100
+		lower := math.Round(previous.Close*(1-rule.Pct/100)*100) / 100
 		// Slippage cannot create a simulated fill outside the observed daily range.
 		marketFill := func(price float64) float64 { return math.Max(b.Low, tickDown(price*(1-s.SlippageRate))) }
 		exitPrice, reason := 0.0, ""

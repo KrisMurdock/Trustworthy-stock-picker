@@ -48,6 +48,7 @@ func run(args []string) error {
 	asof := f.String("as-of", "", "completed data date (sync/status/preview/research/experiment only)")
 	code := f.String("code", "", "stock code (plan only)")
 	parent := f.String("parent", "", "parent experiment ID (experiment only)")
+	holdout := f.Bool("holdout", false, "consume the parent experiment's reserved holdout interval once (experiment only)")
 	policy := f.String("policy", "baseline", "conditional-{entry,rsi,macd,bollinger,confluence,all-three,guard,confluence-guard,chan-5-15-30}, baseline, upper-wick, risk-qualified or next-day-{baseline,upper-wick,low-volatility,pullback,breakout,momentum,volume-recovery,balanced,risk-qualified} (experiment only)")
 	from := f.String("from", "", "inclusive backtest signal start date (experiment only; pair with -through)")
 	through := f.String("through", "", "inclusive backtest signal end date (experiment only; pair with -from)")
@@ -78,11 +79,14 @@ func run(args []string) error {
 	if command != "plan" && (*code != "" || *entry != 0) {
 		return errors.New("trade price flags require the plan command")
 	}
-	if command != "experiment" && (*parent != "" || *policy != "baseline" || *from != "" || *through != "") {
+	if command != "experiment" && (*parent != "" || *holdout || *policy != "baseline" || *from != "" || *through != "") {
 		return errors.New("experiment flags require the experiment command")
 	}
 	if (*from == "") != (*through == "") {
 		return errors.New("experiment -from and -through must be supplied together")
+	}
+	if *holdout && (*parent == "" || *from != "" || *through != "") {
+		return errors.New("experiment -holdout requires -parent and cannot be combined with -from/-through")
 	}
 	c, err := config.Load(*path)
 	if err != nil {
@@ -140,6 +144,9 @@ func run(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(status)
 	}
 	if command == "experiment" {
+		if *holdout {
+			return runHoldout(ctx, c, *parent, log)
+		}
 		var interval *strategy.BacktestRange
 		if *from != "" {
 			interval = &strategy.BacktestRange{From: *from, Through: *through}

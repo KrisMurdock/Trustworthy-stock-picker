@@ -23,9 +23,12 @@ func ReviewRecord(r Record) *Review {
 	if r.Spec.NextDayRule != "" {
 		parameters.MaxHoldingDays = 1
 	}
-	stats := strategy.SummarizeExperimentTrades(r.Result.Development.Trades, parameters)
+	stats := strategy.SummarizeExperimentTradesWithCohort(r.Result.Development.Trades, parameters, r.Data.TopN)
 	review := ReviewStats(stats)
 	saved := r.Result.Development.Research.Development.TopRanked
+	if r.Stage == "holdout" {
+		saved = r.Result.Development.Research.Holdout.TopRanked
+	}
 	if stats.Samples != saved.Samples || stats.Resolved != saved.Resolved || stats.Unresolved != saved.Unresolved || stats.SkippedEntries != saved.SkippedEntries {
 		if review.Risk.Status != "breached" {
 			review.Risk.Status = "unverified"
