@@ -208,3 +208,9 @@ stocks:
     name: 壹石通
   - code: sh688802
     name: 沐曦股份
+  - code: sz000831
+    name: 中国稀土
+    listed_from: '1998-09-11'
+  - code: sh600111
+    name: 北方稀土
+    listed_from: '1997-09-24'
