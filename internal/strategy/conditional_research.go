@@ -12,10 +12,13 @@ import (
 
 // AnalyzeConditional uses one preregistered entry rule. It never chooses stocks
 // based on whether tomorrow's limit or rebound eventually triggers.
-func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []market.History, minutes []market.MinuteHistory, asof string, interval *BacktestRange) (DevelopmentResult, error) {
-	result := DevelopmentResult{Trades: []ExperimentTrade{}, HoldoutThrough: asof}
+func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []market.History, minutes []market.MinuteHistory, asof string, interval *BacktestRange, rule string) (DevelopmentResult, error) {
+	result := DevelopmentResult{Trades: []ExperimentTrade{}, HoldoutThrough: asof, Selection: &SignalSelection{Rule: rule}}
 	if err := ctx.Err(); err != nil {
 		return result, err
+	}
+	if !validSignalRule(rule) {
+		return result, errors.New("unknown conditional signal rule")
 	}
 	if err := interval.Validate(c, asof, 1); err != nil {
 		return result, err
@@ -104,7 +107,7 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 			if err != nil || (interval == nil && !days[entryDate]) || (result.HoldoutFrom != "" && exitDate >= result.HoldoutFrom) {
 				continue
 			}
-			f, err := Extract(h.Bars[:i+1])
+			f, err := extractSignalFeatures(h.Bars[:i+1])
 			if err != nil {
 				return result, err
 			}
@@ -153,10 +156,26 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 		}
 		evaluation.Through = date
 		evaluation.SignalDates++
+		picked := 0
 		for i, x := range candidates {
-			if i >= c.Selection.TopN {
-				break
+			result.Selection.Candidates++
+			allowed := matchesSignalRule(rule, x.Features)
+			if allowed {
+				result.Selection.Eligible++
 			}
+			zone := ConditionalZone(lookup[x.Code].bar.Close)
+			if !allowed {
+				if i < c.Selection.TopN {
+					result.Selection.FilteredOriginalTop++
+					result.Trades = append(result.Trades, ExperimentTrade{ID: date + "/" + x.Code, Code: x.Code, Date: date, Rank: i + 1, Features: x.Features, Outcome: Outcome{Status: "signal_filtered"}, EntryZone: &zone})
+				}
+				continue
+			}
+			if picked >= c.Selection.TopN {
+				continue
+			}
+			picked++
+			result.Selection.Selected++
 			sample := lookup[x.Code]
 			entryDate, _ := cal.Next(date)
 			exitDate, _ := cal.Next(entryDate)
@@ -167,7 +186,6 @@ func AnalyzeConditional(ctx context.Context, c config.Config, histories, raw []m
 			if sample.corporate && out.EntryDate != "" {
 				out.Status = "corporate_action"
 			}
-			zone := ConditionalZone(sample.bar.Close)
 			result.Trades = append(result.Trades, ExperimentTrade{ID: date + "/" + x.Code, Code: x.Code, Date: date, Rank: i + 1, Selected: true, Features: x.Features, Outcome: out, EntryZone: &zone})
 		}
 	}

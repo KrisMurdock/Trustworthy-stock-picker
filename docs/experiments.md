@@ -58,6 +58,39 @@
 
 验收保留单笔净亏损严格小于3%的优先约束；存在买入日浮盈不为正的样本判定“买入日未达标”，入场分钟缺失不能判定通过。满足风险、买入日、完整证据、至少30笔完成和10个信号日期后，再检查两档联合成功率是否达到80%。这些是历史试验门槛，不能保证未来买入日收盘、实际成交或亏损上限。
 
+## RSI、MACD 与布林线对照
+
+原机会评分已经包含 RSI 和 MACD。本轮在相同条件低吸成交规则上增加明确的信号日过滤，新增布林线位置与前一日变化证据；不改变日常看板排序或自动发布买入推荐。
+
+| policy | 信号日筛选条件 |
+| --- | --- |
+| `conditional-entry` | 原机会排序，无额外过滤 |
+| `conditional-rsi` | Wilder RSI14 为40～65且高于前一交易日 |
+| `conditional-macd` | DIF > DEA，且2×(DIF−DEA)高于前一交易日 |
+| `conditional-bollinger` | 布林 %B 为0.1～0.6且高于前一交易日 |
+| `conditional-confluence` | 上述三个指标条件至少满足两项 |
+| `conditional-all-three` | 上述三个指标条件全部满足 |
+| `conditional-guard` | ATR14 ≤3%，距MA20在−5%～5%，量比0.8～2.5 |
+| `conditional-confluence-guard` | 至少两项指标满足，并通过波动量能约束 |
+
+MACD沿用EMA12/26、DEA为DIF的EMA9，初值使用对应窗口SMA；柱值为2×(DIF−DEA)。布林线使用20日收盘SMA±2倍总体标准差，%B=(收盘−下轨)/(上轨−下轨)，带宽=(上轨−下轨)/中轨；零带宽的%B记为未定义，不产生修复信号。前一日指标只计算到前一交易日。全部特征使用信号时可见的前复权窗口，成交价格继续使用不复权数据。
+
+先过滤再按原机会分数和代码取Top N；只有信号日条件能决定入选，次日不触发不补位。原Top N被过滤的记录保存指标和过滤状态，不计算假设成交收益；前端同时显示全部候选、指标通过、预先入选和原Top N过滤数量，避免把空仓或样本减少说成盈利改善。
+
+```bash
+# 用已有分钟快照重跑新版本基线；代码/引擎改变时建立新的根基线并保留旧父档案
+./bin/stock-watcher experiment -config config.yaml \
+  -parent <含分钟数据的旧实验ID> -policy conditional-entry
+
+# 用新基线ID运行一组固定对照，自动继承信号区间
+./bin/stock-watcher experiment -config config.yaml \
+  -parent <本轮新基线ID> -policy conditional-confluence-guard
+```
+
+七个指标对照要求父实验。页面支持选择这些规则并生成命令；没有分钟快照时提示先创建条件低吸基线。查看样本可读出RSI及MACD柱的昨日/今日值、DIF/DEA、布林上下中轨/%B/带宽及ATR/量比。旧记录没有这些值时明确显示未记录，不从同步后的行情补造证据。
+
+这些门槛是实验假设，不是从指标定义推出的胜率。[Fidelity RSI说明](https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/RSI)与[MACD说明](https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/macd)用于核对口径；[John Bollinger的规则说明](https://www.bollingerbands.com/bollinger-band-rules)也强调触及轨道本身不是买卖信号，相关指标叠加不能当作独立证据。参数在本轮结果前固定，所有组使用相同快照、区间、成本及成交方式，全部保留结果，不把最佳小样本比例解释成未来成功率。
+
 ## 次日触达目标
 
 当前优先研究两个目标：**买入后的第 1 个可卖出交易日，最高价净盈利触达 2.5%／3%，两档成功率分别争取 ≥80%；单笔净亏损严格低于投入的 3%**。第 1 天指买入后的第二个交易日，不使用 `holding_days < 1`；日线没有精确成交时刻，不能据此声称持仓小于 24 小时。
@@ -87,7 +120,7 @@
 
 比较中包含未决的全部入场样本作为分母，分别保存次日触达笔数和比例。任何单笔超限先判风险不达标；无完成或存在未决判风险待核实；不足30笔完成、10个信号日期、触达证据不全判证据不足。通过这些门槛、实际平均净收益为正后，区分“目标未达到”“仅2.5%档观察达标”“两档观察达标”。80%仅是开发期的观察比例，不是预测概率；不能凭5笔中的4笔成功认定达标，也不能因成功率高忽略亏损。候选须冻结后另行验证最终区间，多次筛选后的最佳开发结果不能替代独立验证。
 
-实验期限覆盖记录在 `spec.next_day_rule` 和 `result.development.research.parameters.max_holding_days=1`；快照原参数和原留出边界不变。由旧实验启动次日基线时，新记录成为自己的根基线；旧父档案仍可追溯。次日实验与原5日期限记录不显示数值提升差值，旧高点证据可派生“次日触达率”，但不能当成次日退出策略收益。引擎升级为 `conditional_entry_v5`；存储仍是向后兼容的schema 1，旧记录缺失的逐笔触达证据明确显示未知，不改写原记录。
+实验期限覆盖记录在 `spec.next_day_rule` 和 `result.development.research.parameters.max_holding_days=1`；快照原参数和原留出边界不变。由旧实验启动次日基线时，新记录成为自己的根基线；旧父档案仍可追溯。次日实验与原5日期限记录不显示数值提升差值，旧高点证据可派生“次日触达率”，但不能当成次日退出策略收益。引擎升级为 `indicator_selection_v6`；存储仍是向后兼容的schema 1，旧记录缺失的逐笔触达证据明确显示未知，不改写原记录。
 
 ## 页面与指标
 
@@ -149,3 +182,5 @@
 底部入场的离线研究见[无止损、止损幅度与批次数实验](bottom-optimization.md)：固定快照比较 600 组参数，记录净目标触达、实际止损亏损、分批与资金占用；该研究尚未登记到网页实验档案，也未放宽生产风险门槛。
 
 新增的[个股与板块大盘两组对照](sector-market-comparison.md)固定每日名额、批次、费用和止损，对比行业过滤及大盘弱信号的整体效果。该轮使用当前行业归属做回溯探索，历史分类偏差、样本减少和未决均单列。
+
+RSI、MACD、布林线及组合的8组同区间对照见[指标实验记录](experiments-indicators.md)。

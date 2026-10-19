@@ -8,18 +8,19 @@ import (
 )
 
 type Features struct {
-	Return1        float64            `json:"return_1_pct"`
-	Return5        float64            `json:"return_5_pct"`
-	Return10       float64            `json:"return_10_pct"`
-	MA20Distance   float64            `json:"ma20_distance_pct"`
-	MA20Slope      float64            `json:"ma20_slope_5_pct"`
-	VolumeRatio    float64            `json:"volume_ratio"`
-	ATR14Pct       float64            `json:"atr14_pct"`
-	ClosePosition  float64            `json:"close_position"`
-	UpperWick      float64            `json:"upper_wick_ratio"`
-	High20Distance float64            `json:"high20_distance_pct"`
-	Relative5      float64            `json:"relative_pool_5_pct"`
-	Metrics        indicators.Metrics `json:"trend_metrics"`
+	Return1          float64            `json:"return_1_pct"`
+	Return5          float64            `json:"return_5_pct"`
+	Return10         float64            `json:"return_10_pct"`
+	MA20Distance     float64            `json:"ma20_distance_pct"`
+	MA20Slope        float64            `json:"ma20_slope_5_pct"`
+	VolumeRatio      float64            `json:"volume_ratio"`
+	ATR14Pct         float64            `json:"atr14_pct"`
+	ClosePosition    float64            `json:"close_position"`
+	UpperWick        float64            `json:"upper_wick_ratio"`
+	High20Distance   float64            `json:"high20_distance_pct"`
+	Relative5        float64            `json:"relative_pool_5_pct"`
+	Metrics          indicators.Metrics `json:"trend_metrics"`
+	SignalIndicators *SignalIndicators  `json:"signal_indicators,omitempty"`
 }
 
 func Extract(bars []market.Bar) (Features, error) {

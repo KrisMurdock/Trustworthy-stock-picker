@@ -46,7 +46,7 @@ func run(args []string) error {
 	asof := f.String("as-of", "", "completed data date (sync/preview/research/experiment only)")
 	code := f.String("code", "", "stock code (plan only)")
 	parent := f.String("parent", "", "parent experiment ID (experiment only)")
-	policy := f.String("policy", "baseline", "conditional-entry, baseline, upper-wick, risk-qualified or next-day-{baseline,upper-wick,low-volatility,pullback,breakout,momentum,volume-recovery,balanced,risk-qualified} (experiment only)")
+	policy := f.String("policy", "baseline", "conditional-{entry,rsi,macd,bollinger,confluence,all-three,guard,confluence-guard}, baseline, upper-wick, risk-qualified or next-day-{baseline,upper-wick,low-volatility,pullback,breakout,momentum,volume-recovery,balanced,risk-qualified} (experiment only)")
 	from := f.String("from", "", "inclusive backtest signal start date (experiment only; pair with -through)")
 	through := f.String("through", "", "inclusive backtest signal end date (experiment only; pair with -from)")
 	entry := f.Float64("entry-price", 0, "actual buy fill price (plan only)")

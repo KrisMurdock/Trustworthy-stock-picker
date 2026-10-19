@@ -26,6 +26,15 @@ type DevelopmentResult struct {
 	Trades         []ExperimentTrade `json:"trades"`
 	HoldoutFrom    string            `json:"holdout_from"`
 	HoldoutThrough string            `json:"holdout_through"`
+	Selection      *SignalSelection  `json:"signal_selection,omitempty"`
+}
+
+type SignalSelection struct {
+	Rule                string `json:"rule"`
+	Candidates          int    `json:"candidates"`
+	Eligible            int    `json:"eligible"`
+	Selected            int    `json:"selected"`
+	FilteredOriginalTop int    `json:"filtered_original_top"`
 }
 type EntryPolicy struct {
 	MaxUpperWick    *float64
