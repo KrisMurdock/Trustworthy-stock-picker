@@ -404,17 +404,17 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (report selection.Repor
 }
 
 func (m *Monitor) collectStock(ctx context.Context, stock config.Stock, end time.Time, analysisStart, asof string) (storage.SyncItem, error) {
-	isolate := func(err error) (storage.SyncItem, error) {
+	isolate := func(err error, prefix string) (storage.SyncItem, error) {
 		if !market.IsProviderFailure(err) {
 			return storage.SyncItem{}, err
 		}
-		reason := syncReason(err)
+		reason := prefix + syncReason(err)
 		m.Log.Warn("Daily stock isolated", "code", stock.Code, "reason", reason)
 		return storage.SyncItem{Stock: stock, Status: "isolated", Reason: reason}, nil
 	}
 	resolved, err := m.listingStock(ctx, stock)
 	if err != nil {
-		return isolate(err)
+		return isolate(err, "listing_lookup: ")
 	}
 	stock = resolved
 	start := requiredHistoryStart(end, stock.ListedFrom)
@@ -424,10 +424,10 @@ func (m *Monitor) collectStock(ctx context.Context, stock config.Stock, end time
 	}
 	h, err := m.fetchHistory(ctx, stock, adjustedStart, asof, m.Config.Daily.Adjust)
 	if err != nil {
-		return isolate(err)
+		return isolate(err, "")
 	}
 	if err := validateHistory(m.Calendar, stock, h, adjustedStart, asof); err != nil {
-		return isolate(err)
+		return isolate(err, "")
 	}
 	item := storage.SyncItem{Stock: stock, Status: "ok", Adjusted: &h}
 	if m.Config.Daily.Adjust != "none" {
@@ -440,10 +440,10 @@ func (m *Monitor) collectStock(ctx context.Context, stock config.Stock, end time
 		}
 		r, err := m.fetchHistory(ctx, stock, start, asof, "none")
 		if err != nil {
-			return isolate(err)
+			return isolate(err, "")
 		}
 		if err := validateHistory(m.Calendar, stock, r, start, asof); err != nil {
-			return isolate(err)
+			return isolate(err, "")
 		}
 		item.Raw = &r
 	}
