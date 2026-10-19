@@ -56,9 +56,11 @@ func MinuteSession(end time.Time, period int) (int, bool) {
 	return 0, false
 }
 
-func (h MinuteHistory) Validate() error {
+func (h MinuteHistory) Validate() error { return h.validateLimit(MinuteLimit) }
+
+func (h MinuteHistory) validateLimit(limit int) error {
 	if h.Version != 1 || !config.ValidCode(h.Code) || h.Source != "tencent" || h.Period != 5 || h.BasePeriod != 5 ||
-		h.Adjust != "none" || h.VolumeUnit != "provider_raw" || h.FetchedAt.IsZero() || len(h.Bars) == 0 || len(h.Bars) > MinuteLimit {
+		h.Adjust != "none" || h.VolumeUnit != "provider_raw" || h.FetchedAt.IsZero() || len(h.Bars) == 0 || len(h.Bars) > limit {
 		return errors.New("invalid minute history metadata")
 	}
 	var previous time.Time

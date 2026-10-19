@@ -84,15 +84,21 @@ func runExperiment(ctx context.Context, c config.Config, asof, parentID, policy 
 		}
 		if spec.EntryMode != "" {
 			minutes := []market.MinuteHistory{}
+			from := asof
+			for _, raw := range snapshot.Raw {
+				if len(raw.Bars) > 0 && raw.Bars[0].Date < from {
+					from = raw.Bars[0].Date
+				}
+			}
 			for _, stock := range snapshot.Stocks {
-				h, readErr := marketDB.LoadMinutes(ctx, stock, 5)
+				h, readErr := marketDB.LoadMinutesRange(ctx, stock, from, asof)
 				if errors.Is(readErr, fs.ErrNotExist) {
 					continue
 				}
 				if readErr != nil {
 					return readErr
 				}
-				minutes = append(minutes, h.MinuteHistory)
+				minutes = append(minutes, h)
 			}
 			snapshot, err = experiment.WithMinutes(snapshot, minutes)
 			if err != nil {

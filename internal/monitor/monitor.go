@@ -87,7 +87,10 @@ func (m *Monitor) channelNames() []string {
 	return names
 }
 
-func (m *Monitor) readState() (State, error) {
+func (m *Monitor) readState() (State, error) { return m.loadState(true) }
+
+// loadState only recovers interrupted sends when the caller owns the writer lock.
+func (m *Monitor) loadState(recover bool) (State, error) {
 	var raw persistedState
 	err := m.Store.Read("state/delivery.json", &raw)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -98,13 +101,17 @@ func (m *Monitor) readState() (State, error) {
 	}
 	switch raw.Version {
 	case 1:
-		return m.migrateLegacy(raw)
+		state, err := m.migrateLegacy(raw)
+		if err == nil && recover {
+			err = m.writeState(state)
+		}
+		return state, err
 	case 2:
 		state := notify.Ledger{Version: raw.Version, Events: raw.Events}
 		if err := state.Validate(); err != nil {
 			return state, err
 		}
-		if state.Normalize(m.Now()) {
+		if recover && state.Normalize(m.Now()) {
 			if err := m.writeState(state); err != nil {
 				return state, err
 			}
@@ -178,9 +185,6 @@ func (m *Monitor) migrateLegacy(raw persistedState) (State, error) {
 		state.Events[message.EventID] = event
 	}
 	if err := state.Validate(); err != nil {
-		return state, err
-	}
-	if err := m.writeState(state); err != nil {
 		return state, err
 	}
 	return state, nil
@@ -744,7 +748,20 @@ func (m *Monitor) flushState(ctx context.Context, state *State) error {
 		if err := m.writeState(*state); err != nil {
 			return err
 		}
-		err := channel.Send(ctx, delivery.Message)
+		// Persisting in-flight can itself take time on a network filesystem.
+		// Recheck after that write and before entering the transport.
+		remaining := delivery.Message.ExpiresAt.Sub(m.Now())
+		if remaining <= 0 {
+			state.Expire(m.Now())
+			if err := m.writeState(*state); err != nil {
+				return err
+			}
+			continue
+		}
+		sendCtx, cancel := context.WithTimeout(ctx, remaining)
+		err := channel.Send(sendCtx, delivery.Message)
+		sendErr := sendCtx.Err()
+		cancel()
 		if err == nil {
 			if err := state.MarkDelivered(delivery.EventID, delivery.Channel); err != nil {
 				return err
@@ -755,14 +772,23 @@ func (m *Monitor) flushState(ctx context.Context, state *State) error {
 			m.Log.Info("Recommendation delivered", "channel", delivery.Channel, "as_of", state.Events[delivery.EventID].AsOf, "event_id", delivery.EventID)
 			continue
 		}
-		if ctx.Err() != nil {
+		if sendErr != nil {
 			if markErr := state.MarkUnknown(delivery.EventID, delivery.Channel); markErr != nil {
 				return markErr
+			}
+			if ctx.Err() == nil {
+				state.Expire(delivery.Message.ExpiresAt)
 			}
 			if saveErr := m.writeState(*state); saveErr != nil {
 				return saveErr
 			}
-			return ctx.Err()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if firstErr == nil {
+				firstErr = sendErr
+			}
+			continue
 		}
 		failure := deliveryFailure(delivery.Channel, err)
 		if markErr := state.MarkFailure(delivery.EventID, delivery.Channel, failure, m.Now()); markErr != nil {
@@ -810,7 +836,7 @@ func (m *Monitor) Retry(channel string) error {
 	return m.writeState(state)
 }
 
-func (m *Monitor) Status() (State, error) { return m.readState() }
+func (m *Monitor) Status() (State, error) { return m.loadState(false) }
 
 func (m *Monitor) Run(ctx context.Context) error {
 	startupReady := false

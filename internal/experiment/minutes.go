@@ -29,7 +29,7 @@ func WithMinutes(s Snapshot, histories []market.MinuteHistory) (Snapshot, error)
 			return s, errors.New("duplicate minute stock")
 		}
 		seen[h.Code] = true
-		if err := h.Validate(); err != nil {
+		if err := h.ValidateArchive(); err != nil {
 			return s, err
 		}
 		bars := []market.MinuteBar{}

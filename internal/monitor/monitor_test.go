@@ -425,7 +425,7 @@ func TestInFlightStateIsRecoveredAsPossiblyDuplicate(t *testing.T) {
 	}
 	restarted := New(m.Config, m.Store, nil, []notify.Channel{channel}, nil)
 	restarted.Now = m.Now
-	recovered, err := restarted.Status()
+	recovered, err := restarted.readState()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +456,7 @@ func TestMigratesV1PendingDelivery(t *testing.T) {
 	if err := m.Store.Write("state/delivery.json", state); err != nil {
 		t.Fatal(err)
 	}
-	migrated, err := m.Status()
+	migrated, err := m.readState()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -219,6 +219,9 @@ func (l Ledger) Due(now time.Time) []Delivery {
 	out := []Delivery{}
 	for _, eventID := range eventIDs {
 		event := l.Events[eventID]
+		if !now.Before(event.ExpiresAt) {
+			continue
+		}
 		channels := make([]string, 0, len(event.Channels))
 		for channel := range event.Channels {
 			channels = append(channels, channel)
