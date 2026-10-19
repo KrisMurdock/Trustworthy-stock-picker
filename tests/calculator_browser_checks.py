@@ -141,5 +141,5 @@ def calculator_checks(context, page, url, root, args, state, stalled_endpoint):
     expect(calculate).to_be_enabled()
     expect(page.get_by_label("账户总资产（元）", exact=True)).to_have_value("")
     state["injecting"] = False
-    page.get_by_role("link", name="股池观察", exact=True).click()
+    page.get_by_role("link", name="摘要快照", exact=True).click()
     expect(page).to_have_url(url + "/")

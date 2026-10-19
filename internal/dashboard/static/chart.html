@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#164d59">
+    <meta name="description" content="查看已保存股票的日 K 与分钟 K 线。">
+    <title>个股 K 线 · Stock Watcher</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/assets/style.css">
+    <script src="/assets/common.js" defer></script>
+    <script src="/assets/chart.js" defer></script>
+    <script src="/assets/chart-page.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳转至 K 线</a>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="/" aria-label="Stock Watcher 股池观察首页">
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M6 24V15m10 9V8m10 16V4"/><path d="m5 12 10-7 8 5 5-7"/></svg></span>
+          <span><strong>STOCK WATCHER</strong><span class="brand-caption">把每日变化，看得更清楚</span></span>
+        </a>
+        <nav class="header-nav" aria-label="主导航"><a href="/">摘要快照</a><a href="/stocks">全部股票</a><a href="/chart" aria-current="page">个股 K 线</a><a href="/rankings">日推排名</a><a href="/experiments">策略实验室</a><a href="/calculator">仓位计算</a></nav>
+        <span class="market-label">A 股 · 日线观察</span>
+      </div>
+    </header>
+    <main id="main-content" class="page">
+      <section class="page-heading" aria-labelledby="chart-page-title">
+        <div><p class="eyebrow">PRICE &amp; VOLUME</p><h1 id="chart-page-title">个股 K 线<span class="heading-dot">.</span></h1><p class="intro">按股票、周期与复权口径查看已保存的 K 线。</p></div>
+        <div class="refresh-area"><button id="refresh-button" class="button button-primary" type="button" data-testid="refresh-button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.3 7a6.5 6.5 0 1 0 .1 5M16.3 3v4h-4"/></svg><span>刷新 K 线</span></button><p id="auto-refresh-label">手动刷新 · 不自动轮询</p></div>
+      </section>
+
+      <div id="error-state" class="notice notice-error" role="alert" data-testid="error-state" hidden><div><strong id="error-title">K 线股票列表加载失败</strong><p id="error-message"></p></div><button id="retry-button" class="button button-secondary" type="button" data-testid="retry-button">重新加载</button></div>
+      <div id="loading-state" class="loading-state" role="status" data-testid="loading-state"><span class="spinner" aria-hidden="true"></span><div><strong>正在读取股票列表</strong><p>准备已保存的 K 线…</p></div></div>
+      <noscript><p class="notice notice-error">请启用 JavaScript，以加载 K 线与成交量。</p></noscript>
+
+      <div id="dashboard-content" hidden>
+        <section id="stock-chart" class="panel" aria-labelledby="chart-title">
+          <div class="panel-heading"><div><p class="eyebrow">PRICE &amp; VOLUME</p><h2 id="chart-title">个股日 K</h2><p id="chart-meta" class="section-description">选择股票和周期查看已保存的 K 线。</p></div><div class="chart-controls"><label for="chart-stock">股票</label><select id="chart-stock" aria-label="K线股票"></select><label for="chart-period">周期</label><select id="chart-period" aria-label="K线周期"><option value="day">日 K</option><option value="5">5 分钟</option><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="60">60 分钟</option></select><label for="chart-adjust">价格</label><select id="chart-adjust" aria-label="K线价格口径"></select><label for="chart-range">范围</label><select id="chart-range" aria-label="K线范围"><option value="60">最近 60 根</option><option value="120">最近 120 根</option><option value="250">最近 250 根</option><option value="0">全部已保存</option></select></div></div>
+          <div id="chart-loading" class="section-empty" role="status" hidden>正在读取 K 线…</div>
+          <div id="chart-error" class="notice notice-error report-notice" role="status" hidden><p id="chart-error-message"></p><button id="chart-retry" type="button" class="button button-secondary">重试 K 线</button></div>
+          <p id="chart-basis-note" class="chart-basis-note"></p>
+          <p id="chart-sync-note" class="notice" role="status" hidden></p>
+          <div id="chart-body" hidden>
+            <p id="chart-detail" class="chart-detail" aria-live="polite"></p>
+            <div class="chart-legend"><span id="chart-ma5" class="chart-ma5"></span><span id="chart-ma10" class="chart-ma10"></span><span id="chart-ma20" class="chart-ma20"></span><span>红涨 · 绿跌（收盘与开盘比较）</span></div>
+            <div id="chart-plot" class="chart-scroll" tabindex="0" role="region" aria-label="K线图，可横向滚动"></div>
+            <div class="chart-date-control"><label for="chart-day">查看时点</label><input type="range" id="chart-day" min="0" max="0" value="0" aria-label="查看K线时点"></div>
+          </div>
+          <div class="panel-footer"><span>均线按当前周期的已保存 K 线计算 · 形成中 K 线会继续变化</span><span>切换股票会更新地址栏 · 横向滚动查看历史 · 拖动滑块查看各根价格</span></div>
+        </section>
+      </div>
+      <footer class="site-footer"><span>STOCK WATCHER <span class="footer-separator">/</span> 每日有据，观察有序</span><span>行情与指标来自已保存的交易日快照</span></footer>
+      <p id="live-status" class="sr-only" aria-live="polite" aria-atomic="true"></p>
+    </main>
+  </body>
+</html>

@@ -51,7 +51,7 @@ stocks:
 
 
 def run(command, **kwargs):
-    return subprocess.run(command, check=True, timeout=60, **kwargs)
+    return subprocess.run(command, check=True, timeout=180, **kwargs)
 
 
 def available_port():
@@ -190,6 +190,20 @@ def stock_codes(page):
     return page.get_by_test_id("stock-row").evaluate_all("rows => rows.map(row => row.dataset.code)")
 
 
+def check_page_assets(context, page, url):
+    assets = page.locator('script[src], link[rel="stylesheet"][href]').evaluate_all(
+        "nodes => nodes.map(node => node.src || node.href)"
+    )
+    assert len(assets) >= 2
+    for asset in assets:
+        assert asset.startswith(url + "/"), f"unexpected external asset: {asset}"
+        actual = context.request.get(asset)
+        assert actual.status == 200 and len(actual.body()) > 100
+        assert actual.headers.get("cache-control"), "asset cache policy missing"
+        source = ROOT / "internal/dashboard/static" / Path(urlparse(asset).path).name
+        assert hashlib.sha256(actual.body()).digest() == hashlib.sha256(source.read_bytes()).digest(), f"stale embedded asset: {asset}"
+
+
 @contextmanager
 def stalled_endpoint():
     release = threading.Event()
@@ -258,26 +272,33 @@ def populated_checks(context, page, url, args, directory, env):
     expect(page.get_by_test_id("runtime-status")).to_contain_text("分析 3/3")
     page.unroute("**/api/status")
     expect(page.get_by_test_id("snapshot-summary")).to_contain_text("3")
+    assert page.locator('nav.header-nav [aria-current="page"]').inner_text() == "摘要快照"
+    screenshots = ROOT / ".scratch" / "dashboard-verification"
+    screenshots.mkdir(parents=True, exist_ok=True)
+    kind = "container" if args.image else "native"
+    page.screenshot(path=str(screenshots / f"{kind}-overview-desktop.png"), full_page=True)
+    page.set_viewport_size({"width": 390, "height": 844})
+    expect(page.get_by_test_id("dashboard-title")).to_be_visible()
+    expect(page.locator(".entry-card")).to_have_count(3)
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "overview overflows mobile viewport"
+    page.screenshot(path=str(screenshots / f"{kind}-overview-mobile.png"), full_page=True)
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    page.goto(url + "/#stock-pool", wait_until="networkidle")
+    expect(page).to_have_url(url + "/stocks")
+    page.goto(url + "/#rankings", wait_until="networkidle")
+    expect(page).to_have_url(url + "/rankings")
+    page.goto(url + "/#stock-chart", wait_until="networkidle")
+    expect(page).to_have_url(re.compile(re.escape(url) + r"/chart(\?code=sz000001)?$"))
+
+    page.goto(url + "/stocks", wait_until="networkidle")
+    expect(page).to_have_title("全部股票 · Stock Watcher")
+    assert page.locator('nav.header-nav [aria-current="page"]').inner_text() == "全部股票"
+    check_page_assets(context, page, url)
     expect(page.get_by_test_id("stock-row")).to_have_count(3)
-    expect(page.get_by_test_id("ranking-row")).to_have_count(2)
-    expect(page.get_by_test_id("ranking-row").filter(has_text="测试银行")).to_contain_text("推荐")
-    expect(page.get_by_test_id("ranking-row").filter(has_text="测试消费")).to_contain_text("观察")
     expect(page.get_by_test_id("stock-row").filter(has_text="测试缺失")).to_contain_text("缺")
     expect(page.get_by_test_id("stock-row").filter(has_text="测试银行")).to_contain_text("10.25")
+    expect(page.locator('#stock-body td[title$="（股）"]')).to_have_count(2)
 
-    # Confirm actual asset bytes match this checkout and verify cache policy,
-    # rather than treating the HTML 200 as a UI assertion.
-    assets = page.locator('script[src], link[rel="stylesheet"][href]').evaluate_all(
-        "nodes => nodes.map(node => node.src || node.href)"
-    )
-    assert len(assets) >= 2
-    for asset in assets:
-        assert asset.startswith(url + "/"), f"unexpected external asset: {asset}"
-        actual = context.request.get(asset)
-        assert actual.status == 200 and len(actual.body()) > 100
-        assert actual.headers.get("cache-control"), "asset cache policy missing"
-        source = ROOT / "internal/dashboard/static" / Path(urlparse(asset).path).name
-        assert hashlib.sha256(actual.body()).digest() == hashlib.sha256(source.read_bytes()).digest(), f"stale embedded asset: {asset}"
     actual = context.request.get(url + "/api/dashboard")
     assert "no-store" in actual.headers.get("cache-control", "")
 
@@ -293,8 +314,9 @@ def populated_checks(context, page, url, args, directory, env):
     expect(page.get_by_test_id("stock-row")).to_have_count(1)
     assert stock_codes(page) == ["sh600519"]
     page.get_by_test_id("pool-filter").select_option(index=0)
+    page.goto(url, wait_until="networkidle")
     page.locator("#view-synced").click()
-    assert page.url == url + "/#stock-pool"
+    expect(page).to_have_url(url + "/stocks?status=available")
     expect(page.locator("#data-filter")).to_have_value("available")
     expect(page.get_by_test_id("stock-row")).to_have_count(2)
     assert "sz000002" not in stock_codes(page)
@@ -306,6 +328,7 @@ def populated_checks(context, page, url, args, directory, env):
     expect(page.locator("#data-filter")).to_have_value("")
     expect(search).to_have_value("")
     expect(page.get_by_test_id("stock-row")).to_have_count(3)
+    expect(page).to_have_url(url + "/stocks")
     page.locator("#data-filter").select_option("missing")
     assert stock_codes(page) == ["sz000002"]
     page.locator("#data-filter").select_option("")
@@ -317,24 +340,38 @@ def populated_checks(context, page, url, args, directory, env):
     assert before != after, "sort direction did not change stock order"
     assert before.index("sz000001") < before.index("sh600519") or after.index("sz000001") < after.index("sh600519")
     assert before[-1] == after[-1] == "sz000002", "missing price must remain last"
+    page.screenshot(path=str(screenshots / f"{kind}-stocks-desktop.png"), full_page=True)
+    page.set_viewport_size({"width": 390, "height": 844})
+    expect(page.get_by_test_id("stock-search")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "stocks page overflows mobile viewport"
+    page.screenshot(path=str(screenshots / f"{kind}-stocks-mobile.png"), full_page=True)
+    page.set_viewport_size({"width": 1440, "height": 1000})
 
+    page.goto(url + "/rankings?as_of=" + PREVIOUS, wait_until="networkidle")
+    expect(page).to_have_title("日推排名 · Stock Watcher")
+    assert page.locator('nav.header-nav [aria-current="page"]').inner_text() == "日推排名"
+    check_page_assets(context, page, url)
+    expect(page.locator("#report-date-select")).to_have_value(PREVIOUS)
     page.get_by_test_id("report-date-select").select_option(PREVIOUS)
     expect(page.get_by_test_id("ranking-row")).to_have_count(1)
     expect(page.get_by_test_id("ranking-row")).to_contain_text("测试消费")
-    # Historical ranking selection must not silently replace the latest pool snapshot.
+    # A historical ranking selection must survive a reload and keep the stock pool unchanged.
+    page.goto(url + "/stocks", wait_until="networkidle")
     expect(page.get_by_test_id("stock-row").filter(has_text="测试银行")).to_contain_text("10.25")
+    page.goto(url + "/rankings?as_of=" + PREVIOUS, wait_until="networkidle")
+    expect(page.locator("#report-date-select")).to_have_value(PREVIOUS)
+    expect(page.get_by_test_id("ranking-row")).to_have_count(1)
+    page.screenshot(path=str(screenshots / f"{kind}-rankings-desktop.png"), full_page=True)
+    page.set_viewport_size({"width": 390, "height": 844})
+    expect(page.locator("#report-date-select")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "rankings page overflows mobile viewport"
+    page.screenshot(path=str(screenshots / f"{kind}-rankings-mobile.png"), full_page=True)
+    page.set_viewport_size({"width": 1440, "height": 1000})
     page.get_by_test_id("report-date-select").select_option(LATEST)
     expect(page.get_by_test_id("ranking-row")).to_have_count(2)
-    screenshots = ROOT / ".scratch" / "dashboard-verification"
-    screenshots.mkdir(parents=True, exist_ok=True)
-    kind = "container" if args.image else "native"
-    page.screenshot(path=str(screenshots / f"{kind}-desktop.png"), full_page=True)
-    page.set_viewport_size({"width": 390, "height": 844})
-    expect(page.get_by_test_id("dashboard-title")).to_be_visible()
-    expect(page.get_by_test_id("stock-search")).to_be_visible()
-    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "mobile page overflows viewport"
-    page.screenshot(path=str(screenshots / f"{kind}-mobile.png"), full_page=True)
-    page.set_viewport_size({"width": 1440, "height": 1000})
+    expect(page.get_by_test_id("ranking-row").filter(has_text="测试银行")).to_contain_text("推荐")
+    expect(page.get_by_test_id("ranking-row").filter(has_text="测试消费")).to_contain_text("观察")
+    expect(page).to_have_url(url + "/rankings")
 
     if not args.image:
         missing_config = subprocess.run(
@@ -345,6 +382,13 @@ def populated_checks(context, page, url, args, directory, env):
 
 
 def chart_checks(page, url, state, args):
+    page.goto(url + "/chart?code=sz000001", wait_until="networkidle")
+    # A pointer left over the chart from another page must not select a candle
+    # while the SVG is redrawn under it.
+    page.mouse.move(0, 0)
+    expect(page).to_have_title("个股 K 线 · Stock Watcher")
+    assert page.locator('nav.header-nav [aria-current="page"]').inner_text() == "个股 K 线"
+    check_page_assets(page.context, page, url)
     history = page.context.request.get(url + "/api/history?code=sz000001").json()
     assert len(history["bars"]) == 80 and history["adjust"] == "qfq"
     expect(page.locator("#chart-stock")).to_have_value("sz000001")
@@ -355,7 +399,6 @@ def chart_checks(page, url, state, args):
         if stock["bar"]:
             scale = 1 if stock["source"] == "baostock" else 100
             assert stock["bar"]["volume_shares"] == stock["bar"]["volume"] * scale
-    expect(page.locator('#stock-body td[title$="（股）"]')).to_have_count(2)
     expect(page.get_by_test_id("kline-candle")).to_have_count(60)
     expect(page.get_by_test_id("kline-volume")).to_have_count(60)
     for period in (5, 10, 20):
@@ -381,7 +424,7 @@ def chart_checks(page, url, state, args):
     page.locator("#chart-range").select_option("60")
     expect(page.locator("#chart-detail")).to_contain_text(LATEST)
     page.get_by_role("link", name="个股 K 线", exact=True).click()
-    assert page.url == url + "/#stock-chart"
+    expect(page).to_have_url(url + "/chart?code=sz000001")
     raw = page.context.request.get(url + "/api/history?code=sz000001&adjust=none").json()
     assert raw["adjust"] == "none" and len(raw["bars"]) == 2700 and raw["bars"][0]["date"] < "2016-10-13"
     assert raw["bars"][-1]["close"] != history["bars"][-1]["close"]
@@ -415,7 +458,9 @@ def chart_checks(page, url, state, args):
     expect(page.get_by_test_id("kline-candle")).to_have_count(80)
     expect(page.locator("#chart-detail")).to_contain_text("10.25")
     page.locator("#chart-range").select_option("60")
-    page.get_by_test_id("stock-row").filter(has_text="测试消费").get_by_role("button").click()
+    page.goto(url + "/stocks", wait_until="networkidle")
+    page.locator('[data-code="sh600519"] .stock-link').click()
+    expect(page).to_have_url(url + "/chart?code=sh600519")
     expect(page.locator("#chart-stock")).to_have_value("sh600519")
     expect(page.locator("#chart-meta")).to_contain_text("BaoStock")
     expect(page.locator("#chart-meta")).to_contain_text("成交量单位：股")
@@ -498,6 +543,7 @@ def chart_checks(page, url, state, args):
 
 
 def error_checks(page, url, state):
+    page.goto(url + "/rankings", wait_until="networkidle")
     pattern = "**/api/dashboard"
     fresh = page.context.request.get(url + "/api/dashboard").json()
     fresh["as_of"] = "2026-10-14"
@@ -518,6 +564,7 @@ def error_checks(page, url, state):
     expect(page.get_by_test_id("report-date-select")).to_have_value(LATEST)
     expect(page.get_by_test_id("ranking-row")).to_have_count(2)
 
+    page.goto(url + "/stocks", wait_until="networkidle")
     state["injecting"] = True
     for status in (403, 503):
         # 403 models a gateway denying access; the app has no login or roles.
@@ -543,6 +590,26 @@ def error_checks(page, url, state):
     page.get_by_test_id("retry-button").click()
     expect(page.get_by_test_id("error-state")).to_be_hidden()
 
+    # The overview and chart pages keep their last successful content on refresh errors.
+    page.goto(url, wait_until="networkidle")
+    page.route(pattern, lambda route: route.fulfill(status=503, content_type="application/json", body='{"error":"test_unavailable"}'))
+    page.get_by_test_id("refresh-button").click()
+    expect(page.get_by_test_id("error-state")).to_be_visible()
+    expect(page.get_by_test_id("snapshot-summary")).to_contain_text("3")
+    page.unroute(pattern)
+    page.get_by_test_id("retry-button").click()
+    expect(page.get_by_test_id("error-state")).to_be_hidden()
+
+    page.goto(url + "/chart?code=sz000001", wait_until="networkidle")
+    page.route(pattern, lambda route: route.fulfill(status=503, content_type="application/json", body='{"error":"test_unavailable"}'))
+    page.get_by_test_id("refresh-button").click()
+    expect(page.get_by_test_id("error-state")).to_be_visible()
+    expect(page.get_by_test_id("kline-candle")).to_have_count(60)
+    page.unroute(pattern)
+    page.get_by_test_id("retry-button").click()
+    expect(page.get_by_test_id("error-state")).to_be_hidden()
+
+    page.goto(url + "/rankings", wait_until="networkidle")
     history_pattern = "**/api/reports?*"
     page.route(history_pattern, lambda route: route.fulfill(status=503, content_type="application/json", body='{"error":"test_unavailable"}'))
     page.get_by_test_id("report-date-select").select_option(PREVIOUS)
@@ -551,11 +618,15 @@ def error_checks(page, url, state):
     page.get_by_test_id("report-retry-button").click()
     expect(page.get_by_test_id("report-error-state")).to_be_hidden()
     expect(page.get_by_test_id("ranking-row")).to_have_count(1)
+    page.goto(url + "/rankings?as_of=not-a-date", wait_until="networkidle")
+    expect(page.locator("#report-date-select")).to_have_value(LATEST)
+    expect(page).to_have_url(url + "/rankings")
     page.wait_for_load_state("networkidle")
     state["injecting"] = False
 
 
 def minute_checks(page, url, state, args):
+    page.goto(url + "/chart?code=sz000001", wait_until="networkidle")
     # The preceding chart checks hover historical candles. A DOM redraw under
     # that pointer can select an old bar before the latest-bar assertion.
     page.mouse.move(0, 0)
@@ -687,6 +758,7 @@ def main():
                 assert not saved["selected"] and not any(row["recommended"] for row in saved["ranking"])
                 page.goto(url, wait_until="networkidle")
                 assert page.url.rstrip("/") == url and "股池观察" in page.title()
+                page.goto(url + "/rankings", wait_until="networkidle")
                 panel = page.locator("#report-diagnostics")
                 expect(panel).to_contain_text("无合格推荐样本")
                 expect(panel).to_contain_text("入场样本 0 / 要求 ≥30")
@@ -717,7 +789,9 @@ def main():
                 assert payload["report"] is None and payload["summary"]["available"] == 0
                 page.goto(url, wait_until="networkidle")
                 expect(page.get_by_test_id("empty-state")).to_be_visible()
+                page.goto(url + "/stocks", wait_until="networkidle")
                 expect(page.get_by_test_id("stock-row")).to_have_count(3)
+                page.goto(url + "/rankings", wait_until="networkidle")
                 expect(page.get_by_test_id("ranking-empty-state")).to_be_visible()
                 page.get_by_role("link", name="策略实验室", exact=True).click()
                 expect(page.locator("#lab-empty")).to_be_visible()
@@ -733,12 +807,14 @@ def main():
                 assert payload["report"] is None and payload["summary"]["available"] == 2
                 assert payload["latest_sync"]["status"] == "failed" and not payload["report_current"]
                 page.goto(url, wait_until="networkidle")
-                expect(page.get_by_test_id("kline-candle")).to_have_count(60)
                 expect(page.locator("#market-notice")).to_contain_text("尚无对应推荐报告")
                 expect(page.locator("#eligible-count")).to_have_text("—")
-                expect(page.get_by_test_id("ranking-row")).to_have_count(0)
                 expect(page.get_by_test_id("empty-state")).to_be_hidden()
+                page.goto(url + "/rankings", wait_until="networkidle")
+                expect(page.get_by_test_id("ranking-row")).to_have_count(0)
                 expect(page.get_by_test_id("ranking-empty-state")).to_be_visible()
+                page.goto(url + "/chart?code=sz000001", wait_until="networkidle")
+                expect(page.get_by_test_id("kline-candle")).to_have_count(60)
                 page.locator("#chart-adjust").select_option("none")
                 expect(page.locator("#chart-meta")).to_contain_text("2700 根已保存日线")
                 expect(page.locator("#chart-detail")).to_contain_text("20.50")

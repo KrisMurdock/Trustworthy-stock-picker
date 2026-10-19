@@ -214,6 +214,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, r, http.StatusOK, explainReport(report))
 	case "/":
 		h.asset(w, r, "index.html", "text/html; charset=utf-8")
+	case "/stocks":
+		h.asset(w, r, "stocks.html", "text/html; charset=utf-8")
+	case "/chart":
+		h.asset(w, r, "chart.html", "text/html; charset=utf-8")
+	case "/rankings":
+		h.asset(w, r, "rankings.html", "text/html; charset=utf-8")
 	case "/experiments":
 		h.asset(w, r, "experiments.html", "text/html; charset=utf-8")
 	case "/assets/experiments.js":
@@ -233,9 +239,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/assets/chart.js":
 		w.Header().Set("Cache-Control", "no-cache")
 		h.asset(w, r, "chart.js", "text/javascript; charset=utf-8")
-	case "/assets/app.js":
+	case "/assets/common.js", "/assets/overview.js", "/assets/stocks.js", "/assets/chart-page.js", "/assets/rankings.js":
 		w.Header().Set("Cache-Control", "no-cache")
-		h.asset(w, r, "app.js", "text/javascript; charset=utf-8")
+		h.asset(w, r, r.URL.Path[len("/assets/"):], "text/javascript; charset=utf-8")
 	case "/assets/style.css":
 		w.Header().Set("Cache-Control", "no-cache")
 		h.asset(w, r, "style.css", "text/css; charset=utf-8")

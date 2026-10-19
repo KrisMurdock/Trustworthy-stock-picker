@@ -15,7 +15,7 @@ window.StockChart = class {
     this.byId("chart-retry").addEventListener("click", () => this.select(this.code, false, true));
     this.byId("chart-day").addEventListener("input", (event) => this.inspect(Number(event.target.value), true));
   }
-  update(stocks, adjust) {
+  update(stocks, adjust, preferredCode = "") {
     this.stocks = stocks;
     if (this.configuredAdjust !== adjust) {
       this.configuredAdjust = adjust;
@@ -36,7 +36,12 @@ window.StockChart = class {
       option.textContent = `${stock.name || stock.code} · ${stock.code}${stock.bar ? "" : " · 暂无数据"}`;
       select.append(option);
     }
-    this.select(stocks.some((stock) => stock.code === this.code) ? this.code : (stocks.find((stock) => stock.bar) || stocks[0])?.code || "");
+    const selected = stocks.some((stock) => stock.code === preferredCode)
+      ? preferredCode
+      : stocks.some((stock) => stock.code === this.code)
+      ? this.code
+      : (stocks.find((stock) => stock.bar) || stocks[0])?.code || "";
+    this.select(selected);
   }
   async select(code, scroll = false, force = false) {
     const stock = this.stocks.find((item) => item.code === code);

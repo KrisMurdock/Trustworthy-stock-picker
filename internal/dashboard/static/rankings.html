@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#164d59">
+    <meta name="description" content="回看每日机会排名、推荐依据与风险提示。">
+    <title>日推排名 · Stock Watcher</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/assets/style.css">
+    <script src="/assets/common.js" defer></script>
+    <script src="/assets/rankings.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳转至排名</a>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="/" aria-label="Stock Watcher 股池观察首页">
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M6 24V15m10 9V8m10 16V4"/><path d="m5 12 10-7 8 5 5-7"/></svg></span>
+          <span><strong>STOCK WATCHER</strong><span class="brand-caption">把每日变化，看得更清楚</span></span>
+        </a>
+        <nav class="header-nav" aria-label="主导航"><a href="/">摘要快照</a><a href="/stocks">全部股票</a><a href="/chart">个股 K 线</a><a href="/rankings" aria-current="page">日推排名</a><a href="/experiments">策略实验室</a><a href="/calculator">仓位计算</a></nav>
+        <span class="market-label">A 股 · 日线观察</span>
+      </div>
+    </header>
+    <main id="main-content" class="page">
+      <section class="page-heading" aria-labelledby="ranking-page-title">
+        <div><p class="eyebrow">DAILY RANKING</p><h1 id="ranking-page-title">日推排名<span class="heading-dot">.</span></h1><p class="intro">查看已保存的每日机会排名与推荐依据。</p></div>
+        <div class="refresh-area"><button id="refresh-button" class="button button-primary" type="button" data-testid="refresh-button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.3 7a6.5 6.5 0 1 0 .1 5M16.3 3v4h-4"/></svg><span>刷新排名</span></button><p id="auto-refresh-label">每 60 秒自动刷新报告列表</p></div>
+      </section>
+
+      <div id="error-state" class="notice notice-error" role="alert" data-testid="error-state" hidden><div><strong id="error-title">排名报告加载失败</strong><p id="error-message"></p></div><button id="retry-button" class="button button-secondary" type="button" data-testid="retry-button">重新加载</button></div>
+      <div id="loading-state" class="loading-state" role="status" data-testid="loading-state"><span class="spinner" aria-hidden="true"></span><div><strong>正在读取排名报告</strong><p>汇总可用报告日期与最新排名…</p></div></div>
+      <noscript><p class="notice notice-error">请启用 JavaScript，以加载历史报告。</p></noscript>
+
+      <div id="dashboard-content" hidden>
+        <section id="rankings" class="panel" aria-labelledby="ranking-title">
+          <div class="panel-heading"><div><p class="eyebrow">DAILY RANKING</p><h2 id="ranking-title">日推排名 <span id="ranking-count" class="count-tag">—</span></h2><p id="ranking-description" class="section-description">查看已保存的每日机会排名与推荐依据。</p></div><div class="date-control"><label for="report-date-select">报告日期</label><select id="report-date-select" data-testid="report-date-select" disabled><option value="">暂无报告</option></select></div></div>
+          <div class="notice notice-info report-notice" id="strategy-validation-note"><div><strong>当前实验目标：亏损先过关，最高价触达越快越好</strong><p>单笔扣费后净亏损严格低于投入的 3%；盈利机会按可卖出持仓窗口的最高价触达 2.5%／3% 验证，不要求收盘达标。历史报告保留原口径，触达不代表实际成交。</p><a href="/experiments#validation-rules">查看完整规则与逐笔实验依据 →</a></div></div>
+          <div id="report-meta" class="report-meta" hidden></div>
+          <div id="report-notice" class="notice notice-info report-notice" hidden></div>
+          <div id="report-diagnostics" class="report-diagnostics report-notice" role="status" aria-label="推荐门槛诊断" hidden></div>
+          <div id="report-loading" class="section-empty" role="status" hidden><span class="spinner" aria-hidden="true"></span><p>正在读取历史报告…</p></div>
+          <div id="report-error-state" class="notice notice-error report-notice" role="alert" data-testid="report-error-state" hidden><div><strong>历史报告加载失败</strong><p id="report-error-message"></p></div><button id="report-retry-button" class="button button-secondary" data-testid="report-retry-button" type="button">重试</button></div>
+          <div id="ranking-empty-state" class="section-empty" data-testid="ranking-empty-state"><span class="empty-symbol" aria-hidden="true">≡</span><strong>暂无每日排名</strong><p>同步完成并生成报告后，可在这里回看每日筛选结果。</p></div>
+          <div id="ranking-table-wrap" class="table-scroll ranking-scroll" role="region" aria-label="每日排名表，可横向滚动" tabindex="0" hidden><table class="ranking-table"><caption class="sr-only">所选报告日期的每日排名、推荐依据与风险</caption><thead><tr><th scope="col" class="rank-column">排名</th><th scope="col">股票</th><th scope="col" id="ranking-score-label" class="numeric">机会分</th><th scope="col">推荐状态</th><th scope="col">观察依据</th><th scope="col">风险提示</th></tr></thead><tbody id="ranking-body"></tbody></table></div>
+          <div class="panel-footer"><span id="ranking-footer">排名以已保存的报告为准</span><span>仅供研究参考，不构成投资建议</span></div>
+        </section>
+      </div>
+      <footer class="site-footer"><span>STOCK WATCHER <span class="footer-separator">/</span> 每日有据，观察有序</span><span>行情与指标来自已保存的交易日快照</span></footer>
+      <p id="live-status" class="sr-only" aria-live="polite" aria-atomic="true"></p>
+    </main>
+  </body>
+</html>
