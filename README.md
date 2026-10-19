@@ -6,10 +6,24 @@
 
 <p align="center">
   <a href="https://github.com/KrisMurdock/Trustworthy-stock-picker/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/KrisMurdock/Trustworthy-stock-picker/actions/workflows/ci.yml/badge.svg?branch=main"></a>
-  <img alt="Go" src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white">
+  <a href="https://go.dev/doc/devel/release"><img alt="Go" src="https://img.shields.io/github/go-mod/go-version/KrisMurdock/Trustworthy-stock-picker?logo=go&amp;logoColor=white"></a>
   <img alt="SQLite" src="https://img.shields.io/badge/Storage-SQLite-003B57?logo=sqlite&logoColor=white">
   <img alt="Dashboard" src="https://img.shields.io/badge/UI-Embedded-2ea44f">
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-green?style=flat&labelColor=555555"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/KrisMurdock/Trustworthy-stock-picker?label=License&amp;color=green&amp;labelColor=555555"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/KrisMurdock/Trustworthy-stock-picker"><img alt="Stars" src="https://img.shields.io/github/stars/KrisMurdock/Trustworthy-stock-picker?logo=github&amp;label=Stars"></a>
+  <a href="https://github.com/KrisMurdock/Trustworthy-stock-picker/forks"><img alt="Forks" src="https://img.shields.io/github/forks/KrisMurdock/Trustworthy-stock-picker?logo=github&amp;label=Forks"></a>
+  <a href="https://github.com/KrisMurdock/Trustworthy-stock-picker/issues"><img alt="Issues" src="https://img.shields.io/github/issues/KrisMurdock/Trustworthy-stock-picker?logo=github&amp;label=Issues"></a>
+  <a href="https://github.com/KrisMurdock/Trustworthy-stock-picker/pulls"><img alt="Pull requests" src="https://img.shields.io/github/issues-pr/KrisMurdock/Trustworthy-stock-picker?logo=github&amp;label=Pull%20requests"></a>
+  <a href="https://github.com/KrisMurdock/Trustworthy-stock-picker/graphs/contributors"><img alt="Contributors" src="https://img.shields.io/github/contributors-anon/KrisMurdock/Trustworthy-stock-picker?logo=github&amp;label=Contributors"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/KrisMurdock/Trustworthy-stock-picker/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/KrisMurdock/Trustworthy-stock-picker?logo=github&amp;label=Last%20commit"></a>
+  <img alt="Commits per month" src="https://img.shields.io/github/commit-activity/m/KrisMurdock/Trustworthy-stock-picker?label=Commits%2Fmonth">
+  <img alt="Code size" src="https://img.shields.io/github/languages/code-size/KrisMurdock/Trustworthy-stock-picker?label=Code%20size">
 </p>
 
 <p align="center">
