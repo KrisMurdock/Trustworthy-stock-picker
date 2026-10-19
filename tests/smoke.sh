@@ -26,22 +26,20 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir "$FIXTURE/data" "$FIXTURE/logs"
-cp "$ROOT_DIR/leaders.yaml" "$FIXTURE/leaders.yaml"
+printf '%s\n' 'schema_version: 1' 'stocks:' '  - code: sz000001' '    name: 平安银行' > "$FIXTURE/leaders.yaml"
 if [[ "$MODE" == container ]]; then
   DATA=/fixture/data
   LOGS=/fixture/logs
-  POOL=/fixture/leaders.yaml
-  CREDENTIALS=/fixture/feishu.config
+  POOL_FILE=/fixture/leaders.yaml
+  MISSING_POOL=/fixture/missing-leaders.yaml
 else
   DATA="$FIXTURE/data"
   LOGS="$FIXTURE/logs"
-  POOL="$FIXTURE/leaders.yaml"
-  CREDENTIALS="$FIXTURE/feishu.config"
+  POOL_FILE="$FIXTURE/leaders.yaml"
+  MISSING_POOL="$FIXTURE/missing-leaders.yaml"
 fi
 FEISHU_ENABLED=false
 REQUIRE_CIFS=false
-POOL_FILE="$POOL"
-CREDENTIALS_FILE="$CREDENTIALS"
 EXTRA_ENV=()
 cli() {
   local values=(
@@ -54,7 +52,6 @@ cli() {
     "STOCK_WATCHER_CALENDAR_VALID_THROUGH=2099-12-31"
     "STOCK_WATCHER_CALENDAR_HOLIDAYS="
     "STOCK_WATCHER_FEISHU_ENABLED=$FEISHU_ENABLED"
-    "STOCK_WATCHER_FEISHU_CREDENTIALS_FILE=$CREDENTIALS_FILE"
     "STOCK_WATCHER_INTRADAY_ENABLED=false"
     "STOCK_WATCHER_STRATEGY_ENABLED=false"
     "STOCK_WATCHER_WEB_ENABLED=false"
@@ -96,38 +93,27 @@ test ! -e "$FIXTURE/data"
 mv "$FIXTURE/saved-data" "$FIXTURE/data"
 REQUIRE_CIFS=true must_fail check
 REQUIRE_CIFS=false
-POOL_FILE="$FIXTURE/missing-leaders.yaml" must_fail check-config
-POOL_FILE="$POOL"
-FEISHU_ENABLED=true CREDENTIALS_FILE="$FIXTURE/missing-feishu.config" must_fail check
-printf '%s\n' 'webhook: https://open.feishu.cn/open-apis/bot/v2/hook/smoke-test-only' > "$FIXTURE/feishu.config"
-FEISHU_ENABLED=true CREDENTIALS_FILE="$CREDENTIALS" invoke check-config | tail -n 1 | jq -e '.status == "valid"' >/dev/null
+POOL_FILE="$MISSING_POOL" must_fail check-config
+if [[ "$MODE" == container ]]; then POOL_FILE=/fixture/leaders.yaml; else POOL_FILE="$FIXTURE/leaders.yaml"; fi
+FEISHU_ENABLED=true must_fail check-config
+EXTRA_ENV=("FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/smoke-test-only")
+FEISHU_ENABLED=true invoke check-config | tail -n 1 | jq -e '.status == "valid"' >/dev/null
+EXTRA_ENV=()
+FEISHU_ENABLED=false
 if [[ "$MODE" == container ]]; then
   chmod 755 "$FIXTURE"
-  chmod 644 "$FIXTURE/leaders.yaml"
-  chmod 600 "$FIXTURE/feishu.config"
   denied=0
   timeout 30s docker run --rm --network none --user 65534:65534 --read-only \
     --mount "type=bind,src=$FIXTURE,dst=/fixture,readonly" \
     -e STOCK_WATCHER_DATA_DIR=/fixture/data -e STOCK_WATCHER_LOG_DIR=/fixture/logs \
-    -e STOCK_WATCHER_REQUIRE_CIFS=false -e STOCK_WATCHER_POOL_FILE=/fixture/leaders.yaml \
-    -e STOCK_WATCHER_FEISHU_ENABLED=true -e STOCK_WATCHER_FEISHU_CREDENTIALS_FILE=/fixture/feishu.config \
-    "$IMAGE" check-config > "$FIXTURE/denied-credentials.txt" 2>&1 || denied=$?
+    -e STOCK_WATCHER_REQUIRE_CIFS=false -e STOCK_WATCHER_POOL_FILE="$MISSING_POOL" \
+    -e STOCK_WATCHER_FEISHU_ENABLED=false \
+    "$IMAGE" check-config > "$FIXTURE/denied-stocks.txt" 2>&1 || denied=$?
   test "$denied" -eq 1
-  grep -q 'cannot open Feishu credentials file' "$FIXTURE/denied-credentials.txt"
-  if grep -q 'smoke-test-only' "$FIXTURE/denied-credentials.txt"; then exit 1; fi
-  chmod 600 "$FIXTURE/feishu.config"
-  denied=0
-  timeout 30s docker run --rm --network none --user 65534:65534 --read-only \
-    --mount "type=bind,src=$FIXTURE,dst=/fixture,readonly" \
-    -e STOCK_WATCHER_DATA_DIR=/fixture/data -e STOCK_WATCHER_LOG_DIR=/fixture/logs \
-    -e STOCK_WATCHER_REQUIRE_CIFS=false -e STOCK_WATCHER_FEISHU_ENABLED=false \
-    -e STOCK_WATCHER_POOL_FILE=/fixture/missing-leaders.yaml \
-    "$IMAGE" check > "$FIXTURE/denied.txt" 2>&1 || denied=$?
-  test "$denied" -eq 1
-  grep -q 'cannot open stock pool file' "$FIXTURE/denied.txt"
+  grep -q 'cannot open stock pool file' "$FIXTURE/denied-stocks.txt"
   # Use the deployed Compose definition; only network and probe interval differ.
-  printf '%s\n' 'SMOKE_LITERAL=$not_expanded' 'STOCK_WATCHER_REQUIRE_CIFS=false' \
-    'STOCK_WATCHER_POOL_FILE=/app/leaders.yaml' 'STOCK_WATCHER_CALENDAR_VALID_FROM=2020-01-01' \
+  printf '%s\n' 'STOCK_WATCHER_REQUIRE_CIFS=false' 'STOCK_WATCHER_POOL_FILE=/app/leaders.yaml' \
+    'STOCK_WATCHER_CALENDAR_VALID_FROM=2020-01-01' \
     'STOCK_WATCHER_CALENDAR_VALID_THROUGH=2099-12-31' 'STOCK_WATCHER_CALENDAR_HOLIDAYS=' \
     'STOCK_WATCHER_FEISHU_ENABLED=false' 'STOCK_WATCHER_INTRADAY_ENABLED=false' > "$FIXTURE/runtime.env"
   cat > "$FIXTURE/compose.env" <<ENV
@@ -135,7 +121,7 @@ STOCK_WATCHER_IMAGE=$IMAGE
 STOCK_WATCHER_HOST_DATA=$FIXTURE/data
 STOCK_WATCHER_HOST_POOL=$FIXTURE/leaders.yaml
 STOCK_WATCHER_HOST_LOGS=$FIXTURE/logs
-STOCK_WATCHER_RUNTIME_ENV=$FIXTURE/runtime.env
+STOCK_WATCHER_ENV_FILE=$FIXTURE/runtime.env
 ENV
   cat > "$FIXTURE/override.yaml" <<'YAML'
 services:
@@ -148,8 +134,7 @@ services:
       start_period: 1s
 YAML
   COMPOSE=(env -u STOCK_WATCHER_IMAGE -u STOCK_WATCHER_VERSION -u STOCK_WATCHER_HOST_DATA
-    -u STOCK_WATCHER_HOST_POOL -u STOCK_WATCHER_HOST_LOGS
-    -u STOCK_WATCHER_RUNTIME_ENV docker compose --project-name "$CONTAINER_NAME"
+    -u STOCK_WATCHER_HOST_POOL -u STOCK_WATCHER_HOST_LOGS -u STOCK_WATCHER_ENV_FILE docker compose --project-name "$CONTAINER_NAME"
     --env-file "$FIXTURE/compose.env" -f "$ROOT_DIR/docker/compose.yaml" -f "$FIXTURE/override.yaml")
   "${COMPOSE[@]}" config --quiet
   "${COMPOSE[@]}" up -d --no-build >/dev/null
@@ -165,7 +150,7 @@ YAML
     docker inspect -f '{{json .State.Health}}' "$CONTAINER_ID" >&2
     exit 1
   fi
-  docker inspect "$CONTAINER_ID" | jq -e '.[0].Config.Env | index("SMOKE_LITERAL=$not_expanded") != null' >/dev/null
+  docker inspect "$CONTAINER_ID" | jq -e '.[0].Config.Env | index("STOCK_WATCHER_POOL_FILE=/app/leaders.yaml") != null' >/dev/null
   "${COMPOSE[@]}" exec -T stock-watcher stock-watcher version | cmp - "$FIXTURE/version.txt"
   "${COMPOSE[@]}" exec -T stock-watcher stock-watcher status \
     | tail -n 1 | jq -e '.schema_version == 2' >/dev/null
@@ -180,4 +165,4 @@ YAML
   test "$missing" -ne 0 && test "$missing" -ne 124 && test "$missing" -ne 137
   test ! -e "$FIXTURE/data" # Compose must not create an empty local mount source.
 fi
-echo "Smoke passed ($MODE): ready/status/plan, missing pool/data/credentials, CIFS guard; container also checks permissions, Compose health/raw env and SIGTERM."
+echo "Smoke passed ($MODE): env-only notification/config, pool file, ready/status/plan, missing pool/data, CIFS guard; container also checks env injection, Compose health and SIGTERM."

@@ -15,11 +15,18 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_FEISHU_CREDENTIALS_FILE":   &c.Feishu.CredentialsFile,
 		"STOCK_WATCHER_POLL_INTERVAL":             &c.PollInterval,
 		"STOCK_WATCHER_REQUEST_TIMEOUT":           &c.Timeout,
+		"STOCK_WATCHER_ANALYSIS_ENGINE":           &c.Analysis.Engine,
+		"STOCK_WATCHER_ANALYSIS_TIMEOUT":          &c.Analysis.Timeout,
+		"STOCK_WATCHER_ANALYSIS_SYNC_TIMEOUT":     &c.Analysis.SyncTimeout,
+		"STOCK_WATCHER_STRUCTURE_GUARD_MODE":      &c.StructureGuard.Mode,
+		"STOCK_WATCHER_DAILY_RUN_AT":              &c.Daily.RunAt,
+		"STOCK_WATCHER_DAILY_ADJUST":              &c.Daily.Adjust,
 		"STOCK_WATCHER_CALENDAR_VALID_FROM":       &c.Calendar.ValidFrom,
 		"STOCK_WATCHER_CALENDAR_VALID_THROUGH":    &c.Calendar.ValidThrough,
 		"STOCK_WATCHER_MARKET_REQUEST_INTERVAL":   &c.Market.RequestInterval,
 		"STOCK_WATCHER_MARKET_ATTEMPT_TIMEOUT":    &c.Market.AttemptTimeout,
 		"STOCK_WATCHER_MARKET_FAILURE_COOLDOWN":   &c.Market.FailureCooldown,
+		"STOCK_WATCHER_MARKET_TUSHARE_TOKEN_ENV":  &c.Market.TushareTokenEnv,
 		"STOCK_WATCHER_MARKET_TENCENT_ENDPOINT":   &c.Market.TencentEndpoint,
 		"STOCK_WATCHER_MARKET_BAOSTOCK_ADDRESS":   &c.Market.BaostockAddress,
 		"STOCK_WATCHER_MARKET_TUSHARE_ENDPOINT":   &c.Market.TushareEndpoint,
@@ -36,16 +43,65 @@ func applyEnvironment(c *Config) error {
 		}
 	}
 	for name, target := range map[string]*bool{
-		"STOCK_WATCHER_REQUIRE_CIFS":     &c.RequireCIFS,
-		"STOCK_WATCHER_WEB_ENABLED":      &c.Web.Enabled,
-		"STOCK_WATCHER_FEISHU_ENABLED":   &c.Feishu.Enabled,
-		"STOCK_WATCHER_INTRADAY_ENABLED": &c.Intraday.Enabled,
-		"STOCK_WATCHER_STRATEGY_ENABLED": &c.Strategy.Enabled,
+		"STOCK_WATCHER_REQUIRE_CIFS":      &c.RequireCIFS,
+		"STOCK_WATCHER_WEB_ENABLED":       &c.Web.Enabled,
+		"STOCK_WATCHER_FEISHU_ENABLED":    &c.Feishu.Enabled,
+		"STOCK_WATCHER_INTRADAY_ENABLED":  &c.Intraday.Enabled,
+		"STOCK_WATCHER_STRATEGY_ENABLED":  &c.Strategy.Enabled,
+		"STOCK_WATCHER_SELECTION_ENABLED": &c.Selection.Enabled,
 	} {
 		if value, ok := os.LookupEnv(name); ok {
-			parsed, err := strconv.ParseBool(value)
+			parsed, err := strconv.ParseBool(strings.TrimSpace(value))
 			if err != nil {
 				return errors.New("invalid boolean environment variable: " + name)
+			}
+			*target = parsed
+		}
+	}
+	for name, target := range map[string]*int{
+		"STOCK_WATCHER_DAILY_HISTORY_DAYS":         &c.Daily.HistoryDays,
+		"STOCK_WATCHER_SELECTION_MIN_SCORE":        &c.Selection.MinScore,
+		"STOCK_WATCHER_SELECTION_TOP_N":            &c.Selection.TopN,
+		"STOCK_WATCHER_SYNC_INCREMENTAL_BARS":      &c.Sync.IncrementalBars,
+		"STOCK_WATCHER_SYNC_STATUS_REFRESH_DAYS":   &c.Sync.StatusRefreshDays,
+		"STOCK_WATCHER_MARKET_FAILURE_THRESHOLD":   &c.Market.FailureThreshold,
+		"STOCK_WATCHER_INTRADAY_WORKERS":           &c.Intraday.Workers,
+		"STOCK_WATCHER_STRATEGY_MAX_HOLDING_DAYS":  &c.Strategy.MaxHoldingDays,
+		"STOCK_WATCHER_STRATEGY_MIN_EVIDENCE":      &c.Strategy.MinEvidence,
+		"STOCK_WATCHER_STRATEGY_MIN_TRAINING_DAYS": &c.Strategy.MinTrainingDays,
+		"STOCK_WATCHER_STRATEGY_HOLDOUT_DAYS":      &c.Strategy.HoldoutDays,
+	} {
+		if value, ok := os.LookupEnv(name); ok {
+			parsed, err := strconv.Atoi(strings.TrimSpace(value))
+			if err != nil {
+				return errors.New("invalid integer environment variable: " + name)
+			}
+			*target = parsed
+		}
+	}
+	for name, target := range map[string]*float64{
+		"STOCK_WATCHER_SELECTION_MIN_VOLUME_RATIO": &c.Selection.MinVolumeRatio,
+		"STOCK_WATCHER_SELECTION_RSI_MIN":          &c.Selection.RSIMin,
+		"STOCK_WATCHER_SELECTION_RSI_MAX":          &c.Selection.RSIMax,
+		"STOCK_WATCHER_SELECTION_MIN_DAY_CHANGE":   &c.Selection.MinDayChange,
+		"STOCK_WATCHER_SELECTION_MAX_DAY_CHANGE":   &c.Selection.MaxDayChange,
+		"STOCK_WATCHER_SYNC_MIN_COVERAGE_PCT":      &c.Sync.MinCoveragePct,
+		"STOCK_WATCHER_SYNC_MIN_ANALYZABLE_PCT":    &c.Sync.MinAnalyzablePct,
+		"STOCK_WATCHER_STRATEGY_TARGET_NET_PCT":    &c.Strategy.TargetNetPct,
+		"STOCK_WATCHER_STRATEGY_STOP_NET_PCT":      &c.Strategy.StopNetPct,
+		"STOCK_WATCHER_STRATEGY_TRADE_CASH":        &c.Strategy.TradeCash,
+		"STOCK_WATCHER_STRATEGY_COMMISSION_RATE":   &c.Strategy.CommissionRate,
+		"STOCK_WATCHER_STRATEGY_MIN_COMMISSION":    &c.Strategy.MinCommission,
+		"STOCK_WATCHER_STRATEGY_TRANSFER_RATE":     &c.Strategy.TransferRate,
+		"STOCK_WATCHER_STRATEGY_SELL_STAMP_RATE":   &c.Strategy.SellStampRate,
+		"STOCK_WATCHER_STRATEGY_SLIPPAGE_RATE":     &c.Strategy.SlippageRate,
+		"STOCK_WATCHER_STRATEGY_MAX_ENTRY_GAP_PCT": &c.Strategy.MaxEntryGapPct,
+		"STOCK_WATCHER_STRATEGY_MIN_RANK_SCORE":    &c.Strategy.MinRankScore,
+	} {
+		if value, ok := os.LookupEnv(name); ok {
+			parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+			if err != nil {
+				return errors.New("invalid float environment variable: " + name)
 			}
 			*target = parsed
 		}
@@ -56,28 +112,49 @@ func applyEnvironment(c *Config) error {
 	if value, ok := os.LookupEnv("STOCK_WATCHER_MARKET_PROVIDERS"); ok {
 		c.Market.Providers = splitList(value)
 	}
-	if value, ok := os.LookupEnv("STOCK_WATCHER_DAILY_HISTORY_DAYS"); ok {
-		parsed, err := strconv.Atoi(value)
+	if value, ok := os.LookupEnv("STOCK_WATCHER_NOTIFY_CHANNELS"); ok {
+		channels, err := parseEnvironmentChannels(value)
 		if err != nil {
-			return errors.New("invalid integer environment variable: STOCK_WATCHER_DAILY_HISTORY_DAYS")
+			return err
 		}
-		c.Daily.HistoryDays = parsed
-	}
-	if value, ok := os.LookupEnv("STOCK_WATCHER_MARKET_FAILURE_THRESHOLD"); ok {
-		parsed, err := strconv.Atoi(value)
-		if err != nil {
-			return errors.New("invalid integer environment variable: STOCK_WATCHER_MARKET_FAILURE_THRESHOLD")
-		}
-		c.Market.FailureThreshold = parsed
-	}
-	if value, ok := os.LookupEnv("STOCK_WATCHER_INTRADAY_WORKERS"); ok {
-		parsed, err := strconv.Atoi(value)
-		if err != nil {
-			return errors.New("invalid integer environment variable: STOCK_WATCHER_INTRADAY_WORKERS")
-		}
-		c.Intraday.Workers = parsed
+		c.Notify.Channels = channels
 	}
 	return nil
+}
+
+func parseEnvironmentChannels(value string) ([]NotifyChannel, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	entries := strings.Split(value, ";")
+	channels := make([]NotifyChannel, 0, len(entries))
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		fields := strings.Split(entry, "|")
+		if len(fields) < 2 || len(fields) > 5 {
+			return nil, errors.New("invalid STOCK_WATCHER_NOTIFY_CHANNELS")
+		}
+		channel := NotifyChannel{Name: strings.TrimSpace(fields[0]), Type: strings.TrimSpace(fields[1]), Enabled: true}
+		if len(fields) > 2 && strings.TrimSpace(fields[2]) != "" {
+			parsed, err := strconv.ParseBool(strings.TrimSpace(fields[2]))
+			if err != nil {
+				return nil, errors.New("invalid STOCK_WATCHER_NOTIFY_CHANNELS enabled value")
+			}
+			channel.Enabled = parsed
+		}
+		if len(fields) > 3 {
+			channel.WebhookEnv = strings.TrimSpace(fields[3])
+		}
+		if len(fields) > 4 {
+			channel.SecretEnv = strings.TrimSpace(fields[4])
+		}
+		channels = append(channels, channel)
+	}
+	return channels, nil
 }
 
 func splitList(value string) []string {

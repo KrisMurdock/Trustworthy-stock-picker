@@ -63,7 +63,7 @@ Stock Watcher 是一个用纯 Go 构建的 A 股研究型行情引擎。它从�
 
 - Linux、Go 1.26.4+、Git、GNU Make、Bash。
 - 默认将行情与状态保存到当前目录的 `data/`（本地磁盘）；需要 Windows 共享盘时，先挂载并设置 `STOCK_WATCHER_DATA_DIR` 与 `STOCK_WATCHER_REQUIRE_CIFS=true`。
-- 默认读取当前目录的 `leaders.yaml` 股池和 `feishu.config` 私有凭证；无需通知时设置 `STOCK_WATCHER_FEISHU_ENABLED=false`。
+- 运行参数和凭证从 `.env` 环境变量读取；观测股池仍独立保存在 `leaders.yaml`。启动不再需要 `config.yaml` 或 `feishu.config`。
 - Docker Engine 与 Compose ≥ 2.30.0 仅用于容器部署和容器验收。
 
 ### 构建与首次启动
@@ -72,8 +72,13 @@ Stock Watcher 是一个用纯 Go 构建的 A 股研究型行情引擎。它从�
 git clone https://github.com/KrisMurdock/Trustworthy-stock-picker.git
 cd Trustworthy-stock-picker
 
-# 首次体验可先关闭通知；需要飞书推送时移除此行并配置凭证
-export STOCK_WATCHER_FEISHU_ENABLED=false
+# 复制完整参数模板；按部署实际修改数据目录、CIFS 和通知配置
+cp .env.example .env
+
+# 直接运行 CLI 前加载环境变量；make run 会自动加载 .env
+set -a
+source .env
+set +a
 
 make build
 ./bin/stock-watcher check-config
@@ -180,7 +185,7 @@ func main() {
 
 ```text
                        ┌─────────────────────────────┐
-                       │ leaders.yaml / 内置配置      │
+                       │ .env 环境变量 / 内置默认值  │
                        └──────────────┬──────────────┘
                                       │
   Tencent ─┐                          ▼
@@ -270,22 +275,26 @@ func main() {
 
 ## 配置
 
-生产配置已编译进二进制，启动不读取 `config.yaml`。部署差异通过环境变量覆盖，私有运行时文件仍保持在仓库之外或 Git 忽略范围内。
+生产配置全部来自环境变量。根 `.env.example` 已包含完整参数、行情源、日志和 Docker 部署示例；复制为 `.env` 后即可启动，不需要额外 YAML 或凭证文件。观测股池独立保存在 `leaders.yaml`，不内联到 `.env`。
 
 | 文件 / 变量 | 作用 |
 | --- | --- |
-| `leaders.yaml` | 已确认股池；股票代码必须带 `sh`/`sz` 市场前缀 |
-| `feishu.config` | 可选飞书凭证文件，权限应为 `600`，不得提交 |
+| `.env` | 私有运行环境；不得提交，生产权限建议 `600` |
+| `leaders.yaml` | 运行时加载的已确认观测股池；可独立维护大量股票 |
+| `leaders.pending.yaml` | 待人工确认名单，不参与启动或选股 |
+| `STOCK_WATCHER_POOL_FILE` | 股池路径，默认 `leaders.yaml` |
 | `STOCK_WATCHER_DATA_DIR` | 行情与状态目录；默认本地 `data`，也可指向已挂载的 CIFS |
-| `STOCK_WATCHER_REQUIRE_CIFS` | 是否强制数据目录位于 CIFS；默认 `false`，挂载盘模式设为 `true` |
+| `STOCK_WATCHER_REQUIRE_CIFS` | 是否强制数据目录位于 CIFS；默认 `false`，共享盘模式设为 `true` |
 | `STOCK_WATCHER_WEB_ADDR` | 网页监听地址，默认 `127.0.0.1:8080` |
 | `STOCK_WATCHER_FEISHU_ENABLED` | 是否启用飞书投递 |
+| `FEISHU_WEBHOOK` / `FEISHU_SECRET` | 飞书 webhook 与可选签名密钥，只从环境读取 |
+| `STOCK_WATCHER_FEISHU_CREDENTIALS_FILE` | 显式设置时才启用旧 `feishu.config` 兼容 |
 | `STOCK_WATCHER_STRATEGY_ENABLED` | 是否启用全池短周期排名 |
 | `STOCK_WATCHER_INTRADAY_ENABLED` | 是否启用 5 分钟采集 |
 | `STOCK_WATCHER_MARKET_PROVIDERS` | 逗号分隔的行情源顺序 |
 | `TUSHARE_TOKEN` | 可选 Tushare Token；缺失时跳过 Tushare |
 
-完整变量、默认值、优先级和 systemd/Compose 加载差异见[环境变量](docs/environment-variables.md)。凭证只能来自环境变量或私有文件，日志不会输出 webhook、secret 或 Token。
+完整变量、默认值、股池格式和 systemd/Compose 加载差异见[环境变量](docs/environment-variables.md)。凭证只来自环境变量，日志不会输出 webhook、secret 或 Token。
 
 ## 部署
 

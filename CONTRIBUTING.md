@@ -18,10 +18,11 @@
 - Python 3.12、Playwright Chromium，用于浏览器测试。
 - Node.js 20+，用于仓位计算模型对照测试。
 
-生产配置已内置，日常开发不需要创建 `config.yaml`。`leaders.yaml` 和 `feishu.config` 是外部运行时文件：
+生产配置通过 `.env` 环境变量加载，日常开发不需要创建 `config.yaml`。观测股池独立保存在 `leaders.yaml`：
 
 - `leaders.yaml` 可以提交经过核对的股池修改。
-- `feishu.config`、`.env`、行情数据库、日志、截图和临时研究产物不得提交。
+- `leaders.pending.yaml` 保存待人工确认名单，不参与启动或选股。
+- `.env`、行情数据库、日志、截图和临时研究产物不得提交。
 - 本地测试需要临时关闭通知时设置 `STOCK_WATCHER_FEISHU_ENABLED=false`。
 - 本地测试可使用 `STOCK_WATCHER_REQUIRE_CIFS=false`，生产环境必须保持 `true`。
 

@@ -242,11 +242,143 @@ func TestBuiltinConfiguration(t *testing.T) {
 	if c.Version != 1 || c.RequireCIFS || c.PoolFile != "leaders.yaml" {
 		t.Fatalf("unexpected builtin identity: %+v", c)
 	}
-	if !c.Strategy.Enabled || !c.Selection.Enabled || !c.Feishu.Enabled || c.Feishu.CredentialsFile != "feishu.config" {
+	if !c.Strategy.Enabled || !c.Selection.Enabled || !c.Feishu.Enabled || c.Feishu.CredentialsFile != "" {
 		t.Fatalf("unexpected builtin feature flags: %+v", c)
 	}
 	if c.Calendar.ValidFrom != "2026-01-01" || c.Calendar.ValidThrough != "2026-12-31" || len(c.Calendar.Holidays) == 0 {
 		t.Fatalf("unexpected builtin calendar: %+v", c.Calendar)
+	}
+}
+
+func TestEnvironmentOnlyConfiguration(t *testing.T) {
+	root := t.TempDir()
+	pool := filepath.Join(root, "leaders.yaml")
+	if err := os.WriteFile(pool, []byte("schema_version: 1\nstocks:\n  - code: sz000001\n    name: 平安银行\n  - code: sh600111\n    name: 北方稀土\n    sector: 稀土\n    listed_from: '1997-09-24'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STOCK_WATCHER_DATA_DIR", root)
+	t.Setenv("STOCK_WATCHER_REQUIRE_CIFS", "false")
+	t.Setenv("STOCK_WATCHER_POOL_FILE", pool)
+	t.Setenv("STOCK_WATCHER_FEISHU_ENABLED", "false")
+	t.Setenv("STOCK_WATCHER_CALENDAR_VALID_FROM", "2020-01-01")
+	t.Setenv("STOCK_WATCHER_CALENDAR_VALID_THROUGH", "2099-12-31")
+	t.Setenv("STOCK_WATCHER_CALENDAR_HOLIDAYS", "2026-10-01,2026-10-02")
+	t.Setenv("STOCK_WATCHER_POLL_INTERVAL", "6m")
+	t.Setenv("STOCK_WATCHER_REQUEST_TIMEOUT", "12s")
+	t.Setenv("STOCK_WATCHER_ANALYSIS_ENGINE", "auto")
+	t.Setenv("STOCK_WATCHER_ANALYSIS_TIMEOUT", "11m")
+	t.Setenv("STOCK_WATCHER_ANALYSIS_SYNC_TIMEOUT", "2h")
+	t.Setenv("STOCK_WATCHER_STRUCTURE_GUARD_MODE", "enforce")
+	t.Setenv("STOCK_WATCHER_DAILY_RUN_AT", "18:15")
+	t.Setenv("STOCK_WATCHER_DAILY_HISTORY_DAYS", "500")
+	t.Setenv("STOCK_WATCHER_DAILY_ADJUST", "qfq")
+	t.Setenv("STOCK_WATCHER_WEB_ENABLED", "true")
+	t.Setenv("STOCK_WATCHER_WEB_ADDR", "127.0.0.1:8089")
+	t.Setenv("STOCK_WATCHER_SELECTION_ENABLED", "false")
+	t.Setenv("STOCK_WATCHER_SELECTION_MIN_SCORE", "75")
+	t.Setenv("STOCK_WATCHER_SELECTION_TOP_N", "7")
+	t.Setenv("STOCK_WATCHER_SELECTION_MIN_VOLUME_RATIO", "1.5")
+	t.Setenv("STOCK_WATCHER_SELECTION_RSI_MIN", "45")
+	t.Setenv("STOCK_WATCHER_SELECTION_RSI_MAX", "85")
+	t.Setenv("STOCK_WATCHER_SELECTION_MIN_DAY_CHANGE", "-2.5")
+	t.Setenv("STOCK_WATCHER_SELECTION_MAX_DAY_CHANGE", "6.5")
+	t.Setenv("STOCK_WATCHER_SYNC_MIN_COVERAGE_PCT", "96")
+	t.Setenv("STOCK_WATCHER_SYNC_MIN_ANALYZABLE_PCT", "91")
+	t.Setenv("STOCK_WATCHER_SYNC_INCREMENTAL_BARS", "6")
+	t.Setenv("STOCK_WATCHER_SYNC_STATUS_REFRESH_DAYS", "31")
+	t.Setenv("STOCK_WATCHER_STRATEGY_ENABLED", "true")
+	t.Setenv("STOCK_WATCHER_STRATEGY_TARGET_NET_PCT", "2.5")
+	t.Setenv("STOCK_WATCHER_STRATEGY_STOP_NET_PCT", "-2")
+	t.Setenv("STOCK_WATCHER_STRATEGY_MAX_HOLDING_DAYS", "4")
+	t.Setenv("STOCK_WATCHER_STRATEGY_TRADE_CASH", "25000")
+	t.Setenv("STOCK_WATCHER_STRATEGY_COMMISSION_RATE", "0.00012")
+	t.Setenv("STOCK_WATCHER_STRATEGY_MIN_COMMISSION", "6")
+	t.Setenv("STOCK_WATCHER_STRATEGY_TRANSFER_RATE", "0.00002")
+	t.Setenv("STOCK_WATCHER_STRATEGY_SELL_STAMP_RATE", "0.0006")
+	t.Setenv("STOCK_WATCHER_STRATEGY_SLIPPAGE_RATE", "0.0007")
+	t.Setenv("STOCK_WATCHER_STRATEGY_MAX_ENTRY_GAP_PCT", "4")
+	t.Setenv("STOCK_WATCHER_STRATEGY_MIN_EVIDENCE", "61")
+	t.Setenv("STOCK_WATCHER_STRATEGY_MIN_TRAINING_DAYS", "41")
+	t.Setenv("STOCK_WATCHER_STRATEGY_HOLDOUT_DAYS", "42")
+	t.Setenv("STOCK_WATCHER_STRATEGY_MIN_RANK_SCORE", "61")
+	t.Setenv("STOCK_WATCHER_MARKET_PROVIDERS", "tencent,sina")
+	t.Setenv("STOCK_WATCHER_MARKET_REQUEST_INTERVAL", "2s")
+	t.Setenv("STOCK_WATCHER_MARKET_ATTEMPT_TIMEOUT", "2m")
+	t.Setenv("STOCK_WATCHER_MARKET_FAILURE_THRESHOLD", "4")
+	t.Setenv("STOCK_WATCHER_MARKET_FAILURE_COOLDOWN", "6m")
+	t.Setenv("STOCK_WATCHER_MARKET_TUSHARE_TOKEN_ENV", "TEST_TUSHARE_TOKEN")
+	t.Setenv("TEST_TUSHARE_TOKEN", "test-token")
+	t.Setenv("STOCK_WATCHER_MARKET_TENCENT_ENDPOINT", "https://example.com/tencent")
+	t.Setenv("STOCK_WATCHER_MARKET_SINA_ENDPOINT", "https://example.com/sina")
+	t.Setenv("STOCK_WATCHER_MARKET_TUSHARE_ENDPOINT", "https://example.com/tushare")
+	t.Setenv("STOCK_WATCHER_MARKET_EASTMONEY_ENDPOINT", "https://example.com/eastmoney")
+	t.Setenv("STOCK_WATCHER_MARKET_LISTING_ENDPOINT", "https://example.com/listing")
+	t.Setenv("STOCK_WATCHER_INTRADAY_ENABLED", "false")
+	t.Setenv("STOCK_WATCHER_INTRADAY_POLL_INTERVAL", "2m")
+	t.Setenv("STOCK_WATCHER_INTRADAY_REQUEST_INTERVAL", "500ms")
+	t.Setenv("STOCK_WATCHER_INTRADAY_WORKERS", "4")
+	t.Setenv("STOCK_WATCHER_INTRADAY_CALIBRATION_AT", "15:20")
+	t.Setenv("STOCK_WATCHER_INTRADAY_TENCENT_ENDPOINT", "https://example.com/minute")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DataDir != root || c.RequireCIFS || c.Feishu.Enabled || c.PoolFile != pool || c.Feishu.CredentialsFile != "" {
+		t.Fatalf("identity environment not applied: %+v", c)
+	}
+	if len(c.Stocks) != 2 || c.Stocks[0].Code != "sz000001" || c.Stocks[1].ListedFrom != "1997-09-24" {
+		t.Fatalf("stock pool file not applied: %+v", c.Stocks)
+	}
+	if c.PollInterval != "6m" || c.Timeout != "12s" || c.Analysis.Timeout != "11m" || c.Analysis.SyncTimeout != "2h" || c.StructureGuard.Mode != "enforce" {
+		t.Fatalf("runtime environment not applied: %+v", c)
+	}
+	if !c.Web.Enabled || c.Web.Listen != "127.0.0.1:8089" || c.Daily.RunAt != "18:15" || c.Daily.HistoryDays != 500 || c.Daily.Adjust != "qfq" {
+		t.Fatalf("web/daily environment not applied: %+v", c)
+	}
+	if c.Selection.Enabled || c.Selection.MinScore != 75 || c.Selection.TopN != 7 || c.Selection.MinVolumeRatio != 1.5 || c.Selection.RSIMin != 45 || c.Selection.RSIMax != 85 || c.Selection.MinDayChange != -2.5 || c.Selection.MaxDayChange != 6.5 {
+		t.Fatalf("selection environment not applied: %+v", c.Selection)
+	}
+	if c.Sync.MinCoveragePct != 96 || c.Sync.MinAnalyzablePct != 91 || c.Sync.IncrementalBars != 6 || c.Sync.StatusRefreshDays != 31 {
+		t.Fatalf("sync environment not applied: %+v", c.Sync)
+	}
+	if !c.Strategy.Enabled || c.Strategy.TargetNetPct != 2.5 || c.Strategy.StopNetPct != -2 || c.Strategy.MaxHoldingDays != 4 || c.Strategy.TradeCash != 25000 || c.Strategy.MinEvidence != 61 || c.Strategy.HoldoutDays != 42 {
+		t.Fatalf("strategy environment not applied: %+v", c.Strategy)
+	}
+	if len(c.Market.Providers) != 2 || c.Market.FailureThreshold != 4 || c.Market.TushareTokenEnv != "TEST_TUSHARE_TOKEN" || c.Market.TushareToken != "test-token" || c.Market.ListingEndpoint != "https://example.com/listing" {
+		t.Fatalf("market environment not applied: %+v", c.Market)
+	}
+	if c.Intraday.Enabled || c.Intraday.Workers != 4 || c.Intraday.CalibrationAt != "15:20" || c.Intraday.TencentEndpoint != "https://example.com/minute" {
+		t.Fatalf("intraday environment not applied: %+v", c.Intraday)
+	}
+	if c.Calendar.ValidFrom != "2020-01-01" || c.Calendar.ValidThrough != "2099-12-31" || len(c.Calendar.Holidays) != 2 {
+		t.Fatalf("calendar environment not applied: %+v", c.Calendar)
+	}
+}
+
+func TestEnvironmentNotifyChannels(t *testing.T) {
+	root := t.TempDir()
+	pool := filepath.Join(root, "leaders.yaml")
+	if err := os.WriteFile(pool, []byte("schema_version: 1\nstocks:\n  - code: sz000001\n    name: 平安银行\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STOCK_WATCHER_DATA_DIR", root)
+	t.Setenv("STOCK_WATCHER_REQUIRE_CIFS", "false")
+	t.Setenv("STOCK_WATCHER_POOL_FILE", pool)
+	t.Setenv("STOCK_WATCHER_FEISHU_ENABLED", "false")
+	t.Setenv("STOCK_WATCHER_CALENDAR_VALID_FROM", "2020-01-01")
+	t.Setenv("STOCK_WATCHER_CALENDAR_VALID_THROUGH", "2099-12-31")
+	t.Setenv("STOCK_WATCHER_CALENDAR_HOLIDAYS", "")
+	t.Setenv("TEST_FEISHU_WEBHOOK", "https://open.feishu.cn/open-apis/bot/v2/hook/env-only")
+	t.Setenv("TEST_FEISHU_SECRET", "env-secret")
+	t.Setenv("STOCK_WATCHER_NOTIFY_CHANNELS", "feishu-main|feishu|true|TEST_FEISHU_WEBHOOK|TEST_FEISHU_SECRET")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	channels := c.NotificationChannels()
+	if len(channels) != 1 || channels[0].Name != "feishu-main" || channels[0].Webhook != os.Getenv("TEST_FEISHU_WEBHOOK") || channels[0].Secret != "env-secret" {
+		t.Fatalf("channel environment not applied: %+v", channels)
 	}
 }
 

@@ -21,7 +21,7 @@ market:
   tushare_token_env: TUSHARE_TOKEN
 ```
 
-Token 仅从 `TUSHARE_TOKEN` 读取。未配置时跳过 Tushare；若它是唯一来源，则配置校验失败。配置实际 Token 的私有 `.env` 不入库；`make run` 已支持加载该文件，systemd 使用 `EnvironmentFile`，Docker Compose 使用 `STOCK_WATCHER_RUNTIME_ENV` 指定的环境文件。使用 `./bin/stock-watcher check` 可查看 `market_sources`，该检查确认内置配置与存储可用，**不探测远端权限或网络**。
+Token 仅从 `TUSHARE_TOKEN` 读取。未配置时跳过 Tushare；若它是唯一来源，则配置校验失败。配置实际 Token 的私有 `.env` 不入库；`make run` 已支持加载该文件，systemd 使用 `EnvironmentFile`，Docker Compose 使用同一份根 `.env`。使用 `./bin/stock-watcher check` 可查看 `market_sources`，该检查确认配置与存储可用，**不探测远端权限或网络**。
 
 默认端点：
 

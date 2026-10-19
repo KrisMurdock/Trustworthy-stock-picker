@@ -17,8 +17,7 @@ services:
     pids_limit: 64
     stop_grace_period: 20s
     env_file:
-      - path: ${STOCK_WATCHER_RUNTIME_ENV:?Set the absolute runtime env file path}
-        format: raw
+      - path: ${STOCK_WATCHER_ENV_FILE:-../.env}
     environment:
       STOCK_WATCHER_DATA_DIR: /data
       STOCK_WATCHER_LOG_DIR: /logs

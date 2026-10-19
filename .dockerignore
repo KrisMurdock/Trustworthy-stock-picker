@@ -10,5 +10,4 @@
 !internal/**
 !runtime/
 !runtime/**
-!config.yaml.example
 !leaders.yaml

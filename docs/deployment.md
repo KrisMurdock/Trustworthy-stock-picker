@@ -5,8 +5,8 @@
 ## 共同准备
 
 1. 默认使用本地存储，无需 Windows 或 SSH 隧道。使用 Windows/CIFS 共享盘时，保持 Windows 在线及 SSH 反向隧道可用，由宿主机把共享挂载至 `/mnt/windows_database`，并确认 `findmnt -T /mnt/windows_database -o TARGET,FSTYPE` 显示 cifs。容器不会建立隧道或挂载 SMB。
-2. 业务配置已编译进二进制，启动不再需要 `config.yaml`。确认 `leaders.yaml` 位于工作目录。本地模式使用默认 `data/`，显式 `init` 会自动创建；共享盘模式通过 `STOCK_WATCHER_DATA_DIR` 指向挂载目录，并设置 `STOCK_WATCHER_REQUIRE_CIFS=true`。
-3. 按[环境变量说明](environment-variables.md)配置通知及滚动日志。默认行情与状态在本地 `data/`，也可放在 Windows 共享；先关闭通知完成检查，再按实际需要启用通道。
+2. 从 `.env.example` 复制 `.env`，按[环境变量说明](environment-variables.md)配置数据目录、通知、行情源和滚动日志。业务配置不再读取 `config.yaml`；观测股池继续独立保存在 `leaders.yaml`，`leaders.pending.yaml` 只是待确认名单。
+3. 本地模式使用默认 `data/`，显式 `init` 会自动创建；共享盘模式通过 `STOCK_WATCHER_DATA_DIR` 指向挂载目录，并设置 `STOCK_WATCHER_REQUIRE_CIFS=true`。目录 `logs/` 保持在宿主机。先关闭通知完成检查，再按实际需要启用通道。
 4. 记录提交 SHA、镜像 ID 或包校验和。升级前备份配置与共享盘状态，保留旧制品。
 
 ## 原生与 systemd
@@ -25,7 +25,7 @@ journalctl -u stock-watcher.service -n 50 --no-pager
 
 模板默认目录 `/root/data/codebase/toys_project/stock_watcher`，读取 `/etc/stock-watcher.env`，等待网络与已有 `mnt-windows_database.automount`。SELinux Enforcing 环境需配置适当的程序路径策略；本服务器原生路径已有 `bin_t` 策略，替换二进制后运行 `sudo restorecon -v /root/data/codebase/toys_project/stock_watcher/bin/stock-watcher` 再重启。
 
-原生发布包没有开发启动脚本，服务直接运行 Go。升级先停止服务，再校验新包、替换二进制和公开材料，保留环境文件、`feishu.config`、股池修改和数据，恢复文件标签，执行 check 后启动。回滚使用保存的旧制品及兼容环境；如果另一次功能升级改变持久数据版本，须先检查其兼容说明，不能直接降级覆盖账本。
+原生发布包没有开发启动脚本，服务直接运行 Go。升级先停止服务，再校验新包、替换二进制和公开材料，保留环境文件、`leaders.yaml` 股池修改和数据，恢复文件标签，执行 check 后启动。回滚使用保存的旧制品及兼容环境；如果另一次功能升级改变持久数据版本，须先检查其兼容说明，不能直接降级覆盖账本。
 
 ## 容器
 
@@ -37,8 +37,9 @@ journalctl -u stock-watcher.service -n 50 --no-pager
 
 - `version` 与预期提交一致；`check` 返回 `status: ready`；`status` 能读取账本；检查启动日志及退出码。Compose 使用 `ps` 核对 healthy，systemd 使用 `is-active`。
 - 报“CIFS”或路径不存在：共享盘模式检查 Windows/隧道/宿主机挂载；本地模式检查 `STOCK_WATCHER_DATA_DIR` 和目录权限。共享重新挂载后，容器可能仍持有旧 bind mount，应重建容器。不要在共享盘模式关闭 CIFS 校验或创建本地 data 目录绕过故障。
-- 报权限不足：确认运行 UID、`feishu.config` 可读及共享可写。SELinux 拒绝时检查宿主机审计日志与专用策略，不要对整个 Windows 盘递归重标记。
-- 报缺少 webhook：检查 `STOCK_WATCHER_FEISHU_ENABLED`、凭证文件或 `FEISHU_WEBHOOK` 是否生效，只检查是否设置，不输出值。检查通知权限前先设置 `STOCK_WATCHER_FEISHU_ENABLED=false`；真实发送需单独确认。
+- 报权限不足：确认运行 UID、`.env`/EnvironmentFile 可读及数据目录可写。SELinux 拒绝时检查宿主机审计日志与专用策略，不要对整个 Windows 盘递归重标记。
+- 报缺少 webhook：检查 `STOCK_WATCHER_FEISHU_ENABLED` 和 `FEISHU_WEBHOOK` 是否生效，只检查是否设置，不输出值。检查通知权限前先设置 `STOCK_WATCHER_FEISHU_ENABLED=false`；真实发送需单独确认。
+- 旧部署显式设置了 `STOCK_WATCHER_FEISHU_CREDENTIALS_FILE` 时，才检查对应凭证文件；新部署应使用环境变量。
 - 报日历越界：内置官方交易日历当前覆盖 2026 年，需在年底前升级二进制；测试可用 `STOCK_WATCHER_CALENDAR_*` 覆盖，不得用于生产。
 - 冷启动大量研究数据时关注内存及退出码 137，按实际需求调整 Compose 限额；不能把进程存在等同于任务成功。
 
