@@ -110,10 +110,8 @@ func (a Analysis) LastFractal() *Fractal {
 	return &fractal
 }
 
-// Analyze builds the completed structure over bars. The final stroke is only
-// marked finished when at least five merged bars remain from its ending fractal
-// window; this mirrors the minimum tail needed to avoid publishing a stroke that
-// is likely to be extended or invalidated by the next bars.
+// Analyze builds the completed structure over bars. Every stroke is provisional
+// until a later reverse stroke exists to confirm it.
 func Analyze(bars []Bar, minStrokeBars int) (Analysis, error) {
 	out := Analysis{Version: Version}
 	if minStrokeBars == 0 {
@@ -133,12 +131,6 @@ func Analyze(bars []Bar, minStrokeBars int) (Analysis, error) {
 	out.Strokes = buildStrokes(out.Fractals, out.MergedBars, minStrokeBars)
 	for i := range out.Strokes {
 		out.Strokes[i].Finished = i < len(out.Strokes)-1
-	}
-	if n := len(out.Strokes); n > 0 {
-		last := &out.Strokes[n-1]
-		if len(out.MergedBars)-last.End.Start >= 5 {
-			last.Finished = true
-		}
 	}
 	for _, stroke := range out.Strokes {
 		if stroke.Finished {
@@ -174,6 +166,7 @@ func validate(bars []Bar) error {
 
 func mergeInclusions(bars []Bar) []Bar {
 	out := make([]Bar, 0, len(bars))
+	lastDirection := 0
 	for _, source := range bars {
 		bar := source
 		if bar.RawBars <= 0 {
@@ -184,16 +177,8 @@ func mergeInclusions(bars []Bar) []Bar {
 			continue
 		}
 		previous, last := out[len(out)-2], out[len(out)-1]
-		direction := 0
-		switch {
-		case previous.High < last.High:
-			direction = 1
-		case previous.High > last.High:
-			direction = -1
-		default:
-			out = append(out, bar)
-			continue
-		}
+		direction := inclusionDirection(previous, last, lastDirection)
+		lastDirection = direction
 		included := (last.High <= bar.High && last.Low >= bar.Low) || (last.High >= bar.High && last.Low <= bar.Low)
 		if !included {
 			out = append(out, bar)
@@ -221,6 +206,23 @@ func mergeInclusions(bars []Bar) []Bar {
 	return out
 }
 
+func inclusionDirection(previous, last Bar, fallback int) int {
+	switch {
+	case previous.High < last.High:
+		return 1
+	case previous.High > last.High:
+		return -1
+	case previous.Low < last.Low:
+		return 1
+	case previous.Low > last.Low:
+		return -1
+	case fallback != 0:
+		return fallback
+	default:
+		return 1
+	}
+}
+
 func detectFractals(bars []Bar) []Fractal {
 	out := []Fractal{}
 	for i := 1; i+1 < len(bars); i++ {
@@ -234,11 +236,21 @@ func detectFractals(bars []Bar) []Fractal {
 		default:
 			continue
 		}
-		if len(out) > 0 && out[len(out)-1].Mark == fractal.Mark {
-			continue
-		}
 		fractal.Index, fractal.Start, fractal.End = i, i-1, i+1
-		out = append(out, fractal)
+		out = appendFractal(out, fractal)
+	}
+	return out
+}
+
+func appendFractal(out []Fractal, fractal Fractal) []Fractal {
+	if len(out) == 0 || out[len(out)-1].Mark != fractal.Mark {
+		return append(out, fractal)
+	}
+	last := out[len(out)-1]
+	moreExtreme := (fractal.Mark == Top && fractal.High > last.High) ||
+		(fractal.Mark == Bottom && fractal.Low < last.Low)
+	if moreExtreme {
+		out[len(out)-1] = fractal
 	}
 	return out
 }
@@ -246,24 +258,17 @@ func detectFractals(bars []Bar) []Fractal {
 func buildStrokes(fractals []Fractal, bars []Bar, minBars int) []Stroke {
 	out := []Stroke{}
 	start := 0
-	for {
-		candidates := make([]Fractal, 0, len(fractals))
-		for _, fractal := range fractals {
-			if fractal.Start >= start {
-				candidates = append(candidates, fractal)
-			}
-		}
-		if len(candidates) < 2 {
-			break
-		}
-		first := candidates[0]
-		end, ok := selectStrokeEnd(first, candidates[1:])
+	for start+1 < len(fractals) {
+		first := fractals[start]
+		end, ok := selectStrokeEnd(first, fractals[start+1:])
 		if !ok {
-			break
+			start++
+			continue
 		}
 		span := end.End - first.Start + 1
 		if fractalContains(first, end) || span < minBars {
-			break
+			start++
+			continue
 		}
 		stroke := Stroke{Direction: Up, Start: first, End: end}
 		if first.Mark == Top {
@@ -276,7 +281,15 @@ func buildStrokes(fractals []Fractal, bars []Bar, minBars int) []Stroke {
 		}
 		stroke.MergedBars = span
 		out = append(out, stroke)
-		start = end.Start
+
+		next := start + 1
+		for next < len(fractals) && fractals[next] != end {
+			next++
+		}
+		if next == len(fractals) {
+			break
+		}
+		start = next
 	}
 	return out
 }
@@ -285,7 +298,19 @@ func selectStrokeEnd(first Fractal, candidates []Fractal) (Fractal, bool) {
 	var selected Fractal
 	found := false
 	for _, candidate := range candidates {
-		if candidate.Mark == first.Mark || candidate.Index <= first.Index {
+		if candidate.Index <= first.Index {
+			continue
+		}
+		// A same-mark fractal only starts the next stroke when it is more
+		// extreme than the starting fractal. A retracement that does not break
+		// the start does not invalidate the current stroke.
+		if candidate.Mark == first.Mark {
+			if first.Mark == Bottom && candidate.Low < first.Low {
+				break
+			}
+			if first.Mark == Top && candidate.High > first.High {
+				break
+			}
 			continue
 		}
 		if first.Mark == Bottom && candidate.Price <= first.Price {
@@ -313,28 +338,36 @@ func fractalContains(a, b Fractal) bool {
 }
 
 func buildZones(strokes []Stroke) []Zone {
-	groups := [][]Stroke{}
-	for _, stroke := range strokes {
-		if len(groups) == 0 {
-			groups = append(groups, []Stroke{stroke})
-			continue
-		}
-		last := &groups[len(groups)-1]
-		zone := newZone(*last)
-		if (stroke.Direction == Up && stroke.High < zone.Lower) || (stroke.Direction == Down && stroke.Low > zone.Upper) {
-			groups = append(groups, []Stroke{stroke})
-			continue
-		}
-		*last = append(*last, stroke)
-	}
 	out := []Zone{}
-	for _, group := range groups {
-		zone := newZone(group)
-		if len(group) >= 3 && zone.Upper >= zone.Lower {
+	group := []Stroke{}
+	for _, stroke := range strokes {
+		if len(group) >= 3 {
+			zone := newZone(group)
+			if zone.Upper >= zone.Lower && !zoneOverlaps(stroke, zone) {
+				out = append(out, zone)
+				group = []Stroke{stroke}
+				continue
+			}
+		}
+		group = append(group, stroke)
+		for len(group) >= 2 && !zoneValid(newZone(group)) {
+			group = group[1:]
+		}
+	}
+	if len(group) >= 3 {
+		if zone := newZone(group); zoneValid(zone) {
 			out = append(out, zone)
 		}
 	}
 	return out
+}
+
+func zoneOverlaps(stroke Stroke, zone Zone) bool {
+	return stroke.High >= zone.Lower && stroke.Low <= zone.Upper
+}
+
+func zoneValid(zone Zone) bool {
+	return zone.Upper >= zone.Lower
 }
 
 func newZone(strokes []Stroke) Zone {
