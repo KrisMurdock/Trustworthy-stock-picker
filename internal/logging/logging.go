@@ -39,7 +39,7 @@ type Logger struct {
 func Nop() *Logger { return &Logger{} }
 
 func EnvOptions() (Options, error) {
-	o := Options{Dir: "logs", MaxBytes: 10 << 20, MaxDays: 7, Backups: 10, Color: "auto", Stdout: os.Stdout}
+	o := Options{Dir: defaultDir(), MaxBytes: 10 << 20, MaxDays: 7, Backups: 10, Color: "auto", Stdout: os.Stdout}
 	if v := os.Getenv("STOCK_WATCHER_LOG_DIR"); v != "" {
 		o.Dir = v
 	}
@@ -77,6 +77,48 @@ func EnvOptions() (Options, error) {
 	}
 	return o, nil
 }
+
+// defaultDir keeps development logs at the repository root even when the CLI is
+// started from a package subdirectory. Explicit STOCK_WATCHER_LOG_DIR values are
+// never rewritten.
+func defaultDir() string {
+	starts := []string{}
+	if executable, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+			executable = resolved
+		}
+		starts = append(starts, filepath.Dir(executable))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		starts = append(starts, cwd)
+	}
+	for _, start := range starts {
+		if root := projectRoot(start); root != "" {
+			return filepath.Join(root, "logs")
+		}
+	}
+	return "logs"
+}
+
+func projectRoot(start string) string {
+	dir, err := filepath.Abs(start)
+	if err != nil {
+		return ""
+	}
+	for {
+		for _, marker := range []string{"go.mod", ".git"} {
+			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+				return dir
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
 func New(o Options) (*Logger, error) {
 	if o.MaxBytes < 1 || o.MaxDays < 1 || o.Backups < 1 {
 		return nil, errors.New("invalid log retention")

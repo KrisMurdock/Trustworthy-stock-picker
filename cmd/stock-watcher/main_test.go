@@ -7,6 +7,19 @@ import (
 	"testing"
 )
 
+func TestMain(m *testing.M) {
+	logs, err := os.MkdirTemp("", "stock-watcher-cli-logs-")
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("STOCK_WATCHER_LOG_DIR", logs); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(logs)
+	os.Exit(code)
+}
+
 func TestCLIInvalidAndMissingConfiguration(t *testing.T) {
 	for _, args := range [][]string{nil, {"unknown"}, {"check", "-config", "config.yaml"}, {"run", "-as-of", "2026-10-13"}, {"run", "-entry-price", "10"}, {"plan", "-entry-price", "NaN"}} {
 		if err := run(args); err == nil {

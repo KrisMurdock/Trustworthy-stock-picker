@@ -38,7 +38,7 @@
 | STOCK_WATCHER_INTRADAY_CALIBRATION_AT | 15:10 | 每日分钟数据校准时间 |
 | STOCK_WATCHER_INTRADAY_TENCENT_ENDPOINT | 腾讯分钟端点 | 分钟行情端点覆盖 |
 | TUSHARE_TOKEN | 空 | Tushare Token；缺失时跳过 Tushare |
-| STOCK_WATCHER_LOG_DIR | logs | 相对路径按当前工作目录解析 |
+| STOCK_WATCHER_LOG_DIR | 仓库根目录/logs | 未设置时向上识别 `go.mod`/`.git` 并统一写入项目根目录；显式相对路径仍按当前工作目录解析 |
 | STOCK_WATCHER_LOG_MAX_MB | 10 | 单文件大小上限 MB，整数 1～1000 |
 | STOCK_WATCHER_LOG_MAX_DAYS | 7 | 轮转日志保留天数，整数 1～1000 |
 | STOCK_WATCHER_LOG_BACKUPS | 10 | 轮转文件保留份数，整数 1～1000，gzip 压缩 |

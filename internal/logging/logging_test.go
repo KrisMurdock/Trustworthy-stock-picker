@@ -97,3 +97,40 @@ func TestRegisteredSecretsAndStructAttributesAreRedacted(t *testing.T) {
 		t.Fatalf("credentials leaked: %s", text)
 	}
 }
+
+func TestDefaultLogDirectoryUsesProjectRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(root, "cmd", "service")
+	if err := os.MkdirAll(nested, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(nested)
+	t.Setenv("STOCK_WATCHER_LOG_DIR", "")
+	options, err := EnvOptions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.Dir != filepath.Join(root, "logs") {
+		t.Fatalf("log directory escaped project root: %s", options.Dir)
+	}
+}
+
+func TestProjectRootRequiresRepositoryMarker(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(nested, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if got := projectRoot(nested); got != "" {
+		t.Fatalf("unexpected project root: %s", got)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: elsewhere\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := projectRoot(nested); got != root {
+		t.Fatalf("project root not discovered: %s", got)
+	}
+}
