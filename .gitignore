@@ -16,6 +16,7 @@
 /coverage.out
 
 # Coding-agent planning artifacts
+/.reasonix/
 /docs/adr/
 /docs/agents/
 /docs/superpowers/
