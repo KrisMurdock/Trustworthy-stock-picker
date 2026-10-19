@@ -97,7 +97,7 @@ MACD沿用EMA12/26、DEA为DIF的EMA9，初值使用对应窗口SMA；柱值为2
 
 这些门槛是实验假设，不是从指标定义推出的胜率。[Fidelity RSI说明](https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/RSI)与[MACD说明](https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/macd)用于核对口径；[John Bollinger的规则说明](https://www.bollingerbands.com/bollinger-band-rules)也强调触及轨道本身不是买卖信号，相关指标叠加不能当作独立证据。参数在本轮结果前固定，所有组使用相同快照、区间、成本及成交方式，全部保留结果，不把最佳小样本比例解释成未来成功率。
 
-缠论结构对照使用同一条件低吸成交路径，只增加固定 5/15/30 分钟结构过滤；实现口径、周期选择依据和首次开发结果见[缠论多级别实验](experiments-chan.md)。
+缠论结构对照使用同一条件低吸成交路径，只增加固定 5/15/30 分钟结构过滤；该轮开发记录仅保留在本地研究目录，不随仓库发布。
 
 ## 次日触达目标
 
@@ -185,14 +185,4 @@ MACD沿用EMA12/26、DEA为DIF的EMA9，初值使用对应窗口SMA；柱值为2
 
 验证入口：`make test`、`make vet`、`make dashboard-smoke`、`make docker-dashboard-smoke`。浏览器冒烟使用同一 `run` 启动模式和真实 SQLite，小数据集配合阻断的行情上游，覆盖空库、运行结果、父子导航、对比、冻结 K 线、移动端、网关拒绝、异常、超时与取消；不访问真实行情或通知服务。
 
-首轮真实数据结果见[次日触达实验记录](experiments-next-day.md)：包含9组完整对照、超限归因和未验证的下一轮方向。
-
-条件入场、显式回测区间的耗时、复现与失败证据见[条件低吸首轮记录](experiments-conditional-entry.md)。
-
-底部入场的离线研究见[无止损、止损幅度与批次数实验](bottom-optimization.md)：固定快照比较 600 组参数，记录净目标触达、实际止损亏损、分批与资金占用；该研究尚未登记到网页实验档案，也未放宽生产风险门槛。
-
-新增的[个股与板块大盘两组对照](sector-market-comparison.md)固定每日名额、批次、费用和止损，对比行业过滤及大盘弱信号的整体效果。该轮使用当前行业归属做回溯探索，历史分类偏差、样本减少和未决均单列。
-
-RSI、MACD、布林线及组合的8组同区间对照见[指标实验记录](experiments-indicators.md)。
-
-缠论 5/15/30 分钟结构过滤的首轮开发结果见[缠论多级别实验](experiments-chan.md)。
+逐轮实验结论、底部研究和行业对照记录仅保留在本地研究目录，不随仓库发布；生产行为、复现方法和可追溯档案格式以本文及[算法接入契约](algorithm-interface.md)为准。

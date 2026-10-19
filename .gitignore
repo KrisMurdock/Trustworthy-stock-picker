@@ -15,6 +15,9 @@
 *.test
 /coverage.out
 
+# Local research records
+/docs/research/
+
 # Coding-agent planning artifacts
 /.reasonix/
 /docs/adr/

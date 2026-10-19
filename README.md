@@ -343,7 +343,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | `internal/feishu` | 卡片、签名、HTTP/业务码确认和错误分类 |
 | `internal/logging` | 调用位置、脱敏、stdout/滚动文件和文本/JSON 输出 |
 | `tests/` | CLI、容器、行情源、分钟和浏览器冒烟 |
-| `docs/` | 数据、部署、策略和实验文档 |
+| `docs/` | 部署、配置、算法契约和用户功能文档 |
 
 ## 文档导航
 
@@ -354,8 +354,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | 数据与运行 | [行情来源与回退](docs/data-sources.md) · [部署与排障](docs/deployment.md) |
 | 开发与发布 | [开发、CI 与发布包](docs/development.md) · [测试范围](tests/README.md) |
 | 策略研究 | [推荐门槛诊断](docs/strategy-diagnostics.md) · [策略实验室](docs/experiments.md) · [实验快照](docs/experiment-result-snapshots.md) |
-| 实验专题 | [条件入场](docs/experiments-conditional-entry.md) · [指标组合](docs/experiments-indicators.md) · [次日触达](docs/experiments-next-day.md) · [缠论门控](docs/experiments-chan.md) |
-| 研究与工具 | [单股价格策略](docs/单股价格策略.md) · [底部形态](docs/bottom-signals.md) · [行业与大盘对比](docs/sector-market-comparison.md) · [持有速度](docs/holding-speed.md) |
+| 研究与工具 | [单股价格策略](docs/单股价格策略.md) · [底部形态](docs/bottom-signals.md) |
 | 容器 | [Compose 部署与升级](docker/README.md) |
 
 ## 已知边界
