@@ -42,9 +42,7 @@ func (m *Monitor) Replay(ctx context.Context, revision string) (selection.Report
 	var minutes []market.MinuteHistory
 	for _, item := range items {
 		if item.Adjusted != nil {
-			if item.Minutes != nil {
-				minutes = append(minutes, *item.Minutes)
-			}
+			minutes = append(minutes, item.Minutes...)
 			adjusted = append(adjusted, *item.Adjusted)
 			if item.Raw != nil {
 				raw = append(raw, *item.Raw)

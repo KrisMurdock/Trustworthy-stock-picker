@@ -97,3 +97,30 @@ func TestBuiltinEnginePreservesChanGateAndRejectsNonFinalMinutes(t *testing.T) {
 		t.Fatal("future minute input did not fail the as-of guard", err)
 	}
 }
+
+func TestEngineRequiresAlignedThirtyAndFiveMinuteSnapshot(t *testing.T) {
+	c, histories, raw := executionFixture()
+	asof := histories[0].AsOf
+	base := singleDayMinuteHistory(asof, raw[0].Bars[len(raw[0].Bars)-1])
+	derived := base
+	derived.Period = 30
+	derived.Bars = market.AggregateMinutes(base.Bars, 30, base.FetchedAt)
+	engine, err := DefaultEngine(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := Input{Config: c, Histories: histories, Raw: raw, Minutes: []market.MinuteHistory{derived, base}, AsOf: asof, Target: "2026-10-20", Now: time.Now()}
+	if _, err := Execute(context.Background(), engine, in, "pair-test"); err != nil {
+		t.Fatal(err)
+	}
+	in.Minutes[0].FetchedAt = in.Minutes[0].FetchedAt.Add(time.Minute)
+	if _, err := Execute(context.Background(), engine, in, "pair-test"); err == nil || !strings.Contains(err.Error(), "one snapshot") {
+		t.Fatal("cross-snapshot periods accepted", err)
+	}
+	in.Minutes[0] = derived
+	in.Minutes[1].Bars = append([]market.MinuteBar(nil), base.Bars...)
+	in.Minutes[1].Bars[0].High += 0.1
+	if _, err := Execute(context.Background(), engine, in, "pair-test"); err == nil || !strings.Contains(err.Error(), "one snapshot") {
+		t.Fatal("relabelled aggregate accepted", err)
+	}
+}

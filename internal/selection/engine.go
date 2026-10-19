@@ -79,7 +79,7 @@ func DefaultEngine(c config.Config) (Engine, error) {
 	}
 	periods := []string{"day"}
 	if c.Strategy.Enabled {
-		periods = append(periods, "5")
+		periods = append(periods, "30", "5")
 	}
 	return builtinEngine{EngineDescriptor{ID: id, Version: 1, Periods: periods, Adjust: c.Daily.Adjust, RawRequired: c.Strategy.Enabled, FinalOnly: true, MissingPolicy: "exclude"}}, nil
 }
@@ -88,10 +88,24 @@ func Execute(ctx context.Context, e Engine, in Input, build string) (Report, err
 		return Report{}, err
 	}
 	d := e.Descriptor()
-	minuteContract := len(d.Periods) == 2 && d.Periods[0] == "day" && d.Periods[1] == "5"
+	legacyMinuteContract := len(d.Periods) == 2 && d.Periods[0] == "day" && d.Periods[1] == "5"
+	minuteContract := len(d.Periods) == 3 && d.Periods[0] == "day" && d.Periods[1] == "30" && d.Periods[2] == "5"
 	dailyContract := len(d.Periods) == 1 && d.Periods[0] == "day"
-	if d.ID == "" || d.Version != 1 || (!dailyContract && !minuteContract) || (len(in.Minutes) > 0 && !minuteContract) || d.Adjust != in.Config.Daily.Adjust || !d.FinalOnly || d.MissingPolicy != "exclude" {
+	if d.ID == "" || d.Version != 1 || (!dailyContract && !legacyMinuteContract && !minuteContract) || (len(in.Minutes) > 0 && !legacyMinuteContract && !minuteContract) || d.Adjust != in.Config.Daily.Adjust || !d.FinalOnly || d.MissingPolicy != "exclude" {
 		return Report{}, errors.New("unsupported algorithm input contract")
+	}
+	allowedPeriod := map[int]bool{}
+	for _, period := range d.Periods[1:] {
+		switch period {
+		case "5":
+			allowedPeriod[5] = true
+		case "15":
+			allowedPeriod[15] = true
+		case "30":
+			allowedPeriod[30] = true
+		case "60":
+			allowedPeriod[60] = true
+		}
 	}
 	if d.RawRequired && len(in.Raw) == 0 {
 		return Report{}, errors.New("algorithm requires raw execution histories")
@@ -136,15 +150,40 @@ func Execute(ctx context.Context, e Engine, in Input, build string) (Report, err
 			return Report{}, errors.New("invalid algorithm input history")
 		}
 	}
-	minuteCodes := map[string]bool{}
+	minutePeriods := map[string]map[int]bool{}
+	minuteByCodePeriod := map[string]map[int]market.MinuteHistory{}
+	minuteMeta := map[string]market.MinuteHistory{}
 	for _, h := range frozen.Minutes {
-		if !available[h.Code] || minuteCodes[h.Code] || h.Validate() != nil {
+		if !available[h.Code] || !allowedPeriod[h.Period] || h.Validate() != nil {
 			return Report{}, errors.New("invalid algorithm minute history")
 		}
-		minuteCodes[h.Code] = true
+		if minutePeriods[h.Code] == nil {
+			minutePeriods[h.Code] = map[int]bool{}
+			minuteByCodePeriod[h.Code] = map[int]market.MinuteHistory{}
+			minuteMeta[h.Code] = h
+		} else {
+			first := minuteMeta[h.Code]
+			if first.Source != h.Source || first.Adjust != h.Adjust || first.VolumeUnit != h.VolumeUnit || first.BasePeriod != h.BasePeriod || !first.FetchedAt.Equal(h.FetchedAt) {
+				return Report{}, errors.New("algorithm minute histories are not from one snapshot")
+			}
+		}
+		if minutePeriods[h.Code][h.Period] {
+			return Report{}, errors.New("duplicate algorithm minute period")
+		}
+		minutePeriods[h.Code][h.Period] = true
+		minuteByCodePeriod[h.Code][h.Period] = h
 		for _, bar := range h.Bars {
 			if !bar.Final || bar.End.In(market.Shanghai).Format("2006-01-02") > in.AsOf {
 				return Report{}, errors.New("algorithm minute history is not final as of report date")
+			}
+		}
+	}
+	for _, set := range minuteByCodePeriod {
+		base, hasBase := set[5]
+		derived, hasDerived := set[30]
+		if hasBase && hasDerived {
+			if err := market.ValidateMinutePair(base, derived); err != nil {
+				return Report{}, errors.New("algorithm minute histories are not from one snapshot")
 			}
 		}
 	}

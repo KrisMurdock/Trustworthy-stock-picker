@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"stock-watcher/internal/config"
@@ -98,6 +99,38 @@ func TestMinuteMigrationReadAndCorrection(t *testing.T) {
 	}
 	if _, err := view.LoadMinutes(ctx, stock, 1); err == nil {
 		t.Fatal("one minute allowed")
+	}
+}
+
+func TestLoadMinuteSetUsesOneNativeSnapshot(t *testing.T) {
+	ctx := context.Background()
+	db, err := InitMarket(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := minuteHistory()
+	stock := config.Stock{Code: h.Code, Name: h.Name}
+	if err := db.SaveMinutes(ctx, stock, h.Bars[47].End, h.FetchedAt, &h, "ok", "", true); err != nil {
+		t.Fatal(err)
+	}
+	set, err := db.LoadMinuteSet(ctx, stock, 30, 5)
+	if err != nil || len(set) != 2 {
+		t.Fatalf("minute set = %+v, %v", set, err)
+	}
+	if set[0].Period != 30 || set[1].Period != 5 || len(set[0].Bars) != 8 || len(set[1].Bars) != 48 {
+		t.Fatalf("unexpected periods or bars: %+v", set)
+	}
+	if !set[0].FetchedAt.Equal(set[1].FetchedAt) || market.ValidateMinutePair(set[1], set[0]) != nil {
+		t.Fatal("loaded periods are not one native snapshot")
+	}
+	raw, _ := json.Marshal(set[1])
+	var legacy SyncItem
+	if err := json.Unmarshal(append(append([]byte(`{"minutes":`), raw...), '}'), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy.Minutes) != 1 || legacy.Minutes[0].Period != 5 {
+		t.Fatalf("legacy single minute input did not decode: %+v", legacy.Minutes)
 	}
 }
 

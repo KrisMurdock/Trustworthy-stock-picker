@@ -58,14 +58,23 @@ func MinuteSession(end time.Time, period int) (int, bool) {
 
 func (h MinuteHistory) Validate() error { return h.validateLimit(MinuteLimit) }
 
+// ValidateBase accepts only the native five-minute series. Aggregated periods
+// are derived on read and must never be persisted as if they were native data.
+func (h MinuteHistory) ValidateBase() error {
+	if h.Period != 5 || h.BasePeriod != 5 {
+		return errors.New("minute history is not a native five-minute series")
+	}
+	return h.validateLimit(MinuteLimit)
+}
+
 func (h MinuteHistory) validateLimit(limit int) error {
-	if h.Version != 1 || !config.ValidCode(h.Code) || h.Source != "tencent" || h.Period != 5 || h.BasePeriod != 5 ||
+	if h.Version != 1 || !config.ValidCode(h.Code) || h.Source != "tencent" || !MinutePeriod(h.Period) || h.BasePeriod != 5 ||
 		h.Adjust != "none" || h.VolumeUnit != "provider_raw" || h.FetchedAt.IsZero() || len(h.Bars) == 0 || len(h.Bars) > limit {
 		return errors.New("invalid minute history metadata")
 	}
 	var previous time.Time
 	for _, b := range h.Bars {
-		_, session := MinuteSession(b.End, 5)
+		_, session := MinuteSession(b.End, h.Period)
 		if !session || !b.End.After(previous) || b.End.After(h.FetchedAt.Add(5*time.Minute)) || b.End.Weekday() == time.Saturday || b.End.Weekday() == time.Sunday {
 			return errors.New("invalid minute time or ordering")
 		}
@@ -81,6 +90,40 @@ func (h MinuteHistory) validateLimit(limit int) error {
 	}
 	return nil
 }
+
+// ValidateMinutePair proves that an aggregated series and its native base
+// series came from the same observation. The comparison is value based so a
+// caller cannot relabel bars from another day, source or adjustment.
+func ValidateMinutePair(base, derived MinuteHistory) error {
+	if base.Period != 5 || derived.Period == 5 || derived.BasePeriod != 5 {
+		return errors.New("invalid minute pair periods")
+	}
+	if base.Code != derived.Code || base.Source != derived.Source || base.Adjust != derived.Adjust ||
+		base.VolumeUnit != derived.VolumeUnit || !base.FetchedAt.Equal(derived.FetchedAt) {
+		return errors.New("minute pair metadata mismatch")
+	}
+	if err := base.Validate(); err != nil {
+		return err
+	}
+	if err := derived.Validate(); err != nil {
+		return err
+	}
+	expected := AggregateMinutes(base.Bars, derived.Period, base.FetchedAt)
+	if len(expected) != len(derived.Bars) {
+		return errors.New("minute pair bar count mismatch")
+	}
+	for i := range expected {
+		want, got := expected[i], derived.Bars[i]
+		if !want.End.Equal(got.End) || want.Final != got.Final ||
+			!near(want.Open, got.Open) || !near(want.High, got.High) || !near(want.Low, got.Low) ||
+			!near(want.Close, got.Close) || !near(want.Volume, got.Volume) {
+			return errors.New("minute pair aggregate mismatch")
+		}
+	}
+	return nil
+}
+
+func near(a, b float64) bool { return math.Abs(a-b) <= 1e-6 }
 
 // AggregateMinutes derives only contiguous groups. An incomplete historical
 // group is omitted; the currently forming group may contain a contiguous prefix.

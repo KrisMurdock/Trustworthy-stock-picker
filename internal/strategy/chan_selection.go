@@ -32,7 +32,15 @@ func applyChanGate(result *Result, raw []market.History, minutes []market.Minute
 		}
 	}
 	minuteByCode := make(map[string]market.MinuteHistory, len(minutes))
+	contextByCode := make(map[string]market.MinuteHistory, len(minutes))
 	for _, history := range minutes {
+		if history.Period == 30 {
+			contextByCode[history.Code] = history
+			continue
+		}
+		if history.Period != 5 {
+			continue
+		}
 		if _, exists := minuteByCode[history.Code]; exists {
 			continue
 		}
@@ -44,6 +52,8 @@ func applyChanGate(result *Result, raw []market.History, minutes []market.Minute
 		if history, ok := minuteByCode[candidate.Code]; ok {
 			if err := history.Validate(); err != nil {
 				evidence = unavailableChanEvidence(asof, "5分钟数据无效")
+			} else if context, exists := contextByCode[candidate.Code]; exists && market.ValidateMinutePair(history, context) != nil {
+				evidence = unavailableChanEvidence(asof, "30m/5m 分钟快照不一致")
 			} else if bar, exists := daily[candidate.Code]; exists {
 				if value, err := chanSignalEvidence(history, asof, bar); err != nil {
 					evidence = unavailableChanEvidence(asof, "缠论计算失败")

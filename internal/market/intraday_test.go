@@ -64,6 +64,44 @@ func TestMinuteProtocolAndFailures(t *testing.T) {
 	}
 }
 
+func TestMinutePairRequiresOneSnapshot(t *testing.T) {
+	base := MinuteHistory{Version: 1, Code: "sz000001", Name: "测试", Source: "tencent", Period: 5, BasePeriod: 5, Adjust: "none", VolumeUnit: "provider_raw", FetchedAt: minuteAt("2026-10-15 15:10:00")}
+	for i := 0; i < 48; i++ {
+		minute := 575 + i*5
+		if i >= 24 {
+			minute = 785 + (i-24)*5
+		}
+		base.Bars = append(base.Bars, MinuteBar{End: time.Date(2026, 10, 15, minute/60, minute%60, 0, 0, Shanghai), Open: 10, High: 12, Low: 9, Close: 11, Volume: 100, Final: true})
+	}
+	derived := base
+	derived.Period = 30
+	derived.Bars = AggregateMinutes(base.Bars, 30, base.FetchedAt)
+	if err := ValidateMinutePair(base, derived); err != nil {
+		t.Fatal(err)
+	}
+	if err := base.ValidateBase(); err != nil {
+		t.Fatal(err)
+	}
+	if err := derived.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	other := derived
+	other.FetchedAt = other.FetchedAt.Add(time.Minute)
+	if err := ValidateMinutePair(base, other); err == nil {
+		t.Fatal("different FetchedAt accepted")
+	}
+	other = derived
+	other.Bars = append([]MinuteBar(nil), derived.Bars...)
+	other.Bars[0].Close += 0.1
+	if err := ValidateMinutePair(base, other); err == nil {
+		t.Fatal("relabelled aggregate accepted")
+	}
+	base.Period = 30
+	if err := base.ValidateBase(); err == nil {
+		t.Fatal("aggregated series accepted as native base")
+	}
+}
+
 func TestMinuteCancellationAndTimeout(t *testing.T) {
 	started := make(chan struct{}, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { started <- struct{}{}; <-r.Context().Done() }))

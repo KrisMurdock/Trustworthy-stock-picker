@@ -457,7 +457,7 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (report selection.Repor
 	for i := range items {
 		for j := range minutes {
 			if items[i].Stock.Code == minutes[j].Code {
-				items[i].Minutes = &minutes[j]
+				items[i].Minutes = append(items[i].Minutes, minutes[j])
 			}
 		}
 	}
@@ -902,25 +902,28 @@ func (m *Monitor) reportMinutes(ctx context.Context, histories []market.History,
 		if !valid[stock.Code] {
 			continue
 		}
-		snapshot, err := m.Market.LoadMinutes(ctx, stock, 5)
+		set, err := m.Market.LoadMinuteSet(ctx, stock, 30, 5)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
-		h := snapshot.MinuteHistory
-		h.Bars = nil
-		for _, bar := range snapshot.Bars {
-			if bar.Final && bar.End.In(market.Shanghai).Format("2006-01-02") <= asof {
-				h.Bars = append(h.Bars, bar)
+		for _, source := range set {
+			h := source
+			observed := len(h.Bars)
+			h.Bars = nil
+			for _, bar := range source.Bars {
+				if bar.Final && bar.End.In(market.Shanghai).Format("2006-01-02") <= asof {
+					h.Bars = append(h.Bars, bar)
+				}
 			}
-		}
-		if len(snapshot.Bars) > 0 && len(h.Bars) == 0 {
-			return nil, fmt.Errorf("no completed minute history on or before %s for %s", asof, stock.Code)
-		}
-		if len(h.Bars) > 0 {
-			minutes = append(minutes, h)
+			if observed > 0 && len(h.Bars) == 0 {
+				return nil, fmt.Errorf("no completed %dm history on or before %s for %s", h.Period, asof, stock.Code)
+			}
+			if len(h.Bars) > 0 {
+				minutes = append(minutes, h)
+			}
 		}
 	}
 	m.Log.Debug("Minute histories loaded for Chan gate", "loaded", len(minutes), "eligible_daily", len(histories))

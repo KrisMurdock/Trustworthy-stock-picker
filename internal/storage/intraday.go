@@ -104,7 +104,7 @@ func (m *MarketDB) SaveMinutes(ctx context.Context, stock config.Stock, target, 
 		return errors.New("invalid minute status")
 	}
 	if h != nil {
-		if err := h.Validate(); err != nil {
+		if err := h.ValidateBase(); err != nil {
 			return err
 		}
 		if h.Code != stock.Code || h.FetchedAt.After(attempt) {
@@ -215,9 +215,70 @@ func (m *MarketDB) LoadMinutes(ctx context.Context, stock config.Stock, period i
 	if out.State.FetchedAt != nil {
 		out.FetchedAt = *out.State.FetchedAt
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT end_unix,open_micros,high_micros,low_micros,close_micros,volume_raw,final FROM intraday_bar WHERE code=? ORDER BY end_unix DESC LIMIT ?`, stock.Code, (market.MinuteLimit+1)*period/5)
+	bars, err := readMinuteBars(ctx, tx, stock.Code, (market.MinuteLimit+1)*period/5)
 	if err != nil {
-		return out, errors.New("cannot read minute history")
+		return out, err
+	}
+	out.Bars = market.AggregateMinutes(bars, period, out.FetchedAt)
+	if len(out.Bars) > market.MinuteLimit {
+		out.Bars = out.Bars[len(out.Bars)-market.MinuteLimit:]
+	}
+	return out, tx.Commit()
+}
+
+// LoadMinuteSet derives every requested period from one native five-minute
+// read and one FetchedAt. This is the production snapshot boundary: callers
+// cannot combine a 30-minute series from one observation with a 5-minute
+// series from another.
+func (m *MarketDB) LoadMinuteSet(ctx context.Context, stock config.Stock, periods ...int) ([]market.MinuteHistory, error) {
+	if len(periods) == 0 {
+		return nil, errors.New("minute period set is empty")
+	}
+	seen := map[int]bool{}
+	for _, period := range periods {
+		if !market.MinutePeriod(period) {
+			return nil, errors.New("unsupported minute period")
+		}
+		if seen[period] {
+			return nil, errors.New("duplicate minute period")
+		}
+		seen[period] = true
+	}
+	if m == nil || m.db == nil {
+		return nil, fs.ErrNotExist
+	}
+	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, errors.New("cannot open minute view")
+	}
+	defer tx.Rollback()
+	state, err := minuteState(ctx, tx, stock.Code)
+	if err != nil {
+		return nil, err
+	}
+	bars, err := readMinuteBars(ctx, tx, stock.Code, market.MinuteLimit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]market.MinuteHistory, 0, len(periods))
+	for _, period := range periods {
+		h := market.MinuteHistory{Version: 1, Code: stock.Code, Name: stock.Name, Source: "tencent", Period: period, BasePeriod: 5, Adjust: "none", VolumeUnit: "provider_raw", Bars: []market.MinuteBar{}}
+		if state.FetchedAt != nil {
+			h.FetchedAt = *state.FetchedAt
+			h.Bars = market.AggregateMinutes(bars, period, h.FetchedAt)
+		}
+		out = append(out, h)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func readMinuteBars(ctx context.Context, r sqlReader, code string, limit int) ([]market.MinuteBar, error) {
+	rows, err := r.QueryContext(ctx, `SELECT end_unix,open_micros,high_micros,low_micros,close_micros,volume_raw,final FROM intraday_bar WHERE code=? ORDER BY end_unix DESC LIMIT ?`, code, limit)
+	if err != nil {
+		return nil, errors.New("cannot read minute history")
 	}
 	bars := []market.MinuteBar{}
 	for rows.Next() {
@@ -225,7 +286,7 @@ func (m *MarketDB) LoadMinutes(ctx context.Context, stock config.Stock, period i
 		var end, o, h, l, c int64
 		if err := rows.Scan(&end, &o, &h, &l, &c, &b.Volume, &b.Final); err != nil {
 			rows.Close()
-			return out, errors.New("cannot decode minute history")
+			return nil, errors.New("cannot decode minute history")
 		}
 		b.End = time.Unix(end, 0).In(market.Shanghai)
 		b.Open, b.High, b.Low, b.Close = float64(o)/1e6, float64(h)/1e6, float64(l)/1e6, float64(c)/1e6
@@ -234,14 +295,10 @@ func (m *MarketDB) LoadMinutes(ctx context.Context, stock config.Stock, period i
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		return out, errors.New("cannot read minute history")
+		return nil, errors.New("cannot read minute history")
 	}
 	for a, b := 0, len(bars)-1; a < b; a, b = a+1, b-1 {
 		bars[a], bars[b] = bars[b], bars[a]
 	}
-	out.Bars = market.AggregateMinutes(bars, period, out.FetchedAt)
-	if len(out.Bars) > market.MinuteLimit {
-		out.Bars = out.Bars[len(out.Bars)-market.MinuteLimit:]
-	}
-	return out, tx.Commit()
+	return bars, nil
 }

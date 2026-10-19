@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -38,7 +39,7 @@ type SyncItem struct {
 	Stock         config.Stock
 	Adjusted      *market.History
 	Raw           *market.History
-	Minutes       *market.MinuteHistory `json:",omitempty"`
+	Minutes       MinuteInputs `json:",omitempty"`
 	Status        string
 	Reason        string
 	Analyzable    bool
@@ -49,6 +50,32 @@ type SyncItem struct {
 	RawStatus     string
 	RawReason     string
 	RawAnalyzable bool
+}
+
+// MinuteInputs accepts both the current multi-period array and the legacy
+// single-object payload so old report inputs remain replayable.
+type MinuteInputs []market.MinuteHistory
+
+func (m *MinuteInputs) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		*m = nil
+		return nil
+	}
+	if data[0] == '{' {
+		var one market.MinuteHistory
+		if err := json.Unmarshal(data, &one); err != nil {
+			return err
+		}
+		*m = MinuteInputs{one}
+		return nil
+	}
+	var many []market.MinuteHistory
+	if err := json.Unmarshal(data, &many); err != nil {
+		return err
+	}
+	*m = MinuteInputs(many)
+	return nil
 }
 
 type SyncRun struct {
