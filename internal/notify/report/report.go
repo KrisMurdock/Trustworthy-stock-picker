@@ -18,6 +18,7 @@ const (
 )
 
 var riskPriority = []string{
+	"结构影子期·仅观察",
 	"历史单笔净亏损超限",
 	"独立验证未通过",
 	"匹配规则未通过历史检验",
@@ -95,6 +96,8 @@ func mainCardTitle(r selection.Report, short bool, baseTitle string) (string, st
 		switch {
 		case !r.SelectionEnabled:
 			return baseTitle + " · 筛选未启用", "orange"
+		case r.ExecutionMode == strategy.StructureGuardShadow && len(r.Ranking) > 0:
+			return baseTitle + " · 仅观察（结构影子期）", "blue"
 		case len(r.Selected) > 0:
 			return fmt.Sprintf("%s · %d 只可执行", baseTitle, len(r.Selected)), "green"
 		case len(r.Ranking) > 0:
@@ -121,6 +124,10 @@ func mainConclusion(r selection.Report, short bool) string {
 				return "筛选未启用；Top10 仅供观察"
 			}
 			return "筛选未启用；本次不生成候选名单"
+		case r.ExecutionMode == strategy.StructureGuardShadow && len(r.Ranking) > 0:
+			first := r.Ranking[0]
+			return fmt.Sprintf("结构影子期：不产生可执行推荐；观察排名 %d 只，最高机会分 %s %s %.1f",
+				len(r.Ranking), first.Code, escape(first.Name), first.Score)
 		case len(r.Selected) > 0:
 			first := shortFirstSelected(r.Selected)
 			entry, stop := "—", "—"
@@ -165,6 +172,9 @@ func metadataLine(r selection.Report) string {
 	if hasStructureGuard(r) {
 		line += fmt.Sprintf(" · 结构通过 %d/%d", r.GuardPassed, r.Eligible)
 	}
+	if r.ExecutionMode == strategy.StructureGuardShadow {
+		line += " · 执行模式 结构影子期（仅观察）"
+	}
 	return line
 }
 
@@ -186,7 +196,7 @@ func mainCardTable(r selection.Report, short bool, diagnosis *diagnostics.Report
 		}
 		for _, candidate := range shortMainCandidates(r) {
 			entry, target, stop := "—", "—", "—"
-			if candidate.Plan != nil {
+			if candidate.Plan != nil && candidate.Recommended && r.ExecutionMode != strategy.StructureGuardShadow {
 				entry = fmt.Sprintf("%.2f", candidate.Plan.EntryPrice)
 				target = fmt.Sprintf("%.2f", candidate.Plan.TakeProfit)
 				stop = fmt.Sprintf("%.2f", candidate.Plan.StopPrice)
@@ -265,32 +275,30 @@ func shortCandidateStatus(r selection.Report, candidate strategy.Candidate) stri
 	if !r.SelectionEnabled {
 		return "未启用"
 	}
-	if candidate.StructureGuard != nil {
-		shadow := candidate.StructureGuard.Mode == strategy.StructureGuardShadow
-		switch candidate.StructureGuard.GuardStatus {
-		case strategy.StructureGuardFail:
-			if shadow {
-				if candidate.Recommended {
-					return "旧路径通过·影子未过"
-				}
+	if r.ExecutionMode == strategy.StructureGuardShadow {
+		if candidate.StructureGuard != nil {
+			switch candidate.StructureGuard.GuardStatus {
+			case strategy.StructureGuardPass:
+				return "结构通过·仅观察"
+			case strategy.StructureGuardFail:
 				return "结构未过·仅观察"
-			}
-			return "结构未过"
-		case strategy.StructureGuardUnknown:
-			if shadow {
-				if candidate.Recommended {
-					return "旧路径通过·影子未知"
-				}
+			case strategy.StructureGuardUnknown:
 				return "结构未知·仅观察"
 			}
+		}
+		return "仅观察"
+	}
+	if candidate.StructureGuard != nil {
+		switch candidate.StructureGuard.GuardStatus {
+		case strategy.StructureGuardFail:
+			return "结构未过"
+		case strategy.StructureGuardUnknown:
 			return "结构未知"
 		case strategy.StructureGuardPass:
 			if candidate.Recommended {
 				return "可执行"
 			}
-			if shadow {
-				return "结构通过"
-			}
+			return "结构通过"
 		}
 	}
 	if candidate.Recommended {
@@ -423,7 +431,7 @@ func shortCandidateDetailSections(r selection.Report, diagnosis *diagnostics.Rep
 			lines = append(lines, "结构门控："+structureGuardSummary(*candidate.StructureGuard))
 		}
 		lines = append(lines,
-			"缠论门控："+candidateChanSummary(candidate.Chan),
+			"旧 5/15/30 诊断："+candidateChanSummary(candidate.Chan),
 			"评分推导："+candidateScoreFormula(breakdown),
 		)
 		for _, rule := range detail.Rules {
@@ -433,8 +441,12 @@ func shortCandidateDetailSections(r selection.Report, diagnosis *diagnostics.Rep
 		heading := fmt.Sprintf("第%d名 · %s %s · %s",
 			candidate.Rank, candidate.Code, escape(candidate.Name), shortCandidateStatus(r, candidate))
 		if candidate.EligibleRank > 0 {
-			heading = fmt.Sprintf("可入选第%d / 观察第%d名 · %s %s · %s",
-				candidate.EligibleRank, observationRank(&candidate), candidate.Code, escape(candidate.Name), shortCandidateStatus(r, candidate))
+			eligibleLabel := "可入选"
+			if r.ExecutionMode == strategy.StructureGuardShadow {
+				eligibleLabel = "结构通过"
+			}
+			heading = fmt.Sprintf("%s第%d / 观察第%d名 · %s %s · %s",
+				eligibleLabel, candidate.EligibleRank, observationRank(&candidate), candidate.Code, escape(candidate.Name), shortCandidateStatus(r, candidate))
 		}
 		if candidate.Rank > mainTableRows {
 			heading = "推荐补充 · " + heading
@@ -455,7 +467,7 @@ func shortCandidateDetailSections(r selection.Report, diagnosis *diagnostics.Rep
 
 func candidateChanSummary(evidence *strategy.ChanEvidence) string {
 	if evidence == nil {
-		return "未知：未检查；仅观察"
+		return "未知：未检查；仅诊断，不影响正式结论"
 	}
 	return chanSummary(*evidence)
 }
@@ -520,7 +532,7 @@ func structureGuardSummary(evidence strategy.StructureGuardEvidence) string {
 
 func structureGuardConsequence(evidence strategy.StructureGuardEvidence) string {
 	if evidence.Mode == strategy.StructureGuardShadow {
-		return "影子期仅记录，不改变正式推荐"
+		return "影子期仅记录，不产生可执行推荐"
 	}
 	return "已过滤"
 }
@@ -774,21 +786,21 @@ func chanSummary(evidence strategy.ChanEvidence) string {
 			}
 		}
 		if len(details) == 0 {
-			return "通过：5m/15m/30m 均满足；未被过滤"
+			return "通过：5m/15m/30m 旧路径条件满足；仅诊断，不构成买点"
 		}
-		return "通过：" + strings.Join(details, "、") + "；未被过滤"
+		return "通过：" + strings.Join(details, "、") + "；仅诊断，不构成买点"
 	case strategy.ChanFail:
 		if evidence.Reason == "" {
-			return "未通过：结构不满足；仅观察"
+			return "未通过：旧路径结构不满足；仅诊断，不影响正式结论"
 		}
-		return "未通过：" + escape(evidence.Reason) + "；仅观察"
+		return "未通过：" + escape(evidence.Reason) + "；仅诊断，不影响正式结论"
 	case strategy.ChanUnknown:
 		if evidence.Reason == "" {
-			return "未知：结构证据不足；仅观察"
+			return "未知：旧路径证据不足；仅诊断，不影响正式结论"
 		}
-		return "未知：" + escape(evidence.Reason) + "；仅观察"
+		return "未知：" + escape(evidence.Reason) + "；仅诊断，不影响正式结论"
 	default:
-		return "未知：未检查；仅观察"
+		return "未知：未检查；仅诊断，不影响正式结论"
 	}
 }
 
@@ -839,6 +851,7 @@ func exclusionReason(reason string) string {
 		"chan_unknown":                    "缠论结构未知",
 		"structure_guard_fail":            "结构门控不通过",
 		"structure_guard_unknown":         "结构门控数据不足",
+		"shadow_structure_not_validated":  "结构影子期·仅观察",
 	}
 	if label := labels[reason]; label != "" {
 		return label
@@ -868,6 +881,7 @@ func tags(values []string) string {
 		"chan_unknown":                          "缠论结构未知",
 		"structure_guard_fail":                  "结构门控不通过",
 		"structure_guard_unknown":               "结构门控数据不足",
+		"shadow_structure_not_validated":        "结构影子期·仅观察",
 		"insufficient_or_unprofitable_evidence": "匹配规则未通过历史检验",
 		"historical_net_loss_limit_breached":    "历史单笔净亏损超限",
 		"extended_price":                        "涨幅/偏离过大",

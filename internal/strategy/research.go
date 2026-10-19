@@ -144,6 +144,7 @@ type Candidate struct {
 	ObservationScoreBreakdown *ScoreBreakdown         `json:"observation_score_breakdown,omitempty"`
 	EligibleScoreBreakdown    *ScoreBreakdown         `json:"eligible_score_breakdown,omitempty"`
 	Recommended               bool                    `json:"recommended"`
+	DailyRecommended          bool                    `json:"daily_recommended,omitempty"`
 	EligibleRecommended       bool                    `json:"eligible_recommended"`
 	Rules                     []string                `json:"matched_rules"`
 	Evidence                  *Stats                  `json:"historical_evidence,omitempty"`
@@ -163,10 +164,11 @@ type ScoreBreakdown struct {
 	Final       float64 `json:"final_score"`
 }
 type Result struct {
-	Ranking     []Candidate
-	Excluded    map[string]string
-	Research    Research
-	GuardPassed int
+	Ranking       []Candidate
+	Excluded      map[string]string
+	Research      Research
+	GuardPassed   int
+	ExecutionMode string
 }
 
 func key(target float64, horizon int) string {
@@ -401,6 +403,7 @@ func rank(code, name string, f Features, stats []Stats, s config.Strategy) Candi
 		c.Risks = append(c.Risks, "upper_wick")
 	}
 	c.Recommended = c.Evidence != nil && c.Score >= s.MinRankScore && f.ATR14Pct <= 4 && f.MA20Distance <= 10 && f.Return5 <= 12
+	c.DailyRecommended = c.Recommended
 	return c
 }
 func sortRank(candidates []Candidate) {

@@ -50,7 +50,7 @@ func singleDayMinuteHistory(date string, bar market.Bar) market.MinuteHistory {
 	return market.MinuteHistory{Version: 1, Code: "sz000001", Name: "测试", Source: "tencent", Period: 5, BasePeriod: 5, Adjust: "none", VolumeUnit: "provider_raw", FetchedAt: day.Add(18 * time.Hour), Bars: bars}
 }
 
-func TestBuildWithExecutionMinutesMarksUnknownChanAsFiltered(t *testing.T) {
+func TestBuildWithExecutionMinutesShadowNeverSelectsLegacyUnknownCandidate(t *testing.T) {
 	c, histories, raw := executionFixture()
 	asof := histories[0].AsOf
 	minutes := singleDayMinuteHistory(asof, raw[0].Bars[len(raw[0].Bars)-1])
@@ -62,13 +62,28 @@ func TestBuildWithExecutionMinutesMarksUnknownChanAsFiltered(t *testing.T) {
 		t.Fatalf("Chan evidence missing: %+v", report.Ranking)
 	}
 	if report.Ranking[0].Chan.Status != "unknown" || report.Ranking[0].Recommended {
-		t.Fatalf("unknown Chan evidence should disable recommendation: %+v", report.Ranking[0])
+		t.Fatalf("shadow mode produced an executable recommendation: %+v", report.Ranking[0])
 	}
-	if len(report.Filtered) != 1 || report.Filtered[0].Reason != "chan_unknown" {
+	if report.ExecutionMode != "shadow" {
+		t.Fatalf("execution mode = %q, want shadow", report.ExecutionMode)
+	}
+	if len(report.Filtered) != 1 || report.Filtered[0].Reason != "shadow_structure_not_validated" {
 		t.Fatalf("wrong filtered reason: %+v", report.Filtered)
 	}
 	if report.Passed != 0 || len(report.Selected) != 0 {
 		t.Fatalf("unknown Chan evidence entered selection: passed=%d selected=%d", report.Passed, len(report.Selected))
+	}
+}
+
+func TestBuildWithExecutionMinutesEmptySliceKeepsDailyOnlyPath(t *testing.T) {
+	c, histories, raw := executionFixture()
+	asof := histories[0].AsOf
+	report, err := BuildWithExecutionMinutes(context.Background(), c, histories, raw, []market.MinuteHistory{}, asof, "2026-10-20", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Version != 2 || report.ExecutionMode != "legacy_daily" || len(report.Ranking) != 1 || report.Ranking[0].StructureGuard != nil {
+		t.Fatalf("empty minute slice did not preserve daily-only path: %+v", report)
 	}
 }
 
@@ -80,6 +95,7 @@ func TestRecommendationFilterReasonPrefersChanEvidence(t *testing.T) {
 	}{
 		{name: "chan fail", risks: []string{"chan_filtered", "chan_unknown"}, want: "chan_filtered"},
 		{name: "chan unknown", risks: []string{"chan_unknown"}, want: "chan_unknown"},
+		{name: "shadow only", risks: []string{"shadow_structure_not_validated"}, want: "shadow_structure_not_validated"},
 		{name: "other gate", risks: []string{"insufficient_or_unprofitable_evidence"}, want: "strategy_evidence_or_risk_gate"},
 	}
 	for _, test := range tests {

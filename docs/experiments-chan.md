@@ -41,7 +41,7 @@
 
 `structure_guard.mode` 默认为 `shadow`：
 
-- `shadow`：记录日线结构、30m/5m 否决证据、`observation_rank` 和 `eligible_rank`，但正式推荐仍走旧门控。
+- `shadow`：记录日线结构、30m/5m 否决证据、`observation_rank` 和 `eligible_rank`；不产生可执行推荐，只输出观察排名和结构通过排名。旧 5/15/30 只作诊断，不影响正式结论。
 - `enforce`：正式 Top N 只能来自 `guard_status=pass` 的 `eligible_rank`；没有合格股票时输出空推荐，不从全池递补。
 
 日线决定方向：
@@ -58,12 +58,12 @@
 - 5m 收盘跌破 30m 最近完成底分型低点：否决。
 - 低级别没有足够分型、笔或区间：只记 `unknown`，不额外解释成买点。
 
-报告 schema 3 新增 `structure_guard`、`guard_passed`、`observation_rank`、`eligible_rank` 和可复现评分推导。旧 schema 1/2 报告保持只读兼容。`structure_guard=pass` 只表示“未被结构过滤”，不是第一、二、三类买点，也不能绕过历史证据、机会分、风险和留出验证。
+报告 schema 3 新增 `structure_guard`、`guard_passed`、`observation_rank`、`eligible_rank`、`execution_mode` 和可复现评分推导。旧 schema 1/2 报告保持只读兼容。`structure_guard=pass` 只表示“未被结构过滤”，不是第一、二、三类买点，也不能绕过历史证据、机会分、风险和留出验证。`shadow` 报告不写 `selected`，`recommended` 不作为可执行结论；日线证据结论保留在 `daily_recommended`，用于审计。
 
 日线报告的 `Eligible` 仍表示有效日线覆盖率，不因结构门控缩小；主卡表格先给出 Top10 的状态、价格和主要风险，详情卡逐只补齐以下证据：
 
 - `结构门控`：日线 pass/fail/unknown、30m/5m 否决原因、观测排名和可入选排名。
-- `缠论门控`：旧 5/15/30 路径的通过、未通过或未知原因，仅用于影子期对照。
+- `旧 5/15/30 诊断`：旧路径的通过、未通过或未知原因；仅作对照，不改变正式结论，也不构成买点。
 - `评分推导`：基础分、日线评分贡献、加减分项、机会分和历史证据融合的完整算式。
 - `规则`：当日匹配的固定日线规则。
 

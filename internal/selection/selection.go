@@ -42,6 +42,7 @@ type Report struct {
 	Target           string               `json:"target_trading_date"`
 	GeneratedAt      time.Time            `json:"generated_at"`
 	Strategy         string               `json:"strategy"`
+	ExecutionMode    string               `json:"execution_mode,omitempty"`
 	SelectionEnabled bool                 `json:"selection_enabled"`
 	Adjust           string               `json:"adjust"`
 	MinScore         int                  `json:"min_score"`
@@ -179,7 +180,7 @@ func buildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 	}
 	var result strategy.Result
 	var err error
-	if minutes == nil {
+	if len(minutes) == 0 {
 		result, err = strategy.Analyze(ctx, c, histories, raw, asof)
 	} else {
 		result, err = strategy.AnalyzeWithChan(ctx, c, histories, raw, minutes, asof)
@@ -188,10 +189,14 @@ func buildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 		return Report{}, err
 	}
 	version := 2
-	if minutes != nil {
+	if len(minutes) > 0 {
 		version = 3
 	}
-	r := Report{Version: version, AsOf: asof, Target: target, GeneratedAt: now.In(market.Shanghai), Strategy: "short_horizon_v1", SelectionEnabled: c.Selection.Enabled, Adjust: c.Daily.Adjust, TopN: c.Selection.TopN, PoolSize: len(c.Stocks), Eligible: len(result.Ranking), GuardPassed: result.GuardPassed, Ranking: result.Ranking, Research: &result.Research, Selected: []Candidate{}, Excluded: []Excluded{}, Filtered: []Excluded{}, Rules: []string{
+	executionMode := result.ExecutionMode
+	if executionMode == "" {
+		executionMode = "legacy_daily"
+	}
+	r := Report{Version: version, AsOf: asof, Target: target, GeneratedAt: now.In(market.Shanghai), Strategy: "short_horizon_v1", ExecutionMode: executionMode, SelectionEnabled: c.Selection.Enabled, Adjust: c.Daily.Adjust, TopN: c.Selection.TopN, PoolSize: len(c.Stocks), Eligible: len(result.Ranking), GuardPassed: result.GuardPassed, Ranking: result.Ranking, Research: &result.Research, Selected: []Candidate{}, Excluded: []Excluded{}, Filtered: []Excluded{}, Rules: []string{
 		fmt.Sprintf("次日开盘模拟买入；净止盈 %.1f%% / 净止损 %.1f%%", c.Strategy.TargetNetPct, c.Strategy.StopNetPct),
 		fmt.Sprintf("买入当日不卖出；买入后第 %d 个交易日收盘到期退出", c.Strategy.MaxHoldingDays),
 		"历史验收硬条件：单笔扣费后净亏损严格低于投入的3%，超限或未决不通过；止损触发价不保证实盘成交价",
@@ -208,7 +213,14 @@ func buildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 	}
 	for _, x := range r.Ranking {
 		if !x.Recommended {
-			r.Filtered = append(r.Filtered, Excluded{Code: x.Code, Reason: recommendationFilterReason(x.Risks)})
+			reason := recommendationFilterReason(x.Risks)
+			if executionMode == strategy.StructureGuardShadow {
+				reason = "shadow_structure_not_validated"
+			}
+			r.Filtered = append(r.Filtered, Excluded{Code: x.Code, Reason: reason})
+			continue
+		}
+		if executionMode == strategy.StructureGuardShadow {
 			continue
 		}
 		r.Passed++
@@ -247,6 +259,9 @@ func recommendationFilterReason(risks []string) string {
 	}
 	if hasRisk(risks, "structure_guard_unknown") {
 		return "structure_guard_unknown"
+	}
+	if hasRisk(risks, "shadow_structure_not_validated") {
+		return "shadow_structure_not_validated"
 	}
 	return "strategy_evidence_or_risk_gate"
 }
