@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"stock-watcher/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 )
 
 const HistoryVersion = 1

@@ -5,13 +5,13 @@ package health
 import (
 	"context"
 	"errors"
-	"stock-watcher/internal/calendar"
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/intraday"
-	"stock-watcher/internal/market"
-	"stock-watcher/internal/monitor"
-	"stock-watcher/internal/notify"
-	"stock-watcher/internal/storage"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/intraday"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/monitor"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 	"time"
 )
 

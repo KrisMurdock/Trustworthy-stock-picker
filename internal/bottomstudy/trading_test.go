@@ -1,11 +1,11 @@
 package bottomstudy
 
 import (
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 	"math"
 	"reflect"
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/market"
-	"stock-watcher/internal/strategy"
 	"testing"
 )
 

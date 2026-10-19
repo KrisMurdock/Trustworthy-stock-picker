@@ -9,20 +9,19 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"stock-watcher/internal/calendar"
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/dashboard"
-	"stock-watcher/internal/feishu"
-	"stock-watcher/internal/health"
-	"stock-watcher/internal/intraday"
-	"stock-watcher/internal/logging"
-	"stock-watcher/internal/market"
-	"stock-watcher/internal/monitor"
-	"stock-watcher/internal/notify"
-	"stock-watcher/internal/storage"
-	"stock-watcher/internal/strategy"
 	"syscall"
 	"time"
+
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/channels"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/health"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/intraday"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/monitor"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
+	stockruntime "github.com/KrisMurdock/Trustworthy-stock-picker/runtime"
 )
 
 var version = "development"
@@ -101,7 +100,7 @@ func run(args []string) error {
 			return errors.New("experiment -holdout reuses the parent policy and cannot be combined with -policy")
 		}
 	}
-	c, err := config.Load()
+	c, err := stockruntime.LoadConfig()
 	if err != nil {
 		return err
 	}
@@ -113,20 +112,11 @@ func run(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(p)
 	}
 	if command == "init" {
-		if err := storage.EnsureRoot(c.DataDir, c.RequireCIFS); err != nil {
-			return err
-		}
-		store, err := storage.Open(c.DataDir, c.RequireCIFS)
+		path, err := stockruntime.Init(&c)
 		if err != nil {
 			return err
 		}
-		defer store.Close()
-		marketDB, err := storage.InitMarket(c.DataDir, c.RequireCIFS)
-		if err != nil {
-			return err
-		}
-		defer marketDB.Close()
-		return json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "initialized", "market_db": marketDB.Path()})
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "initialized", "market_db": path})
 	}
 	options, err := logging.EnvOptions()
 	if err != nil {
@@ -168,6 +158,14 @@ func run(args []string) error {
 			interval = &strategy.BacktestRange{From: *from, Through: *through}
 		}
 		return runExperiment(ctx, c, *asof, *parent, *policy, log, interval)
+	}
+	if command == "run" {
+		rt, err := stockruntime.New(stockruntime.Options{Version: version, Config: &c, Logger: log})
+		if err != nil {
+			return err
+		}
+		defer rt.Close()
+		return rt.Run(ctx)
 	}
 	openStore := storage.Open
 	readOnly := false
@@ -216,7 +214,7 @@ func run(args []string) error {
 		return err
 	}
 	defer source.Close()
-	channels, closeChannels, err := buildChannels(c)
+	noticeChannels, closeChannels, err := channels.Build(c)
 	if err != nil {
 		return err
 	}
@@ -225,13 +223,13 @@ func run(args []string) error {
 		log.RegisterSecret(channel.Webhook)
 		log.RegisterSecret(channel.Secret)
 	}
-	m := monitor.NewWithMarketDB(c, store, marketDB, source, channels, log)
+	m := monitor.NewWithMarketDB(c, store, marketDB, source, noticeChannels, log)
 	m.BuildVersion = version
 	cal := calendar.New(c)
 	if _, err := cal.Trading(calendar.Date(time.Now())); err != nil {
 		return err
 	}
-	log.Info("Stock watcher started", "command", command, "version", version, "pool_size", len(c.Stocks), "notification_channels", len(channels))
+	log.Info("Stock watcher started", "command", command, "version", version, "pool_size", len(c.Stocks), "notification_channels", len(noticeChannels))
 	printJSON := func(v any) error { return json.NewEncoder(os.Stdout).Encode(v) }
 	switch command {
 	case "check":
@@ -242,7 +240,7 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		return printJSON(map[string]any{"status": "ready", "pool_size": len(c.Stocks), "cifs_required": c.RequireCIFS, "notification_channels": len(channels), "selection_enabled": c.Selection.Enabled, "calendar_through": c.Calendar.ValidThrough, "market_sources": source.Names()})
+		return printJSON(map[string]any{"status": "ready", "pool_size": len(c.Stocks), "cifs_required": c.RequireCIFS, "notification_channels": len(noticeChannels), "selection_enabled": c.Selection.Enabled, "calendar_through": c.Calendar.ValidThrough, "market_sources": source.Names()})
 	case "replay":
 		r, err := m.Replay(ctx, *revision)
 		if err != nil {
@@ -308,52 +306,6 @@ func run(args []string) error {
 		return m.Retry(channel)
 	case "once":
 		return m.Cycle(ctx)
-	case "run":
-		monitorRun := m.Run
-		if c.Intraday.Enabled {
-			client := market.NewMinuteClient(c)
-			defer client.Close()
-			minuteMonitor := intraday.New(c, store, marketDB, client, log)
-			monitorRun = func(ctx context.Context) error { return runMonitors(ctx, m.Run, minuteMonitor.Run) }
-		}
-		var err error
-		if c.Web.Enabled {
-			err = runServices(ctx, c.Web.Listen, dashboard.NewHandler(c, marketDB, log), monitorRun, log)
-		} else {
-			err = monitorRun(ctx)
-		}
-		if errors.Is(err, context.Canceled) {
-			log.Info("Stock watcher stopped")
-			return nil
-		}
-		return err
 	}
 	return nil
-}
-
-func buildChannels(c config.Config) ([]notify.Channel, func(), error) {
-	specs := c.NotificationChannels()
-	channels := make([]notify.Channel, 0, len(specs))
-	closers := []func(){}
-	for _, spec := range specs {
-		switch spec.Type {
-		case "feishu":
-			if spec.Webhook == "" {
-				return nil, func() {}, errors.New("enabled Feishu channel requires a webhook")
-			}
-			if err := feishu.ValidateWebhook(spec.Webhook); err != nil {
-				return nil, func() {}, errors.New("enabled Feishu channel has an invalid webhook")
-			}
-			client := feishu.NewNamedClient(spec.Name, spec.Webhook, spec.Secret, config.Duration(c.Timeout))
-			channels = append(channels, client)
-			closers = append(closers, client.Close)
-		default:
-			return nil, func() {}, errors.New("unsupported notification channel type")
-		}
-	}
-	return channels, func() {
-		for _, close := range closers {
-			close()
-		}
-	}, nil
 }

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/indicators"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/indicators"
 )
 
 func TestOpportunityFormulaIsReproducible(t *testing.T) {

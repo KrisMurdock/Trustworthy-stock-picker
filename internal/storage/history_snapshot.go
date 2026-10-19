@@ -7,9 +7,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"io"
-	"stock-watcher/internal/market"
-	"stock-watcher/internal/selection"
 )
 
 // Snapshots preserve exact upstream values and provenance. daily_bar remains a

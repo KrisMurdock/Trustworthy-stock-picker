@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"stock-watcher/internal/calendar"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
 
 	_ "modernc.org/sqlite"
 )

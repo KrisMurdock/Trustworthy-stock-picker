@@ -6,8 +6,8 @@ import (
 	"io/fs"
 	"time"
 
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 )
 
 // listingStock never infers an IPO date from a provider's first available bar.

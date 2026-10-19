@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"stock-watcher/internal/bottomstudy"
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/experiment"
-	"stock-watcher/internal/storage"
-	"stock-watcher/internal/strategy"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/bottomstudy"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/experiment"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 	"time"
 )
 

@@ -3,11 +3,11 @@ package dashboard
 import (
 	"context"
 	"errors"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/experiment"
 	"io/fs"
 	"net/http"
 	"net/url"
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/experiment"
 	"time"
 )
 

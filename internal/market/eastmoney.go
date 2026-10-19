@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"stock-watcher/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 )
 
 // EastmoneyClient uses the upstream HTTP endpoint used by AKShare's

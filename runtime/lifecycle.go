@@ -1,4 +1,4 @@
-package main
+package runtime
 
 import (
 	"context"
@@ -7,9 +7,10 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"stock-watcher/internal/logging"
 	"strconv"
 	"time"
+
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 )
 
 // runMonitors starts independent ingestion loops and joins all of them before

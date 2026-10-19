@@ -1,8 +1,8 @@
 package experiment
 
 import (
-	"stock-watcher/internal/market"
-	"stock-watcher/internal/strategy"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 	"testing"
 )
 

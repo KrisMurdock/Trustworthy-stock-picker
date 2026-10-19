@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"stock-watcher/internal/chanlun"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/chanlun"
 )
 
 var invariantStart = time.Date(2026, 9, 1, 9, 30, 0, 0, time.UTC)

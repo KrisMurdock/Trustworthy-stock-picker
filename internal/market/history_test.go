@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"stock-watcher/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 )
 
 func historicalRows(start, end string) [][]string {

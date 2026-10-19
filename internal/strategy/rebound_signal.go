@@ -2,8 +2,8 @@ package strategy
 
 import (
 	"fmt"
-	"stock-watcher/internal/chanlun"
-	"stock-watcher/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/chanlun"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"time"
 )
 

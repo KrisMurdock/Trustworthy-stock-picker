@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"sort"
-	"stock-watcher/internal/market"
 	"time"
 )
 

@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"stock-watcher/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 )
 
 const baoSeparator = "\x01"

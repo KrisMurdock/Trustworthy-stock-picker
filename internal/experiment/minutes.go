@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"sort"
-	"stock-watcher/internal/market"
 )
 
 // WithMinutes freezes the actual paths in the digest; old snapshots with no

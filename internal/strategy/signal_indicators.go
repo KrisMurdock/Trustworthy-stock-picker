@@ -1,9 +1,9 @@
 package strategy
 
 import (
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/indicators"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"math"
-	"stock-watcher/internal/indicators"
-	"stock-watcher/internal/market"
 )
 
 // Bollinger uses 20 closes, a simple average and population standard deviation.

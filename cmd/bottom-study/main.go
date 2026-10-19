@@ -11,11 +11,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/bottomstudy"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/experiment"
 	"io"
 	"os"
 	"os/signal"
-	"stock-watcher/internal/bottomstudy"
-	"stock-watcher/internal/experiment"
 	"syscall"
 	"time"
 )

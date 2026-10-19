@@ -3,9 +3,9 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/experiment"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 	"reflect"
-	"stock-watcher/internal/experiment"
-	"stock-watcher/internal/strategy"
 	"testing"
 	"time"
 )

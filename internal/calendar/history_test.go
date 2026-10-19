@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"stock-watcher/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 )
 
 func testHistory(t *testing.T, source, from, through string, days []string) History {

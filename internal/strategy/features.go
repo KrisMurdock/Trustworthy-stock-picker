@@ -3,9 +3,9 @@ package strategy
 import (
 	"errors"
 	"fmt"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/indicators"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"math"
-	"stock-watcher/internal/indicators"
-	"stock-watcher/internal/market"
 )
 
 type Features struct {

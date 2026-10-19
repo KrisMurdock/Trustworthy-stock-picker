@@ -1,7 +1,7 @@
 package strategy
 
 import (
-	"stock-watcher/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"testing"
 	"time"
 )

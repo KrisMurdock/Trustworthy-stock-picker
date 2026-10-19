@@ -10,8 +10,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"golang.org/x/text/encoding/simplifiedchinese"
-	"stock-watcher/internal/config"
 )
 
 // Listing records a separately verified listing date, never a first price bar.

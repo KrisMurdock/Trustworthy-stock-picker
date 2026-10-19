@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"stock-watcher/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 )
 
 func TestCohortUsesFixedSlotsAndExcludesUnknownDates(t *testing.T) {

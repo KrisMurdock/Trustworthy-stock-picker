@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"stock-watcher/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 )
 
 // SinaClient implements the upstream used by AKShare stock_zh_a_daily in Go.

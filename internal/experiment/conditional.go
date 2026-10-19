@@ -2,7 +2,7 @@ package experiment
 
 import (
 	"errors"
-	"stock-watcher/internal/strategy"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 )
 
 func conditionalSpecification(rule string) (Spec, error) {

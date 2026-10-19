@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"stock-watcher/internal/calendar"
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/logging"
-	"stock-watcher/internal/market"
-	"stock-watcher/internal/storage"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 )
 
 type Source interface {

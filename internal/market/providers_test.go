@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"stock-watcher/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 )
 
 var providerStock = config.Stock{Code: "sh688981", Name: "中芯国际"}

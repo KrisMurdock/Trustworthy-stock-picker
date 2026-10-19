@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"io/fs"
-	"stock-watcher/internal/config"
 	"time"
 )
 

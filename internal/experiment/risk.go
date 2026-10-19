@@ -1,6 +1,6 @@
 package experiment
 
-import "stock-watcher/internal/strategy"
+import "github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 
 // Review is a read-time assessment under today's acceptance policy. It is not
 // written over the archived verdict, hypothesis or simulated executions.

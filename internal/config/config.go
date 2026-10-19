@@ -79,6 +79,7 @@ type Config struct {
 		Source       string   `yaml:"-"`
 		Digest       string   `yaml:"-"`
 	} `yaml:"calendar"`
+	prepared bool
 }
 
 type StructureGuard struct {
@@ -138,6 +139,16 @@ func Load(paths ...string) (Config, error) {
 	default:
 		return Config{}, errors.New("at most one configuration path is supported")
 	}
+}
+
+// Prepare finalizes an externally constructed configuration. Values returned by
+// Load are already prepared; preparing them again only revalidates and refreshes
+// environment-backed secrets.
+func Prepare(c Config, baseDir string) (Config, error) {
+	if c.prepared {
+		return finalize(c, baseDir)
+	}
+	return resolve(c, baseDir)
 }
 
 func loadFile(path string) (Config, error) {
@@ -226,6 +237,10 @@ func resolve(c Config, baseDir string) (Config, error) {
 			}
 		}
 	}
+	return finalize(c, baseDir)
+}
+
+func finalize(c Config, baseDir string) (Config, error) {
 	if strings.TrimSpace(c.DataDir) == "" {
 		return Config{}, errors.New("data_dir is required")
 	}
@@ -238,6 +253,7 @@ func resolve(c Config, baseDir string) (Config, error) {
 	}
 	c.DataDir = absolute
 	c.Market.loadCredentials()
+	c.prepared = true
 	return c, c.Validate()
 }
 

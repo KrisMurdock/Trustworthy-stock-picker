@@ -1,7 +1,7 @@
 package strategy
 
 import (
-	"stock-watcher/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 )
 
 // conditionalSignal is one preselected stock/signal-date sample. Cross-sectional

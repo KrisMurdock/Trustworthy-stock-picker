@@ -293,3 +293,29 @@ func TestBuiltinCIFSModeCanBeEnabled(t *testing.T) {
 		t.Fatal("CIFS requirement not enabled")
 	}
 }
+
+func TestPrepareLoadedConfigurationIsIdempotent(t *testing.T) {
+	root := t.TempDir()
+	pool := filepath.Join(root, "leaders.yaml")
+	if err := os.WriteFile(pool, []byte("schema_version: 1\nstocks:\n  - code: sz000001\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STOCK_WATCHER_DATA_DIR", root)
+	t.Setenv("STOCK_WATCHER_REQUIRE_CIFS", "false")
+	t.Setenv("STOCK_WATCHER_FEISHU_ENABLED", "false")
+	t.Setenv("STOCK_WATCHER_POOL_FILE", pool)
+	t.Setenv("STOCK_WATCHER_CALENDAR_VALID_FROM", "2020-01-01")
+	t.Setenv("STOCK_WATCHER_CALENDAR_VALID_THROUGH", "2099-12-31")
+	t.Setenv("STOCK_WATCHER_CALENDAR_HOLIDAYS", "")
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := Prepare(loaded, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.DataDir != root || len(prepared.Stocks) != 1 || prepared.Stocks[0].Code != "sz000001" {
+		t.Fatalf("prepared config changed: %+v", prepared)
+	}
+}

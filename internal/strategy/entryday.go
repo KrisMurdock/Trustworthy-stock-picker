@@ -1,6 +1,6 @@
 package strategy
 
-import "stock-watcher/internal/config"
+import "github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 
 // EntryDay is a cost-reserved mark at the entry day's close, not a T+0 sale.
 // Missing legacy observations remain unknown; never infer a fill from the low.

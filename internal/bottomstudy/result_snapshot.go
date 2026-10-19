@@ -2,8 +2,8 @@ package bottomstudy
 
 import (
 	"fmt"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/experiment"
 	"math"
-	"stock-watcher/internal/experiment"
 )
 
 // SpeedResultSnapshot keeps every training-selected parameter pair in both

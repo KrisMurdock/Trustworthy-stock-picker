@@ -2,8 +2,8 @@ package strategy
 
 import (
 	"errors"
-	"stock-watcher/internal/calendar"
-	"stock-watcher/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"time"
 )
 

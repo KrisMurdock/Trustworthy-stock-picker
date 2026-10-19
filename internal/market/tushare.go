@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"stock-watcher/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 )
 
 // TushareClient uses the official REST API directly. The token is never part

@@ -17,6 +17,7 @@
 
 ```text
 cmd/                     Go 命令入口
+runtime/                 可嵌入其他 Go 项目的运行时入口
 internal/                配置、数据源、存储、筛选、研究、通知、日志等模块
 leaders.yaml             已核对股池（外部运行时数据）
 feishu.config            私有飞书凭证（不提交）
@@ -41,4 +42,4 @@ scripts/ 只组织构建或 exec Go 二进制，生产容器和 systemd 直接�
 
 support-agent 的 LLM 提示词、内部镜像仓库与 GitLab 私有流水线依赖不适用于本项目，因此不创建 db/、conf/prompts 或空占位目录。本项目已提供 Go 内嵌只读网页及 HTTP API，同一监听端口承载 `/healthz`、`/readyz` 和 `/api/status`，无需独立前端容器。SQLite 迁移由 `internal/storage` 的版本化代码管理，不创建空的 db/ 目录。
 
-`internal/selection/engine.go` 定义日常算法计算边界；`internal/health` 汇总只读业务健康；任务和快照仍由 `internal/storage` 管理。实验代码保持独立，实验结果不会自动进入生产推送。
+`runtime/` 只暴露配置、初始化、运行、看板和日志入口，内部存储与行情实现仍由 `internal/` 持有。`internal/selection/engine.go` 定义日常算法计算边界；`internal/health` 汇总只读业务健康；任务和快照仍由 `internal/storage` 管理。实验代码保持独立，实验结果不会自动进入生产推送。

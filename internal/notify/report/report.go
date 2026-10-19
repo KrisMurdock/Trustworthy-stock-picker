@@ -2,12 +2,12 @@ package report
 
 import (
 	"fmt"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/diagnostics"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 	"sort"
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/diagnostics"
-	"stock-watcher/internal/notify"
-	"stock-watcher/internal/selection"
-	"stock-watcher/internal/strategy"
 	"strings"
 	"time"
 )

@@ -1,6 +1,6 @@
 package strategy
 
-import "stock-watcher/internal/config"
+import "github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 
 const (
 	MinCohortSignalDates = 30

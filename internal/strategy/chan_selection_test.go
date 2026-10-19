@@ -3,7 +3,7 @@ package strategy
 import (
 	"testing"
 
-	"stock-watcher/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 )
 
 func TestLegacyChanDiagnosticDoesNotChangeRecommendation(t *testing.T) {

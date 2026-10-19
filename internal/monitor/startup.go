@@ -3,9 +3,9 @@ package monitor
 import (
 	"context"
 	"errors"
-	"stock-watcher/internal/calendar"
-	reportmessage "stock-watcher/internal/notify/report"
-	"stock-watcher/internal/selection"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
+	reportmessage "github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify/report"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 )
 
 // prepareStartup refreshes the complete pool even when a report already exists.

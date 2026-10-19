@@ -14,6 +14,7 @@
 
 <p align="center">
   <a href="#快速开始">快速开始</a> ·
+  <a href="#嵌入-go-项目">嵌入 Go</a> ·
   <a href="#核心能力">核心能力</a> ·
   <a href="#工作原理">工作原理</a> ·
   <a href="#配置">配置</a> ·
@@ -80,6 +81,63 @@ make run
 将 `YYYY-MM-DD` 替换为最近已完成的交易日。`check-config` 只校验配置、股池、凭证和日志设置，`check` 才检查数据库、交易日历和投递状态。首次部署或升级数据库 schema 后，必须先完成 `status-backfill`；未完成时 `sync` 和 `run` 会拒绝发布。
 
 `make run` 启动后会先绑定网页端口，再执行启动同步。网页默认地址为 `http://127.0.0.1:8080/`；常驻进程按内置的 `daily.run_at`（默认北京时间 18:05）处理后续交易日。
+
+## 嵌入 Go 项目
+
+其他 Go 程序可以直接依赖本仓库的 `runtime` 包，复用配置加载、SQLite 存储、行情同步、调度、通知和只读看板，无需启动 `stock-watcher` 子进程。
+
+```go
+package main
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"os/signal"
+	"syscall"
+
+	stockwatcher "github.com/KrisMurdock/Trustworthy-stock-picker/runtime"
+)
+
+func main() {
+	cfg, err := stockwatcher.LoadConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+	cfg.DataDir = "/srv/stock-watcher/data"
+	cfg.PoolFile = ""
+	cfg.Stocks = []stockwatcher.Stock{{Code: "sz000001", Name: "平安银行"}}
+	cfg.Web.Enabled = false // 由宿主进程挂载看板 handler
+
+	if _, err := stockwatcher.Init(&cfg); err != nil {
+		log.Fatal(err)
+	}
+	logger, err := stockwatcher.NewLogger(stockwatcher.LoggerOptions{
+		Dir: "logs", MaxBytes: 10 << 20, MaxDays: 7, Backups: 10, Color: "auto",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer logger.Close()
+
+	rt, err := stockwatcher.New(stockwatcher.Options{Version: "my-app", Config: &cfg, Logger: logger})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rt.Close()
+
+	mux := http.NewServeMux()
+	mux.Handle("/", rt.DashboardHandler())
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	if err := rt.Run(ctx); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+`Runtime` 不接管 `os/signal`，由宿主控制退出；同一数据目录只允许一个写入实例。完整接口与生命周期说明见[作为 Go 库嵌入](docs/embedding.md)。
 
 ## 常用命令
 
@@ -270,6 +328,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | 路径 | 职责 |
 | --- | --- |
 | `cmd/stock-watcher` | 唯一生产入口和命令编排 |
+| `runtime` | 可被其他 Go 项目导入的运行时、初始化与看板 handler |
 | `cmd/bottom-study` | 底部形态与止损/持有期研究工具 |
 | `cmd/resolve-pool` | 股池名称与代码核对辅助工具 |
 | `internal/config` | 内置生产配置、环境变量覆盖和严格校验 |
@@ -290,6 +349,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 
 | 主题 | 文档 |
 | --- | --- |
+| 嵌入与集成 | [作为 Go 库嵌入](docs/embedding.md) |
 | 环境与配置 | [环境变量](docs/environment-variables.md) · [工程结构](docs/repository-layout.md) |
 | 数据与运行 | [行情来源与回退](docs/data-sources.md) · [部署与排障](docs/deployment.md) |
 | 开发与发布 | [开发、CI 与发布包](docs/development.md) · [测试范围](tests/README.md) |

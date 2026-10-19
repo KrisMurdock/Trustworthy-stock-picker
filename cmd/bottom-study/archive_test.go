@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/bottomstudy"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/experiment"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 	"os"
 	"path/filepath"
 	"reflect"
-	"stock-watcher/internal/bottomstudy"
-	"stock-watcher/internal/experiment"
-	"stock-watcher/internal/storage"
 	"testing"
 )
 

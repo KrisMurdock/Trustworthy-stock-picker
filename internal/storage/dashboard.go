@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/indicators"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"io/fs"
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/indicators"
-	"stock-watcher/internal/market"
-	"stock-watcher/internal/selection"
 	"time"
 )
 

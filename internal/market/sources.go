@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/logging"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 )
 
 type Provider struct {

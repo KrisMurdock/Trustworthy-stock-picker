@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"stock-watcher/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 )
 
 var Shanghai = time.FixedZone("Asia/Shanghai", 8*60*60)
@@ -244,7 +244,7 @@ func (c *Client) FetchWindow(ctx context.Context, stock config.Stock, start, end
 	if err != nil {
 		return h, &Failure{Kind: "request"}
 	}
-	req.Header.Set("User-Agent", "stock-watcher/1.0")
+	req.Header.Set("User-Agent", "github.com/KrisMurdock/Trustworthy-stock-picker/1.0")
 	if err := c.pacer.wait(ctx); err != nil {
 		return h, err
 	}

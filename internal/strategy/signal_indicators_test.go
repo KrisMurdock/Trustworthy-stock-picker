@@ -2,10 +2,10 @@ package strategy
 
 import (
 	"context"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/indicators"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"math"
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/indicators"
-	"stock-watcher/internal/market"
 	"testing"
 	"time"
 )

@@ -4,9 +4,9 @@ package bottomstudy
 
 import (
 	"context"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/indicators"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"math"
-	"stock-watcher/internal/indicators"
-	"stock-watcher/internal/market"
 )
 
 const warmup = 60

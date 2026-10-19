@@ -3,12 +3,12 @@ package monitor
 import (
 	"bytes"
 	"context"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 	"os"
 	"path/filepath"
-	"stock-watcher/internal/market"
-	"stock-watcher/internal/notify"
-	"stock-watcher/internal/selection"
-	"stock-watcher/internal/storage"
 	"testing"
 	"time"
 )

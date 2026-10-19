@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"stock-watcher/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 )
 
 func sinaFixture(t *testing.T, code string) ([]byte, string) {

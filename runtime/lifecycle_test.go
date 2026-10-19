@@ -1,13 +1,14 @@
-package main
+package runtime
 
 import (
 	"context"
 	"errors"
 	"net"
 	"net/http"
-	"stock-watcher/internal/logging"
 	"testing"
 	"time"
+
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 )
 
 func TestServicesRejectOccupiedPortBeforeMonitorStarts(t *testing.T) {

@@ -2,7 +2,7 @@ package storage
 
 import (
 	"context"
-	"stock-watcher/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"testing"
 	"time"
 )

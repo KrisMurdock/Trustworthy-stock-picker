@@ -1,7 +1,7 @@
 package bottomstudy
 
 import (
-	"stock-watcher/internal/experiment"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/experiment"
 	"testing"
 )
 

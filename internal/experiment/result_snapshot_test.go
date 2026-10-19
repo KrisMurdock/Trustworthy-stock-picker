@@ -1,9 +1,9 @@
 package experiment
 
 import (
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 	"reflect"
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/strategy"
 	"testing"
 )
 

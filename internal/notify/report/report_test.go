@@ -3,10 +3,10 @@ package report
 import (
 	"encoding/json"
 	"fmt"
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/notify"
-	"stock-watcher/internal/selection"
-	"stock-watcher/internal/strategy"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 	"strings"
 	"testing"
 )

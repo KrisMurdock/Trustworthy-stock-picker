@@ -1,9 +1,9 @@
 package dashboard
 
 import (
-	"stock-watcher/internal/diagnostics"
-	"stock-watcher/internal/selection"
-	"stock-watcher/internal/storage"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/diagnostics"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 )
 
 type reportView struct {

@@ -3,9 +3,9 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"path/filepath"
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/market"
 	"testing"
 	"time"
 )

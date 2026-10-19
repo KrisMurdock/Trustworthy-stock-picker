@@ -3,9 +3,9 @@ package bottomstudy
 import (
 	"context"
 	"errors"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/experiment"
 	"math"
 	"sort"
-	"stock-watcher/internal/experiment"
 )
 
 const SpeedEngine = "no_stop_holding_speed_v1"

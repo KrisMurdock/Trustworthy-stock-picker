@@ -3,9 +3,9 @@ package bottomstudy
 import (
 	"context"
 	"errors"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"math"
 	"reflect"
-	"stock-watcher/internal/market"
 	"testing"
 	"time"
 )

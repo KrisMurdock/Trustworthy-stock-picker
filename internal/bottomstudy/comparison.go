@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/experiment"
 	"sort"
-	"stock-watcher/internal/experiment"
 )
 
 const ComparisonEngine = "stock_sector_market_pair_v1"

@@ -2,9 +2,9 @@ package strategy
 
 import (
 	"context"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"sort"
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/market"
 )
 
 // AnalyzeWithChan attaches the legacy 5/15/30-minute Chan diagnostic and the

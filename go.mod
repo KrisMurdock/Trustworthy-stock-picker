@@ -1,4 +1,4 @@
-module stock-watcher
+module github.com/KrisMurdock/Trustworthy-stock-picker
 
 go 1.26.0
 

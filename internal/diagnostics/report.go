@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"stock-watcher/internal/selection"
-	"stock-watcher/internal/strategy"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 )
 
 type Issue struct {

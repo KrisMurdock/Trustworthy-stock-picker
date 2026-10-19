@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"golang.org/x/text/encoding/simplifiedchinese"
-	"stock-watcher/internal/config"
 )
 
 const listingHTML = `<html><title>联讯仪器(688808)新股发行_新浪财经_新浪网</title><table><tr><td>发行日期</td><td>2026-04-03</td></tr><tr><td width="170"><strong>上市日期</strong></td><td>2026-04-24</td></tr></table></html>`

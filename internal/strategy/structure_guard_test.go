@@ -1,9 +1,9 @@
 package strategy
 
 import (
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"math"
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/market"
 	"testing"
 	"time"
 )

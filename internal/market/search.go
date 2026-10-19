@@ -3,11 +3,11 @@ package market
 import (
 	"context"
 	"errors"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"io"
 	"net/http"
 	"net/url"
-	"stock-watcher/internal/config"
 	"strings"
 )
 

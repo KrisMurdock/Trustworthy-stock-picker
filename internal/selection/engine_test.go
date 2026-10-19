@@ -3,8 +3,8 @@ package selection
 import (
 	"context"
 	"errors"
-	"stock-watcher/internal/config"
-	"stock-watcher/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"strings"
 	"testing"
 	"time"

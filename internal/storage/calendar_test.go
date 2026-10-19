@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"stock-watcher/internal/calendar"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
 )
 
 func calendarWindow(t *testing.T, source, from, through string, days []string) calendar.History {

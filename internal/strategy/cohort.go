@@ -1,10 +1,10 @@
 package strategy
 
 import (
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"math"
 	"math/rand"
 	"sort"
-	"stock-watcher/internal/config"
 )
 
 const (
