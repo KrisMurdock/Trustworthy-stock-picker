@@ -1,4 +1,4 @@
-<h1 align="center">Stock Watcher</h1>
+<h1 align="center">Trustworthy-stock-picker</h1>
 
 <p align="center">
   <strong>A 股龙头股池 · 十年日线 · 多源回退 · 短线研究 · 内嵌看板</strong>
