@@ -4,6 +4,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
+COPY runtime ./runtime
 ARG VERSION=development
 RUN CGO_ENABLED=0 go build -p=1 -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /stock-watcher ./cmd/stock-watcher
 
