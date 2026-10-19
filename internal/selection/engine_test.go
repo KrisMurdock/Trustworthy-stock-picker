@@ -13,6 +13,7 @@ import (
 type testEngine struct {
 	mutate  bool
 	invalid bool
+	enable  bool
 }
 
 func (testEngine) Descriptor() EngineDescriptor {
@@ -26,6 +27,7 @@ func (e testEngine) Analyze(ctx context.Context, in Input) (Report, error) {
 		in.Histories[0].Bars[0].Close = 100
 	}
 	r := Report{Version: 1, ID: "test", AsOf: in.AsOf, Target: in.Target, Adjust: "none", Strategy: "test_v1"}
+	r.SelectionEnabled = e.enable
 	if e.invalid {
 		r.Selected = []Candidate{{Code: "sh600519"}}
 	}
@@ -51,6 +53,9 @@ func TestEngineBoundaryCopiesInputsAndRejectsInvalidResults(t *testing.T) {
 	}
 	if _, err := Execute(context.Background(), testEngine{invalid: true}, in, "test"); err == nil {
 		t.Fatal("outside-pool result accepted")
+	}
+	if _, err := Execute(context.Background(), testEngine{enable: true}, in, "test"); err == nil {
+		t.Fatal("algorithm enabled disabled publishing")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

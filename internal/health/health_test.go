@@ -46,6 +46,21 @@ func TestBusinessFreshnessAndReadinessAreSeparate(t *testing.T) {
 	if err != nil || !stale.Ready || stale.Business != "degraded" || stale.ExpectedDate != "2026-10-19" {
 		t.Fatalf("stale data hidden: %+v %v", stale, err)
 	}
+	// A startup refresh can publish today's data before the normal run time.
+	h.AsOf = "2026-10-19"
+	h.Bars[0].Date = h.AsOf
+	h.FetchedAt = now.Add(72 * time.Hour)
+	report.ID = "monday"
+	report.AsOf = h.AsOf
+	report.Target = "2026-10-20"
+	report.GeneratedAt = h.FetchedAt
+	if err := db.CommitSnapshot(context.Background(), storage.SyncRun{ID: "monday", AsOf: h.AsOf, StartedAt: h.FetchedAt, FinishedAt: h.FetchedAt, CoveragePct: 100}, []storage.SyncItem{{Stock: c.Stocks[0], Adjusted: &h, Status: "ok"}}, report); err != nil {
+		t.Fatal(err)
+	}
+	early, err := Read(context.Background(), c, db, time.Date(2026, 10, 19, 16, 0, 0, 0, market.Shanghai))
+	if err != nil || early.Business != "healthy" || early.ExpectedDate != "2026-10-19" {
+		t.Fatalf("early published session ignored: %+v %v", early, err)
+	}
 	if _, err := os.Stat(filepath.Join(c.DataDir, "state/delivery.json")); !os.IsNotExist(err) {
 		t.Fatal("health wrote a ledger")
 	}

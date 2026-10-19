@@ -41,6 +41,7 @@ func Read(ctx context.Context, c config.Config, db *storage.MarketDB, now time.T
 	}
 	// Until the scheduled daily refresh, the previous session is still expected.
 	// This also keeps normal weekends and exchange holidays from looking stale.
+	completed := day
 	local := now.In(market.Shanghai)
 	if day == calendar.Date(local) && local.Format("15:04") < c.Daily.RunAt {
 		midnight := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, market.Shanghai)
@@ -53,6 +54,17 @@ func Read(ctx context.Context, c config.Config, db *storage.MarketDB, now time.T
 	data, err := db.RuntimeStatus(ctx, c.Stocks, day, c.Daily.Adjust)
 	if err != nil {
 		return out, err
+	}
+	// Startup may have already published the newer completed session.
+	if completed != day {
+		current, err := db.RuntimeStatus(ctx, c.Stocks, completed, c.Daily.Adjust)
+		if err != nil {
+			return out, err
+		}
+		if current.ReportReady && len(c.Stocks) > 0 && float64(current.Available)*100/float64(len(c.Stocks)) >= c.Sync.MinCoveragePct {
+			data = current
+			out.ExpectedDate = completed
+		}
 	}
 	view, err := storage.OpenView(c.DataDir, c.RequireCIFS)
 	if err != nil {

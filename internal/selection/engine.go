@@ -133,7 +133,7 @@ func Execute(ctx context.Context, e Engine, in Input, build string) (Report, err
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
 	}
-	if result.ID == "" || (result.Version != 1 && result.Version != 2) || result.AsOf != in.AsOf || result.Target != in.Target || result.Adjust != d.Adjust || result.Strategy != d.ID {
+	if result.SelectionEnabled != in.Config.Selection.Enabled || (!in.Config.Selection.Enabled && len(result.Selected) > 0) || result.ID == "" || (result.Version != 1 && result.Version != 2) || result.AsOf != in.AsOf || result.Target != in.Target || result.Adjust != d.Adjust || result.Strategy != d.ID {
 		return Report{}, errors.New("invalid algorithm result identity")
 	}
 	seen := map[string]bool{}
