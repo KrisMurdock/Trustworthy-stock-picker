@@ -37,7 +37,7 @@ type MinuteArchive struct {
 func (h MinuteArchive) Validate() error {
 	first, e1 := time.ParseInLocation("2006-01-02", h.From, Shanghai)
 	last, e2 := time.ParseInLocation("2006-01-02", h.Through, Shanghai)
-	if h.Version != 1 || !config.ValidCode(h.Code) || h.Source != "baostock" || h.Period != 5 ||
+	if h.Version != 1 || !config.ValidCode(h.Code) || (h.Source != "baostock" && h.Source != "sina") || h.Period != 5 ||
 		h.BasePeriod != 5 || h.Adjust != "none" || (h.VolumeUnit != "shares" && h.VolumeUnit != "provider_raw") || h.FetchedAt.IsZero() ||
 		e1 != nil || e2 != nil || first.After(last) || len(h.Bars) > MinuteArchiveLimit {
 		return errors.New("invalid minute archive metadata")

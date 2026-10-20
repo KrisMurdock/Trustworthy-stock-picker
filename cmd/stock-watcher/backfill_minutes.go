@@ -27,45 +27,46 @@ type minuteFetchResult struct {
 }
 
 type minuteBackfillStockResult struct {
-	Code               string   `json:"code"`
-	Name               string   `json:"name,omitempty"`
-	Status             string   `json:"status"`
-	ExpectedDays       int      `json:"expected_days"`
-	CompleteDays       int      `json:"complete_days"`
-	MissingSessions    int      `json:"missing_sessions"`
-	IncompleteSessions int      `json:"incomplete_sessions"`
-	FetchedBars        int      `json:"fetched_bars"`
-	InsertedBars       int      `json:"inserted_bars"`
-	ExistingBars       int      `json:"existing_bars"`
-	OverlapMismatch    int      `json:"overlap_mismatch"`
-	MissingDays        []string `json:"missing_days,omitempty"`
-	IncompleteDays     []string `json:"incomplete_days,omitempty"`
-	Skipped            bool     `json:"skipped,omitempty"`
-	Error              string   `json:"error,omitempty"`
+	Code            string   `json:"code"`
+	Name            string   `json:"name,omitempty"`
+	Status          string   `json:"status"`
+	ExpectedDays    int      `json:"expected_days"`
+	CompleteDays    int      `json:"complete_days"`
+	MissingSessions int      `json:"missing_sessions"`
+	PartialSessions int      `json:"partial_sessions"`
+	FetchedBars     int      `json:"fetched_bars"`
+	InsertedBars    int      `json:"inserted_bars"`
+	ExistingBars    int      `json:"existing_bars"`
+	OverlapMismatch int      `json:"overlap_mismatch"`
+	MissingDays     []string `json:"missing_days,omitempty"`
+	PartialDays     []string `json:"partial_days,omitempty"`
+	Skipped         bool     `json:"skipped,omitempty"`
+	Error           string   `json:"error,omitempty"`
 }
 
 type minuteBackfillReport struct {
-	Command            string                      `json:"command"`
-	Mode               string                      `json:"mode"`
-	From               string                      `json:"from"`
-	AsOf               string                      `json:"as_of"`
-	TradingDays        int                         `json:"trading_days"`
-	Stocks             int                         `json:"stocks"`
-	CompleteStocks     int                         `json:"complete_stocks"`
-	IncompleteStocks   int                         `json:"incomplete_stocks"`
-	FailedStocks       int                         `json:"failed_stocks"`
-	FetchedBars        int                         `json:"fetched_bars"`
-	InsertedBars       int                         `json:"inserted_bars"`
-	ExistingBars       int                         `json:"existing_bars"`
-	OverlapMismatch    int                         `json:"overlap_mismatch"`
-	MissingSessions    int                         `json:"missing_sessions"`
-	IncompleteSessions int                         `json:"incomplete_sessions"`
-	SkippedStocks      int                         `json:"skipped_stocks"`
-	StagingDataDir     string                      `json:"staging_data_dir,omitempty"`
-	Results            []minuteBackfillStockResult `json:"results"`
+	Command          string                      `json:"command"`
+	Mode             string                      `json:"mode"`
+	Provider         string                      `json:"provider"`
+	From             string                      `json:"from"`
+	AsOf             string                      `json:"as_of"`
+	TradingDays      int                         `json:"trading_days"`
+	Stocks           int                         `json:"stocks"`
+	CompleteStocks   int                         `json:"complete_stocks"`
+	IncompleteStocks int                         `json:"incomplete_stocks"`
+	FailedStocks     int                         `json:"failed_stocks"`
+	FetchedBars      int                         `json:"fetched_bars"`
+	InsertedBars     int                         `json:"inserted_bars"`
+	ExistingBars     int                         `json:"existing_bars"`
+	OverlapMismatch  int                         `json:"overlap_mismatch"`
+	MissingSessions  int                         `json:"missing_sessions"`
+	PartialSessions  int                         `json:"partial_sessions"`
+	SkippedStocks    int                         `json:"skipped_stocks"`
+	StagingDataDir   string                      `json:"staging_data_dir,omitempty"`
+	Results          []minuteBackfillStockResult `json:"results"`
 }
 
-func runMinuteBackfill(ctx context.Context, c config.Config, db *storage.MarketDB, log *logging.Logger, asof, from string, workers int, codesCSV, importFrom, referenceDir string) error {
+func runMinuteBackfill(ctx context.Context, c config.Config, db *storage.MarketDB, log *logging.Logger, asof, from string, workers int, provider, codesCSV, importFrom, referenceDir string) error {
 	if workers < 1 || workers > 8 {
 		return errors.New("backfill workers must be between 1 and 8")
 	}
@@ -104,6 +105,10 @@ func runMinuteBackfill(ctx context.Context, c config.Config, db *storage.MarketD
 		return fmt.Errorf("invalid minute backfill range %s..%s", from, asof)
 	}
 	from = days[0]
+	provider, err = minuteProviderForRange(provider, len(days))
+	if err != nil {
+		return err
+	}
 	tradingSet := make(map[string]bool, len(days))
 	for _, day := range days {
 		tradingSet[day] = true
@@ -112,7 +117,7 @@ func runMinuteBackfill(ctx context.Context, c config.Config, db *storage.MarketD
 	if importFrom != "" {
 		mode = "stage_import"
 	}
-	report := minuteBackfillReport{Command: "backfill-minutes", Mode: mode, From: from, AsOf: asof, TradingDays: len(days), Stocks: len(stocks), StagingDataDir: importFrom}
+	report := minuteBackfillReport{Command: "backfill-minutes", Mode: mode, Provider: provider, From: from, AsOf: asof, TradingDays: len(days), Stocks: len(stocks), StagingDataDir: importFrom}
 	byCode := make(map[string]minuteBackfillStockResult, len(stocks))
 	coverageDB := db
 	if importFrom != "" && referenceDir != "" {
@@ -129,7 +134,7 @@ func runMinuteBackfill(ctx context.Context, c config.Config, db *storage.MarketD
 	if mode == "fetch" {
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		log.Info("Minute backfill started", "mode", mode, "from", from, "as_of", asof, "stocks", len(stocks), "workers", workers)
+		log.Info("Minute backfill started", "mode", mode, "provider", provider, "from", from, "as_of", asof, "stocks", len(stocks), "workers", workers)
 		pending := make([]config.Stock, 0, len(stocks))
 		for _, stock := range stocks {
 			expected, err := expectedMinuteDays(ctx, coverageDB, stock.Code, from, asof, c.Daily.Adjust, tradingSet)
@@ -156,7 +161,7 @@ func runMinuteBackfill(ctx context.Context, c config.Config, db *storage.MarketD
 		if len(pending) > 0 {
 			log.Info("Minute backfill pending stocks", "pending", len(pending), "skipped", report.SkippedStocks)
 		}
-		for fetched := range fetchMinuteArchives(ctx, c, pending, from, asof, workers) {
+		for fetched := range fetchMinuteArchives(ctx, c, pending, from, asof, workers, provider) {
 			if fetched.err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
@@ -224,7 +229,7 @@ func runMinuteBackfill(ctx context.Context, c config.Config, db *storage.MarketD
 		report.ExistingBars += result.ExistingBars
 		report.OverlapMismatch += result.OverlapMismatch
 		report.MissingSessions += result.MissingSessions
-		report.IncompleteSessions += result.IncompleteSessions
+		report.PartialSessions += result.PartialSessions
 		switch result.Status {
 		case "complete":
 			report.CompleteStocks++
@@ -234,7 +239,7 @@ func runMinuteBackfill(ctx context.Context, c config.Config, db *storage.MarketD
 			report.FailedStocks++
 		}
 	}
-	log.Info("Minute backfill completed", "mode", mode, "stocks", report.Stocks, "complete", report.CompleteStocks, "incomplete", report.IncompleteStocks, "failed", report.FailedStocks, "inserted", report.InsertedBars, "missing", report.MissingSessions, "incomplete_sessions", report.IncompleteSessions)
+	log.Info("Minute backfill completed", "mode", mode, "stocks", report.Stocks, "complete", report.CompleteStocks, "incomplete", report.IncompleteStocks, "failed", report.FailedStocks, "inserted", report.InsertedBars, "missing", report.MissingSessions, "partial_sessions", report.PartialSessions)
 	if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
 		return err
 	}
@@ -275,7 +280,40 @@ func minuteBackfillStocks(c config.Config, codesCSV string) ([]config.Stock, err
 	return stocks, nil
 }
 
-func fetchMinuteArchives(ctx context.Context, c config.Config, stocks []config.Stock, from, through string, workers int) <-chan minuteFetchResult {
+type minuteRangeFetcher interface {
+	FetchMinuteRange(context.Context, config.Stock, string, string) (market.MinuteArchive, error)
+	Close()
+}
+
+func minuteProviderForRange(provider string, tradingDays int) (string, error) {
+	switch provider {
+	case "baostock":
+		return provider, nil
+	case "sina":
+		if tradingDays > 104 {
+			return "", errors.New("Sina minute history is limited to 104 complete sessions; narrow -from or use -provider baostock")
+		}
+		return provider, nil
+	case "auto":
+		if tradingDays <= 104 {
+			return "sina", nil
+		}
+		return "baostock", nil
+	default:
+		return "", errors.New("minute provider must be auto, baostock or sina")
+	}
+}
+
+func newMinuteRangeFetcher(c config.Config, provider string) minuteRangeFetcher {
+	if provider == "sina" {
+		client := market.NewSinaKLineClient(config.Duration(c.Timeout), config.Duration(c.Market.RequestInterval))
+		client.Endpoint = c.Market.SinaDailyEndpoint
+		return client
+	}
+	return market.NewBaoStockClient(config.Duration(c.Timeout), config.Duration(c.Market.RequestInterval))
+}
+
+func fetchMinuteArchives(ctx context.Context, c config.Config, stocks []config.Stock, from, through string, workers int, provider string) <-chan minuteFetchResult {
 	out := make(chan minuteFetchResult)
 	jobs := make(chan config.Stock)
 	go func() {
@@ -293,7 +331,7 @@ func fetchMinuteArchives(ctx context.Context, c config.Config, stocks []config.S
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			client := market.NewBaoStockClient(config.Duration(c.Timeout), config.Duration(c.Market.RequestInterval))
+			client := newMinuteRangeFetcher(c, provider)
 			defer client.Close()
 			for stock := range jobs {
 				archive, err := client.FetchMinuteRange(ctx, stock, from, through)
@@ -340,17 +378,17 @@ func summarizeMinuteBackfill(ctx context.Context, db *storage.MarketDB, stock co
 			if len(out.MissingDays) < 20 {
 				out.MissingDays = append(out.MissingDays, day)
 			}
-		case count != 48:
-			out.IncompleteSessions++
-			if len(out.IncompleteDays) < 20 {
-				out.IncompleteDays = append(out.IncompleteDays, fmt.Sprintf("%s(%d)", day, count))
+		case count < 48:
+			out.PartialSessions++
+			if len(out.PartialDays) < 20 {
+				out.PartialDays = append(out.PartialDays, fmt.Sprintf("%s(%d)", day, count))
 			}
 		default:
 			out.CompleteDays++
 		}
 	}
 	out.ExpectedDays = len(days)
-	if out.MissingSessions > 0 || out.IncompleteSessions > 0 {
+	if out.MissingSessions > 0 {
 		out.Status = "incomplete"
 	}
 	return out, nil

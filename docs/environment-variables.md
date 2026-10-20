@@ -81,6 +81,7 @@
 | STOCK_WATCHER_MARKET_FAILURE_COOLDOWN | 5m | 跳过后的恢复探测间隔 |
 | STOCK_WATCHER_MARKET_TENCENT_ENDPOINT | 腾讯公开端点 | 腾讯日线端点覆盖 |
 | STOCK_WATCHER_MARKET_SINA_ENDPOINT | 新浪公开端点 | 新浪复权因子/行情端点覆盖 |
+| STOCK_WATCHER_MARKET_SINA_DAILY_ENDPOINT | 新浪公开 K 线端点 | 新浪状态/历史分钟 K 线端点覆盖 |
 | STOCK_WATCHER_MARKET_BAOSTOCK_ADDRESS | public-api.baostock.com:10030 | BaoStock TCP 地址 |
 | STOCK_WATCHER_MARKET_TUSHARE_ENDPOINT | https://api.tushare.pro | Tushare 端点覆盖 |
 | STOCK_WATCHER_MARKET_TUSHARE_TOKEN_ENV | TUSHARE_TOKEN | Tushare Token 所在环境变量名 |

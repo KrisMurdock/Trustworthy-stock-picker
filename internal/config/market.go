@@ -23,6 +23,7 @@ type Market struct {
 	TushareToken      string   `yaml:"-" json:"-"`
 	EastmoneyEndpoint string   `yaml:"eastmoney_endpoint"`
 	SinaEndpoint      string   `yaml:"sina_endpoint"`
+	SinaDailyEndpoint string   `yaml:"sina_daily_endpoint"`
 	ListingEndpoint   string   `yaml:"listing_endpoint"`
 }
 
@@ -32,8 +33,9 @@ func DefaultMarket() Market {
 		TencentEndpoint: "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get",
 		BaostockAddress: "public-api.baostock.com:10030", TushareEndpoint: "https://api.tushare.pro",
 		TushareTokenEnv: "TUSHARE_TOKEN", EastmoneyEndpoint: "https://push2his.eastmoney.com/api/qt/stock/kline/get",
-		SinaEndpoint:    "https://finance.sina.com.cn/realstock/company",
-		ListingEndpoint: "https://vip.stock.finance.sina.com.cn/corp/go.php/vISSUE_NewStock/stockid"}
+		SinaEndpoint:      "https://finance.sina.com.cn/realstock/company",
+		SinaDailyEndpoint: "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData",
+		ListingEndpoint:   "https://vip.stock.finance.sina.com.cn/corp/go.php/vISSUE_NewStock/stockid"}
 }
 
 func (m *Market) loadCredentials() { m.TushareToken = strings.TrimSpace(os.Getenv(m.TushareTokenEnv)) }
@@ -102,6 +104,9 @@ func (m Market) Validate() error {
 		if name != "tushare" || m.TushareToken != "" {
 			active++
 		}
+	}
+	if endpoint := m.SinaDailyEndpoint; endpoint == "" || !validMarketEndpoint(endpoint) {
+		return errors.New("market.sina_daily_endpoint requires HTTPS or loopback HTTP, without credentials or query parameters")
 	}
 	if active == 0 {
 		return errors.New("no active market provider; configure the Tushare token environment variable or enable another provider")

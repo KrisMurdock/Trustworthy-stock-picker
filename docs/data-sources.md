@@ -53,8 +53,8 @@ Token 仅从 `TUSHARE_TOKEN` 读取。未配置时跳过 Tushare；若它是唯�
 
 状态来源与价格来源独立：
 
-- 停牌状态：BaoStock `tradestatus` 为主，能逐日给出 `traded/suspended`；Tushare `suspend_d` 为备用，只提供停复牌事件。
-- 交易所日历：BaoStock `query_trade_dates` 为主，Tushare `trade_cal` 为备用；缓存到 `market_calendar`，不把周一至周五当作交易日。
+- 停牌状态：BaoStock `tradestatus` 为主，能逐日给出 `traded/suspended`；Tushare `suspend_d` 为备用，只提供停复牌事件；两者都不可用时，新浪完整日线与上证指数交易日共同推导 `sina_daily` 覆盖。
+- 交易所日历：BaoStock `query_trade_dates` 为主，Tushare `trade_cal` 为备用；缓存到 `market_calendar`，不把周一至周五当作交易日。状态推导只使用已缓存或已确认的交易日，不自行把工作日当交易日。
 - 冲突时 fail closed：任一来源明确说交易，就不能记为停牌；只有至少一个来源明确停牌且没有来源说交易，才记为 `suspended`。其余冲突或未知记为 `unknown`，按缺口隔离，不放宽门槛。
 
 首次升级或新建数据库后必须显式执行一次全量状态回填；未完成时 `sync`/`run` 拒绝发布推荐：
@@ -89,8 +89,10 @@ SQLite schema 5 新增 `session_status`、`status_sync`、`market_calendar`、`c
 历史 5 分钟补全使用 `backfill-minutes`：
 
 - BaoStock 按最多 7 个自然日一个窗口请求，单窗口正常不超过 250 根；每页使用独立 TCP 会话，网络/限流错误按 1s、2s 退避重试，避免公共端点在长连接连续分页后断连。
-- 默认回补配置日历内最近 200 个交易日；`-from`、`-as-of`、`-codes` 可缩小范围。BaoStock 成交量以“股”返回，写入前按腾讯原始口径换算：科创板保留股数，其他板块除以 100 转为手，保证跨补数边界的量比特征连续。
+- `-provider auto` 在请求范围不超过 104 个完整交易日时使用新浪 5 分钟接口，否则使用 BaoStock；也可用 `-provider sina` 或 `-provider baostock` 显式指定。新浪单次最多返回 5001 根，覆盖约 104 个完整交易日，不能用于更长窗口。
+- 默认回补配置日历内最近 200 个交易日；`-from`、`-as-of`、`-codes` 可缩小范围。两家成交量都以“股”返回，写入前按腾讯原始口径换算：科创板保留股数，其他板块除以 100 转为手，保证跨补数边界的量比特征连续。
 - 导入只插入缺失的 `(code,end_unix)`，不删除、不覆盖腾讯已保存的重叠分钟；重叠 OHLC/成交量差异计入 `overlap_mismatch`，不会静默混源。所有历史 bar 标记为已完成，不补造停牌或缺根。
+- 某个交易日实际有成交但少于 48 根（例如盘中临时停牌）时报告 `partial_sessions`，不补造缺根；只有整日没有数据才计为 `missing_sessions` 并使命令失败。
 - 建议先把 `STOCK_WATCHER_DATA_DIR` 指向独立 staging 目录并执行 `init`，再运行 `backfill-minutes`；此阶段生产 `run` 可继续运行。合并到生产前必须停止 `run` 释放 `.stock-watcher.lock`，再执行 `backfill-minutes -import-from <staging-data-dir>`。`-reference-dir <production-data-dir>` 可用于 staging 断点续跑：按生产日线日期跳过已完整覆盖的股票。
 
 ## 新浪备用日线与故障源保护
@@ -102,6 +104,8 @@ SQLite schema 5 新增 `session_status`、`status_sync`、`market_calendar`、`c
 不运行 Python、JavaScript 引擎或外部数据服务，也不执行响应中的代码。
 未知编码、缺失/非法因子、错误股票标识、截断和无效 OHLCV 均触发回退。
 新浪返回上市以来的完整流，客户端保留请求窗口及边界锚点；不能用返回的首日直接推断上市日期。
+
+状态回退复用同一公开 K 线接口：`sh000001` 的日线提供交易所交易日，个股完整日线提供实际成交日；交易日存在但个股日线缺失时记录为停牌。新浪历史被截断、索引未覆盖请求窗口、日期重复或日历不完整时拒绝该窗口，不能把未知当成停牌。该来源的覆盖标记为 `Full`，并仍与 BaoStock/Tushare 的显式答案按 fail-closed 规则合并。
 
 新的默认顺序为 `tencent → sina → baostock → tushare → eastmoney`。
 **已有配置显式写了 `market.providers` 时不会自动插入来源**，需在合并部署时修改该列表：

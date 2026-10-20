@@ -310,6 +310,7 @@ func TestEnvironmentOnlyConfiguration(t *testing.T) {
 	t.Setenv("TEST_TUSHARE_TOKEN", "test-token")
 	t.Setenv("STOCK_WATCHER_MARKET_TENCENT_ENDPOINT", "https://example.com/tencent")
 	t.Setenv("STOCK_WATCHER_MARKET_SINA_ENDPOINT", "https://example.com/sina")
+	t.Setenv("STOCK_WATCHER_MARKET_SINA_DAILY_ENDPOINT", "https://example.com/sina-daily")
 	t.Setenv("STOCK_WATCHER_MARKET_TUSHARE_ENDPOINT", "https://example.com/tushare")
 	t.Setenv("STOCK_WATCHER_MARKET_EASTMONEY_ENDPOINT", "https://example.com/eastmoney")
 	t.Setenv("STOCK_WATCHER_MARKET_LISTING_ENDPOINT", "https://example.com/listing")
@@ -345,7 +346,7 @@ func TestEnvironmentOnlyConfiguration(t *testing.T) {
 	if !c.Strategy.Enabled || c.Strategy.TargetNetPct != 2.5 || c.Strategy.StopNetPct != -2 || c.Strategy.MaxHoldingDays != 4 || c.Strategy.TradeCash != 25000 || c.Strategy.MinEvidence != 61 || c.Strategy.HoldoutDays != 42 {
 		t.Fatalf("strategy environment not applied: %+v", c.Strategy)
 	}
-	if len(c.Market.Providers) != 2 || c.Market.FailureThreshold != 4 || c.Market.TushareTokenEnv != "TEST_TUSHARE_TOKEN" || c.Market.TushareToken != "test-token" || c.Market.ListingEndpoint != "https://example.com/listing" {
+	if len(c.Market.Providers) != 2 || c.Market.FailureThreshold != 4 || c.Market.TushareTokenEnv != "TEST_TUSHARE_TOKEN" || c.Market.TushareToken != "test-token" || c.Market.ListingEndpoint != "https://example.com/listing" || c.Market.SinaDailyEndpoint != "https://example.com/sina-daily" {
 		t.Fatalf("market environment not applied: %+v", c.Market)
 	}
 	if c.Intraday.Enabled || c.Intraday.Workers != 4 || c.Intraday.CalibrationAt != "15:20" || c.Intraday.TencentEndpoint != "https://example.com/minute" {

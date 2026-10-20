@@ -51,6 +51,7 @@ func run(args []string) error {
 	from := f.String("from", "", "inclusive start date (experiment; pair with -through, or backfill-minutes)")
 	through := f.String("through", "", "inclusive backtest signal end date (experiment only; pair with -from)")
 	backfillWorkers := f.Int("workers", 3, "concurrent BaoStock workers (backfill-minutes only, 1..8)")
+	backfillProvider := f.String("provider", "auto", "minute history provider: auto, baostock or sina (backfill-minutes only)")
 	backfillCodes := f.String("codes", "", "comma-separated pool codes (backfill-minutes only; default all)")
 	importFrom := f.String("import-from", "", "staging data directory to merge without network access (backfill-minutes only)")
 	referenceDir := f.String("reference-dir", "", "read-only production data directory used for resume coverage (backfill-minutes fetch only)")
@@ -97,7 +98,7 @@ func run(args []string) error {
 	if command != "experiment" && command != "backfill-minutes" && *from != "" {
 		return errors.New("from requires the experiment or backfill-minutes command")
 	}
-	if command != "backfill-minutes" && (*backfillWorkers != 3 || *backfillCodes != "" || *importFrom != "" || *referenceDir != "") {
+	if command != "backfill-minutes" && (*backfillWorkers != 3 || *backfillProvider != "auto" || *backfillCodes != "" || *importFrom != "" || *referenceDir != "") {
 		return errors.New("minute backfill flags require the backfill-minutes command")
 	}
 	if command == "experiment" && (*from == "") != (*through == "") {
@@ -253,7 +254,7 @@ func run(args []string) error {
 		return nil
 	}
 	if command == "backfill-minutes" {
-		return runMinuteBackfill(ctx, c, marketDB, log, *asof, *from, *backfillWorkers, *backfillCodes, *importFrom, *referenceDir)
+		return runMinuteBackfill(ctx, c, marketDB, log, *asof, *from, *backfillWorkers, *backfillProvider, *backfillCodes, *importFrom, *referenceDir)
 	}
 
 	source, err := market.NewSources(c, log)

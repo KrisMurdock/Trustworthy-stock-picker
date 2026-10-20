@@ -98,6 +98,9 @@ func NewSources(c config.Config, log *logging.Logger) (*Sources, error) {
 		s.statusProviders = append(s.statusProviders, StatusProvider{Name: "tushare_status", Source: tushareStatus})
 		s.calendarProviders = append(s.calendarProviders, CalendarProvider{Name: "tushare_calendar", Source: tushareStatus})
 	}
+	sinaStatus := NewSinaKLineClient(timeout, interval)
+	sinaStatus.Endpoint = c.Market.SinaDailyEndpoint
+	s.statusProviders = append(s.statusProviders, StatusProvider{Name: "sina_daily_status", Source: sinaStatus})
 	s.Log.Info("Market providers configured", "sources", s.Names())
 	return s, nil
 }
