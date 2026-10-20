@@ -63,8 +63,7 @@ func (c *BaoStockClient) TradingDays(ctx context.Context, start, end string) ([]
 			parts[7] != start || parts[8] != end {
 			return nil, &DataError{Reason: "baostock_calendar_query_mismatch"}
 		}
-		fields := strings.Split(parts[9], ",")
-		if len(fields) != 2 || fields[0] != "calendar_date" || fields[1] != "is_trading_day" {
+		if !validBaoCalendarFields(parts[9]) {
 			return nil, &DataError{Reason: "invalid_baostock_calendar_fields"}
 		}
 		var data struct {
@@ -109,6 +108,14 @@ func (c *BaoStockClient) TradingDays(ctx context.Context, start, end string) ([]
 	}
 	sort.Strings(days)
 	return days, nil
+}
+
+func validBaoCalendarFields(value string) bool {
+	fields := strings.Split(value, ",")
+	if len(fields) != 2 {
+		return false
+	}
+	return strings.TrimSpace(fields[0]) == "calendar_date" && strings.TrimSpace(fields[1]) == "is_trading_day"
 }
 
 type tushareCalendarChunk struct {

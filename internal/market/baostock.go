@@ -373,8 +373,11 @@ func (c *BaoStockClient) fetchTradingDaysYear(ctx context.Context, pageStart, pa
 	if err != nil {
 		return nil, fmt.Errorf("baostock calendar year %s: %w", pageStart[:4], err)
 	}
-	if len(parts) < 10 || parts[2] != "query_trade_dates" || parts[3] != "anonymous" || parts[4] != "1" || parts[5] != "2000" || parts[7] != pageStart || parts[8] != pageEnd || parts[9] != "calendar_date,is_trading_day" {
+	if len(parts) < 10 || parts[2] != "query_trade_dates" || parts[3] != "anonymous" || parts[4] != "1" || parts[5] != "2000" || parts[7] != pageStart || parts[8] != pageEnd {
 		return nil, &DataError{Reason: "baostock_calendar_query_mismatch"}
+	}
+	if !validBaoCalendarFields(parts[9]) {
+		return nil, &DataError{Reason: "invalid_baostock_calendar_fields"}
 	}
 	var data struct {
 		Records [][]string `json:"record"`

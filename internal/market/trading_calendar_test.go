@@ -63,6 +63,34 @@ func TestBaoStockTradingCalendarRejectsIncompleteWindow(t *testing.T) {
 	}
 }
 
+func TestBaoStockCalendarAcceptsSpacesAfterFieldDelimiter(t *testing.T) {
+	address := baoTestServer(t, func(kind string, parts []string) (string, string) {
+		if kind == "00" {
+			return "01", "0\x01success\x01login\x01anonymous"
+		}
+		data, _ := json.Marshal(map[string]any{"record": [][]string{{"2026-10-20", "1"}}})
+		return "34", strings.Join([]string{
+			"0", "success", parts[0], parts[1], parts[2], parts[3], string(data),
+			parts[4], parts[5], "calendar_date, is_trading_day",
+		}, baoSeparator) + "\n"
+	})
+	client := NewBaoStockClient(time.Second, 0)
+	client.Address = address
+	defer client.Close()
+
+	for name, fetch := range map[string]func(context.Context, string, string) ([]string, error){
+		"FetchTradingDays": client.FetchTradingDays,
+		"TradingDays":      client.TradingDays,
+	} {
+		t.Run(name, func(t *testing.T) {
+			days, err := fetch(context.Background(), "2026-10-20", "2026-10-20")
+			if err != nil || strings.Join(days, ",") != "2026-10-20" {
+				t.Fatalf("days=%v err=%v", days, err)
+			}
+		})
+	}
+}
+
 func TestTushareTradingCalendarProtocol(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
