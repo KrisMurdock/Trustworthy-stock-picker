@@ -40,6 +40,11 @@ func TestBuildCardAggregatesPredictions(t *testing.T) {
 	if len(message.Sections) == 0 || message.Sections[0].Table == nil || len(message.Sections[0].Table.Rows) != 1 {
 		t.Fatalf("missing prediction table row")
 	}
+	for _, column := range message.Sections[0].Table.Columns {
+		if !strings.HasSuffix(column.Width, "%") {
+			t.Fatalf("card table width must be a percentage: %s=%q", column.Key, column.Width)
+		}
+	}
 	row := message.Sections[0].Table.Rows[0]
 	if row[0].Text != "sh600000" || !strings.HasPrefix(row[2].Text, "10.10") || !strings.HasPrefix(row[3].Text, "9.90") {
 		t.Fatalf("unexpected row: %+v", row)
