@@ -188,6 +188,16 @@ def service(args, empty=False, partial=False, gates=False):
                     assert result.stdout.strip() == "0", "container did not stop gracefully"
                 finally:
                     run(["docker", "rm", "-f", name], capture_output=True, text=True)
+                # Rootless Docker may create root-owned state under the bind
+                # mount. Normalize it before TemporaryDirectory cleanup.
+                subprocess.run(
+                    [
+                        "docker", "run", "--rm", "--network", "none", "--entrypoint", "/bin/sh",
+                        "--mount", f"type=bind,src={directory},dst=/fixture",
+                        args.image, "-c", "chmod -R a+rwX /fixture",
+                    ],
+                    capture_output=True, text=True, timeout=60,
+                )
             if process:
                 if process.poll() is None:
                     os.killpg(process.pid, signal.SIGTERM)
