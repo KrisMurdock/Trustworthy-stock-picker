@@ -29,6 +29,11 @@
   <div id="lab-workspace" class="lab-layout" hidden>
     <aside class="panel experiment-sidebar" aria-label="实验列表"><div class="lab-sidebar-heading"><h2>实验档案 <span id="experiment-count" class="count-tag"></span></h2><p class="section-description">最近 200 条 · 完成的记录保留原貌</p></div><div class="lab-filters"><label for="experiment-search" class="sr-only">搜索实验</label><input id="experiment-search" type="search" placeholder="搜索方向、假设或编号"><label for="experiment-filter" class="sr-only">筛选实验结论</label><select id="experiment-filter"><option value="">全部状态与结论</option><option value="research">研究结果快照</option><option value="baseline">基线</option><option value="entry_day_rejected">买入日浮盈不达标</option><option value="entry_day_unverified">买入日证据待核实</option><option value="below_goal">次日目标未达到</option><option value="goal_25_only">仅 2.5% 档观察达标</option><option value="goal_observed">两档观察达标 · 待独立验证</option><option value="risk_rejected">风险不达标</option><option value="risk_unverified">风险待核实</option><option value="tradeoff">收益／周期有取舍</option><option value="historical">旧口径结论</option><option value="holdout">保留区间验证</option><option value="exploratory">探索性结果</option><option value="validated">通过独立验证</option><option value="exploratory_current_universe">当前股池探索性验证</option><option value="validation_failed">独立验证失败</option><option value="contaminated">保留区间已污染</option><option value="insufficient_evidence">证据不足</option><option value="partial_calendar">交易日历不完整</option><option value="promising">开发候选</option><option value="no_improvement">未改善</option><option value="insufficient">证据不足</option><option value="not_comparable">口径不同</option><option value="running">运行中</option><option value="failed">运行异常</option></select></div><p id="list-empty" class="section-description lab-padding" hidden>没有符合条件的实验。</p><div id="experiment-list" class="experiment-list"></div></aside>
     <div class="lab-main">
+      <section id="history-comparison" class="panel history-comparison" aria-labelledby="history-comparison-title" hidden>
+        <div class="panel-heading"><div><p class="eyebrow">HISTORY / METRIC COMPARISON</p><h2 id="history-comparison-title">历史实验指标对比</h2><p class="section-description">把已归档实验放在同一张表里比较；离线回测取已完成交易，选股覆盖取本轮信号漏斗。缺失字段显示“未记录”，不补造数值。</p></div><label class="history-sort">排序 <select id="history-sort"><option value="newest">最新实验</option><option value="mean">平均净收益</option><option value="target">目标命中率</option><option value="worst">最差单笔</option><option value="samples">样本数</option></select></label></div>
+        <div class="table-scroll history-scroll" tabindex="0" role="region" aria-label="历史实验指标对比"><table class="experiment-table history-table"><thead><tr><th>实验</th><th>结论</th><th>样本 / 信号日</th><th>平均净收益</th><th>盈利比例</th><th>目标命中率</th><th>最差单笔</th><th>选股入选 / 候选</th><th>查看</th></tr></thead><tbody id="history-body"></tbody></table></div>
+        <p id="history-note" class="lab-note"></p>
+      </section>
       <div id="detail-loading" class="panel section-empty" role="status" hidden>正在读取实验及对照记录…</div>
       <div id="detail-error" class="notice notice-error" role="alert" hidden><p id="detail-error-text"></p><button id="detail-retry" class="button button-secondary" type="button">重试详情</button></div>
       <article id="experiment-detail" hidden>
@@ -47,6 +52,14 @@
             <dl id="snapshot-secondary" class="snapshot-secondary lab-padding"></dl>
             <details class="lab-data"><summary>所有结果分组与统计口径</summary><div class="table-scroll" role="region" tabindex="0" aria-label="结果快照分组"><table class="experiment-table"><thead><tr><th>分组 / 规则</th><th>净目标</th><th>达标 / 样本</th><th>达标平均持仓</th><th>最大已实现亏损</th><th>查看</th></tr></thead><tbody id="snapshot-table"></tbody></table></div><ul id="snapshot-notes"></ul></details>
           </div>
+        </section>
+        <section id="metric-overview" class="panel metric-overview" aria-labelledby="metric-overview-title" hidden>
+          <div class="panel-heading"><div><p class="eyebrow">TWO METRIC LENSES / 一次运行，两组读数</p><h2 id="metric-overview-title">双指标总览</h2><p id="metric-overview-note" class="section-description"></p></div></div>
+          <div class="metric-overview-grid">
+            <section class="metric-lens" aria-labelledby="overview-backtest-title"><div class="metric-lens-heading"><span>01</span><h3 id="overview-backtest-title">离线回测</h3></div><dl id="overview-backtest" class="metric-list"></dl></section>
+            <section class="metric-lens" aria-labelledby="overview-selection-title"><div class="metric-lens-heading"><span>02</span><h3 id="overview-selection-title">选股覆盖</h3></div><dl id="overview-selection" class="metric-list"></dl></section>
+          </div>
+          <p id="metric-overview-footnote" class="lab-note">离线回测统计已完成交易与单笔模拟，不代表账户年化收益或组合最大回撤；选股覆盖描述信号漏斗，不是成功概率。</p>
         </section>
         <section id="risk-review" class="panel" hidden><div class="panel-heading"><div><p class="eyebrow">RISK FIRST / 先满足亏损约束</p><h2 id="risk-title"></h2></div></div><div class="lab-padding"><p id="risk-summary"></p><p class="section-description">软目标：最高价扣费后触达 2.5%／3% 或以上，只看买入后的第 1 个可卖出交易日；实际退出收益单独核对。收益、胜率或速度不能抵消亏损超限。跳空、跌停和 T+1 可能导致实际亏损超过止损目标。</p><p id="risk-original" class="section-description"></p><button id="show-breaches" type="button" class="button button-secondary">查看超限样本</button></div></section>
         <div id="run-results" hidden>

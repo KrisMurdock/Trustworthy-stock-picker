@@ -4,6 +4,18 @@
 .lab-main { min-width: 0; }
 .experiment-sidebar { position: sticky; top: 92px; }
 .lab-sidebar-heading, .lab-padding { padding: 20px 24px; }
+.history-comparison { margin-bottom: 24px; }
+.history-comparison .panel-heading { align-items: flex-end; }
+.history-scroll { max-height: 520px; }
+.history-sort { display: grid; gap: 6px; flex: 0 0 auto; color: var(--muted); font-size: 11px; }
+.history-sort select { min-width: 132px; }
+.history-table { min-width: 980px; }
+.history-table td:first-child { min-width: 230px; white-space: normal; }
+.history-table td:first-child strong { display: block; color: var(--ink-strong); font-family: var(--sans); font-weight: 600; }
+.history-meta { display: block; margin-top: 5px; color: var(--muted); font-family: var(--sans); font-size: 11px; }
+.history-table tr[aria-current="true"] { background: rgba(111, 211, 188, .08); }
+.history-table tr[aria-current="true"] td:first-child { box-shadow: inset 3px 0 0 var(--jade); }
+.history-table td:last-child { text-align: right; }
 .lab-sidebar-heading h2 { font-size: 18px; }
 .lab-filters { padding: 0 16px 16px; display: grid; gap: 8px; }
 .lab-filters input { width: 100%; }
@@ -67,6 +79,16 @@
 .backtest-command { max-width: 100%; padding: 12px; overflow-x: auto; overflow-wrap: normal; white-space: pre; color: var(--ink); background: var(--raised); border: 1px solid var(--line); border-radius: 8px; font-family: var(--mono); font-size: 11px; line-height: 1.7; tab-size: 2; }
 #backtest-settings input, #backtest-settings select { max-width: 100%; }
 .result-snapshot { border-top: 3px solid var(--jade); }
+.metric-overview { border-top: 3px solid var(--copper); }
+.metric-overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 0 24px 8px; }
+.metric-lens { min-width: 0; padding: 18px 20px; background: rgba(20, 25, 32, .72); border: 1px solid var(--line); border-radius: 10px; }
+.metric-lens-heading { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+.metric-lens-heading span { color: var(--copper); font-family: var(--mono); font-size: 10px; letter-spacing: .12em; }
+.metric-lens-heading h3 { margin: 0; color: var(--ink-strong); font-size: 16px; }
+.metric-list { display: grid; gap: 1px; margin: 0; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.metric-list > div { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 10px 12px; background: var(--raised); }
+.metric-list dt { color: var(--muted); font-size: 11px; }
+.metric-list dd { margin: 0; color: var(--ink-strong); font-family: var(--serif); font-size: 14px; font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; }
 .snapshot-controls { display: grid; gap: 8px; }
 .snapshot-controls label { font-size: 12px; color: var(--muted); }
 .snapshot-controls select { width: 100%; min-width: 0; text-overflow: ellipsis; }
@@ -94,6 +116,7 @@
   .experiment-flow { font-size: 11px; }
   .snapshot-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .snapshot-cards > div { border-bottom: 1px solid var(--line); }
+  .metric-overview-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 760px) {
@@ -104,6 +127,7 @@
   .lab-padding, .lab-sidebar-heading { padding: 16px; }
   .lab-data, .run-lineage { padding: 14px 16px; }
   .lab-main .panel-heading { flex-wrap: wrap; }
+  .history-comparison .panel-heading { align-items: flex-start; }
   .experiment-flow { font-size: 10px; gap: 8px; }
   .experiments-page .intro { max-width: none; }
   .lab-note { padding-inline: 16px; }
@@ -115,6 +139,8 @@
   .snapshot-cards > div { padding: 16px 12px; border-right: 0; }
   .snapshot-cards strong { font-size: 20px; }
   .snapshot-secondary { grid-template-columns: 1fr; }
+  .metric-overview-grid { padding-inline: 16px; }
+  .metric-list > div { align-items: flex-start; }
   .result-snapshot .panel-heading { flex-wrap: wrap; gap: 12px; }
   .trade-pager { flex-wrap: wrap; gap: 8px; }
   .backtest-command { font-size: 10px; }

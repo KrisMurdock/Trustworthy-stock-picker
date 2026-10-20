@@ -1,7 +1,7 @@
 "use strict";
 (() => {
   const $ = id => document.getElementById(id);
-  const state = { records: [], current: null, parent: null, baseline: null, id: "", request: 0, page: 0, evidenceRequest: 0 };
+  const state = { records: [], current: null, parent: null, baseline: null, id: "", request: 0, page: 0, evidenceRequest: 0, historySort: "newest" };
   const verdicts = { research: "研究结果快照", entry_day_rejected: "买入日浮盈不达标", entry_day_unverified: "买入日证据待核实", below_goal: "次日目标未达到", goal_25_only: "仅 2.5% 档观察达标", goal_observed: "两档观察达标 · 待独立验证", risk_rejected: "风险不达标", risk_unverified: "风险待核实", tradeoff: "收益／周期有取舍", historical: "旧口径结论", baseline: "基线", promising: "开发候选", no_improvement: "未改善", insufficient: "证据不足", not_comparable: "口径不同", pending: "尚无结论", exploratory: "探索性结果", validated: "通过独立验证", exploratory_current_universe: "当前股池探索性验证", validation_failed: "独立验证失败", contaminated: "保留区间已污染", insufficient_evidence: "证据不足", partial_calendar: "交易日历不完整", configured_calendar: "使用配置日历" };
   const flagLabels = { current_universe_bias: "当前股池幸存者偏差", historical_st_unknown: "历史 ST 状态未知", incomplete_signal_date: "存在不完整信号日", corporate_action: "公司行为未决", partial_calendar: "交易日历不完整", configured_calendar: "使用配置日历", contaminated: "保留区间已污染" };
   const statuses = { running: "运行中", completed: "运行成功", failed: "运行失败", canceled: "已取消", interrupted: "运行中断" };
@@ -16,6 +16,34 @@
   const stats = r => {
     const research = r?.result?.development?.research;
     return r?.current_review?.stats || (r?.stage === "holdout" ? research?.holdout?.top_ranked : research?.development?.top_ranked);
+  };
+  const frozenStats = r => {
+    const research = r?.result?.development?.research;
+    return r?.stage === "holdout" ? research?.holdout?.top_ranked : research?.development?.top_ranked;
+  };
+  const pct = (value, digits = 2) => Number.isFinite(value) ? `${fmt(value * 100, digits)}%` : "未记录";
+  const pctPoint = (value, digits = 3) => Number.isFinite(value) ? `${fmt(value, digits)}%` : "未记录";
+  const count = value => Number.isFinite(value) ? fmt(value, 0) : "未记录";
+  const ratio = (part, total) => Number.isFinite(part) && Number.isFinite(total) && total > 0 ? `${fmt(part / total * 100, 2)}%` : "未记录";
+  const selectionCounts = r => {
+    const selection = r?.result?.development?.signal_selection;
+    const development = r?.result?.development;
+    const trades = list(development?.trades);
+    const selectedTrades = trades.filter(t => t.selected).length;
+    return {
+      funnel: !!selection,
+      rule: selection?.rule,
+      candidates: selection?.candidates ?? (development ? trades.length : undefined),
+      eligible: selection?.eligible,
+      selected: selection?.selected ?? (development ? selectedTrades : undefined),
+      filtered: selection?.filtered_original_top ?? (development ? trades.length - selectedTrades : undefined)
+    };
+  };
+  const recordMetrics = r => {
+    const s = frozenStats(r), row = defaultSnapshotRow(r), selection = selectionCounts(r);
+    if (s) return { kind: "stats", samples: s.samples, dates: s.distinct_signal_dates, resolved: s.resolved, unresolved: s.unresolved, meanNet: s.mean_resolved_net_pct, profit: s.resolved_profit_rate, target: s.target_rate, worst: s.worst_resolved_net_pct, maxAdverse: s.worst_max_adverse_net_pct, selection };
+    if (row) return { kind: "snapshot", samples: row.samples, resolved: row.resolved, unresolved: row.unresolved, meanNet: row.mean_resolved_net_pct, target: row.target_rate, maxAdverse: row.max_adverse_loss_pct, selection };
+    return { kind: "none", selection };
   };
   const researchSnapshot = r => r?.result_snapshot?.source === "no_stop_speed";
   const resolved = outcome => ["target", "stop", "stop_gap", "timeout"].includes(outcome.status);
@@ -70,7 +98,66 @@
       if (summary) b.append(node("span", `结果快照 · ${fmt(summary.target_net_pct, 1)}%目标`, "item-meta"), node("span", `达标 ${summary.mean_target_days == null ? "暂无" : fmt(summary.mean_target_days) + "日"} · 最大亏损 ${summary.max_realized_loss_pct == null ? "未记录" : fmt(summary.max_realized_loss_pct) + "%"}`, "item-meta"));
       return b;
     }));
-    text("experiment-count", state.records.length); show("list-empty", !visible.length);
+    text("experiment-count", state.records.length); show("list-empty", !visible.length); renderHistory();
+  }
+  function renderHistory() {
+    const records = [...state.records], visible = records.length > 0;
+    show("history-comparison", visible);
+    if (!visible) { $("history-body").replaceChildren(); return; }
+    const newer = (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at);
+    records.sort((a, b) => {
+      const ma = recordMetrics(a), mb = recordMetrics(b);
+      let diff = 0;
+      if (state.historySort === "mean") diff = (mb.meanNet ?? -Infinity) - (ma.meanNet ?? -Infinity);
+      else if (state.historySort === "target") diff = (mb.target ?? -Infinity) - (ma.target ?? -Infinity);
+      else if (state.historySort === "worst") diff = (mb.worst ?? -Infinity) - (ma.worst ?? -Infinity);
+      else if (state.historySort === "samples") diff = (mb.samples ?? -Infinity) - (ma.samples ?? -Infinity);
+      return diff || newer(a, b);
+    });
+    $("history-body").replaceChildren(...records.map(r => {
+      const m = recordMetrics(r), sel = m.selection, verdict = currentVerdict(r), tr = node("tr");
+      tr.dataset.experiment = r.id; tr.setAttribute("aria-current", String(r.id === state.id));
+      const experiment = node("td");
+      experiment.append(node("strong", r.spec.title || "未命名实验"), node("span", `#${short(r.id)} · ${timestamp(r.created_at)}`, "history-meta"));
+      const action = node("td"); action.append(button("查看", () => select(r.id, true)));
+      const selectionValue = Number.isFinite(sel.selected) || Number.isFinite(sel.candidates) ? `${count(sel.selected)} / ${count(sel.candidates)}` : "未记录";
+      for (const value of [experiment, badge(verdicts[verdict] || verdict, verdict === "promising"), `${count(m.samples)} / ${count(m.dates)}`, pctPoint(m.meanNet), pct(m.profit), pct(m.target), pctPoint(m.worst), selectionValue, action]) tr.append(value instanceof HTMLElement ? value : node("td", String(value)));
+      return tr;
+    }));
+    text("history-note", `共 ${records.length} 条归档；数值只读取每条实验自己的结果，不在当前页面重算。旧档案没有规则漏斗时，选股列为 Top N 候选样本 / 入选交易。排序不会改变实验记录或结论。`);
+  }
+  function renderMetricOverview() {
+    const r = state.current, m = recordMetrics(r), sel = m.selection, complete = r?.status === "completed";
+    show("metric-overview", complete);
+    if (!complete) return;
+    const backtest = [
+      ["已完成 / 未决", `${count(m.resolved)} / ${count(m.unresolved)}`],
+      ["独立信号日", count(m.dates)],
+      ["平均单笔净收益", pctPoint(m.meanNet)],
+      ["盈利比例", pct(m.profit)],
+      ["目标命中率", pct(m.target)],
+      ["最差单笔", pctPoint(m.worst)],
+      ["最大不利波动", pctPoint(m.maxAdverse)]
+    ];
+    const selection = sel.funnel ? [
+      ["候选", count(sel.candidates)],
+      ["规则通过", count(sel.eligible)],
+      ["预先入选", count(sel.selected)],
+      ["原 Top N 被过滤", count(sel.filtered)],
+      ["入选率", ratio(sel.selected, sel.candidates)],
+      ["信号日规则", sel.rule || "未记录"]
+    ] : [
+      ["Top N 候选样本", count(sel.candidates)],
+      ["入选交易", count(sel.selected)],
+      ["未入选", count(sel.filtered)],
+      ["入选率", ratio(sel.selected, sel.candidates)],
+      ["信号日规则", "未记录"],
+      ["规则通过", "未记录"]
+    ];
+    const values = rows => rows.map(([label, value]) => { const box = node("div"); box.append(node("dt", label), node("dd", value)); return box; });
+    $("overview-backtest").replaceChildren(...values(backtest));
+    $("overview-selection").replaceChildren(...values(selection));
+    text("metric-overview-note", m.kind === "snapshot" ? "本档案为无止损研究结果快照；回测指标来自固定结果行，选股漏斗未记录。" : m.kind === "stats" ? sel.funnel ? "回测指标取本轮已完成交易；选股覆盖取本轮固定的信号筛选统计。" : "回测指标取本轮已完成交易；旧档案没有规则漏斗，选股覆盖仅显示可回溯的 Top N 候选与入选交易。" : "该实验没有可读取的完成指标。");
   }
   async function refresh() {
     state.listController?.abort(); state.listController = new AbortController();
@@ -136,6 +223,7 @@
     show("run-results", !!result && r.status === "completed"); show("risk-review", !!result && r.status === "completed");
   show("validation-rules", !researchSnapshot(r));
   renderSnapshot();
+    renderMetricOverview();
     if (!result) return;
     renderComparison(); renderGroups(); renderTrades(); renderRisk(); renderNextDay(); renderEntryDay();
     $("run-findings").replaceChildren(...list(result.findings).map(f => {
@@ -330,6 +418,7 @@
   });
   $("refresh-experiments").addEventListener("click", refresh); $("lab-retry").addEventListener("click", refresh); $("detail-retry").addEventListener("click", () => select(state.id));
   $("experiment-search").addEventListener("input", renderList); $("experiment-filter").addEventListener("change", renderList);
+  $("history-sort").addEventListener("change", () => { state.historySort = $("history-sort").value; renderHistory(); });
   $("group-kind").addEventListener("change", renderGroups); $("trade-filter").addEventListener("change", () => { state.page = 0; renderTrades(); });
   $("trade-prev").addEventListener("click", () => { state.page--; renderTrades(); }); $("trade-next").addEventListener("click", () => { state.page++; renderTrades(); });
   window.addEventListener("popstate", () => { const id = new URL(location.href).searchParams.get("id") || state.records[0]?.id; if (id) select(id); });

@@ -12,6 +12,9 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     expect(page).to_have_title("策略实验室 · Stock Watcher")
     assert urlparse(page.url).path == "/experiments"
     expect(page.locator(".experiment-item")).to_have_count(6)
+    expect(page.locator("#history-comparison")).to_be_visible()
+    expect(page.locator("#history-body tr")).to_have_count(6)
+    expect(page.locator("#history-comparison")).to_contain_text("平均净收益")
     payload = context.request.get(url + "/api/experiments").json()
     records = payload["experiments"]
     child = next(r for r in records if r["spec"].get("max_upper_wick") is not None)
@@ -26,6 +29,10 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     expect(page.locator("#snapshot-policy")).to_contain_text("无价格止损")
     expect(page.locator("#snapshot-secondary")).to_contain_text("7.42 日")
     expect(page.locator("#snapshot-secondary")).to_contain_text("未记录")
+    expect(page.locator("#metric-overview")).to_be_visible()
+    expect(page.locator("#overview-backtest")).to_contain_text("平均单笔净收益")
+    expect(page.locator("#overview-backtest")).to_contain_text("最大不利波动")
+    expect(page.locator("#overview-selection")).to_contain_text("Top N 候选样本")
     expect(page.locator("#validation-rules")).to_be_hidden()
     expect(page.locator("#risk-review")).to_be_hidden()
     expect(page.locator("#run-tags")).to_contain_text("研究结果快照")
@@ -43,6 +50,7 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     page.locator("#experiment-filter").select_option("")
     page.set_viewport_size({"width": 390, "height": 844})
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), "result snapshot mobile overflow"
+    assert page.evaluate("document.getElementById('metric-overview').scrollWidth <= document.getElementById('metric-overview').clientWidth + 1"), "metric overview mobile overflow"
     screenshots = root / ".scratch/dashboard-verification"
     screenshots.mkdir(parents=True, exist_ok=True)
     kind = "container" if args.image else "native"
@@ -55,6 +63,11 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     expect(page.locator("#run-hypothesis")).to_contain_text("30%")
     expect(page.locator("#comparison-note")).to_contain_text("口径一致")
     expect(page.locator("#comparison-body tr")).to_have_count(31)
+    expect(page.locator("#metric-overview")).to_be_visible()
+    expect(page.locator("#overview-selection")).to_contain_text("规则通过")
+    page.locator("#history-sort").select_option("mean")
+    expect(page.locator("#history-body tr")).to_have_count(6)
+    page.locator("#history-sort").select_option("newest")
     expect(page.locator("#run-holdout")).not_to_have_text("待划分")
     expect(page.locator("#run-next")).not_to_be_empty()
     expect(page.locator("#validation-rules")).to_contain_text("最高价触达 2.5%／3% 或以上")
