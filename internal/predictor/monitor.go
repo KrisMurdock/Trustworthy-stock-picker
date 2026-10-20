@@ -243,6 +243,11 @@ func (m *Monitor) PredictOnce(ctx context.Context, now time.Time) (Result, error
 		result.Skipped = []string{"model_not_valid_for_today"}
 		return result, nil
 	}
+	if pushEnabled {
+		if _, err := m.enqueueDeviationCard(ctx, date, slot, info); err != nil {
+			m.Log.Warn("Predictor deviation card failed", "error", err.Error())
+		}
+	}
 	m.mu.Lock()
 	attempted := m.lastAttemptEnd.Equal(slot.TargetEnd)
 	m.mu.Unlock()
@@ -257,6 +262,12 @@ func (m *Monitor) PredictOnce(ctx context.Context, now time.Time) (Result, error
 			}
 		}
 		result.Skipped = []string{"already_predicted"}
+		if pushEnabled {
+			result.Pushed, err = m.enqueuePredictionCard(ctx, date, slot, info, result.Predictions)
+			if err != nil {
+				return result, err
+			}
+		}
 		return result, nil
 	}
 
@@ -345,55 +356,16 @@ func (m *Monitor) PredictOnce(ctx context.Context, now time.Time) (Result, error
 		}
 	}
 	result.Predictions = current
-
-	pushed := false
-	if pushEnabled && len(current) > 0 {
-		names := make(map[string]string, len(selected))
-		for _, stock := range selected {
-			names[stock.Code] = stock.Name
-		}
-		previous, err := m.DB.PendingForTarget(ctx, date, slot.InputEnd)
-		if err != nil {
-			return result, err
-		}
-		filteredPrevious := make([]Prediction, 0, len(previous))
-		for _, prediction := range previous {
-			if prediction.ModelID == info.ModelID {
-				filteredPrevious = append(filteredPrevious, prediction)
-			}
-		}
-		actuals, err := m.DB.ActualsForTarget(ctx, slot.InputEnd)
-		if err != nil {
-			return result, err
-		}
-		message, err := BuildCard(date, slot.TargetEnd, info, current, CardData{
-			Names: names, Previous: filteredPrevious, Actuals: actuals,
-		})
-		if err != nil {
-			return result, err
-		}
-		channels := m.channelNames()
-		if len(channels) > 0 {
-			m.mu.Lock()
-			_, exists := m.ledger.Events[message.EventID]
-			if inserted > 0 || !exists {
-				err = m.ledger.EnqueuePart(date, message, channels, "5m", 0, "")
-				if err == nil {
-					err = m.saveLedger()
-				}
-				pushed = err == nil
-			}
-			m.mu.Unlock()
-			if err != nil {
-				return result, err
-			}
-		}
-	}
-	result.Pushed = pushed
-	if len(current) >= len(selected) {
+	if predictionsReady(selected, current, info.ModelID) {
 		m.mu.Lock()
 		m.lastAttemptEnd = slot.TargetEnd
 		m.mu.Unlock()
+	}
+	if pushEnabled && len(current) > 0 {
+		result.Pushed, err = m.enqueuePredictionCard(ctx, date, slot, info, current)
+		if err != nil {
+			return result, err
+		}
 	}
 
 	m.mu.Lock()
@@ -423,6 +395,150 @@ func (m *Monitor) PredictOnce(ctx context.Context, now time.Time) (Result, error
 		}
 	}
 	return result, nil
+}
+
+func (m *Monitor) enqueuePredictionCard(ctx context.Context, date string, slot barSlot, info ModelInfo, current []Prediction) (bool, error) {
+	if len(current) == 0 {
+		return false, nil
+	}
+	report, err := m.reportForToday(ctx, date)
+	if err != nil {
+		if errors.Is(err, errNoReportToday) {
+			return false, nil
+		}
+		return false, err
+	}
+	selected, _ := reportUniverse(report, m.Config.Stocks, m.Config.Selection.TopN)
+	if len(selected) == 0 {
+		return false, nil
+	}
+	names := make(map[string]string, len(selected))
+	for _, stock := range selected {
+		names[stock.Code] = stock.Name
+	}
+	message, err := BuildCard(date, slot.TargetEnd, info, current, CardData{Names: names})
+	if err != nil {
+		return false, err
+	}
+	enqueued, err := m.enqueueMessage(date, message, "5m", 0)
+	if enqueued {
+		m.Log.Info("Predictor prediction card queued", "target_end", slot.TargetEnd.Format(time.RFC3339),
+			"predictions", len(current))
+	}
+	return enqueued, err
+}
+
+func (m *Monitor) enqueueDeviationCard(ctx context.Context, date string, slot barSlot, info ModelInfo) (bool, error) {
+	previous, err := m.DB.PendingForTarget(ctx, date, slot.InputEnd)
+	if err != nil {
+		return false, err
+	}
+	filteredPrevious := make([]Prediction, 0, len(previous))
+	for _, prediction := range previous {
+		if prediction.ModelID == info.ModelID {
+			filteredPrevious = append(filteredPrevious, prediction)
+		}
+	}
+	if len(filteredPrevious) == 0 {
+		return false, nil
+	}
+	m.mu.Lock()
+	_, predictionExists := m.ledger.Events[fmt.Sprintf("intraday:%s:%d", date, slot.InputEnd.Unix())]
+	m.mu.Unlock()
+	if !predictionExists {
+		return false, nil
+	}
+	report, err := m.reportForToday(ctx, date)
+	if err != nil {
+		if errors.Is(err, errNoReportToday) {
+			return false, nil
+		}
+		return false, err
+	}
+	selected, _ := reportUniverse(report, m.Config.Stocks, m.Config.Selection.TopN)
+	if len(selected) == 0 {
+		return false, nil
+	}
+	actuals, err := m.DB.ActualsForTarget(ctx, slot.InputEnd)
+	if err != nil {
+		return false, err
+	}
+	if !actualsReady(selected, filteredPrevious, actuals, info.ModelID) {
+		return false, nil
+	}
+	names := make(map[string]string, len(selected))
+	for _, stock := range selected {
+		names[stock.Code] = stock.Name
+	}
+	message, err := BuildDeviationCard(date, slot.InputEnd, slot.TargetEnd, info, filteredPrevious, actuals, names)
+	if err != nil {
+		return false, err
+	}
+	enqueued, err := m.enqueueMessage(date, message, "actual", 1)
+	if enqueued {
+		m.Log.Info("Predictor deviation card queued", "target_end", slot.InputEnd.Format(time.RFC3339),
+			"predictions", len(filteredPrevious))
+	}
+	return enqueued, err
+}
+
+func (m *Monitor) enqueueMessage(date string, message notify.Message, part string, sequence int) (bool, error) {
+	channels := m.channelNames()
+	if len(channels) == 0 {
+		return false, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.ledger.Events[message.EventID]; exists {
+		return false, nil
+	}
+	if err := m.ledger.EnqueuePart(date, message, channels, part, sequence, ""); err != nil {
+		return false, err
+	}
+	if err := m.saveLedger(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func predictionsReady(selected []config.Stock, predictions []Prediction, modelID string) bool {
+	ready := make(map[string]bool, len(predictions))
+	for _, prediction := range predictions {
+		if prediction.ModelID == modelID {
+			ready[prediction.Code] = true
+		}
+	}
+	for _, stock := range selected {
+		if !ready[stock.Code] {
+			return false
+		}
+	}
+	return true
+}
+
+func actualsReady(selected []config.Stock, previous []Prediction, actuals []Actual, modelID string) bool {
+	if len(previous) == 0 {
+		return true
+	}
+	previousByCode := make(map[string]Prediction, len(previous))
+	for _, prediction := range previous {
+		if prediction.ModelID == modelID {
+			previousByCode[prediction.Code] = prediction
+		}
+	}
+	resolved := make(map[string]bool, len(actuals))
+	for _, actual := range actuals {
+		if actual.ModelID == modelID && actual.Status == "resolved" {
+			resolved[predictionKey(actual.Code, actual.ModelID)] = true
+		}
+	}
+	for _, stock := range selected {
+		prediction, ok := previousByCode[stock.Code]
+		if !ok || !resolved[predictionKey(prediction.Code, prediction.ModelID)] {
+			return false
+		}
+	}
+	return true
 }
 
 // Train fits the next valid model and writes it under the CIFS data root.

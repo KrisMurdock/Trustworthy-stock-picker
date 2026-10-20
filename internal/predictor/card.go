@@ -11,9 +11,7 @@ import (
 )
 
 type CardData struct {
-	Names    map[string]string
-	Previous []Prediction
-	Actuals  []Actual
+	Names map[string]string
 }
 
 type previousComparison struct {
@@ -26,12 +24,10 @@ func BuildCard(date string, targetEnd time.Time, model ModelInfo, preds []Predic
 	if len(preds) == 0 {
 		return notify.Message{}, errors.New("predictor card requires at least one prediction")
 	}
-	comparisons := matchPrevious(data.Previous, data.Actuals)
-	confirmed, meanCloseError := previousSummary(comparisons)
 	window := predictionWindow(preds, targetEnd)
 	sections := []notify.Section{
 		{
-			Fields: summaryFields(preds, window, comparisons, confirmed, meanCloseError),
+			Fields: predictionSummaryFields(preds, window),
 		},
 		{
 			Heading: "📊 本轮预测",
@@ -50,28 +46,6 @@ func BuildCard(date string, targetEnd time.Time, model ModelInfo, preds []Predic
 				Rows: predictionRows(preds, data.Names),
 			},
 		},
-	}
-	if len(comparisons) > 0 {
-		target := comparisons[0].Prediction.TargetEnd.Format("15:04")
-		sections = append(sections, notify.Section{
-			Heading: "✅ 上一根实际对比",
-			Lines:   []string{fmt.Sprintf("%s 实际 vs 预测 · 偏差 = 实际 − 预测", target)},
-			Table: &notify.Table{
-				PageSize:          20,
-				RowHeight:         "low",
-				FreezeFirstColumn: true,
-				Columns: []notify.TableColumn{
-					{Key: "name", Label: "名称", Kind: notify.TableText, Width: "18%"},
-					{Key: "actual_high", Label: "实际高", Kind: notify.TableText, Width: "13%", Align: "right"},
-					{Key: "actual_low", Label: "实际低", Kind: notify.TableText, Width: "13%", Align: "right"},
-					{Key: "actual_close", Label: "实际收", Kind: notify.TableText, Width: "13%", Align: "right"},
-					{Key: "high_diff", Label: "高偏差", Kind: notify.TableChange, Width: "14%", Align: "right"},
-					{Key: "low_diff", Label: "低偏差", Kind: notify.TableChange, Width: "14%", Align: "right"},
-					{Key: "close_diff", Label: "收偏差", Kind: notify.TableChange, Width: "15%", Align: "right"},
-				},
-				Rows: previousResultRows(comparisons, data.Names),
-			},
-		})
 	}
 	sections = append(sections, modelSection(model))
 	return notify.Message{
@@ -98,21 +72,76 @@ func predictionWindow(preds []Prediction, targetEnd time.Time) string {
 	return target
 }
 
-func summaryFields(preds []Prediction, window string, comparisons []previousComparison, confirmed int, meanCloseError float64) []notify.Field {
-	confirmedText := "首根"
-	errorText := "—"
-	if len(comparisons) > 0 {
-		confirmedText = fmt.Sprintf("%d / %d", confirmed, len(comparisons))
-		errorText = "待确认"
-		if confirmed > 0 {
-			errorText = fmt.Sprintf("%.2fpp", meanCloseError*100)
-		}
+func BuildDeviationCard(date string, targetEnd, expiresAt time.Time, model ModelInfo, previous []Prediction, actuals []Actual, names map[string]string) (notify.Message, error) {
+	if len(previous) == 0 {
+		return notify.Message{}, errors.New("deviation card requires at least one previous prediction")
 	}
+	comparisons := matchPrevious(previous, actuals)
+	if len(comparisons) == 0 {
+		return notify.Message{}, errors.New("deviation card has no rows")
+	}
+	if expiresAt.IsZero() {
+		expiresAt = targetEnd.Add(5 * time.Minute)
+	}
+	confirmed, meanCloseError := previousSummary(comparisons)
+	window := predictionWindow(previous, targetEnd)
+	return notify.Message{
+		Version:        2,
+		EventID:        fmt.Sprintf("intraday:%s:%d:actual", date, targetEnd.Unix()),
+		DisplayEventID: fmt.Sprintf("intraday:%s:actual", date),
+		PartLabel:      "上轮偏差",
+		Title:          "上轮预测偏差",
+		Subtitle:       fmt.Sprintf("%s %s · 龙头池 · 实验性", date, window),
+		HeaderIcon:     "insert-chart_outlined",
+		WidthMode:      "fill",
+		Template:       "orange",
+		TrimPolicy:     notify.TrimNone,
+		ExpiresAt:      expiresAt,
+		Sections: []notify.Section{
+			{
+				Fields: deviationSummaryFields(comparisons, confirmed, meanCloseError, window),
+			},
+			{
+				Heading: "✅ 上一根实际对比",
+				Lines:   []string{fmt.Sprintf("%s 实际 vs 预测 · 偏差 = 实际 − 预测", targetEnd.Format("15:04"))},
+				Table: &notify.Table{
+					PageSize:          20,
+					RowHeight:         "low",
+					FreezeFirstColumn: true,
+					Columns: []notify.TableColumn{
+						{Key: "name", Label: "名称", Kind: notify.TableText, Width: "18%"},
+						{Key: "actual_high", Label: "实际高", Kind: notify.TableText, Width: "13%", Align: "right"},
+						{Key: "actual_low", Label: "实际低", Kind: notify.TableText, Width: "13%", Align: "right"},
+						{Key: "actual_close", Label: "实际收", Kind: notify.TableText, Width: "13%", Align: "right"},
+						{Key: "high_diff", Label: "高偏差", Kind: notify.TableChange, Width: "14%", Align: "right"},
+						{Key: "low_diff", Label: "低偏差", Kind: notify.TableChange, Width: "14%", Align: "right"},
+						{Key: "close_diff", Label: "收偏差", Kind: notify.TableChange, Width: "15%", Align: "right"},
+					},
+					Rows: previousResultRows(comparisons, names),
+				},
+			},
+			modelSection(model),
+		},
+	}, nil
+}
+
+func deviationSummaryFields(comparisons []previousComparison, confirmed int, meanCloseError float64, window string) []notify.Field {
+	errorText := "待确认"
+	if confirmed > 0 {
+		errorText = fmt.Sprintf("%.2fpp", meanCloseError*100)
+	}
+	return []notify.Field{
+		{Label: "对比窗口", Value: window},
+		{Label: "对比标的", Value: fmt.Sprintf("%d 只", len(comparisons))},
+		{Label: "已确认", Value: fmt.Sprintf("%d / %d", confirmed, len(comparisons))},
+		{Label: "平均收盘误差", Value: errorText},
+	}
+}
+
+func predictionSummaryFields(preds []Prediction, window string) []notify.Field {
 	return []notify.Field{
 		{Label: "预测窗口", Value: window},
 		{Label: "预测标的", Value: fmt.Sprintf("%d 只", len(preds))},
-		{Label: "上根确认", Value: confirmedText},
-		{Label: "上根收盘误差", Value: errorText},
 	}
 }
 

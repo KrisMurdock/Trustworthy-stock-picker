@@ -40,11 +40,16 @@ func TestBuildCardAggregatesPredictions(t *testing.T) {
 		message.HeaderIcon != "insert-chart_outlined" || message.WidthMode != "fill" {
 		t.Fatalf("title=%q", message.Title)
 	}
-	if len(message.Sections) != 3 || len(message.Sections[0].Fields) != 4 || message.Sections[1].Table == nil || len(message.Sections[1].Table.Rows) != 1 {
+	if len(message.Sections) != 3 || len(message.Sections[0].Fields) != 2 || message.Sections[1].Table == nil || len(message.Sections[1].Table.Rows) != 1 {
 		t.Fatalf("missing prediction table row")
 	}
 	if got := fieldValue(message.Sections[0].Fields, "预测窗口"); got != "09:35 → 09:40" {
 		t.Fatalf("prediction window=%q", got)
+	}
+	for _, section := range message.Sections {
+		if section.Heading == "✅ 上一根实际对比" {
+			t.Fatal("prediction card must not embed the deviation section")
+		}
 	}
 	for _, column := range message.Sections[1].Table.Columns {
 		if !strings.HasSuffix(column.Width, "%") {
@@ -74,36 +79,43 @@ func TestBuildCardRejectsEmptyPredictions(t *testing.T) {
 	}
 }
 
-func TestBuildCardReportsPreviousActualDeviation(t *testing.T) {
+func TestBuildDeviationCardReportsPreviousActualDeviation(t *testing.T) {
 	target := time.Date(2026, 10, 20, 9, 45, 0, 0, market.Shanghai)
-	previousTarget := target.Add(-5 * time.Minute)
-	data := CardData{
-		Names: map[string]string{"sh600000": "浦发银行"},
-		Previous: []Prediction{{
-			Code: "sh600000", ModelID: "m1", TargetEnd: previousTarget, BasePrice: 10,
+	expiry := target.Add(5 * time.Minute)
+	message, err := BuildDeviationCard("2026-10-20", target, expiry, ModelInfo{ModelID: "m1", DataTo: "2026-10-19"},
+		[]Prediction{{
+			Code: "sh600000", ModelID: "m1", InputEnd: target.Add(-5 * time.Minute), TargetEnd: target, BasePrice: 10,
 			HighPct: 0.01, LowPct: -0.01, ClosePct: 0,
-		}},
-		Actuals: []Actual{{
-			Code: "sh600000", ModelID: "m1", TargetEnd: previousTarget, Status: "resolved",
+		}}, []Actual{{
+			Code: "sh600000", ModelID: "m1", TargetEnd: target, Status: "resolved",
 			HighPct: 0.03, LowPct: 0.01, ClosePct: 0.02,
-		}},
-	}
-	message, err := BuildCard("2026-10-20", target, ModelInfo{}, []Prediction{{
-		Code: "sh600000", BasePrice: 10.2, HighPct: 0.01, LowPct: -0.01, Trend: "震荡", Confidence: "中",
-	}}, data)
+		}}, map[string]string{"sh600000": "浦发银行"})
 	if err != nil {
-		t.Fatalf("build card: %v", err)
+		t.Fatalf("build deviation card: %v", err)
 	}
-	if len(message.Sections) < 4 || message.Sections[2].Heading != "✅ 上一根实际对比" || message.Sections[2].Table == nil {
+	if message.EventID != "intraday:2026-10-20:"+strconv.FormatInt(target.Unix(), 10)+":actual" || message.PartLabel != "上轮偏差" {
+		t.Fatalf("unexpected deviation identity: %+v", message)
+	}
+	if message.Title != "上轮预测偏差" || !strings.Contains(message.Subtitle, "09:40 → 09:45") ||
+		message.HeaderIcon != "insert-chart_outlined" || message.WidthMode != "fill" {
+		t.Fatalf("unexpected deviation header: %+v", message)
+	}
+	if !message.ExpiresAt.Equal(expiry) {
+		t.Fatalf("expiry=%s want %s", message.ExpiresAt, expiry)
+	}
+	if len(message.Sections) != 3 || message.Sections[1].Heading != "✅ 上一根实际对比" || message.Sections[1].Table == nil {
 		t.Fatalf("missing previous actual section: %+v", message.Sections)
 	}
-	if got := fieldValue(message.Sections[0].Fields, "上根确认"); got != "1 / 1" {
+	if got := fieldValue(message.Sections[0].Fields, "对比窗口"); got != "09:40 → 09:45" {
+		t.Fatalf("comparison window=%q", got)
+	}
+	if got := fieldValue(message.Sections[0].Fields, "已确认"); got != "1 / 1" {
 		t.Fatalf("confirmed=%q", got)
 	}
-	if got := fieldValue(message.Sections[0].Fields, "上根收盘误差"); got != "2.00pp" {
+	if got := fieldValue(message.Sections[0].Fields, "平均收盘误差"); got != "2.00pp" {
 		t.Fatalf("close error=%q", got)
 	}
-	row := message.Sections[2].Table.Rows[0]
+	row := message.Sections[1].Table.Rows[0]
 	want := []string{"浦发银行", "10.30 (+3.00%)", "10.10 (+1.00%)", "10.20 (+2.00%)", "+0.20 (+2.00pp)", "+0.20 (+2.00pp)", "+0.20 (+2.00pp)"}
 	for index := range want {
 		if row[index].Text != want[index] {
@@ -112,28 +124,30 @@ func TestBuildCardReportsPreviousActualDeviation(t *testing.T) {
 	}
 }
 
-func TestBuildCardMarksUnresolvedPreviousActual(t *testing.T) {
+func TestBuildDeviationCardMarksUnresolvedPreviousActual(t *testing.T) {
 	target := time.Date(2026, 10, 20, 9, 45, 0, 0, market.Shanghai)
-	previousTarget := target.Add(-5 * time.Minute)
-	message, err := BuildCard("2026-10-20", target, ModelInfo{}, []Prediction{{
-		Code: "sh600000", BasePrice: 10, HighPct: 0.01, LowPct: -0.01, Trend: "震荡", Confidence: "中",
-	}}, CardData{
-		Names:    map[string]string{"sh600000": "浦发银行"},
-		Previous: []Prediction{{Code: "sh600000", ModelID: "m1", TargetEnd: previousTarget, BasePrice: 10}},
-		Actuals:  []Actual{{Code: "sh600000", ModelID: "m1", TargetEnd: previousTarget, Status: "unresolved"}},
-	})
+	message, err := BuildDeviationCard("2026-10-20", target, target.Add(5*time.Minute), ModelInfo{},
+		[]Prediction{{Code: "sh600000", ModelID: "m1", InputEnd: target.Add(-5 * time.Minute), TargetEnd: target, BasePrice: 10}},
+		[]Actual{{Code: "sh600000", ModelID: "m1", TargetEnd: target, Status: "unresolved"}},
+		map[string]string{"sh600000": "浦发银行"})
 	if err != nil {
-		t.Fatalf("build card: %v", err)
+		t.Fatalf("build deviation card: %v", err)
 	}
-	if got := fieldValue(message.Sections[0].Fields, "上根确认"); got != "0 / 1" {
+	if got := fieldValue(message.Sections[0].Fields, "已确认"); got != "0 / 1" {
 		t.Fatalf("confirmed=%q", got)
 	}
-	if got := fieldValue(message.Sections[0].Fields, "上根收盘误差"); got != "待确认" {
+	if got := fieldValue(message.Sections[0].Fields, "平均收盘误差"); got != "待确认" {
 		t.Fatalf("close error=%q", got)
 	}
-	row := message.Sections[2].Table.Rows[0]
+	row := message.Sections[1].Table.Rows[0]
 	if row[1].Text != "待确认" || row[4].Text != "—" {
 		t.Fatalf("unresolved previous actual row: %+v", row)
+	}
+}
+
+func TestBuildDeviationCardRejectsEmptyPrevious(t *testing.T) {
+	if _, err := BuildDeviationCard("2026-10-20", time.Now(), time.Now().Add(time.Minute), ModelInfo{}, nil, nil, nil); err == nil {
+		t.Fatal("expected empty previous prediction error")
 	}
 }
 

@@ -3,9 +3,11 @@ package predictor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -275,6 +277,80 @@ func TestPredictOncePersistsAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestPredictOncePushesPartialPredictionImmediately(t *testing.T) {
+	now := monitorAt(t, "2026-10-20 09:35:10")
+	m, reader, _ := monitorNewTestMonitor(t, now)
+	m.Config.Stocks = []config.Stock{{Code: "sh600000", Name: "Test"}, {Code: "sz000001", Name: "Second"}}
+	monitorSetModel(m, "2026-10-20")
+	report := monitorReportFor("2026-10-20")
+	report.Selected = append(report.Selected, selection.Candidate{Code: "sz000001", Name: "Second"})
+	reader.reports["2026-10-19"] = report
+	blocked := true
+	m.inferenceBuilder = func(_ Data, code string, _ time.Time) (FeatureVector, market.MinuteBar, error) {
+		if blocked && code == "sz000001" {
+			return FeatureVector{}, market.MinuteBar{}, errors.New("not ready")
+		}
+		return FeatureVector{Names: FeatureNames(), Values: make([]float64, len(FeatureNames()))},
+			market.MinuteBar{Close: 10, Final: true}, nil
+	}
+
+	first, err := m.PredictOnce(context.Background(), now)
+	if err != nil {
+		t.Fatalf("predict partial batch: %v", err)
+	}
+	if !first.Pushed || len(m.ledger.Events) != 1 {
+		t.Fatalf("partial batch was not pushed immediately: result=%+v events=%d", first, len(m.ledger.Events))
+	}
+
+	blocked = false
+	second, err := m.PredictOnce(context.Background(), monitorAt(t, "2026-10-20 09:36:00"))
+	if err != nil {
+		t.Fatalf("predict complete batch: %v", err)
+	}
+	if second.Pushed || len(m.ledger.Events) != 1 {
+		t.Fatalf("prediction card was duplicated: result=%+v events=%d", second, len(m.ledger.Events))
+	}
+	predictions, err := m.DB.PendingForTarget(context.Background(), "2026-10-20", monitorAt(t, "2026-10-20 09:40:00"))
+	if err != nil || len(predictions) != 2 {
+		t.Fatalf("predictions=%d err=%v want 2", len(predictions), err)
+	}
+}
+
+func TestPredictOncePushesDeviationCardWhenActualsReady(t *testing.T) {
+	now := monitorAt(t, "2026-10-20 09:35:10")
+	m, reader, _ := monitorNewTestMonitor(t, now)
+	monitorSetModel(m, "2026-10-20")
+	reader.reports["2026-10-19"] = monitorReportFor("2026-10-20")
+	reader.minutes["sh600000"] = []market.MinuteBar{monitorMinuteBar(t, "2026-10-20", "09:35", 10, 10.1, 9.9, 10)}
+	if _, err := m.PredictOnce(context.Background(), now); err != nil {
+		t.Fatalf("initial predict: %v", err)
+	}
+
+	if _, err := m.PredictOnce(context.Background(), monitorAt(t, "2026-10-20 09:40:10")); err != nil {
+		t.Fatalf("predict without actual: %v", err)
+	}
+	deviationID := "intraday:2026-10-20:" + strconv.FormatInt(monitorAt(t, "2026-10-20 09:40:00").Unix(), 10) + ":actual"
+	if _, exists := m.ledger.Events[deviationID]; exists {
+		t.Fatal("deviation card was queued before the actual bar arrived")
+	}
+
+	reader.minutes["sh600000"] = append(reader.minutes["sh600000"], monitorMinuteBar(t, "2026-10-20", "09:40", 10, 10.3, 10.1, 10.2))
+	ready, err := m.PredictOnce(context.Background(), monitorAt(t, "2026-10-20 09:41:10"))
+	if err != nil {
+		t.Fatalf("predict with actual: %v", err)
+	}
+	if ready.Pushed {
+		t.Fatalf("prediction card should already exist: result=%+v", ready)
+	}
+	event, exists := m.ledger.Events[deviationID]
+	if !exists {
+		t.Fatal("deviation card was not queued after actuals resolved")
+	}
+	if event.Part != "actual" || event.Sequence != 1 || event.Message.PartLabel != "上轮偏差" {
+		t.Fatalf("unexpected deviation event: %+v", event)
+	}
+}
+
 func TestPredictOnceReconcilesArrivedTargetBar(t *testing.T) {
 	now := monitorAt(t, "2026-10-20 09:35:10")
 	m, reader, channel := monitorNewTestMonitor(t, now)
@@ -310,10 +386,28 @@ func TestPredictOnceReconcilesArrivedTargetBar(t *testing.T) {
 	if monitorAbsDiff(highPct, 0.03) > 1e-9 || monitorAbsDiff(lowPct, 0.01) > 1e-9 || monitorAbsDiff(closePct, 0.02) > 1e-9 {
 		t.Fatalf("actual pct high=%v low=%v close=%v", highPct, lowPct, closePct)
 	}
-	if len(channel.sent) != 2 || len(channel.sent[1].Sections) < 4 {
-		t.Fatalf("sent cards=%d, second card sections=%+v", len(channel.sent), channel.sent)
+	if len(channel.sent) != 3 {
+		t.Fatalf("sent cards=%d want prediction, prediction, deviation: %+v", len(channel.sent), channel.sent)
 	}
-	actualSection := channel.sent[1].Sections[2]
+	var deviation *notify.Message
+	for i := range channel.sent {
+		if channel.sent[i].PartLabel == "上轮偏差" {
+			deviation = &channel.sent[i]
+			continue
+		}
+		if len(channel.sent[i].Sections) != 3 {
+			t.Fatalf("prediction card contains extra sections: %+v", channel.sent[i].Sections)
+		}
+		for _, section := range channel.sent[i].Sections {
+			if section.Heading == "✅ 上一根实际对比" {
+				t.Fatalf("prediction card embeds the deviation section: %+v", channel.sent[i].Sections)
+			}
+		}
+	}
+	if deviation == nil {
+		t.Fatal("separate deviation card was not sent")
+	}
+	actualSection := deviation.Sections[1]
 	if actualSection.Heading != "✅ 上一根实际对比" || actualSection.Table == nil || len(actualSection.Table.Rows) != 1 {
 		t.Fatalf("unexpected previous actual section: %+v", actualSection)
 	}

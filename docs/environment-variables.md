@@ -126,7 +126,7 @@
 | STOCK_WATCHER_PREDICTOR_VALIDATION_DAYS | 3 | expanding walk-forward 验证交易日 |
 | STOCK_WATCHER_PREDICTOR_KEEP_MODELS | 10 | 保留的模型代数 |
 
-模型缺失、过期或 `valid_for` 不是今天时不会预测，也不会推送旧结果。网页开关只控制飞书投递，不停止预测和落库。
+模型缺失、过期或 `valid_for` 不是今天时不会预测，也不会推送旧结果。预测结果实时落库并推送预测卡；上一根实际 K 线确认后，再单独推送偏差对比卡。网页开关只控制飞书投递，不停止预测和落库。
 
 ## 通知与凭证
 
