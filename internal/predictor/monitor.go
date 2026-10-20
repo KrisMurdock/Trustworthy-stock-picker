@@ -268,7 +268,7 @@ func (m *Monitor) PredictOnce(ctx context.Context, now time.Time) (Result, error
 		}
 		return result, err
 	}
-	selected := selectedStocks(report, m.Config.Stocks)
+	selected, _ := reportUniverse(report, m.Config.Stocks, m.Config.Selection.TopN)
 	if len(selected) == 0 {
 		result.Skipped = []string{"no_selected_stocks"}
 		return result, nil
@@ -413,7 +413,25 @@ func (m *Monitor) Train(ctx context.Context, now time.Time) (ModelInfo, error) {
 	if err != nil {
 		return ModelInfo{}, err
 	}
-	data, err := m.loadData(ctx, m.Config.Stocks, now, true)
+	report, err := m.reportForToday(ctx, calendar.Date(now))
+	if err != nil {
+		if errors.Is(err, errNoReportToday) {
+			return ModelInfo{}, errors.New("predictor training requires a selection report for today")
+		}
+		return ModelInfo{}, err
+	}
+	topN := report.TopN
+	if topN <= 0 {
+		topN = m.Config.Selection.TopN
+	}
+	universe, observed := reportUniverse(report, m.Config.Stocks, topN)
+	if len(universe) == 0 {
+		return ModelInfo{}, errors.New("predictor training requires selected or ranked stocks")
+	}
+	if observed {
+		m.Log.Info("Predictor training uses observation ranking", "stocks", len(universe))
+	}
+	data, err := m.loadData(ctx, universe, now, true)
 	if err != nil {
 		return ModelInfo{}, err
 	}
@@ -943,6 +961,38 @@ func selectedStocks(report selection.Report, pool []config.Stock) []config.Stock
 		out = append(out, stock)
 	}
 	return out
+}
+
+// reportUniverse prefers the formal selection and falls back to the top-N
+// observation ranking when strict selection produced no candidates.
+func reportUniverse(report selection.Report, pool []config.Stock, topN int) ([]config.Stock, bool) {
+	if selected := selectedStocks(report, pool); len(selected) > 0 {
+		return selected, false
+	}
+	if topN <= 0 {
+		topN = len(report.Ranking)
+	}
+	byCode := map[string]config.Stock{}
+	for _, stock := range pool {
+		byCode[stock.Code] = stock
+	}
+	out := make([]config.Stock, 0, topN)
+	seen := map[string]bool{}
+	for _, candidate := range report.Ranking {
+		if len(out) >= topN {
+			break
+		}
+		if candidate.Code == "" || seen[candidate.Code] {
+			continue
+		}
+		seen[candidate.Code] = true
+		stock, ok := byCode[candidate.Code]
+		if !ok {
+			stock = config.Stock{Code: candidate.Code, Name: candidate.Name}
+		}
+		out = append(out, stock)
+	}
+	return out, true
 }
 
 func mergeStocks(pool, extra []config.Stock) []config.Stock {

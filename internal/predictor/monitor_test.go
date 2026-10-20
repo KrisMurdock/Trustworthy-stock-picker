@@ -16,6 +16,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 )
 
 type monitorFakeReader struct {
@@ -150,6 +151,23 @@ func monitorReportFor(date string) selection.Report {
 		Version: 1, ID: "report-" + date, AsOf: "2026-10-19", Target: date,
 		GeneratedAt: time.Date(2026, 10, 19, 18, 5, 0, 0, market.Shanghai),
 		Selected:    []selection.Candidate{{Code: "sh600000", Name: "Test"}},
+	}
+}
+
+func TestReportUniverseFallsBackToObservationRanking(t *testing.T) {
+	pool := []config.Stock{{Code: "sh600000", Name: "Selected"}, {Code: "sz000001", Name: "Ranked"}}
+	report := selection.Report{
+		Selected: []selection.Candidate{{Code: "sh600000"}},
+		Ranking:  []strategy.Candidate{{Code: "sz000001", Rank: 1}},
+	}
+	got, fallback := reportUniverse(report, pool, 5)
+	if fallback || len(got) != 1 || got[0].Code != "sh600000" {
+		t.Fatalf("formal selection was not preferred: %+v fallback=%v", got, fallback)
+	}
+	report.Selected = nil
+	got, fallback = reportUniverse(report, pool, 1)
+	if !fallback || len(got) != 1 || got[0].Code != "sz000001" || got[0].Name != "Ranked" {
+		t.Fatalf("observation fallback failed: %+v fallback=%v", got, fallback)
 	}
 }
 
@@ -376,6 +394,7 @@ func monitorSyntheticSamples(days int) []Sample {
 func TestTrainWritesArtifactPointerAndMetadata(t *testing.T) {
 	now := monitorAt(t, "2026-10-20 15:30:00")
 	m, _, _ := monitorNewTestMonitor(t, now)
+	m.reader.(*monitorFakeReader).reports["2026-10-19"] = monitorReportFor("2026-10-20")
 	m.Config.Predictor.KeepModels = 1
 	if err := os.MkdirAll(filepath.Join(m.Config.DataDir, "models", "intraday", "old-model"), 0700); err != nil {
 		t.Fatalf("prepare old model: %v", err)
@@ -447,6 +466,7 @@ func TestTrainWritesArtifactPointerAndMetadata(t *testing.T) {
 func TestTrainRejectsTooFewDays(t *testing.T) {
 	now := monitorAt(t, "2026-10-20 15:30:00")
 	m, _, _ := monitorNewTestMonitor(t, now)
+	m.reader.(*monitorFakeReader).reports["2026-10-19"] = monitorReportFor("2026-10-20")
 	m.samplesBuilder = func(Data) ([]Sample, error) { return monitorSyntheticSamples(2), nil }
 	if _, err := m.Train(context.Background(), now); err == nil {
 		t.Fatalf("expected insufficient training days error")
@@ -556,6 +576,7 @@ func TestTrainWithRealBuilders(t *testing.T) {
 	}
 	now := monitorAt(t, "2026-10-20 15:30:00")
 	m, reader, _ := monitorNewTestMonitor(t, now)
+	reader.reports["2026-10-19"] = monitorReportFor("2026-10-20")
 	clocks := []string{
 		"09:35", "09:40", "09:45", "09:50", "09:55", "10:00", "10:05", "10:10", "10:15", "10:20", "10:25", "10:30",
 		"10:35", "10:40", "10:45", "10:50", "10:55", "11:00", "11:05", "11:10", "11:15", "11:20", "11:25", "11:30",
@@ -621,6 +642,7 @@ func TestTrainingDueHonorsTrainAt(t *testing.T) {
 func TestTrainExcludesSameSessionSamples(t *testing.T) {
 	now := monitorAt(t, "2026-10-20 10:00:00")
 	m, _, _ := monitorNewTestMonitor(t, now)
+	m.reader.(*monitorFakeReader).reports["2026-10-19"] = monitorReportFor("2026-10-20")
 	m.Config.Predictor.MinTrainingDays = 1
 	features := make([]float64, len(FeatureNames()))
 	m.samplesBuilder = func(Data) ([]Sample, error) {
@@ -654,6 +676,7 @@ func TestTrainExcludesSameSessionSamples(t *testing.T) {
 func TestTrainRejectsOnlySameSessionSamples(t *testing.T) {
 	now := monitorAt(t, "2026-10-20 10:00:00")
 	m, _, _ := monitorNewTestMonitor(t, now)
+	m.reader.(*monitorFakeReader).reports["2026-10-19"] = monitorReportFor("2026-10-20")
 	features := make([]float64, len(FeatureNames()))
 	m.samplesBuilder = func(Data) ([]Sample, error) {
 		return []Sample{{Code: "sh600000", Date: "2026-10-20", InputEnd: now, Features: features}}, nil
