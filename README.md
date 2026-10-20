@@ -173,6 +173,7 @@ func main() {
 | `sync-intraday` | 手动执行一轮 5 分钟采集 | 是 | 否 |
 | `train-predictor` | 在停止 `run` 后手动训练下一有效期模型 | 是 | 否 |
 | `predictor-status` | 只读查看预测模型、开关和最近状态 | 否 | 否 |
+| `predictor-eval` | 只读运行多训练窗口滚动评估，输出确定性 JSON | 否 | 否 |
 | `preview` | 输出全池观察排名和研究结果 | 否 | 否 |
 | `research` | 输出研究统计 | 否 | 否 |
 | `experiment` | 运行或派生策略实验 | 是 | 否 |

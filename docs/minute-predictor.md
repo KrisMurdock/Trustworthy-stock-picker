@@ -34,7 +34,8 @@
 - 纯 Go 训练和推理，固定种子、固定特征顺序和稳定 tie-break；模型 artifact 可确定性重放。
 - 特征包括：多尺度收益/振幅/量比/波动率、收盘位置、影线、MA/RSI、时段、股池横截面宽度、上一交易日 qfq 日线上下文和缺失指示。
 - 标签只取同交易时段、正好 +5 分钟的下一根 bar；11:30 和 15:00 不作为训练输入。
-- 训练按日 expanding walk-forward 评估；生产模型用截止日全量样本重训，卡片显示 walk-forward 指标。
+- 生产模型当前仍使用单一训练区间：读取最近 400 个自然日的 5 分钟线，用截止日全量样本重训，卡片显示 walk-forward 指标。
+- `predictor-eval` 提供离线的多训练窗口 rolling walk-forward 评估；它不改变生产模型权重，也不写入模型、预测库或飞书。
 
 ## 4. 卡尔曼滤波
 
@@ -128,3 +129,47 @@ STOCK_WATCHER_PREDICTOR_PUSH_ENABLED=false
 - 5 分钟预测噪声高，点估计不代表概率或收益承诺。
 - A 股 T+1：本模块不模拟日内买卖闭环；用户手动交易时需自行处理持仓和交易规则。
 - 该模块不改变日报的可执行推荐、机会分或风险门槛。
+
+## 11. 多窗口离线评估
+
+```bash
+go run ./cmd/stock-watcher predictor-eval \
+  -as-of 2026-10-19 \
+  -windows 40,60,120 \
+  -validation-days 20 \
+  -half-life 60
+```
+
+边界：
+
+- 只读打开 `market.db` 和 `context.db`，不初始化 logger，不启动行情源、监控、通知或网页。
+- 不创建 `predictions.db`，不写 `models/intraday/`、`state/` 或生产报告。
+- 评估不发送通知；离线环境没有飞书凭证时可用 `STOCK_WATCHER_FEISHU_ENABLED=false` 启动，避免无关的配置校验失败。
+- 输出一个确定性 JSON；数据不足时返回 `status=insufficient_history`、`skipped` 和 `notes`，不会自动缩短窗口。
+- `B0` 会读取配置日历覆盖的全部交易日，长日历下比固定窗口更慢；这是 expanding 基线的代价。
+- 股票池按验证日当时可见的报告恢复：优先 `report_archive` 中目标交易日 09:30 前生成的归档，缺失时才回退可变的 `selection_run`，并在 `universes[].report_source` 标明来源。
+- 默认要求报告在目标交易日 09:30 前生成。历史报告是事后补生成时，可显式加 `-allow-late-reports`；它仍只接受 `as_of < target` 的记录，优先使用归档并标为 `archive-late`，归档不可读时才回退可变的 `selection_run` 并标为 `selection_run-late`，不会使用目标日数据。
+
+窗口与策略：
+
+| 名称 | 定义 |
+| --- | --- |
+| `window-N` | 只用验证日之前最近 N 个交易日训练一个独立模型；任一 required session 缺失时整个 fold 跳过 |
+| `B0` | expanding 基线，使用验证日之前全部可用交易日历史训练单模型 |
+| `N0-last` | 朴素基线：下一根 high/low 延续当前 bar 的 high/low 相对收盘价，close 为 0 |
+| `N0-range` | 朴素基线：high/low 取当前 bar 历史振幅的一半，close 为 0 |
+| `E0` | 多窗口等权平均 |
+| `E1` | 多窗口固定指数权重平均 |
+| `E1-filtered` | 只在所有窗口 close 预测方向一致时保留 E1 结果 |
+| `B0-filtered` | 使用同一方向一致过滤后的 B0 结果，作为过滤后对照 |
+
+`E1` 权重按 `2^(-N/half_life)` 计算后归一化。默认 40/60/120 和 `half-life=60` 时约为 `0.4565/0.3624/0.1811`，短窗口权重更高。权重在评估前固定，不根据验证结果反复调参，避免验证集泄漏。
+
+市场状态：
+
+- 使用 `sh000300` 沪深 300；对每个验证日，只取该日之前 20 个交易日的收盘价计算 MA20。
+- 验证日前最后一个收盘价相对 MA20 高于 `+1%` 为 `up`，低于 `-1%` 为 `down`，其余为 `range`。
+- 缺失、缺口、陈旧数据或不足 20 个交易日为 `unknown`。
+- 市场状态只用于 walk-forward 结果分组比较；当前不改变生产实时权重。
+
+输出中的 `windows`、`strategies`、`regimes` 和 `universes` 共同记录指标、B0 对比、方向一致过滤统计、市场状态和每日股票池，便于复核评估是否使用了正确的时间边界。
