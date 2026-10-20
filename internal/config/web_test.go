@@ -22,6 +22,9 @@ func TestDashboardConfiguration(t *testing.T) {
 	if err != nil || !c.Web.Enabled || c.Web.Listen != "127.0.0.1:8080" {
 		t.Fatalf("default dashboard configuration: %+v, %v", c.Web, err)
 	}
+	if c.Web.PublicReadOnly {
+		t.Fatal("public read-only mode must be opt-in")
+	}
 	for _, address := range []string{"0.0.0.0:8081", "[::1]:8082", "localhost:8083", ":8084"} {
 		write("web:\n  listen: '" + address + "'\n")
 		c, err = Load(path)
@@ -47,5 +50,14 @@ func TestDashboardConfiguration(t *testing.T) {
 	t.Setenv("STOCK_WATCHER_WEB_ADDR", "")
 	if _, err := Load(path); err == nil {
 		t.Fatal("explicit empty address was ignored")
+	}
+	t.Setenv("STOCK_WATCHER_WEB_ADDR", "127.0.0.1:8088")
+	t.Setenv("STOCK_WATCHER_WEB_PUBLIC_READ_ONLY", "true")
+	if c, err = Load(path); err != nil || !c.Web.PublicReadOnly {
+		t.Fatalf("public read-only override ignored: %+v, %v", c, err)
+	}
+	t.Setenv("STOCK_WATCHER_WEB_PUBLIC_READ_ONLY", "not-a-boolean")
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "STOCK_WATCHER_WEB_PUBLIC_READ_ONLY") {
+		t.Fatalf("invalid public read-only override accepted: %v", err)
 	}
 }

@@ -85,6 +85,7 @@
       settingsTrigger: null,
     },
   };
+  const publicReadOnly = document.querySelector('meta[name="stock-watcher-public-read-only"]')?.content === "true";
 
   const finite = (value) => typeof value === "number" && Number.isFinite(value);
   const count = (value) => Number.isInteger(value) && value >= 0 ? number(value) : "—";
@@ -1612,7 +1613,13 @@
     const configured = aiReady();
     const masterStatus = byId("master-ai-status");
     masterStatus.className = "notice review-ai-status";
-    if (state.llm.mode === "loading") {
+    if (publicReadOnly) {
+      setText("review-analysis-title", "复盘说明");
+      setText("review-analysis-description", "公网公开模式仅提供已保存的复盘证据，不调用外部模型。");
+      byId("review-analysis-notice")?.classList.add("public-read-only");
+      masterStatus.textContent = "公网公开模式仅展示行情与复盘数据，AI 对话和配置不可用。";
+      masterStatus.classList.add("is-warning");
+    } else if (state.llm.mode === "loading") {
       masterStatus.textContent = "正在读取 AI 配置…";
     } else if (configured) {
       const parts = ["AI 已配置"];
@@ -1634,8 +1641,10 @@
     const settingsButton = byId("review-analysis-settings");
     const paragraph = notice.querySelector("p");
     notice.classList.toggle("is-unconfigured", !configured);
-    settingsButton.hidden = configured;
-    if (configured) {
+    settingsButton.hidden = configured || publicReadOnly;
+    if (publicReadOnly) {
+      paragraph.textContent = "公网公开模式仅展示复盘数据；AI 归因和 AI 设置不可用。";
+    } else if (configured) {
       const scope = state.selectedCode ? `所选事件 ${state.selectedCode}` : state.asOf ? `报告 ${state.asOf}` : "当前复盘";
       paragraph.textContent = `将分析${scope}。只有点击按钮才会发送请求；默认不自动生成。`;
     } else if (config?.enabled === false) {
@@ -1652,10 +1661,16 @@
 
   function aiReady() {
     const config = state.llm.config;
-    return state.llm.mode === "configured" && config?.configured === true && config?.enabled !== false;
+    return !publicReadOnly && state.llm.mode === "configured" && config?.configured === true && config?.enabled !== false;
   }
 
   async function loadLLMConfig(options = {}) {
+    if (publicReadOnly) {
+      state.llm.loading = false;
+      state.llm.mode = "unavailable";
+      updateAIReadiness();
+      return;
+    }
     if (state.llm.loading) return;
     state.llm.loading = true;
     if (!options.quiet) {
@@ -1696,6 +1711,7 @@
   }
 
   function openSettings(trigger) {
+    if (publicReadOnly) return;
     state.llm.settingsTrigger = trigger || document.activeElement;
     const dialog = byId("llm-settings-dialog");
     byId("llm-test-status").hidden = true;
@@ -1857,6 +1873,7 @@
   }
 
   function openMasterDrawer() {
+    if (publicReadOnly) return;
     const drawer = byId("master-drawer");
     if (state.master.drawerOpen) return;
     state.master.trigger = document.activeElement;
@@ -2087,8 +2104,17 @@
     state.asOf = state.requestedDate;
     state.revision = state.requestedRevision;
     state.master.roleId = "";
-    loadMasterRoles();
-    loadLLMConfig();
+    if (publicReadOnly) {
+      byId("master-open").hidden = true;
+      byId("llm-settings-open").hidden = true;
+      byId("review-analysis-button").hidden = true;
+      byId("review-analysis-cancel").hidden = true;
+      byId("review-analysis-settings").hidden = true;
+      updateAIReadiness();
+    } else {
+      loadMasterRoles();
+      loadLLMConfig();
+    }
     try {
       const data = await fetchJSON("/api/dashboard", { timeout: 10000, notFound: "看板快照不存在。" });
       state.dashboard = data;

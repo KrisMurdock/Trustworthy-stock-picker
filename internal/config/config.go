@@ -41,8 +41,9 @@ type Config struct {
 	PoolFile       string         `yaml:"pool_file,omitempty"`
 	Stocks         []Stock        `yaml:"stocks"`
 	Web            struct {
-		Enabled bool   `yaml:"enabled"`
-		Listen  string `yaml:"listen"`
+		Enabled        bool   `yaml:"enabled"`
+		Listen         string `yaml:"listen"`
+		PublicReadOnly bool   `yaml:"public_read_only,omitempty"`
 	} `yaml:"web"`
 	Daily struct {
 		RunAt       string `yaml:"run_at"`

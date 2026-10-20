@@ -4,6 +4,8 @@
 
 `bash tests/run_test.sh` 在临时仓库内用 mock systemctl/ps 和 CLI 验证 `make run`：同仓库同配置时按“构建、配置校验、停止后台、启动前台”的顺序执行；构建/校验失败保留后台，停止失败或仍有 PID 时不启动前台。不同配置/仓库不停止服务；服务查询拒绝/超时、缺配置、dotenv 加载和 make dry-run 均有断言。该回归检查包含在 `make smoke` / `make ci` 中。
 
+`bash tests/public_tunnel_test.sh` 用 mock `make`、CLI、`curl` 和 `cloudflared` 验证临时公网入口的启动顺序、健康检查、URL 写入、强制匿名只读与 Predictor/飞书关闭，以及任一子进程退出后的清理。它不创建真实隧道、不访问公网，也不读取私有凭证；该检查已接入 `make smoke` / `make ci`。
+
 `python3 tests/strategy_model_test.py` 使用 Node.js 20+ 运行网页计算模型，与原脚本对照 55 组有效情景，并验证 22 组无效输入。金额取整、风险/现金/费用限制、多个持仓批次与固定止盈金额都必须一致。该检查已接入 `make smoke` / `make ci`，因此本地 CI 需要 Python 3 和 Node；生产 Go 镜像不需要这些运行时。
 
 看板使用真实 Chromium 验证，先安装 Python Playwright 及其 Chromium，再执行：

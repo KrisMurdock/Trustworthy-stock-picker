@@ -257,13 +257,19 @@ func main() {
 | `/` | 已完成交易日、覆盖率、筛选数量和导航摘要 |
 | `/stocks` | 全股池搜索、行业/数据状态筛选与排序 |
 | `/chart` | 日 K、成交量、MA5/10/20、前复权/不复权切换和分钟周期 |
-| `/rankings` | 当前及历史日推排名、5 分钟实验预测与推送开关 |
+| `/rankings` | 当前及历史日推排名、5 分钟实验预测与本地推送开关 |
 | `/experiments` | 策略实验室、父子实验、样本对比和固定数据快照 |
 | `/calculator` | 浏览器内仓位、持仓、剩余风险与净止盈价计算 |
 
 除受保护的推送开关外，网页接口只读：`/healthz`、`/api/dashboard`、`/api/reports?as_of=YYYY-MM-DD`、`/api/history?code=sz000001`、`/api/intraday?code=sz000001&period=5`、`/api/predictions?date=YYYY-MM-DD` 和 `/api/predictor` 接受 GET/HEAD；`PUT /api/predictor/config` 只接受 loopback/同源且带固定动作头的请求，用于开关飞书预测推送。摘要页和股票页每分钟刷新，刷新不会触发行情下载或消息推送。
 
 网页没有内置账号或权限系统，默认仅监听 `127.0.0.1:8080`。远程访问必须使用受控网络或已有认证反向代理；代理应保留根路径、`/api/` 和 `/assets/`。
+
+### 家用机器临时公网入口
+
+没有公网 IP、域名或云服务器时，可运行 `make public`。该命令要求本机已安装 `cloudflared`，启动匿名只读网页和 Cloudflare Quick Tunnel，并打印临时 HTTPS 地址；不需要路由器端口转发。脚本强制只允许 GET/HEAD，关闭 AI、Predictor 推送和飞书配置入口，地址也会写入 `.scratch/public-tunnel/url`。
+
+Quick Tunnel 的地址在进程重启、机器休眠或隧道重连后可能变化，且没有可用性承诺。公网只读模式不是账号认证；不要把它当作长期生产部署。长期稳定入口需要自有域名和命名隧道，或认证反向代理。
 
 ## 配置
 
@@ -278,6 +284,7 @@ func main() {
 | `STOCK_WATCHER_DATA_DIR` | 行情与状态目录；默认本地 `data`，也可指向已挂载的 CIFS |
 | `STOCK_WATCHER_REQUIRE_CIFS` | 是否强制数据目录位于 CIFS；默认 `false`，共享盘模式设为 `true` |
 | `STOCK_WATCHER_WEB_ADDR` | 网页监听地址，默认 `127.0.0.1:8080` |
+| `STOCK_WATCHER_WEB_PUBLIC_READ_ONLY` | 公网匿名模式；只允许 GET/HEAD 并隐藏 AI 与预测写入口 |
 | `STOCK_WATCHER_FEISHU_ENABLED` | 是否启用飞书投递 |
 | `FEISHU_WEBHOOK` / `FEISHU_SECRET` | 飞书 webhook 与可选签名密钥，只从环境读取 |
 | `STOCK_WATCHER_FEISHU_CREDENTIALS_FILE` | 显式设置时才启用旧 `feishu.config` 兼容 |
@@ -383,7 +390,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 - 仅覆盖沪深 A 股，不提供逐笔行情、盘口深度或自动交易。
 - 日线来自多个上游，分钟线当前只采集腾讯 5 分钟原始线并派生 15/30/60 分钟；上游窗口和修订规则可能变化。
 - 内置交易日历当前覆盖 2026 年，过期后必须升级；测试覆盖变量不得用于生产。
-- 网页没有账号或角色体系；除受保护的预测推送开关外没有写入接口，远程暴露必须依赖受控网络或已有认证代理。
+- 网页没有账号或角色体系；本地默认只允许受保护的预测推送开关写入，公网匿名模式会拒绝全部写请求。远程暴露必须依赖受控网络或已有认证代理。
 - 飞书投递为至少一次语义，请求成功后、确认落盘前崩溃可能产生重复消息。
 - 共享盘故障、临时网络错误或数据覆盖不足时，本轮不会发布缓存推荐；已有数据保留等待重试。
 - 研究结果受样本、费用假设、流动性和成交边界影响，历史统计不代表未来收益。

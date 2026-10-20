@@ -185,6 +185,47 @@ func TestDashboardRoutingAndSecurityHeaders(t *testing.T) {
 	}
 }
 
+func TestPublicReadOnlyModeRejectsInteractiveEndpoints(t *testing.T) {
+	c := config.Defaults()
+	c.Web.PublicReadOnly = true
+	h := NewHandler(c, nil, nil)
+	for _, path := range []string{"/api/llm/config", "/api/llm/config/test", "/api/master/chat", "/api/review/analysis", "/api/predictor/config"} {
+		w := request(t, h, http.MethodGet, path)
+		if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), `"error":"not found"`) {
+			t.Fatalf("interactive route %s was exposed: %d %s", path, w.Code, w.Body)
+		}
+	}
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/api/dashboard"},
+		{http.MethodPost, "/api/master/chat"},
+		{http.MethodPost, "/api/review/analysis"},
+		{http.MethodPut, "/api/predictor/config"},
+		{http.MethodDelete, "/healthz"},
+	} {
+		w := request(t, h, tc.method, tc.path)
+		if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), `"error":"not found"`) {
+			t.Fatalf("public write %s %s was exposed: %d %s", tc.method, tc.path, w.Code, w.Body)
+		}
+	}
+	if w := request(t, h, http.MethodGet, "/api/dashboard"); w.Code != http.StatusOK {
+		t.Fatalf("public dashboard is unavailable: %d %s", w.Code, w.Body)
+	}
+	if w := request(t, h, http.MethodGet, "/api/master/roles"); w.Code != http.StatusOK {
+		t.Fatalf("public role metadata is unavailable: %d %s", w.Code, w.Body)
+	}
+	w := request(t, h, http.MethodGet, "/review")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `name="stock-watcher-public-read-only" content="true"`) {
+		t.Fatalf("public review page marker missing: %d %s", w.Code, w.Body)
+	}
+	local := request(t, NewHandler(config.Defaults(), nil, nil), http.MethodGet, "/review")
+	if strings.Contains(local.Body.String(), "stock-watcher-public-read-only") {
+		t.Fatal("local review page was marked public read-only")
+	}
+}
+
 func TestHistoricalReportValidationAndVersions(t *testing.T) {
 	reader := &testReader{}
 	h := newHandler(config.Defaults(), reader, nil)

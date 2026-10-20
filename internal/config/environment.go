@@ -52,6 +52,7 @@ func applyEnvironment(c *Config) error {
 	for name, target := range map[string]*bool{
 		"STOCK_WATCHER_REQUIRE_CIFS":           &c.RequireCIFS,
 		"STOCK_WATCHER_WEB_ENABLED":            &c.Web.Enabled,
+		"STOCK_WATCHER_WEB_PUBLIC_READ_ONLY":   &c.Web.PublicReadOnly,
 		"STOCK_WATCHER_FEISHU_ENABLED":         &c.Feishu.Enabled,
 		"STOCK_WATCHER_INTRADAY_ENABLED":       &c.Intraday.Enabled,
 		"STOCK_WATCHER_STRATEGY_ENABLED":       &c.Strategy.Enabled,

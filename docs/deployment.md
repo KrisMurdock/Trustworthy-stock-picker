@@ -33,6 +33,14 @@ journalctl -u stock-watcher.service -n 50 --no-pager
 
 默认 CPU 1 核、内存 256 MiB、PID 64，根文件系统只读，删除全部 Linux capabilities；仅 /data 和 /logs 可写。当前共享使用 root UID 权限，所以容器默认 root，不能随意切换用户；改变用户前需要同步调整共享及配置权限并验证。生产额外需要允许访问行情和飞书的出站网络。
 
+## 家用机器临时公网入口
+
+家用机器没有公网 IP 或域名时，可使用 Cloudflare Quick Tunnel 临时发布匿名只读网页。先安装 `cloudflared`，确认 `.env` 中的股池和数据目录有效，再运行 `make public`。脚本固定本地监听 `127.0.0.1:18080`，强制 `STOCK_WATCHER_WEB_PUBLIC_READ_ONLY=true`、`STOCK_WATCHER_LLM_WRITE_MODE=off`、`STOCK_WATCHER_PREDICTOR_WRITE_MODE=off`、`STOCK_WATCHER_PREDICTOR_PUSH_ENABLED=false` 和 `STOCK_WATCHER_FEISHU_ENABLED=false`，执行 `check-config/init/check` 后启动主程序与隧道；健康检查通过后打印 HTTPS URL，并写入 `.scratch/public-tunnel/url`。
+
+该模式不需要路由器端口转发，适合演示和短期分享，但 URL 是临时的：进程停止、机器休眠或隧道重连后可能变化，Cloudflare Quick Tunnel 不提供可用性承诺。公网模式不是认证；它只公开行情和复盘读接口，所有非 GET/HEAD 请求以及 AI 配置、对话、归因和模型测试接口都在应用层返回 404。长期稳定地址需要自有域名与命名隧道，或自有域名 + 认证反向代理。
+
+macOS 可使用 `tmux new-session -d -s stock-public 'bash scripts/public-tunnel.sh'` 让服务脱离当前终端；用 `tmux attach -t stock-public` 查看日志，用 `cat .scratch/public-tunnel/url` 读取当前地址。机器重启后要重新执行启动命令，临时地址也会变化。
+
 ## 部署后验收与排障
 
 - `version` 与预期提交一致；`check` 返回 `status: ready`；`status` 能读取账本；检查启动日志及退出码。Compose 使用 `ps` 核对 healthy，systemd 使用 `is-active`。

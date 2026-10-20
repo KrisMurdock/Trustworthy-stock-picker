@@ -49,16 +49,17 @@ type reviewReader interface {
 }
 
 type handler struct {
-	health      func(context.Context) (health.Status, error)
-	experiments experimentReader
-	review      reviewReader
-	predictor   PredictorController
-	config      config.Config
-	llm         *config.LLMRuntime
-	stocks      []config.Stock
-	adjust      string
-	db          snapshotReader
-	log         *logging.Logger
+	health         func(context.Context) (health.Status, error)
+	experiments    experimentReader
+	review         reviewReader
+	predictor      PredictorController
+	config         config.Config
+	llm            *config.LLMRuntime
+	publicReadOnly bool
+	stocks         []config.Stock
+	adjust         string
+	db             snapshotReader
+	log            *logging.Logger
 }
 
 // NewHandler exposes only public market snapshots. It never starts synchronization
@@ -81,7 +82,7 @@ func newHandlerWithPredictor(c config.Config, db snapshotReader, log *logging.Lo
 	if log == nil {
 		log = logging.Nop()
 	}
-	h := &handler{experiments: storage.ExperimentView{Root: c.DataDir, RequireCIFS: c.RequireCIFS}, predictor: predictorController, config: c, llm: config.NewLLMRuntime(c.LLM), stocks: append([]config.Stock(nil), c.Stocks...), adjust: c.Daily.Adjust, db: db, log: log}
+	h := &handler{experiments: storage.ExperimentView{Root: c.DataDir, RequireCIFS: c.RequireCIFS}, predictor: predictorController, config: c, llm: config.NewLLMRuntime(c.LLM), publicReadOnly: c.Web.PublicReadOnly, stocks: append([]config.Stock(nil), c.Stocks...), adjust: c.Daily.Adjust, db: db, log: log}
 	if marketDB, ok := db.(*storage.MarketDB); ok {
 		h.health = func(ctx context.Context) (health.Status, error) { return health.Read(ctx, c, marketDB, time.Now()) }
 		h.review = review.New(newReviewLoader(c, marketDB))
@@ -95,6 +96,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+	if h.publicReadOnly && (isInteractiveRoute(r.URL.Path) || !publicReadMethod(r)) {
+		writeError(w, r, http.StatusNotFound, "not found")
+		return
+	}
 	if !allowedMethod(r) {
 		w.Header().Set("Allow", allowedMethods(r.URL.Path))
 		writeError(w, r, http.StatusMethodNotAllowed, "method not allowed")
@@ -269,7 +274,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/experiments":
 		h.asset(w, r, "experiments.html", "text/html; charset=utf-8")
 	case "/review":
-		h.asset(w, r, "review.html", "text/html; charset=utf-8")
+		h.reviewAsset(w, r)
 	case "/assets/experiments.js":
 		w.Header().Set("Cache-Control", "no-cache")
 		h.asset(w, r, "experiments.js", "text/javascript; charset=utf-8")
@@ -364,6 +369,19 @@ func allowedMethods(path string) string {
 		return "POST"
 	default:
 		return "GET, HEAD"
+	}
+}
+
+func publicReadMethod(r *http.Request) bool {
+	return r.Method == http.MethodGet || r.Method == http.MethodHead
+}
+
+func isInteractiveRoute(path string) bool {
+	switch path {
+	case "/api/llm/config", "/api/llm/config/test", "/api/master/chat", "/api/review/analysis", "/api/predictor/config":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -579,6 +597,19 @@ func (h *handler) asset(w http.ResponseWriter, r *http.Request, name, contentTyp
 	}
 	w.Header().Set("Content-Type", contentType)
 	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
+}
+
+func (h *handler) reviewAsset(w http.ResponseWriter, r *http.Request) {
+	data, err := assets.ReadFile("static/review.html")
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "not found")
+		return
+	}
+	if h.publicReadOnly {
+		data = bytes.Replace(data, []byte("</head>"), []byte(`<meta name="stock-watcher-public-read-only" content="true"></head>`), 1)
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	http.ServeContent(w, r, "review.html", time.Time{}, bytes.NewReader(data))
 }
 
 func (h *handler) readError(w http.ResponseWriter, r *http.Request, ctx context.Context, err error) {
