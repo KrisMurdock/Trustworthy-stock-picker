@@ -2,6 +2,7 @@ package predictor
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -16,7 +17,8 @@ func monitorTestPrediction() Prediction {
 		ModelID:   "m1", BasePrice: 10,
 		HighPct: 0.01, LowPct: -0.01, ClosePct: 0.005,
 		Trend: "偏强", Confidence: "中", TrendScore: 1.5,
-		CreatedAt: time.Date(2026, 10, 20, 9, 35, 10, 0, market.Shanghai),
+		InferenceMS: 1.25,
+		CreatedAt:   time.Date(2026, 10, 20, 9, 35, 10, 0, market.Shanghai),
 	}
 }
 
@@ -44,6 +46,10 @@ func TestDBPredictionLifecycle(t *testing.T) {
 	pending, err := db.PendingForTarget(ctx, prediction.Date, prediction.TargetEnd)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending target len=%d err=%v", len(pending), err)
+	}
+	latency, err := db.LatencyStats(ctx, prediction.ModelID)
+	if err != nil || latency.Count != 1 || latency.AvgMS != 1.25 || latency.P95MS != 1.25 {
+		t.Fatalf("latency=%+v err=%v", latency, err)
 	}
 	actual := Actual{Code: prediction.Code, TargetEnd: prediction.TargetEnd, ModelID: prediction.ModelID,
 		HighPct: 0.02, LowPct: -0.005, ClosePct: 0.01, Status: "resolved", ResolvedAt: prediction.CreatedAt.Add(5 * time.Minute)}
@@ -90,6 +96,31 @@ func TestDBPredictionLifecycle(t *testing.T) {
 	}
 	if resolved != 0 {
 		t.Fatalf("resolved=%d want 0 after unresolved upsert", resolved)
+	}
+}
+
+func TestLatencyStatsPercentile(t *testing.T) {
+	db, err := OpenDB(t.TempDir())
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	base := monitorTestPrediction()
+	for i := 1; i <= 20; i++ {
+		prediction := base
+		prediction.Code = fmt.Sprintf("sz%06d", i)
+		prediction.InferenceMS = float64(i)
+		if _, err := db.InsertPrediction(ctx, prediction); err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+	stats, err := db.LatencyStats(ctx, base.ModelID)
+	if err != nil {
+		t.Fatalf("latency stats: %v", err)
+	}
+	if stats.Count != 20 || stats.AvgMS != 10.5 || stats.P95MS != 19 {
+		t.Fatalf("stats=%+v", stats)
 	}
 }
 

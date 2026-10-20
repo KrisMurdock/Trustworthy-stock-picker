@@ -291,7 +291,9 @@ func (m *Monitor) PredictOnce(ctx context.Context, now time.Time) (Result, error
 			skipped = append(skipped, stock.Code+":invalid_input_bar")
 			continue
 		}
+		inferenceStart := time.Now()
 		values, err := model.Predict(features.Values)
+		inferenceMS := float64(time.Since(inferenceStart).Microseconds()) / 1000
 		if err != nil {
 			return result, err
 		}
@@ -305,6 +307,7 @@ func (m *Monitor) PredictOnce(ctx context.Context, now time.Time) (Result, error
 			ModelID: info.ModelID, BasePrice: input.Close,
 			HighPct: values[TargetHigh], LowPct: values[TargetLow], ClosePct: values[TargetClose],
 			Trend: trend, Confidence: confidence, TrendScore: score, CreatedAt: now.UTC(),
+			InferenceMS: inferenceMS,
 		}
 		if err := prediction.Validate(); err != nil {
 			skipped = append(skipped, stock.Code+":invalid_prediction")
@@ -330,6 +333,10 @@ func (m *Monitor) PredictOnce(ctx context.Context, now time.Time) (Result, error
 	all, err := m.DB.PendingForTarget(ctx, date, slot.TargetEnd)
 	if err != nil {
 		return result, err
+	}
+	latency, latErr := m.DB.LatencyStats(ctx, info.ModelID)
+	if latErr != nil {
+		m.Log.Warn("Predictor latency stats failed", "error", latErr.Error())
 	}
 	current := all[:0]
 	for _, prediction := range all {
@@ -373,10 +380,18 @@ func (m *Monitor) PredictOnce(ctx context.Context, now time.Time) (Result, error
 	m.status.LastPredictionAt = now.UTC()
 	m.status.LastPredictionEnd = slot.TargetEnd
 	m.status.LastError = ""
+	m.status.InferenceCount = latency.Count
+	m.status.InferenceAvgMS = latency.AvgMS
+	m.status.InferenceP95MS = latency.P95MS
 	err = m.saveStatus()
 	m.mu.Unlock()
 	if err != nil {
 		return result, err
+	}
+	if inserted > 0 {
+		m.Log.Info("Predictor batch completed", "target_end", slot.TargetEnd.Format(time.RFC3339),
+			"predictions", len(current), "inserted", inserted,
+			"inference_count", latency.Count, "inference_avg_ms", latency.AvgMS, "inference_p95_ms", latency.P95MS)
 	}
 	if predictions, _, err := m.DB.Counts(ctx, date); err == nil {
 		m.mu.Lock()
@@ -398,6 +413,7 @@ func (m *Monitor) Train(ctx context.Context, now time.Time) (ModelInfo, error) {
 	m.applyDefaults()
 	m.workMu.Lock()
 	defer m.workMu.Unlock()
+	started := time.Now()
 	if err := ctx.Err(); err != nil {
 		return ModelInfo{}, err
 	}
@@ -521,6 +537,7 @@ func (m *Monitor) Train(ctx context.Context, now time.Time) (ModelInfo, error) {
 		artifact.Info.Metrics.Samples = len(samples)
 		artifact.Info.Metrics.Days = len(days)
 	}
+	artifact.Info.TrainDurationMS = time.Since(started).Milliseconds()
 	sealed, err := SealArtifact(artifact)
 	if err != nil {
 		return ModelInfo{}, err
@@ -555,6 +572,7 @@ func (m *Monitor) Train(ctx context.Context, now time.Time) (ModelInfo, error) {
 	m.status.ModelID = info.ModelID
 	m.status.ModelValidFor = info.ValidFor
 	m.status.TrainedAt = info.CreatedAt
+	m.status.TrainDurationMS = info.TrainDurationMS
 	m.status.LastError = ""
 	err = m.saveStatus()
 	m.mu.Unlock()
@@ -562,7 +580,7 @@ func (m *Monitor) Train(ctx context.Context, now time.Time) (ModelInfo, error) {
 		return ModelInfo{}, err
 	}
 	m.Log.Info("Predictor model trained", "model_id", info.ModelID, "valid_for", info.ValidFor,
-		"samples", info.Metrics.Samples, "days", len(days))
+		"samples", info.Metrics.Samples, "days", len(days), "train_ms", info.TrainDurationMS)
 	return info, nil
 }
 

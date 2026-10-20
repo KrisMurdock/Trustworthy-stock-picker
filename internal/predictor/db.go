@@ -41,6 +41,10 @@ func OpenDB(dataDir string) (*DB, error) {
 		handle.Close()
 		return nil, errors.New("cannot initialize predictions database")
 	}
+	if err := migratePredictionSchema(handle); err != nil {
+		handle.Close()
+		return nil, err
+	}
 	if err := handle.Ping(); err != nil {
 		handle.Close()
 		return nil, errors.New("predictions database is unavailable")
@@ -59,7 +63,7 @@ func (d *DB) Close() error {
 func (d *DB) Path() string { return d.path }
 
 const predictionSchema = `
-PRAGMA user_version=1;
+PRAGMA user_version=2;
 CREATE TABLE IF NOT EXISTS model_run (
 	model_id TEXT PRIMARY KEY,
 	created_at TEXT NOT NULL,
@@ -83,6 +87,7 @@ CREATE TABLE IF NOT EXISTS prediction (
 	trend TEXT NOT NULL,
 	confidence TEXT NOT NULL,
 	trend_score REAL NOT NULL,
+	inference_ms REAL NOT NULL DEFAULT 0,
 	created_at TEXT NOT NULL,
 	PRIMARY KEY(code,target_end_unix,model_id)
 );
@@ -112,17 +117,48 @@ CREATE TABLE IF NOT EXISTS kalman_state (
 );
 `
 
+func migratePredictionSchema(handle *sql.DB) error {
+	rows, err := handle.Query(`PRAGMA table_info(prediction)`)
+	if err != nil {
+		return errors.New("cannot inspect predictions database")
+	}
+	hasInference := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, kind string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return errors.New("cannot inspect predictions database")
+		}
+		if name == "inference_ms" {
+			hasInference = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return errors.New("cannot inspect predictions database")
+	}
+	rows.Close()
+	if !hasInference {
+		if _, err := handle.Exec(`ALTER TABLE prediction ADD COLUMN inference_ms REAL NOT NULL DEFAULT 0`); err != nil {
+			return errors.New("cannot migrate predictions database")
+		}
+	}
+	return nil
+}
+
 func (d *DB) InsertPrediction(ctx context.Context, p Prediction) (bool, error) {
 	if err := p.Validate(); err != nil {
 		return false, err
 	}
 	result, err := d.db.ExecContext(ctx, `
 		INSERT INTO prediction(code,date,input_end_unix,target_end_unix,model_id,base_price_micros,
-			high_pct,low_pct,close_pct,trend,confidence,trend_score,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+			high_pct,low_pct,close_pct,trend,confidence,trend_score,inference_ms,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(code,target_end_unix,model_id) DO NOTHING`,
 		p.Code, p.Date, p.InputEnd.Unix(), p.TargetEnd.Unix(), p.ModelID, int64(mathRound(p.BasePrice*1e6)),
-		p.HighPct, p.LowPct, p.ClosePct, p.Trend, p.Confidence, p.TrendScore,
+		p.HighPct, p.LowPct, p.ClosePct, p.Trend, p.Confidence, p.TrendScore, p.InferenceMS,
 		p.CreatedAt.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return false, errors.New("cannot insert predictor result")
@@ -152,7 +188,7 @@ func (d *DB) InsertActual(ctx context.Context, a Actual) error {
 func (d *DB) PendingForTarget(ctx context.Context, date string, targetEnd time.Time) ([]Prediction, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT code,date,input_end_unix,target_end_unix,model_id,base_price_micros,
-		       high_pct,low_pct,close_pct,trend,confidence,trend_score,created_at
+		       high_pct,low_pct,close_pct,trend,confidence,trend_score,inference_ms,created_at
 		FROM prediction WHERE date=? AND target_end_unix=? ORDER BY code`, date, targetEnd.Unix())
 	if err != nil {
 		return nil, errors.New("cannot read predictor results")
@@ -164,7 +200,7 @@ func (d *DB) PendingForTarget(ctx context.Context, date string, targetEnd time.T
 func (d *DB) ForDate(ctx context.Context, date string) ([]Prediction, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT code,date,input_end_unix,target_end_unix,model_id,base_price_micros,
-		       high_pct,low_pct,close_pct,trend,confidence,trend_score,created_at
+		       high_pct,low_pct,close_pct,trend,confidence,trend_score,inference_ms,created_at
 		FROM prediction WHERE date=? ORDER BY target_end_unix,code`, date)
 	if err != nil {
 		return nil, errors.New("cannot read predictor history")
@@ -210,7 +246,7 @@ func scanPredictions(rows *sql.Rows) ([]Prediction, error) {
 		var input, target, base int64
 		var created string
 		if err := rows.Scan(&p.Code, &p.Date, &input, &target, &p.ModelID, &base,
-			&p.HighPct, &p.LowPct, &p.ClosePct, &p.Trend, &p.Confidence, &p.TrendScore, &created); err != nil {
+			&p.HighPct, &p.LowPct, &p.ClosePct, &p.Trend, &p.Confidence, &p.TrendScore, &p.InferenceMS, &created); err != nil {
 			return nil, errors.New("cannot decode predictor result")
 		}
 		p.InputEnd = time.Unix(input, 0).In(market.Shanghai)
@@ -227,6 +263,43 @@ func scanPredictions(rows *sql.Rows) ([]Prediction, error) {
 		return nil, errors.New("cannot read predictor results")
 	}
 	return out, nil
+}
+
+// LatencyStats returns count, mean and nearest-rank P95 for per-stock inference.
+func (d *DB) LatencyStats(ctx context.Context, modelID string) (LatencyStats, error) {
+	if modelID == "" {
+		return LatencyStats{}, nil
+	}
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT inference_ms FROM prediction
+		WHERE model_id=? AND inference_ms>0 ORDER BY inference_ms`, modelID)
+	if err != nil {
+		return LatencyStats{}, errors.New("cannot read predictor latency")
+	}
+	defer rows.Close()
+	values := []float64{}
+	for rows.Next() {
+		var value float64
+		if err := rows.Scan(&value); err != nil {
+			return LatencyStats{}, errors.New("cannot decode predictor latency")
+		}
+		values = append(values, value)
+	}
+	if err := rows.Err(); err != nil {
+		return LatencyStats{}, errors.New("cannot read predictor latency")
+	}
+	if len(values) == 0 {
+		return LatencyStats{}, nil
+	}
+	sum := 0.0
+	for _, value := range values {
+		sum += value
+	}
+	index := (len(values)*95+99)/100 - 1
+	if index < 0 {
+		index = 0
+	}
+	return LatencyStats{Count: len(values), AvgMS: sum / float64(len(values)), P95MS: values[index]}, nil
 }
 
 func (d *DB) SaveKalman(ctx context.Context, s KalmanState) error {

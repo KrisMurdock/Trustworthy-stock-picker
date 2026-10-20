@@ -51,19 +51,20 @@ type FeatureVector struct {
 
 // Prediction is the immutable model output for one stock and one target bar.
 type Prediction struct {
-	Code       string    `json:"code"`
-	Date       string    `json:"date"`
-	InputEnd   time.Time `json:"input_end"`
-	TargetEnd  time.Time `json:"target_end"`
-	ModelID    string    `json:"model_id"`
-	BasePrice  float64   `json:"base_price"`
-	HighPct    float64   `json:"high_pct"`
-	LowPct     float64   `json:"low_pct"`
-	ClosePct   float64   `json:"close_pct"`
-	Trend      string    `json:"trend"`
-	Confidence string    `json:"confidence"`
-	TrendScore float64   `json:"trend_score"`
-	CreatedAt  time.Time `json:"created_at"`
+	Code        string    `json:"code"`
+	Date        string    `json:"date"`
+	InputEnd    time.Time `json:"input_end"`
+	TargetEnd   time.Time `json:"target_end"`
+	ModelID     string    `json:"model_id"`
+	BasePrice   float64   `json:"base_price"`
+	HighPct     float64   `json:"high_pct"`
+	LowPct      float64   `json:"low_pct"`
+	ClosePct    float64   `json:"close_pct"`
+	Trend       string    `json:"trend"`
+	Confidence  string    `json:"confidence"`
+	TrendScore  float64   `json:"trend_score"`
+	InferenceMS float64   `json:"inference_ms,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Actual records the realized target bar. Status is resolved or unresolved.
@@ -95,19 +96,26 @@ type ModelMetrics struct {
 }
 
 type ModelInfo struct {
-	SchemaVersion  int           `json:"schema_version"`
-	ModelID        string        `json:"model_id"`
-	CreatedAt      time.Time     `json:"created_at"`
-	DataFrom       string        `json:"data_from"`
-	DataTo         string        `json:"data_to"`
-	ValidFor       string        `json:"valid_for"`
-	FeatureVersion int           `json:"feature_version"`
-	FeatureNames   []string      `json:"feature_names"`
-	Metrics        ModelMetrics  `json:"metrics"`
-	Residuals      TargetMetrics `json:"residual_bands"`
-	CodeVersion    string        `json:"code_version"`
-	Checksum       string        `json:"checksum"`
-	ArtifactPath   string        `json:"artifact_path"`
+	SchemaVersion   int           `json:"schema_version"`
+	ModelID         string        `json:"model_id"`
+	CreatedAt       time.Time     `json:"created_at"`
+	DataFrom        string        `json:"data_from"`
+	DataTo          string        `json:"data_to"`
+	ValidFor        string        `json:"valid_for"`
+	FeatureVersion  int           `json:"feature_version"`
+	FeatureNames    []string      `json:"feature_names"`
+	Metrics         ModelMetrics  `json:"metrics"`
+	Residuals       TargetMetrics `json:"residual_bands"`
+	CodeVersion     string        `json:"code_version"`
+	Checksum        string        `json:"checksum"`
+	ArtifactPath    string        `json:"artifact_path"`
+	TrainDurationMS int64         `json:"train_duration_ms,omitempty"`
+}
+
+type LatencyStats struct {
+	Count int     `json:"count"`
+	AvgMS float64 `json:"avg_ms"`
+	P95MS float64 `json:"p95_ms"`
 }
 
 type Status struct {
@@ -123,6 +131,10 @@ type Status struct {
 	PredictionsToday  int       `json:"predictions_today"`
 	PushDelivered     int       `json:"push_delivered"`
 	PushBlocked       int       `json:"push_blocked"`
+	TrainDurationMS   int64     `json:"train_duration_ms,omitempty"`
+	InferenceCount    int       `json:"inference_count"`
+	InferenceAvgMS    float64   `json:"inference_avg_ms"`
+	InferenceP95MS    float64   `json:"inference_p95_ms"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 

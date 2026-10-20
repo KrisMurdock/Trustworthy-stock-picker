@@ -207,7 +207,13 @@
     toggle.checked = view.push_enabled === true;
     toggle.disabled = view.write_enabled !== true;
     setText("predictor-push-state", view.push_enabled ? "已开启" : "已关闭");
-    setText("predictor-footer", `模型 ${view.model_id || "尚未训练"} · 有效期 ${view.model_valid_for || "—"} · 更新 ${formatTime(view.updated_at)}`);
+    const trainMS = Number(view.train_duration_ms || 0);
+    const latencyCount = Number(view.inference_count || 0);
+    const trainText = trainMS > 0 ? `${(trainMS / 1000).toFixed(1)}s` : "—";
+    const latencyText = latencyCount > 0
+      ? `推理均值 ${Number(view.inference_avg_ms || 0).toFixed(2)}ms · P95 ${Number(view.inference_p95_ms || 0).toFixed(2)}ms（${latencyCount} 次）`
+      : "推理样本 0";
+    setText("predictor-footer", `模型 ${view.model_id || "尚未训练"} · 训练 ${trainText} · ${latencyText} · 有效期 ${view.model_valid_for || "—"} · 更新 ${formatTime(view.updated_at)}`);
   }
 
   function renderPredictions(predictions) {

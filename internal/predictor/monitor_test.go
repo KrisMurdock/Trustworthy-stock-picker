@@ -404,6 +404,7 @@ func TestTrainWritesArtifactPointerAndMetadata(t *testing.T) {
 		return ModelMetrics{Samples: len(samples), Days: 6}, TargetMetrics{High: 0.01, Low: 0.01, Close: 0.01}, nil
 	}
 	m.trainer = func(_ []Sample, info ModelInfo, opts TrainOptions) (*Artifact, error) {
+		time.Sleep(5 * time.Millisecond)
 		return &Artifact{
 			SchemaVersion: ArtifactSchemaVersion, Info: info, Hyperparameters: opts.Hyperparameters,
 			Base:      map[Target]float64{TargetHigh: 0.01, TargetLow: -0.01, TargetClose: 0},
@@ -418,6 +419,9 @@ func TestTrainWritesArtifactPointerAndMetadata(t *testing.T) {
 	}
 	if info.ValidFor != "2026-10-21" {
 		t.Fatalf("valid_for=%q want 2026-10-21", info.ValidFor)
+	}
+	if info.TrainDurationMS <= 0 {
+		t.Fatalf("train duration was not recorded: %d", info.TrainDurationMS)
 	}
 	if m.model == nil || m.model.Artifact.Info.ModelID != info.ModelID {
 		t.Fatalf("model was not loaded after training")
@@ -455,7 +459,7 @@ func TestTrainWritesArtifactPointerAndMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if status.ModelID != info.ModelID || status.ModelValidFor != "2026-10-21" {
+	if status.ModelID != info.ModelID || status.ModelValidFor != "2026-10-21" || status.TrainDurationMS != info.TrainDurationMS {
 		t.Fatalf("status=%+v", status)
 	}
 	if _, err := os.Stat(filepath.Join(m.Config.DataDir, "models", "intraday", "old-model")); !os.IsNotExist(err) {
@@ -567,6 +571,16 @@ func TestPredictOnceWithRealInference(t *testing.T) {
 	}
 	if len(result.Predictions) != 1 || !result.TargetEnd.Equal(monitorAt(t, "2026-10-20 15:00:00")) {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+	if result.Predictions[0].InferenceMS < 0 {
+		t.Fatalf("inference latency was not recorded: %+v", result.Predictions[0])
+	}
+	status, err := m.Status(context.Background())
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if status.InferenceCount != 1 || status.InferenceP95MS <= 0 {
+		t.Fatalf("inference stats were not recorded: %+v", status)
 	}
 }
 
