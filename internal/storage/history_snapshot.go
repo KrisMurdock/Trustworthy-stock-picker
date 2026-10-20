@@ -119,14 +119,44 @@ func (m *MarketDB) LoadReportRevision(ctx context.Context, id string) (selection
 	if err := m.db.QueryRowContext(ctx, `SELECT report_json FROM report_archive WHERE id=?`, id).Scan(&data); err != nil {
 		return report, err
 	}
+	if sha256Sum(reportPayloadWithoutRevision(data)) != id {
+		return report, errors.New("report revision integrity check failed")
+	}
 	if err := json.Unmarshal(data, &report); err != nil {
 		return report, err
 	}
-	report.Revision = ""
-	raw, err := json.Marshal(report)
-	if err != nil || sha256Sum(raw) != id {
-		return report, errors.New("report revision integrity check failed")
+	if report.Revision != "" && report.Revision != id {
+		return report, errors.New("report revision identity mismatch")
 	}
 	report.Revision = id
 	return report, nil
+}
+
+// reportPayloadWithoutRevision reconstructs the bytes hashed before the
+// revision field was attached. CommitSnapshot marshals selection.Report with
+// Revision omitted first, then writes the revision as the first JSON member.
+// Re-marshaling a decoded report is not stable across schema evolution, so
+// remove only that leading member and preserve the archived bytes.
+func reportPayloadWithoutRevision(data []byte) []byte {
+	const prefix = `{"revision":"`
+	if !bytes.HasPrefix(data, []byte(prefix)) {
+		return data
+	}
+	start := len(prefix)
+	end := bytes.IndexByte(data[start:], '"')
+	if end < 0 {
+		return data
+	}
+	end += start
+	next := end + 1
+	for next < len(data) && (data[next] == ' ' || data[next] == '\t' || data[next] == '\r' || data[next] == '\n') {
+		next++
+	}
+	if next >= len(data) || data[next] != ',' {
+		return data
+	}
+	out := make([]byte, 0, len(data)-(next+1-start))
+	out = append(out, '{')
+	out = append(out, data[next+1:]...)
+	return out
 }

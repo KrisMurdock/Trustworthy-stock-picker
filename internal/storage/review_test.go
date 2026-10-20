@@ -110,6 +110,42 @@ func TestReportArchiveMigrationBackfillsAndPreservesPayloads(t *testing.T) {
 	}
 }
 
+func TestLoadReportRevisionHashesArchivedJSONWithoutRevision(t *testing.T) {
+	ctx := context.Background()
+	db, err := InitMarket(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	payload := []byte(`{"schema_version":2,"id":"future-report","as_of":"2026-10-14","target_trading_date":"2026-10-15","generated_at":"2026-10-14T10:00:00+08:00","strategy":"short_horizon_v1","selection_enabled":true,"adjust":"qfq","min_score":0,"top_n":5,"pool_size":1,"eligible":1,"passed":0,"rules":[],"selected":[],"excluded":[],"filtered":[],"future_field":{"added":true}}`)
+	id := sha256Sum(payload)
+	archived := append([]byte(`{"revision":"`+id+`",`), payload[1:]...)
+	if _, err := db.db.Exec(`
+		INSERT INTO report_archive(id, report_json, as_of, generated_at, schema_version) VALUES(?, ?, ?, ?, 2)
+	`, id, archived, "2026-10-14", "2026-10-14T02:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := db.LoadReportRevision(ctx, id)
+	if err != nil {
+		t.Fatalf("load archived report: %v", err)
+	}
+	if loaded.Revision != id || loaded.ID != "future-report" || loaded.Version != 2 {
+		t.Fatalf("loaded report = %+v", loaded)
+	}
+
+	if err := db.db.QueryRow(`SELECT report_json FROM report_archive WHERE id=?`, id).Scan(&archived); err != nil {
+		t.Fatal(err)
+	}
+	archived[len(archived)-2] ^= 1
+	if _, err := db.db.Exec(`UPDATE report_archive SET report_json=? WHERE id=?`, archived, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.LoadReportRevision(ctx, id); err == nil || !strings.Contains(err.Error(), "integrity") {
+		t.Fatalf("tampered archived report accepted: %v", err)
+	}
+}
+
 func TestListReportRevisionsOrderingAndInvalidRows(t *testing.T) {
 	ctx := context.Background()
 	db, err := InitMarket(t.TempDir(), false)
