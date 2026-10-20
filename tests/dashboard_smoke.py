@@ -219,6 +219,112 @@ def check_page_assets(context, page, url):
         assert hashlib.sha256(actual.body()).digest() == hashlib.sha256(source.read_bytes()).digest(), f"stale embedded asset: {asset}"
 
 
+AMBIENT_ASSETS = (
+    "/assets/ambient.css",
+    "/assets/scene.js",
+    "/assets/scene-poster.svg",
+    "/assets/vendor/three-bundle.min.js",
+    "/assets/models/dome.glb",
+    "/assets/fonts/plex-serif-400.woff2",
+    "/assets/fonts/plex-serif-600.woff2",
+)
+
+
+def ambient_checks(browser, context, page, url):
+    page.goto(url, wait_until="networkidle")
+    scene = page.get_by_test_id("ambient-scene")
+    expect(scene).to_be_visible()
+    assert scene.get_attribute("aria-hidden") == "true"
+    assert page.evaluate("getComputedStyle(document.getElementById('ambient-scene')).pointerEvents") == "none"
+    expect(page.locator("#ambient-canvas")).to_be_visible()
+    expect(scene).to_have_attribute("data-scene-state", "degraded")
+    box = page.locator("#ambient-canvas").bounding_box()
+    assert box and box["width"] > 200 and box["height"] > 200, f"ambient canvas has no layout: {box}"
+    assert page.evaluate("document.fonts.check('600 24px \"IBM Plex Serif\"')"), "display font not loaded"
+    ratio = page.evaluate(
+        """() => {
+          const probe = document.createElement("span");
+          document.body.append(probe);
+          const parse = (value) => { probe.style.color = value; return getComputedStyle(probe).color.match(/[\\d.]+/g).slice(0, 3).map(Number); };
+          const lum = (rgb) => rgb.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; })
+            .reduce((acc, v, i) => acc + v * [0.2126, 0.7152, 0.0722][i], 0);
+          const ink = lum(parse("var(--ink)"));
+          const page = lum(parse("var(--page)"));
+          probe.remove();
+          return (Math.max(ink, page) + 0.05) / (Math.min(ink, page) + 0.05);
+        }"""
+    )
+    assert ratio >= 4.5, f"body text contrast below AA: {ratio}"
+
+    requests = []
+    page.on("request", lambda request: requests.append(request.url))
+    page.reload(wait_until="networkidle")
+    external = [item for item in requests if not item.startswith(url + "/")]
+    assert not external, f"ambient scene requested external resources: {external}"
+    total = 0
+    for path in AMBIENT_ASSETS:
+        response = context.request.get(url + path)
+        assert response.status == 200, f"missing ambient asset {path}"
+        total += len(response.body())
+    assert total <= 1_500_000, f"ambient asset budget exceeded: {total} bytes"
+
+    mobile = browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+    try:
+        mobile_page = mobile.new_page()
+        mobile_page.goto(url, wait_until="networkidle")
+        card = mobile_page.locator(".summary-card").first.bounding_box()
+        assert card and card["y"] < 844, f"summary card pushed below the first mobile viewport: {card}"
+        assert mobile_page.evaluate("document.documentElement.scrollWidth <= innerWidth"), "ambient scene causes mobile overflow"
+    finally:
+        mobile.close()
+
+    reduced = browser.new_context(viewport={"width": 1440, "height": 1000}, reduced_motion="reduce")
+    reduced.add_init_script("Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});")
+    try:
+        reduced_page = reduced.new_page()
+        reduced_page.goto(url, wait_until="networkidle")
+        reduced_page.wait_for_timeout(1200)
+        frames = reduced_page.evaluate("window.__ambientFrames || 0")
+        assert frames <= 2, f"reduced motion kept animating: {frames} frames"
+        if frames == 0:
+            expect(reduced_page.locator(".ambient-poster")).to_be_visible()
+    finally:
+        reduced.close()
+
+    capable = browser.new_context(viewport={"width": 1440, "height": 1000})
+    capable.add_init_script("Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});")
+    try:
+        capable_page = capable.new_page()
+        capable_page.goto(url, wait_until="networkidle")
+        if capable_page.evaluate("!!document.createElement('canvas').getContext('webgl2')"):
+            try:
+                capable_page.wait_for_function("(window.__ambientFrames || 0) >= 1", timeout=6000)
+            except Exception:
+                expect(capable_page.locator(".ambient-poster")).to_be_visible()
+    finally:
+        capable.close()
+
+    blocked = browser.new_context(viewport={"width": 1440, "height": 1000})
+    blocked.add_init_script(
+        """(() => {
+          const original = HTMLCanvasElement.prototype.getContext;
+          HTMLCanvasElement.prototype.getContext = function (type, ...args) {
+            return String(type).startsWith("webgl") ? null : original.call(this, type, ...args);
+          };
+        })()"""
+    )
+    try:
+        blocked_page = blocked.new_page()
+        errors = []
+        blocked_page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
+        blocked_page.goto(url, wait_until="networkidle")
+        expect(blocked_page.locator(".ambient-poster")).to_be_visible()
+        expect(blocked_page.get_by_test_id("dashboard-title")).to_be_visible()
+        assert not errors, f"webgl fallback logged errors: {errors}"
+    finally:
+        blocked.close()
+
+
 @contextmanager
 def stalled_endpoint():
     release = threading.Event()
@@ -779,11 +885,15 @@ def main():
             # DOM assertions below verify the selected result wins the race.
             def network_failure(request):
                 canceled_selection = request.failure == "net::ERR_ABORTED" and urlparse(request.url).path in ("/api/history", "/api/reports", "/api/experiments", "/api/experiment-history", "/api/intraday")
-                if not state["injecting"] and not canceled_selection:
+                # Context teardown (reduced-motion/mobile/WebGL-fallback probes)
+                # aborts in-flight static assets; those never reach the user.
+                canceled_asset = request.failure == "net::ERR_ABORTED" and request.resource_type in ("script", "stylesheet", "font", "image")
+                if not state["injecting"] and not canceled_selection and not canceled_asset:
                     problems.append(f"network: {request.url} {request.failure}")
             page.on("requestfailed", network_failure)
             with service(args) as (url, directory, env):
                 populated_checks(context, page, url, args, directory, env)
+                ambient_checks(browser, context, page, url)
                 chart_checks(page, url, state, args)
                 minute_checks(page, url, state, args)
                 experiment_checks(context, page, url, ROOT, args, state, stalled_endpoint)
@@ -871,7 +981,7 @@ def main():
         artifact = hashlib.sha256(Path(args.binary).read_bytes()).hexdigest()
     print(json.dumps({"result": "passed", "mode": "container" if args.image else "native", "artifact": artifact,
                       "identity": "anonymous (no application authentication)",
-                      "checks": "rule-gate-diagnostics/measured-thresholds/zero-sample-unavailable/legacy-history/mobile/minute-5-15-30-60/forming/calibrated/status/independent-daily/volume-MA/experiments/lineage/comparison/snapshot-evidence/empty/errors/cancel/raw-2700-bars/price-basis-switch/cancel/mismatched-basis/raw-missing/synced-filter/candles/volume/MA/stock-switch/isolation/partial-coverage/snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/read-only API/gateway-403/503/timeout/recovery/empty/calculator/initial/add/holdings/net-target/validation/offline/no-account-upload/model-load-failure/SIGTERM"}, ensure_ascii=False))
+                      "checks": "rule-gate-diagnostics/measured-thresholds/zero-sample-unavailable/legacy-history/mobile/minute-5-15-30-60/forming/calibrated/status/independent-daily/volume-MA/experiments/lineage/comparison/snapshot-evidence/empty/errors/cancel/raw-2700-bars/price-basis-switch/cancel/mismatched-basis/raw-missing/synced-filter/candles/volume/MA/stock-switch/isolation/partial-coverage/snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/ambient-scene/reduced-motion/webgl-fallback/asset-budget/contrast/read-only API/gateway-403/503/timeout/recovery/empty/calculator/initial/add/holdings/net-target/validation/offline/no-account-upload/model-load-failure/SIGTERM"}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

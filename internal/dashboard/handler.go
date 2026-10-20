@@ -82,7 +82,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	if !allowedMethod(r) {
 		w.Header().Set("Allow", allowedMethods(r.URL.Path))
@@ -285,6 +285,27 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/assets/style.css":
 		w.Header().Set("Cache-Control", "no-cache")
 		h.asset(w, r, "style.css", "text/css; charset=utf-8")
+	case "/assets/ambient.css":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "ambient.css", "text/css; charset=utf-8")
+	case "/assets/scene.js":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "scene.js", "text/javascript; charset=utf-8")
+	case "/assets/vendor/three-bundle.min.js":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "vendor/three-bundle.min.js", "text/javascript; charset=utf-8")
+	case "/assets/models/dome.glb":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "models/dome.glb", "model/gltf-binary")
+	case "/assets/scene-poster.svg":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "scene-poster.svg", "image/svg+xml")
+	case "/assets/fonts/plex-serif-400.woff2":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "fonts/plex-serif-400.woff2", "font/woff2")
+	case "/assets/fonts/plex-serif-600.woff2":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "fonts/plex-serif-600.woff2", "font/woff2")
 	default:
 		writeError(w, r, http.StatusNotFound, "not found")
 	}

@@ -296,13 +296,13 @@
       const x = i => 65 + (i + .5) * step, y = price => 24 + (max - price) / span * 210;
       const plot = svg("svg", { viewBox: `0 0 ${width} 285`, role: "img", "aria-label": `${trade.code} 实验固定快照日K`, "data-testid": "experiment-kline" });
       plot.append(svg("title", {}, `信号日 ${trade.date}，快照 ${short(state.current.data.id)}`));
-      for (let i = 0; i <= 3; i++) { const price = min + span * i / 3; plot.append(svg("line", { x1: 60, x2: 840, y1: y(price), y2: y(price), stroke: "#e3e9e7" }), svg("text", { x: 52, y: y(price) + 4, "text-anchor": "end", fill: "#63747a", stroke: "none", "font-size": 11 }, fmt(price))); }
+      for (let i = 0; i <= 3; i++) { const price = min + span * i / 3; plot.append(svg("line", { x1: 60, x2: 840, y1: y(price), y2: y(price), class: "plot-grid" }), svg("text", { x: 52, y: y(price) + 4, "text-anchor": "end", class: "plot-label" }, fmt(price))); }
       bars.forEach((b, i) => {
-        const color = b.close >= b.open ? "#bc3d42" : "#208363";
-        if (b.date === trade.date) plot.append(svg("rect", { x: x(i) - step / 2, y: 12, width: step, height: 240, fill: "#164d5915", stroke: "none" }), svg("text", { x: x(i), y: 275, "text-anchor": "middle", fill: "#164d59", stroke: "none", "font-size": 11 }, "信号"));
+        const color = b.close >= b.open ? "#f0686b" : "#3cb98c";
+        if (b.date === trade.date) plot.append(svg("rect", { x: x(i) - step / 2, y: 12, width: step, height: 240, class: "signal-band" }), svg("text", { x: x(i), y: 275, "text-anchor": "middle", class: "signal-label" }, "信号"));
         const g = svg("g", {}); g.append(svg("line", { x1: x(i), x2: x(i), y1: y(b.high), y2: y(b.low), stroke: color }), svg("rect", { x: x(i) - step * .3, y: Math.min(y(b.open), y(b.close)), width: step * .6, height: Math.max(1, Math.abs(y(b.open) - y(b.close))), fill: color, stroke: "none" }), svg("title", {}, `${b.date} 开 ${b.open} 高 ${b.high} 低 ${b.low} 收 ${b.close}`)); plot.append(g);
       });
-      for (const i of [0, bars.length - 1]) plot.append(svg("text", { x: x(i), y: 258, "text-anchor": i === 0 ? "start" : "end", fill: "#63747a", stroke: "none", "font-size": 11 }, bars[i].date));
+      for (const i of [0, bars.length - 1]) plot.append(svg("text", { x: x(i), y: 258, "text-anchor": i === 0 ? "start" : "end", class: "plot-label" }, bars[i].date));
       $("evidence-chart").replaceChildren(plot);
       text("evidence-status", `不复权 · ${data.source} · 红涨绿跌 · 阴影为信号日`);
       const o = trade.outcome, h = touch(trade);

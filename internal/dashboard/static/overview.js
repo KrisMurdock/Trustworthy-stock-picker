@@ -13,6 +13,22 @@
   window.addEventListener("hashchange", redirectLegacyHash);
   const state = { data: null, refreshing: false };
 
+  function publishAmbient(data) {
+    const summary = data.summary || {};
+    const coverage = isNumber(summary.complete_pct) ? summary.complete_pct : summary.coverage_pct;
+    const analyzable = isNumber(summary.pool_size) && summary.pool_size > 0 && isNumber(summary.analyzable) ? summary.analyzable / summary.pool_size * 100 : null;
+    const sync = data.latest_sync;
+    let sceneState = "healthy";
+    if (!data.generated_at && !data.report && !summary.available) sceneState = "empty";
+    else if (sync && sync.status === "running") sceneState = "syncing";
+    else if (sync && ["failed", "failure", "partial", "canceled"].includes(sync.status)) sceneState = "degraded";
+    else if (!isNumber(coverage)) sceneState = "idle";
+    else if (isNumber(coverage) && coverage < 95) sceneState = "degraded";
+    const detail = { coverage: isNumber(coverage) ? coverage : null, analyzable, state: sceneState };
+    window.__stockWatcherAmbient = detail;
+    document.dispatchEvent(new CustomEvent("stockwatcher:snapshot", { detail }));
+  }
+
   function renderSummary(data) {
     const summary = data.summary || {};
     setText("pool-count", number(summary.pool_size));
@@ -88,10 +104,15 @@
       const data = await loadDashboard();
       state.data = data;
       renderSummary(data);
+      publishAmbient(data);
       show("dashboard-content", true);
       show("error-state", false);
       setText("live-status", `摘要已刷新，共 ${data.stocks.length} 支股票。`);
     } catch (error) {
+      if (!state.data) {
+        window.__stockWatcherAmbient = { coverage: null, analyzable: null, state: "degraded" };
+        document.dispatchEvent(new CustomEvent("stockwatcher:snapshot", { detail: window.__stockWatcherAmbient }));
+      }
       setText("error-title", state.data ? "刷新失败，数据已过期" : "摘要加载失败");
       setText("error-message", `${error.message}${state.data ? " 当前保留上次成功读取的摘要。" : ""}`);
       show("error-state", true);

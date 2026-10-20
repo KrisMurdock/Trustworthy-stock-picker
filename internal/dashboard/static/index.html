@@ -3,15 +3,21 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#164d59">
+    <meta name="theme-color" content="#07090B">
     <meta name="description" content="查看全量股池、交易日摘要快照和运行状态。">
     <title>股池观察 · 摘要快照 · Stock Watcher</title>
     <link rel="icon" href="data:,">
+    <link rel="preload" href="/assets/fonts/plex-serif-600.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="/assets/style.css">
+    <link rel="stylesheet" href="/assets/ambient.css">
     <script src="/assets/common.js" defer></script>
     <script src="/assets/overview.js" defer></script>
   </head>
-  <body>
+  <body class="has-ambient">
+    <div class="ambient-scene" id="ambient-scene" data-testid="ambient-scene" data-scene-state="idle" aria-hidden="true">
+      <img class="ambient-poster" src="/assets/scene-poster.svg" alt="" decoding="async">
+      <canvas class="ambient-canvas" id="ambient-canvas"></canvas>
+    </div>
     <a class="skip-link" href="#main-content">跳转至摘要内容</a>
     <header class="site-header">
       <div class="header-inner">
@@ -57,5 +63,6 @@
       <footer class="site-footer"><span>STOCK WATCHER <span class="footer-separator">/</span> 每日有据，观察有序</span><span>行情与指标来自已保存的交易日快照</span></footer>
       <p id="live-status" class="sr-only" aria-live="polite" aria-atomic="true"></p>
     </main>
+    <script type="module" src="/assets/scene.js"></script>
   </body>
 </html>

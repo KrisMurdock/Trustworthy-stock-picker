@@ -377,6 +377,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | 嵌入与集成 | [作为 Go 库嵌入](docs/embedding.md) |
 | 环境与配置 | [环境变量](docs/environment-variables.md) · [工程结构](docs/repository-layout.md) |
 | 数据与运行 | [行情来源与回退](docs/data-sources.md) · [部署与排障](docs/deployment.md) |
+| 看板视觉 | [深色主题与环境层 3D](docs/dashboard-visual-design.md) |
 | 开发与发布 | [开发、CI 与发布包](docs/development.md) · [测试范围](tests/README.md) |
 | 策略研究 | [推荐门槛诊断](docs/strategy-diagnostics.md) · [策略实验室](docs/experiments.md) · [实验快照](docs/experiment-result-snapshots.md) |
 | 研究与工具 | [单股价格策略](docs/单股价格策略.md) · [底部形态](docs/bottom-signals.md) |

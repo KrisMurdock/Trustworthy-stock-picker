@@ -56,6 +56,6 @@ make dashboard-smoke
 make docker-dashboard-smoke
 ```
 
-浏览器断言包含四个看板页面（`/`、`/stocks`、`/chart`、`/rankings`）的独立加载、当前导航项、深链接与跨页跳转，以及 DOM、URL、标题、静态资源、只读 HTTP 方法、网关拒绝、请求失败／超时和恢复；新增 `/api/status` 的业务状态也必须在摘要页出现。没有内置账号角色，因此不虚构普通用户／管理员身份。`make ci` 本身仍是无浏览器的基础验证，完整 CI 由 Actions 追加上述步骤。
+浏览器断言覆盖七个页面（`/`、`/stocks`、`/chart`、`/rankings`、`/review`、`/experiments`、`/calculator`）的独立加载、当前导航项、深链接与跨页跳转，以及 DOM、URL、标题、静态资源、只读 HTTP 方法、网关拒绝、请求失败／超时和恢复；新增 `/api/status` 的业务状态也必须在摘要页出现。摘要页额外断言环境层挂载、`data-scene-state`、字体加载、正文对比度、资源体积上限、移动端首屏、减少动效和 WebGL 不可用时的海报降级。没有内置账号角色，因此不虚构普通用户／管理员身份。`make ci` 本身仍是无浏览器的基础验证，完整 CI 由 Actions 追加上述步骤。
 
 框架回归位于 `internal/monitor/pipeline_test.go`、`internal/storage/reliability_test.go`、`internal/health/health_test.go`：模拟采集与分析失败、断点恢复、同日修订重放、旧库迁移、长期分钟查询、交易日新鲜度。使用临时数据库和模拟通道，不发送真实消息。
