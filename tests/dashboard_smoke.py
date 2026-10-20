@@ -87,6 +87,12 @@ def service(args, empty=False, partial=False, gates=False):
     with tempfile.TemporaryDirectory(prefix="stock-watcher-dashboard-") as temporary:
         directory = Path(temporary)
         fixture(directory, empty, partial, gates)
+        if args.image:
+            # Rootless Docker may map container root to another host user. Keep the
+            # temporary bind mount traversable and writable inside the container.
+            directory.chmod(0o755)
+            for path in directory.rglob("*"):
+                path.chmod(0o777 if path.is_dir() else 0o666)
         port = available_port()
         url = f"http://127.0.0.1:{port}"
         today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
