@@ -27,6 +27,7 @@ type Stock struct {
 type Config struct {
 	Analysis       Analysis       `yaml:"analysis"`
 	Intraday       Intraday       `yaml:"intraday"`
+	Predictor      Predictor      `yaml:"predictor"`
 	LLM            LLM            `yaml:"llm"`
 	Market         Market         `yaml:"market"`
 	MarketContext  MarketContext  `yaml:"market_context"`
@@ -112,6 +113,7 @@ func Defaults() Config {
 	c.Market = DefaultMarket()
 	c.MarketContext = DefaultMarketContext()
 	c.Intraday = DefaultIntraday()
+	c.Predictor = DefaultPredictor()
 	c.Web.Enabled = true
 	c.Web.Listen = "127.0.0.1:8080"
 	c.Daily.RunAt = "18:05"
@@ -282,6 +284,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Intraday.Validate(); err != nil {
+		return err
+	}
+	if err := c.Predictor.Validate(); err != nil {
 		return err
 	}
 	if err := c.Market.Validate(); err != nil {

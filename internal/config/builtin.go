@@ -10,6 +10,8 @@ func Builtin() Config {
 	c.PoolFile = "leaders.yaml"
 	c.Selection.Enabled = true
 	c.Feishu.Enabled = true
+	c.Predictor.Enabled = true
+	c.Predictor.PushEnabled = true
 	c.Calendar.ValidFrom = "2026-01-01"
 	c.Calendar.ValidThrough = "2026-12-31"
 	c.Calendar.Holidays = []string{

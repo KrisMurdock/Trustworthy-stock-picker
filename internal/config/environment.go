@@ -41,19 +41,23 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_INTRADAY_REQUEST_INTERVAL":        &c.Intraday.RequestInterval,
 		"STOCK_WATCHER_INTRADAY_CALIBRATION_AT":          &c.Intraday.CalibrationAt,
 		"STOCK_WATCHER_INTRADAY_TENCENT_ENDPOINT":        &c.Intraday.TencentEndpoint,
+		"STOCK_WATCHER_PREDICTOR_TRAIN_AT":               &c.Predictor.TrainAt,
+		"STOCK_WATCHER_PREDICTOR_WRITE_MODE":             &c.Predictor.WriteMode,
 	} {
 		if value, ok := os.LookupEnv(name); ok {
 			*target = value
 		}
 	}
 	for name, target := range map[string]*bool{
-		"STOCK_WATCHER_REQUIRE_CIFS":      &c.RequireCIFS,
-		"STOCK_WATCHER_WEB_ENABLED":       &c.Web.Enabled,
-		"STOCK_WATCHER_FEISHU_ENABLED":    &c.Feishu.Enabled,
-		"STOCK_WATCHER_INTRADAY_ENABLED":  &c.Intraday.Enabled,
-		"STOCK_WATCHER_STRATEGY_ENABLED":  &c.Strategy.Enabled,
-		"STOCK_WATCHER_SELECTION_ENABLED": &c.Selection.Enabled,
-		"STOCK_WATCHER_CONTEXT_ENABLED":   &c.MarketContext.Enabled,
+		"STOCK_WATCHER_REQUIRE_CIFS":           &c.RequireCIFS,
+		"STOCK_WATCHER_WEB_ENABLED":            &c.Web.Enabled,
+		"STOCK_WATCHER_FEISHU_ENABLED":         &c.Feishu.Enabled,
+		"STOCK_WATCHER_INTRADAY_ENABLED":       &c.Intraday.Enabled,
+		"STOCK_WATCHER_STRATEGY_ENABLED":       &c.Strategy.Enabled,
+		"STOCK_WATCHER_SELECTION_ENABLED":      &c.Selection.Enabled,
+		"STOCK_WATCHER_CONTEXT_ENABLED":        &c.MarketContext.Enabled,
+		"STOCK_WATCHER_PREDICTOR_ENABLED":      &c.Predictor.Enabled,
+		"STOCK_WATCHER_PREDICTOR_PUSH_ENABLED": &c.Predictor.PushEnabled,
 	} {
 		if value, ok := os.LookupEnv(name); ok {
 			parsed, err := strconv.ParseBool(strings.TrimSpace(value))
@@ -64,19 +68,22 @@ func applyEnvironment(c *Config) error {
 		}
 	}
 	for name, target := range map[string]*int{
-		"STOCK_WATCHER_DAILY_HISTORY_DAYS":         &c.Daily.HistoryDays,
-		"STOCK_WATCHER_SELECTION_MIN_SCORE":        &c.Selection.MinScore,
-		"STOCK_WATCHER_SELECTION_TOP_N":            &c.Selection.TopN,
-		"STOCK_WATCHER_SYNC_INCREMENTAL_BARS":      &c.Sync.IncrementalBars,
-		"STOCK_WATCHER_SYNC_STATUS_REFRESH_DAYS":   &c.Sync.StatusRefreshDays,
-		"STOCK_WATCHER_MARKET_FAILURE_THRESHOLD":   &c.Market.FailureThreshold,
-		"STOCK_WATCHER_INTRADAY_WORKERS":           &c.Intraday.Workers,
-		"STOCK_WATCHER_CONTEXT_WORKERS":            &c.MarketContext.Workers,
-		"STOCK_WATCHER_CONTEXT_HISTORY_LIMIT":      &c.MarketContext.HistoryLimit,
-		"STOCK_WATCHER_STRATEGY_MAX_HOLDING_DAYS":  &c.Strategy.MaxHoldingDays,
-		"STOCK_WATCHER_STRATEGY_MIN_EVIDENCE":      &c.Strategy.MinEvidence,
-		"STOCK_WATCHER_STRATEGY_MIN_TRAINING_DAYS": &c.Strategy.MinTrainingDays,
-		"STOCK_WATCHER_STRATEGY_HOLDOUT_DAYS":      &c.Strategy.HoldoutDays,
+		"STOCK_WATCHER_DAILY_HISTORY_DAYS":          &c.Daily.HistoryDays,
+		"STOCK_WATCHER_SELECTION_MIN_SCORE":         &c.Selection.MinScore,
+		"STOCK_WATCHER_SELECTION_TOP_N":             &c.Selection.TopN,
+		"STOCK_WATCHER_SYNC_INCREMENTAL_BARS":       &c.Sync.IncrementalBars,
+		"STOCK_WATCHER_SYNC_STATUS_REFRESH_DAYS":    &c.Sync.StatusRefreshDays,
+		"STOCK_WATCHER_MARKET_FAILURE_THRESHOLD":    &c.Market.FailureThreshold,
+		"STOCK_WATCHER_INTRADAY_WORKERS":            &c.Intraday.Workers,
+		"STOCK_WATCHER_CONTEXT_WORKERS":             &c.MarketContext.Workers,
+		"STOCK_WATCHER_CONTEXT_HISTORY_LIMIT":       &c.MarketContext.HistoryLimit,
+		"STOCK_WATCHER_STRATEGY_MAX_HOLDING_DAYS":   &c.Strategy.MaxHoldingDays,
+		"STOCK_WATCHER_STRATEGY_MIN_EVIDENCE":       &c.Strategy.MinEvidence,
+		"STOCK_WATCHER_STRATEGY_MIN_TRAINING_DAYS":  &c.Strategy.MinTrainingDays,
+		"STOCK_WATCHER_STRATEGY_HOLDOUT_DAYS":       &c.Strategy.HoldoutDays,
+		"STOCK_WATCHER_PREDICTOR_MIN_TRAINING_DAYS": &c.Predictor.MinTrainingDays,
+		"STOCK_WATCHER_PREDICTOR_VALIDATION_DAYS":   &c.Predictor.ValidationDays,
+		"STOCK_WATCHER_PREDICTOR_KEEP_MODELS":       &c.Predictor.KeepModels,
 	} {
 		if value, ok := os.LookupEnv(name); ok {
 			parsed, err := strconv.Atoi(strings.TrimSpace(value))
