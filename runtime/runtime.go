@@ -17,6 +17,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/intraday"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/marketcontext"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/monitor"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
@@ -67,6 +68,9 @@ type Runtime struct {
 	log           *Logger
 	store         *storage.Store
 	marketDB      *storage.MarketDB
+	contextDB     *storage.ContextDB
+	contextClient *marketcontext.Client
+	contextSyncer *marketcontext.Syncer
 	sources       *market.Sources
 	channels      []notify.Channel
 	closeChannels func()
@@ -120,6 +124,13 @@ func Init(cfg *Config) (string, error) {
 		return "", err
 	}
 	defer marketDB.Close()
+	if resolved.MarketContext.Enabled {
+		contextDB, err := storage.InitContext(resolved.DataDir, resolved.RequireCIFS)
+		if err != nil {
+			return "", err
+		}
+		defer contextDB.Close()
+	}
 	return marketDB.Path(), nil
 }
 
@@ -161,6 +172,15 @@ func New(opts Options) (*Runtime, error) {
 		return nil, err
 	}
 	r.marketDB = marketDB
+	if cfg.MarketContext.Enabled {
+		contextDB, err := storage.InitContext(cfg.DataDir, cfg.RequireCIFS)
+		if err != nil {
+			return nil, err
+		}
+		r.contextDB = contextDB
+		r.contextClient = marketcontext.NewClient(cfg.MarketContext, config.Duration(cfg.Timeout))
+		r.contextSyncer = marketcontext.NewSyncer(cfg, contextDB, r.contextClient, log)
+	}
 	sources, err := market.NewSources(cfg, log)
 	if err != nil {
 		return nil, err
@@ -178,6 +198,9 @@ func New(opts Options) (*Runtime, error) {
 	}
 	r.monitor = monitor.NewWithMarketDB(cfg, store, marketDB, sources, noticeChannels, log)
 	r.monitor.BuildVersion = version
+	if r.contextSyncer != nil {
+		r.monitor.MarketContextSync = r.contextSyncer.ForDate
+	}
 	if cfg.Intraday.Enabled {
 		r.minuteClient = market.NewMinuteClient(cfg)
 		r.minuteMonitor = intraday.New(cfg, store, marketDB, r.minuteClient, log)
@@ -296,9 +319,17 @@ func (r *Runtime) release() error {
 		r.minuteClient.Close()
 		r.minuteClient = nil
 	}
+	if r.contextClient != nil {
+		r.contextClient.Close()
+		r.contextClient = nil
+	}
 	if r.sources != nil {
 		r.sources.Close()
 		r.sources = nil
+	}
+	if r.contextDB != nil {
+		errs = append(errs, r.contextDB.Close())
+		r.contextDB = nil
 	}
 	if r.marketDB != nil {
 		errs = append(errs, r.marketDB.Close())

@@ -8,6 +8,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/marketcontext"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
 	reportmessage "github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify/report"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
@@ -50,10 +51,14 @@ type Monitor struct {
 	StatusSource   market.StatusSource
 	CalendarSource market.TradingCalendarSource
 	Listings       market.ListingSource
-	Channels       []notify.Channel
-	Log            *logging.Logger
-	Calendar       *calendar.Calendar
-	Now            func() time.Time
+	// MarketContextSync synchronizes index and sector-board snapshots together
+	// with the stock pool. A failure is logged but never blocks stock data or
+	// report publication; the context database records its own partial status.
+	MarketContextSync func(context.Context, string) (marketcontext.SyncResult, error)
+	Channels          []notify.Channel
+	Log               *logging.Logger
+	Calendar          *calendar.Calendar
+	Now               func() time.Time
 }
 
 func New(c config.Config, s *storage.Store, source Source, channels []notify.Channel, log *logging.Logger) *Monitor {
@@ -278,6 +283,8 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (report selection.Repor
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	waitContext := m.startMarketContextSync(ctx, asof)
+	defer waitContext()
 	end, _ := time.Parse("2006-01-02", asof)
 	analysisStart := end.AddDate(0, 0, -m.Config.Daily.HistoryDays).Format("2006-01-02")
 	if analysisStart < historyStart(end) {
@@ -493,6 +500,31 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (report selection.Repor
 	}
 	m.Log.Info("Daily report saved", "as_of", asof, "target", target, "selected", len(report.Selected), "eligible", report.Eligible, "event_id", report.ID, "coverage_pct", run.CoveragePct, "input_id", report.InputID)
 	return report, nil
+}
+
+// startMarketContextSync runs the independent index/board feed alongside the
+// stock collection. The caller waits for it before returning so a manual sync
+// has persisted every feed, while stock publication remains independent of
+// board discovery or board-history failures.
+func (m *Monitor) startMarketContextSync(ctx context.Context, asof string) func() {
+	if m.MarketContextSync == nil {
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		result, err := m.MarketContextSync(ctx, asof)
+		if err != nil {
+			if ctx.Err() != nil {
+				m.Log.Warn("Market context synchronization canceled", "as_of", asof, "reason", ctx.Err().Error())
+				return
+			}
+			m.Log.Warn("Market context synchronization failed", "as_of", asof, "reason", err.Error())
+			return
+		}
+		m.Log.Info("Market context synchronized", "as_of", asof, "status", result.Status, "indices", result.Indices, "boards", result.Boards, "succeeded", result.Succeeded, "failed", result.Failed)
+	}()
+	return func() { <-done }
 }
 
 func (m *Monitor) isolateStock(stock config.Stock, err error, prefix string) (storage.SyncItem, error) {

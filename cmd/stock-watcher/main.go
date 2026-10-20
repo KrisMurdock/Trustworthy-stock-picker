@@ -34,7 +34,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-intraday|status-backfill|status-refresh|status-audit|preview|research|experiment|plan|run|once|status|retry [channel] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-context|sync-intraday|status-backfill|status-refresh|status-audit|preview|research|experiment|plan|run|once|status|retry [channel] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -43,7 +43,7 @@ func run(args []string) error {
 	}
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
 	revision := f.String("revision", "", "saved report revision (replay only)")
-	asof := f.String("as-of", "", "completed data date (sync/status/preview/research/experiment only)")
+	asof := f.String("as-of", "", "completed data date (sync/context/status/preview/research/experiment only)")
 	code := f.String("code", "", "stock code (plan only)")
 	parent := f.String("parent", "", "parent experiment ID (experiment only)")
 	holdout := f.Bool("holdout", false, "consume the parent experiment's reserved holdout interval once (experiment only)")
@@ -61,7 +61,7 @@ func run(args []string) error {
 		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
-	case "check-config", "init", "check", "health", "replay", "sync", "sync-intraday", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "plan", "run", "once", "status", "retry":
+	case "check-config", "init", "check", "health", "replay", "sync", "sync-context", "sync-intraday", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "plan", "run", "once", "status", "retry":
 	default:
 		return errors.New("unknown command")
 	}
@@ -71,8 +71,8 @@ func run(args []string) error {
 	if command != "replay" && *revision != "" {
 		return errors.New("revision requires replay")
 	}
-	if *asof != "" && command != "sync" && command != "status-backfill" && command != "status-refresh" && command != "status-audit" && command != "preview" && command != "research" && command != "experiment" {
-		return errors.New("as-of is supported by sync, status commands, preview, research and experiment only")
+	if *asof != "" && command != "sync" && command != "sync-context" && command != "status-backfill" && command != "status-refresh" && command != "status-audit" && command != "preview" && command != "research" && command != "experiment" {
+		return errors.New("as-of is supported by sync, context sync, status commands, preview, research and experiment only")
 	}
 	if command != "plan" && (*code != "" || *entry != 0) {
 		return errors.New("trade price flags require the plan command")
@@ -178,6 +178,19 @@ func run(args []string) error {
 		return err
 	}
 	defer store.Close()
+	if command == "sync-context" {
+		result, err := runContextSync(ctx, c, *asof, log)
+		if err != nil {
+			return err
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+			return err
+		}
+		if result.Status != "complete" {
+			return errors.New("market context synchronization is incomplete")
+		}
+		return nil
+	}
 	openMarket := storage.OpenMarket
 	if readOnly {
 		openMarket = storage.OpenMarketView
@@ -225,6 +238,14 @@ func run(args []string) error {
 	}
 	m := monitor.NewWithMarketDB(c, store, marketDB, source, noticeChannels, log)
 	m.BuildVersion = version
+	if (command == "sync" || command == "once") && c.MarketContext.Enabled {
+		ctxRuntime, err := openMarketContextRuntime(c, log)
+		if err != nil {
+			return err
+		}
+		defer ctxRuntime.Close()
+		m.MarketContextSync = ctxRuntime.syncer.ForDate
+	}
 	cal := calendar.New(c)
 	if _, err := cal.Trading(calendar.Date(time.Now())); err != nil {
 		return err

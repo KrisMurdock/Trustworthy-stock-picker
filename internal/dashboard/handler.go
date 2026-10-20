@@ -12,6 +12,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/health"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/marketcontext"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/review"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
@@ -27,6 +28,7 @@ var assets embed.FS
 
 const requestTimeout = 5 * time.Second
 const reviewRequestTimeout = 15 * time.Second
+const contextRequestTimeout = 20 * time.Second
 
 type snapshotReader interface {
 	LoadDashboardHistory(context.Context, config.Stock, string) (market.History, error)
@@ -223,6 +225,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, r, http.StatusOK, explainReport(report))
+	case "/api/market-context":
+		h.serveMarketContext(w, r)
 	case "/api/review":
 		h.serveReviewDay(w, r)
 	case "/api/review/event":
@@ -258,6 +262,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/assets/review.js":
 		w.Header().Set("Cache-Control", "no-cache")
 		h.asset(w, r, "review.js", "text/javascript; charset=utf-8")
+	case "/assets/market-context.js":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "market-context.js", "text/javascript; charset=utf-8")
 	case "/assets/review.css":
 		w.Header().Set("Cache-Control", "no-cache")
 		h.asset(w, r, "review.css", "text/css; charset=utf-8")
@@ -316,6 +323,76 @@ func allowedMethods(path string) string {
 	default:
 		return "GET, HEAD"
 	}
+}
+
+func (h *handler) serveMarketContext(w http.ResponseWriter, r *http.Request) {
+	values, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid market context query")
+		return
+	}
+	asOf := ""
+	if dates, present := values["as_of"]; present {
+		if len(dates) != 1 {
+			writeError(w, r, http.StatusBadRequest, "as_of must be one date in YYYY-MM-DD format")
+			return
+		}
+		parsed, err := time.Parse("2006-01-02", dates[0])
+		if err != nil || parsed.Format("2006-01-02") != dates[0] {
+			writeError(w, r, http.StatusBadRequest, "as_of must be one date in YYYY-MM-DD format")
+			return
+		}
+		asOf = dates[0]
+	}
+	for key := range values {
+		if key != "as_of" {
+			writeError(w, r, http.StatusBadRequest, "unsupported market context parameter")
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), contextRequestTimeout)
+	defer cancel()
+	db, err := storage.OpenContextView(h.config.DataDir, h.config.RequireCIFS)
+	if errors.Is(err, fs.ErrNotExist) {
+		writeError(w, r, http.StatusNotFound, "market context is not synchronized")
+		return
+	}
+	if err != nil {
+		h.log.Warn("Market context storage unavailable")
+		writeError(w, r, http.StatusServiceUnavailable, "market context storage unavailable")
+		return
+	}
+	defer db.Close()
+	status, err := db.LoadSyncStatus(ctx)
+	if errors.Is(err, fs.ErrNotExist) {
+		writeError(w, r, http.StatusNotFound, "market context is not synchronized")
+		return
+	}
+	if err != nil {
+		h.log.Warn("Market context status unavailable")
+		writeError(w, r, http.StatusServiceUnavailable, "market context is temporarily unavailable")
+		return
+	}
+	if asOf == "" {
+		asOf = status.AsOf
+	}
+	if asOf == "" {
+		writeError(w, r, http.StatusNotFound, "market context is not synchronized")
+		return
+	}
+	instruments, err := db.LoadInstruments(ctx)
+	if err != nil {
+		h.log.Warn("Market context instruments unavailable")
+		writeError(w, r, http.StatusServiceUnavailable, "market context is temporarily unavailable")
+		return
+	}
+	bars, err := db.LoadRecentBars(ctx, asOf, 21)
+	if err != nil {
+		h.log.Warn("Market context bars unavailable")
+		writeError(w, r, http.StatusServiceUnavailable, "market context is temporarily unavailable")
+		return
+	}
+	writeJSON(w, r, http.StatusOK, marketcontext.BuildSnapshot(asOf, instruments, bars, status))
 }
 
 func (h *handler) serveReviewDay(w http.ResponseWriter, r *http.Request) {

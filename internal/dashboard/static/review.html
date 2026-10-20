@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="/assets/style.css">
     <link rel="stylesheet" href="/assets/review.css">
     <script src="/assets/common.js" defer></script>
+    <script src="/assets/market-context.js" defer></script>
     <script src="/assets/review.js" defer></script>
   </head>
   <body>
@@ -37,6 +38,76 @@
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.3 7a6.5 6.5 0 1 0 .1 5M16.3 3v4h-4"/></svg>
             <span>刷新复盘</span>
           </button>
+        </div>
+      </section>
+
+
+      <section id="market-context-panel" class="panel market-context-panel" data-testid="market-context-panel" aria-labelledby="market-context-title">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">MARKET CONTEXT / INDEX + ALL BOARDS</p>
+            <h2 id="market-context-title">市场环境</h2>
+            <p id="market-context-note" class="section-description">同步上证、深证、创业板等核心指数，以及东方财富行业与概念板块全量日线。</p>
+          </div>
+          <div class="market-context-meta" data-testid="market-context-meta">
+            <span class="market-context-badge" id="market-context-status">读取中</span>
+            <span>截止 <strong id="market-context-as-of">—</strong></span>
+            <span>同步 <strong id="market-context-synced-at">—</strong></span>
+          </div>
+        </div>
+        <div id="market-context-loading" class="market-context-loading" role="status" data-testid="market-context-loading">
+          <span class="spinner" aria-hidden="true"></span><span>正在读取指数与板块快照…</span>
+        </div>
+        <div id="market-context-empty" class="section-empty market-context-empty" role="status" data-testid="market-context-empty" hidden>
+          <strong>该日期暂无市场环境快照</strong>
+          <p id="market-context-empty-note">等待默认同步流程写入指数与板块日线，或执行 <code>stock-watcher sync-context</code>。</p>
+        </div>
+        <div id="market-context-body" hidden data-testid="market-context-body">
+          <div id="market-context-warnings" class="market-context-warnings" hidden></div>
+          <div id="market-context-indices" class="market-context-indices" data-testid="market-context-indices"></div>
+          <div class="market-context-summary" data-testid="market-context-summary">
+            <div class="market-context-summary-card"><span>行业板块</span><strong id="market-context-industry">—</strong><small>全量同步</small></div>
+            <div class="market-context-summary-card"><span>概念板块</span><strong id="market-context-concept">—</strong><small>可重复归类</small></div>
+            <div class="market-context-summary-card is-up"><span>上涨</span><strong id="market-context-up">—</strong><small>当日收盘</small></div>
+            <div class="market-context-summary-card is-down"><span>下跌</span><strong id="market-context-down">—</strong><small>当日收盘</small></div>
+            <div class="market-context-summary-card"><span>平盘 / 缺失</span><strong id="market-context-flat">—</strong><small>按最新有效日线</small></div>
+          </div>
+          <div class="market-context-toolbar">
+            <div class="market-context-search">
+              <label for="market-context-search">搜索板块</label>
+              <input id="market-context-search" data-testid="market-context-search" type="search" autocomplete="off" placeholder="输入板块名称或 BK 代码">
+            </div>
+            <div class="market-context-filter">
+              <label for="market-context-category">类型</label>
+              <select id="market-context-category" data-testid="market-context-category">
+                <option value="all">全部板块</option>
+                <option value="industry">行业板块</option>
+                <option value="concept">概念板块</option>
+              </select>
+            </div>
+            <div class="market-context-filter">
+              <label for="market-context-sort">排序</label>
+              <select id="market-context-sort" data-testid="market-context-sort">
+                <option value="change_desc">涨幅从高到低</option>
+                <option value="change_asc">跌幅从大到小</option>
+                <option value="name">板块名称</option>
+                <option value="code">板块代码</option>
+              </select>
+            </div>
+            <div class="market-context-quick" aria-label="重点板块快捷筛选">
+              <button type="button" data-context-query="半导体">半导体</button>
+              <button type="button" data-context-query="存储芯片">存储芯片</button>
+              <button type="button" data-context-query="高带宽内存">高带宽内存</button>
+            </div>
+          </div>
+          <div class="market-context-board-head" aria-hidden="true">
+            <span>板块</span><span>类型</span><span>收盘</span><span>涨跌幅</span><span>MA5</span><span>MA20</span><span>趋势</span><span>截止日</span>
+          </div>
+          <div id="market-context-board-list" class="market-context-board-list" data-testid="market-context-board-list"></div>
+          <div class="market-context-list-footer">
+            <span id="market-context-count" data-testid="market-context-count">—</span>
+            <button id="market-context-more" class="button button-secondary" type="button" hidden>显示更多</button>
+          </div>
         </div>
       </section>
 

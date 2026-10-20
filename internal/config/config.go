@@ -29,6 +29,7 @@ type Config struct {
 	Intraday       Intraday       `yaml:"intraday"`
 	LLM            LLM            `yaml:"llm"`
 	Market         Market         `yaml:"market"`
+	MarketContext  MarketContext  `yaml:"market_context"`
 	Strategy       Strategy       `yaml:"strategy"`
 	StructureGuard StructureGuard `yaml:"structure_guard"`
 	Version        int            `yaml:"schema_version"`
@@ -109,6 +110,7 @@ func Defaults() Config {
 	c.Strategy = DefaultStrategy()
 	c.StructureGuard.Mode = "shadow"
 	c.Market = DefaultMarket()
+	c.MarketContext = DefaultMarketContext()
 	c.Intraday = DefaultIntraday()
 	c.Web.Enabled = true
 	c.Web.Listen = "127.0.0.1:8080"
@@ -283,6 +285,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Market.Validate(); err != nil {
+		return err
+	}
+	if err := c.MarketContext.Validate(); err != nil {
 		return err
 	}
 	if err := c.LLM.Validate(); err != nil {

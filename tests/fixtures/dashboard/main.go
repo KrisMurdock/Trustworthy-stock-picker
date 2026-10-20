@@ -134,7 +134,7 @@ func seed(root string, empty, partial, gates bool) error {
 	}); err != nil {
 		return err
 	}
-	return nil
+	return seedMarketContext(root)
 }
 
 func history(stock config.Stock, day string, at time.Time, index, count int) market.History {
@@ -333,4 +333,39 @@ func seedMinutes(db *storage.MarketDB, stock config.Stock) error {
 		h.Bars = append(h.Bars, market.MinuteBar{End: end, Open: 10, High: 12, Low: 9, Close: 11.5, Volume: 200, Final: end.Before(h.FetchedAt)})
 	}
 	return db.SaveMinutes(context.Background(), stock, h.Bars[len(h.Bars)-1].End, h.FetchedAt, &h, "ok", "", false)
+}
+
+func seedMarketContext(root string) error {
+	db, err := storage.InitContext(root, false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	items := []storage.ContextInstrument{
+		{Code: "sh000001", Name: "上证指数", Kind: "index", Category: "index", Source: "tencent"},
+		{Code: "sz399001", Name: "深证成指", Kind: "index", Category: "index", Source: "tencent"},
+		{Code: "sz399006", Name: "创业板指", Kind: "index", Category: "index", Source: "tencent"},
+		{Code: "sh000300", Name: "沪深300", Kind: "index", Category: "index", Source: "tencent"},
+		{Code: "sh000688", Name: "科创50", Kind: "index", Category: "index", Source: "tencent"},
+		{Code: "BK1036", Name: "半导体", Kind: "board", Category: "industry,concept", Source: "eastmoney"},
+		{Code: "BK1137", Name: "存储芯片", Kind: "board", Category: "concept", Source: "eastmoney"},
+		{Code: "BK1152", Name: "高带宽内存", Kind: "board", Category: "concept", Source: "eastmoney"},
+	}
+	at := time.Date(2026, 10, 13, 19, 0, 0, 0, market.Shanghai)
+	for index, item := range items {
+		bars := []storage.ContextBar{}
+		close := 1000.0 + float64(index)*137
+		for day := at.AddDate(0, 0, -30); !day.After(at); day = day.AddDate(0, 0, 1) {
+			if day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
+				continue
+			}
+			close *= 1 + 0.004*math.Sin(float64(index+len(bars)))
+			bars = append(bars, storage.ContextBar{Code: item.Code, Date: day.Format("2006-01-02"), Open: close * .995, Close: close, High: close * 1.01, Low: close * .99, Volume: 1000 + float64(index*100), Amount: close * 1000})
+		}
+		item.UpdatedAt = at
+		if err := db.SaveInstrument(context.Background(), item, bars); err != nil {
+			return err
+		}
+	}
+	return db.SaveSyncStatus(context.Background(), storage.ContextSyncStatus{AsOf: "2026-10-13", StartedAt: at.Add(-time.Minute), FinishedAt: at, Status: "complete", Total: len(items), Succeeded: len(items)})
 }

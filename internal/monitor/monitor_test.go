@@ -23,10 +23,14 @@ type fakeSource struct {
 	failAdjust string
 	failCode   string
 	holidays   map[string]bool
+	fetchHook  func(config.Stock)
 }
 
 func (f *fakeSource) Fetch(ctx context.Context, s config.Stock, start, end, adjust string) (market.History, error) {
 	f.calls++
+	if f.fetchHook != nil {
+		f.fetchHook(s)
+	}
 	if ctx.Err() != nil {
 		return market.History{}, ctx.Err()
 	}

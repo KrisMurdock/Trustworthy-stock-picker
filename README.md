@@ -89,7 +89,7 @@ make build
 ./bin/stock-watcher status-backfill -as-of YYYY-MM-DD
 ./bin/stock-watcher status-audit -as-of YYYY-MM-DD
 
-# 下载行情、校验覆盖率并保存报告
+# 下载股票行情、指数与全量板块，校验覆盖率并保存报告
 ./bin/stock-watcher sync
 ./bin/stock-watcher preview -as-of YYYY-MM-DD
 
@@ -168,7 +168,8 @@ func main() {
 | `status-backfill` | 补齐股池十年停牌状态与交易所日历 | 是 | 否 |
 | `status-refresh` | 刷新最近一段时间的证券状态 | 是 | 否 |
 | `status-audit` | 只读审计交易日、停牌、缺口和可分析状态 | 否 | 否 |
-| `sync` | 同步整池行情并生成报告 | 是 | 否 |
+| `sync` | 同步整池行情、指数与全量板块并生成报告 | 是 | 否 |
+| `sync-context` | 只补跑指数与板块同步，用于排障 | 是 | 否 |
 | `sync-intraday` | 手动执行一轮 5 分钟采集 | 是 | 否 |
 | `preview` | 输出全池观察排名和研究结果 | 否 | 否 |
 | `research` | 输出研究统计 | 否 | 否 |
@@ -179,7 +180,7 @@ func main() {
 | `status` | 查看各通道投递状态 | 否 | 否 |
 | `retry` | 解锁指定通道或全部通道的永久错误 | 是 | 可能 |
 
-`sync` 不发送消息；`run` 和 `once` 才会执行调度与投递。常驻进程持有数据目录写锁，手动写入命令需要先停止常驻实例。修改股池、环境变量或凭证后需要重启。
+`sync` 会在同一轮同步中并发下载整池股票、核心 A 股指数和东方财富可发现的所有行业/概念板块；指数或板块失败只记录在 `context.db` 的同步状态中，不阻断股票报告。`sync-context` 只用于单独补跑或排障，常规流程不需要手动执行。`sync` 不发送消息；`run` 和 `once` 才会执行调度与投递。常驻进程持有数据目录写锁，手动写入命令需要先停止常驻实例。修改股池、环境变量或凭证后需要重启。
 
 ## 工作原理
 

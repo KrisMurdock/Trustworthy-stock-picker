@@ -91,6 +91,9 @@ func TestCLIInitCreatesMarketDatabase(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(data, "market.db")); err != nil {
 		t.Fatalf("market database was not initialized: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(data, "context.db")); err != nil {
+		t.Fatalf("context database was not initialized: %v", err)
+	}
 }
 
 func TestCLIInitRequiresExistingCIFSMount(t *testing.T) {
@@ -120,5 +123,15 @@ func TestCheckConfigBeforeStoppingService(t *testing.T) {
 	useBuiltinConfig(t, filepath.Join(t.TempDir(), "missing"), "sz000001")
 	if err := run([]string{"check-config"}); err == nil {
 		t.Fatal("invalid logging settings accepted")
+	}
+}
+
+func TestCLISyncContextRejectsNonTradingDayBeforeNetwork(t *testing.T) {
+	root := t.TempDir()
+	data := filepath.Join(root, "data")
+	os.Mkdir(data, 0700)
+	useBuiltinConfig(t, data, "sz000001")
+	if err := run([]string{"sync-context", "-as-of", "2026-10-18"}); err == nil || !strings.Contains(err.Error(), "configured trading day") {
+		t.Fatalf("non-trading context day accepted: %v", err)
 	}
 }

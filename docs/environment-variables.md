@@ -87,6 +87,20 @@
 | STOCK_WATCHER_MARKET_EASTMONEY_ENDPOINT | 东方财富公开端点 | 东方财富日线端点覆盖 |
 | STOCK_WATCHER_MARKET_LISTING_ENDPOINT | 新浪发行资料端点 | 上市日期查询端点覆盖 |
 
+### 指数与板块同步
+
+默认 `sync`、`run` 启动同步和到点日线同步都会在同一轮中并发下载核心指数与东方财富可发现的全部行业/概念板块。市场环境数据写入独立的 `<data_dir>/context.db`；板块发现或单板块失败只标记该库为 `partial/failed`，不会阻断股票行情和推荐报告。仅在补跑或排障时执行 `stock-watcher sync-context`。
+
+| 变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| STOCK_WATCHER_CONTEXT_ENABLED | true | 是否随默认同步流程采集指数与板块 |
+| STOCK_WATCHER_CONTEXT_REQUEST_INTERVAL | 350ms | 板块列表与日线请求间隔，允许 350ms～1m |
+| STOCK_WATCHER_CONTEXT_WORKERS | 3 | 板块日线并发数，允许 1～8 |
+| STOCK_WATCHER_CONTEXT_HISTORY_LIMIT | 10000 | 单个板块首次回补的最大日线根数，允许 640～10000 |
+| STOCK_WATCHER_CONTEXT_EASTMONEY_LIST_ENDPOINT | 东方财富板块列表端点 | 板块发现端点覆盖；仅允许 HTTPS 或回环 HTTP |
+| STOCK_WATCHER_CONTEXT_EASTMONEY_KLINE_ENDPOINT | 东方财富板块日线端点 | 板块日线端点覆盖；额外允许指定的东方财富公开 HTTP 端点 |
+| STOCK_WATCHER_CONTEXT_TENCENT_ENDPOINT | 腾讯指数日线端点 | 核心指数日线端点覆盖；仅允许 HTTPS 或回环 HTTP |
+
 ## 分钟行情
 
 | 变量 | 默认值 | 用途 |

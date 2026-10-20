@@ -172,3 +172,31 @@ func TestRunRejectsOccupiedPortBeforeMonitorStarts(t *testing.T) {
 		t.Fatalf("occupied port must fail before monitor starts: %v, started=%v", err, started)
 	}
 }
+
+func TestRuntimeIncludesMarketContextInDefaultMonitors(t *testing.T) {
+	cfg := runtimeTestConfig(t)
+	rt, err := New(Options{Config: &cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.contextDB == nil || rt.contextSyncer == nil || rt.contextClient == nil || rt.monitor.MarketContextSync == nil {
+		rt.Close()
+		t.Fatal("default runtime did not wire market context synchronization into the daily sync")
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "context.db")); err != nil {
+		rt.Close()
+		t.Fatalf("context database missing: %v", err)
+	}
+	if err := rt.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.MarketContext.Enabled = false
+	disabled, err := New(Options{Config: &cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer disabled.Close()
+	if disabled.contextSyncer != nil || disabled.contextDB != nil || disabled.monitor.MarketContextSync != nil {
+		t.Fatal("disabled market context was still started")
+	}
+}
