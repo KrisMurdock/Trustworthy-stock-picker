@@ -34,7 +34,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-context|sync-intraday|status-backfill|status-refresh|status-audit|preview|research|experiment|plan|run|once|status|retry [channel] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-context|sync-intraday|status-backfill|status-refresh|status-audit|preview|research|experiment|plan|run|once|status|retry|train-predictor|predictor-status [channel] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -61,7 +61,7 @@ func run(args []string) error {
 		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
-	case "check-config", "init", "check", "health", "replay", "sync", "sync-context", "sync-intraday", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "plan", "run", "once", "status", "retry":
+	case "check-config", "init", "check", "health", "replay", "sync", "sync-context", "sync-intraday", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "plan", "run", "once", "status", "retry", "train-predictor", "predictor-status":
 	default:
 		return errors.New("unknown command")
 	}
@@ -148,6 +148,12 @@ func run(args []string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(status)
+	}
+	if command == "predictor-status" {
+		return predictorStatus(c)
+	}
+	if command == "train-predictor" {
+		return trainPredictor(ctx, c, log)
 	}
 	if command == "experiment" {
 		if *holdout {

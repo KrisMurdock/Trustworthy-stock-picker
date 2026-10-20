@@ -13,7 +13,7 @@ type KalmanParams struct {
 }
 
 func DefaultKalmanParams() KalmanParams {
-	return KalmanParams{ProcessLevel: 1e-6, ProcessSlope: 1e-8, Measurement: 1e-4, TrendThreshold: 1.0}
+	return KalmanParams{ProcessLevel: 1e-6, ProcessSlope: 1e-9, Measurement: 1e-4, TrendThreshold: 0.4}
 }
 
 type KalmanState struct {

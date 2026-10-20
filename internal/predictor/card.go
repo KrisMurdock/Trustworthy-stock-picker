@@ -64,7 +64,7 @@ func BuildCard(date string, targetEnd time.Time, model ModelInfo, preds []Predic
 						{Key: "high", Label: "预测高", Kind: notify.TableChange, Width: "110px"},
 						{Key: "low", Label: "预测低", Kind: notify.TableChange, Width: "110px"},
 						{Key: "close", Label: "预测收", Kind: notify.TableChange, Width: "110px"},
-						{Key: "trend", Label: "趋势", Kind: notify.TableStatus, Width: "64px"},
+						{Key: "trend", Label: "趋势", Kind: notify.TableChange, Width: "64px"},
 						{Key: "confidence", Label: "置信", Kind: notify.TableStatus, Width: "56px"},
 					},
 					Rows: rows,
