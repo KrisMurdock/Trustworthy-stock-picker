@@ -34,7 +34,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-context|sync-intraday|status-backfill|status-refresh|status-audit|preview|research|experiment|plan|run|once|status|retry|train-predictor|predictor-status|predictor-eval [channel] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-context|sync-intraday|backfill-minutes|status-backfill|status-refresh|status-audit|preview|research|experiment|plan|run|once|status|retry|train-predictor|predictor-status|predictor-eval [channel] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -48,8 +48,12 @@ func run(args []string) error {
 	parent := f.String("parent", "", "parent experiment ID (experiment only)")
 	holdout := f.Bool("holdout", false, "consume the parent experiment's reserved holdout interval once (experiment only)")
 	policy := f.String("policy", "baseline", "conditional-{entry,rsi,macd,bollinger,confluence,all-three,guard,confluence-guard,chan-5-15-30}, baseline, upper-wick, risk-qualified or next-day-{baseline,upper-wick,low-volatility,pullback,breakout,momentum,volume-recovery,balanced,risk-qualified} (experiment only)")
-	from := f.String("from", "", "inclusive backtest signal start date (experiment only; pair with -through)")
+	from := f.String("from", "", "inclusive start date (experiment; pair with -through, or backfill-minutes)")
 	through := f.String("through", "", "inclusive backtest signal end date (experiment only; pair with -from)")
+	backfillWorkers := f.Int("workers", 3, "concurrent BaoStock workers (backfill-minutes only, 1..8)")
+	backfillCodes := f.String("codes", "", "comma-separated pool codes (backfill-minutes only; default all)")
+	importFrom := f.String("import-from", "", "staging data directory to merge without network access (backfill-minutes only)")
+	referenceDir := f.String("reference-dir", "", "read-only production data directory used for resume coverage (backfill-minutes fetch only)")
 	entry := f.Float64("entry-price", 0, "actual buy fill price (plan only)")
 	windows := f.String("windows", "40,60,120", "comma-separated rolling training windows in trading days (predictor-eval only)")
 	validationDays := f.Int("validation-days", 20, "number of common out-of-sample trading days (predictor-eval only)")
@@ -65,7 +69,7 @@ func run(args []string) error {
 		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
-	case "check-config", "init", "check", "health", "replay", "sync", "sync-context", "sync-intraday", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "plan", "run", "once", "status", "retry", "train-predictor", "predictor-status", "predictor-eval":
+	case "check-config", "init", "check", "health", "replay", "sync", "sync-context", "sync-intraday", "backfill-minutes", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "plan", "run", "once", "status", "retry", "train-predictor", "predictor-status", "predictor-eval":
 	default:
 		return errors.New("unknown command")
 	}
@@ -75,8 +79,8 @@ func run(args []string) error {
 	if command != "replay" && *revision != "" {
 		return errors.New("revision requires replay")
 	}
-	if *asof != "" && command != "sync" && command != "sync-context" && command != "status-backfill" && command != "status-refresh" && command != "status-audit" && command != "preview" && command != "research" && command != "experiment" && command != "predictor-eval" {
-		return errors.New("as-of is supported by sync, context sync, status commands, preview, research, experiment and predictor-eval only")
+	if *asof != "" && command != "sync" && command != "sync-context" && command != "backfill-minutes" && command != "status-backfill" && command != "status-refresh" && command != "status-audit" && command != "preview" && command != "research" && command != "experiment" && command != "predictor-eval" {
+		return errors.New("as-of is supported by sync, context sync, minute backfill, status commands, preview, research, experiment and predictor-eval only")
 	}
 	if command != "predictor-eval" && (*windows != "40,60,120" || *validationDays != 20 || *halfLife != 60) {
 		return errors.New("predictor-eval flags require the predictor-eval command")
@@ -87,10 +91,16 @@ func run(args []string) error {
 	if command != "plan" && (*code != "" || *entry != 0) {
 		return errors.New("trade price flags require the plan command")
 	}
-	if command != "experiment" && (*parent != "" || *holdout || *policy != "baseline" || *from != "" || *through != "") {
+	if command != "experiment" && (*parent != "" || *holdout || *policy != "baseline" || *through != "") {
 		return errors.New("experiment flags require the experiment command")
 	}
-	if (*from == "") != (*through == "") {
+	if command != "experiment" && command != "backfill-minutes" && *from != "" {
+		return errors.New("from requires the experiment or backfill-minutes command")
+	}
+	if command != "backfill-minutes" && (*backfillWorkers != 3 || *backfillCodes != "" || *importFrom != "" || *referenceDir != "") {
+		return errors.New("minute backfill flags require the backfill-minutes command")
+	}
+	if command == "experiment" && (*from == "") != (*through == "") {
 		return errors.New("experiment -from and -through must be supplied together")
 	}
 	if *holdout && (*parent == "" || *from != "" || *through != "") {
@@ -241,6 +251,9 @@ func run(args []string) error {
 			return errors.New("intraday synchronization has failed or incomplete stocks")
 		}
 		return nil
+	}
+	if command == "backfill-minutes" {
+		return runMinuteBackfill(ctx, c, marketDB, log, *asof, *from, *backfillWorkers, *backfillCodes, *importFrom, *referenceDir)
 	}
 
 	source, err := market.NewSources(c, log)

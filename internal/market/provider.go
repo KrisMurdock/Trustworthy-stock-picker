@@ -154,3 +154,13 @@ func ProviderVolumeShares(source, code string, raw float64) float64 {
 	}
 	return raw * 100
 }
+
+// TencentMinuteVolumeRaw converts canonical share counts to the provider_raw
+// unit persisted by the realtime minute collector. intraday_bar stores raw
+// Tencent values: hands for the main boards and shares for STAR.
+func TencentMinuteVolumeRaw(code string, shares float64) float64 {
+	if strings.HasPrefix(code, "sh68") {
+		return shares
+	}
+	return shares / 100
+}

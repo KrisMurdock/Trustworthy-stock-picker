@@ -19,6 +19,8 @@ make status
 make run
 ```
 
+首次部署完成 `sync` 后，用 `make minute-backfill`（默认 6 并发、最近 200 个交易日）补齐历史 5 分钟线；可用 `MINUTE_ARGS` 覆盖 `-from`、`-as-of`、`-codes`、`-workers`。已有生产实例运行时不要直接写生产库，先按 [行情来源与回退](data-sources.md#分钟数据) 的 staging 流程抓取，再停止 `run` 执行 `-import-from`。
+
 业务配置和凭证全部来自 `.env`，启动不读取 `config.yaml`，默认也不读取 `feishu.config`；观测股池仍独立保存在 `leaders.yaml`。默认使用本地 `data/`，`init` 会自动创建；使用 Windows 挂载盘时设置 `STOCK_WATCHER_REQUIRE_CIFS=true` 和对应 `STOCK_WATCHER_DATA_DIR`。`make run` 用于前台运行，会构建并加载开发 `.env`。若 `stock-watcher.service` 已运行同一个仓库二进制，则先用原生 `check-config` 校验配置与日志环境变量，通过后正常停止后台服务，确认 MainPID 为 0，再进入前台运行。构建或配置校验失败时不停止原服务；停止失败或超时时中止前台启动并报错。
 
 Go `run` 启动后立即同步最近已收盘交易日的完整股池，并并发同步核心 A 股指数与全量行业/概念板块，生成分析并投递尚未过期的 T+1 消息，之后进入定时轮询；已送达的同日同通道消息不重复发送。盘中不会推送已过买入时点的旧推荐。同步失败会自动重试，原始行情和报告保持在数据目录。`once` 仍仅执行一次受内置 `daily.run_at` 限制的定时流程；手动 `sync` 和 `once` 触发同步时也使用同一套股票与市场环境同步路径。

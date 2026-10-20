@@ -91,6 +91,9 @@ make build
 
 # 下载股票行情、指数与全量板块，校验覆盖率并保存报告
 ./bin/stock-watcher sync
+
+# 首次部署补齐最近 200 个交易日的历史 5 分钟线（日线同步后运行）
+./bin/stock-watcher backfill-minutes -workers 6
 ./bin/stock-watcher preview -as-of YYYY-MM-DD
 
 # 前台运行监控、分钟采集与网页
@@ -171,6 +174,7 @@ func main() {
 | `sync` | 同步整池行情、指数与全量板块并生成报告 | 是 | 否 |
 | `sync-context` | 只补跑指数与板块同步，用于排障 | 是 | 否 |
 | `sync-intraday` | 手动执行一轮 5 分钟采集 | 是 | 否 |
+| `backfill-minutes` | 用 BaoStock 补齐历史 5 分钟线，支持 staging 与断点续跑 | 是 | 否 |
 | `train-predictor` | 在停止 `run` 后手动训练下一有效期模型 | 是 | 否 |
 | `predictor-status` | 只读查看预测模型、开关和最近状态 | 否 | 否 |
 | `predictor-eval` | 只读运行多训练窗口滚动评估，输出确定性 JSON | 否 | 否 |
