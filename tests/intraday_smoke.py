@@ -160,7 +160,7 @@ def main():
                         assert data["base_period_minutes"]==5 and data["period_minutes"]==period
                         if not target()[1] and target()[0].hour==15: assert len(data["bars"])==240//period
                     with sqlite3.connect(root/"data/market.db") as db:
-                        assert db.execute("PRAGMA user_version").fetchone()==(5,)
+                        assert db.execute("PRAGMA user_version").fetchone()==(6,)
                         assert db.execute("PRAGMA integrity_check").fetchone()==("ok",)
                         assert db.execute("SELECT count(*) FROM daily_bar").fetchone()==(0,)
                 finally:
