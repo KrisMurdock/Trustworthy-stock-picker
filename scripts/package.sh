@@ -11,11 +11,12 @@ PACKAGE_PARENT="$ROOT_DIR/.builds/stock-watcher/linux"
 mkdir -p "$PACKAGE_PARENT"
 PACKAGE_STAGE="$(mktemp -d "$PACKAGE_PARENT/.package-XXXXXXXX")"
 trap 'rm -rf -- "$PACKAGE_STAGE"' EXIT
-mkdir -p "$PACKAGE_STAGE/bin" "$PACKAGE_STAGE/deploy" "$PACKAGE_STAGE/docs"
+mkdir -p "$PACKAGE_STAGE/bin" "$PACKAGE_STAGE/deploy" "$PACKAGE_STAGE/docs/assets"
 CGO_ENABLED=0 GOOS=linux GOARCH="$BUILD_GOARCH" "${GO:-go}" build -trimpath -ldflags "-s -w -X main.version=$BUILD_VERSION" -o "$PACKAGE_STAGE/bin/stock-watcher" ./cmd/stock-watcher
 cp leaders.yaml leaders.pending.yaml .env.example README.md "$PACKAGE_STAGE/"
 cp deploy/stock-watcher.service "$PACKAGE_STAGE/deploy/"
 cp docs/*.md "$PACKAGE_STAGE/docs/"
+cp docs/assets/*.svg "$PACKAGE_STAGE/docs/assets/"
 printf '%s\n' "$BUILD_VERSION" > "$PACKAGE_STAGE/VERSION"
 git rev-parse HEAD > "$PACKAGE_STAGE/COMMIT"
 (cd "$PACKAGE_STAGE" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
