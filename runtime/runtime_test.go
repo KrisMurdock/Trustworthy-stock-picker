@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/predictor"
 )
 
 func runtimeTestConfig(t *testing.T) Config {
@@ -198,5 +201,57 @@ func TestRuntimeIncludesMarketContextInDefaultMonitors(t *testing.T) {
 	defer disabled.Close()
 	if disabled.contextSyncer != nil || disabled.contextDB != nil || disabled.monitor.MarketContextSync != nil {
 		t.Fatal("disabled market context was still started")
+	}
+}
+
+func TestRuntimeWiresPredictorIntoDashboardAndRunLoop(t *testing.T) {
+	cfg := runtimeTestConfig(t)
+	cfg.Predictor.Enabled = true
+	cfg.Predictor.PushEnabled = true
+	rt, err := New(Options{Version: "test", Config: &cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.predictor == nil {
+		t.Fatal("predictor monitor was not constructed")
+	}
+	r := httptest.NewRequest(http.MethodGet, "/api/predictor", nil)
+	r.RemoteAddr = "127.0.0.1:45678"
+	w := httptest.NewRecorder()
+	rt.DashboardHandler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("predictor API unavailable: %d %s", w.Code, w.Body.String())
+	}
+	var view predictor.View
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if !view.Enabled || view.WriteMode != cfg.Predictor.WriteMode {
+		t.Fatalf("unexpected predictor view: %+v", view)
+	}
+	if err := rt.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if rt.predictor != nil {
+		t.Fatal("predictor was not released")
+	}
+}
+
+func TestRuntimeWithoutPredictorKeepsDashboardReadOnly(t *testing.T) {
+	cfg := runtimeTestConfig(t)
+	cfg.Predictor.Enabled = false
+	cfg.Predictor.PushEnabled = false
+	rt, err := New(Options{Config: &cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	if rt.predictor != nil {
+		t.Fatal("disabled predictor was constructed")
+	}
+	w := httptest.NewRecorder()
+	rt.DashboardHandler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/predictor", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("disabled predictor API status: %d", w.Code)
 	}
 }

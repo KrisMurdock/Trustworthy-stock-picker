@@ -112,6 +112,22 @@
 | STOCK_WATCHER_INTRADAY_CALIBRATION_AT | 15:10 | 每日分钟数据校准时间 |
 | STOCK_WATCHER_INTRADAY_TENCENT_ENDPOINT | 腾讯分钟端点 | 分钟行情端点覆盖 |
 
+## 5 分钟预测
+
+预测模块只读取已保存的分钟线和日线，针对今日日报入选股票输出下一根 5 分钟 K 线的点估计。模型、预测库和开关都落在 `<data_dir>`，不连接券商、不自动下单。
+
+| 变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| STOCK_WATCHER_PREDICTOR_ENABLED | true | 是否启动 5 分钟预测循环 |
+| STOCK_WATCHER_PREDICTOR_PUSH_ENABLED | true | 是否向飞书推送聚合预测卡；关闭后仍保存预测 |
+| STOCK_WATCHER_PREDICTOR_TRAIN_AT | 15:30 | 收盘后训练下一交易日模型的时间，允许 15:10～23:00 |
+| STOCK_WATCHER_PREDICTOR_WRITE_MODE | loopback | 网页推送开关写权限：off/loopback/all |
+| STOCK_WATCHER_PREDICTOR_MIN_TRAINING_DAYS | 5 | 训练所需最少交易日 |
+| STOCK_WATCHER_PREDICTOR_VALIDATION_DAYS | 3 | expanding walk-forward 验证交易日 |
+| STOCK_WATCHER_PREDICTOR_KEEP_MODELS | 10 | 保留的模型代数 |
+
+模型缺失、过期或 `valid_for` 不是今天时不会预测，也不会推送旧结果。网页开关只控制飞书投递，不停止预测和落库。
+
 ## 通知与凭证
 
 | 变量 | 默认值 | 用途 |

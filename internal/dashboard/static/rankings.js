@@ -2,7 +2,7 @@
 
 (() => {
   const { byId, setText, show, el, list, number, isNumber, displayLabel, formatTime, stockIdentity, loadDashboard, requestJSON } = window.StockWatcher;
-  const state = { data: null, report: null, reportDate: "", followLatest: true, refreshing: false, reportRequest: 0, reportController: null };
+  const state = { data: null, report: null, reportDate: "", followLatest: true, refreshing: false, reportRequest: 0, reportController: null, predictor: null };
   const requested = new URLSearchParams(location.search).get("as_of");
   if (/^\d{4}-\d{2}-\d{2}$/.test(requested || "")) {
     state.reportDate = requested;
@@ -165,6 +165,131 @@
     loadReport(selectedDate);
   }
 
+  function shanghaiDate() {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  }
+
+  function targetClock(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "—";
+    return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+  }
+
+  function percentText(value) {
+    if (!isNumber(value)) return "—";
+    return `${value > 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
+  }
+
+  async function predictorRequest(path, init = {}) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(path, {
+        ...init, signal: controller.signal, cache: "no-store",
+        headers: { Accept: "application/json", ...init.headers },
+      });
+      let payload = null;
+      try { payload = await response.json(); } catch (error) { if (controller.signal.aborted) throw error; }
+      return { response, payload };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function predictorError(message) {
+    setText("predictor-notice", message);
+    show("predictor-notice", true);
+  }
+
+  function renderPredictorView(view) {
+    state.predictor = view;
+    const toggle = byId("predictor-push-toggle");
+    toggle.checked = view.push_enabled === true;
+    toggle.disabled = view.write_enabled !== true;
+    setText("predictor-push-state", view.push_enabled ? "已开启" : "已关闭");
+    setText("predictor-footer", `模型 ${view.model_id || "尚未训练"} · 有效期 ${view.model_valid_for || "—"} · 更新 ${formatTime(view.updated_at)}`);
+  }
+
+  function renderPredictions(predictions) {
+    const rows = list(predictions);
+    byId("predictor-body").replaceChildren();
+    show("predictor-notice", false);
+    if (!rows.length) {
+      setText("predictor-count", "0");
+      show("predictor-empty", true);
+      show("predictor-table-wrap", false);
+      return;
+    }
+    const latest = Math.max(...rows.map((prediction) => new Date(prediction.target_end).getTime()));
+    const current = rows.filter((prediction) => new Date(prediction.target_end).getTime() === latest);
+    const names = new Map();
+    for (const entry of list(state.report?.selected)) names.set(entry.code, entry.name);
+    for (const entry of list(state.report?.ranking)) names.set(entry.code, entry.name);
+    const fragment = document.createDocumentFragment();
+    for (const prediction of current) {
+      const row = el("tr");
+      row.dataset.testid = "predictor-row";
+      row.dataset.code = prediction.code;
+      row.append(stockIdentity({ code: prediction.code, name: names.get(prediction.code) || prediction.code }));
+      row.append(el("td", "numeric", number(prediction.base_price, 2)));
+      for (const key of ["high_pct", "low_pct", "close_pct"]) {
+        const price = prediction.base_price * (1 + prediction[key]);
+        const cell = el("td", "numeric", `${number(price, 2)} (${percentText(prediction[key])})`);
+        if (prediction[key] > 0) cell.classList.add("chart-rise");
+        if (prediction[key] < 0) cell.classList.add("chart-fall");
+        row.append(cell);
+      }
+      row.append(el("td", "", prediction.trend || "—"), el("td", "", prediction.confidence || "—"), el("td", "", targetClock(prediction.target_end)));
+      fragment.append(row);
+    }
+    byId("predictor-body").replaceChildren(fragment);
+    setText("predictor-count", number(current.length));
+    setText("predictor-description", `今日入选股票的下一根 5 分钟 K 线预测，目标时间 ${targetClock(current[0].target_end)}。`);
+    show("predictor-empty", false);
+    show("predictor-table-wrap", true);
+  }
+
+  async function loadPredictor() {
+    try {
+      const { response, payload } = await predictorRequest("/api/predictor");
+      if (response.status === 503) { show("predictor", false); return; }
+      if (!response.ok || !payload || payload.enabled !== true) throw new Error(payload?.error || `预测状态读取失败（HTTP ${response.status}）`);
+      show("predictor", true);
+      renderPredictorView(payload);
+      const history = await predictorRequest(`/api/predictions?date=${encodeURIComponent(shanghaiDate())}`);
+      if (!history.response.ok || !history.payload) throw new Error(history.payload?.error || `预测数据读取失败（HTTP ${history.response.status}）`);
+      renderPredictions(history.payload.predictions);
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      show("predictor", true);
+      predictorError(`5 分钟预测暂不可用：${error.message}`);
+    }
+  }
+
+  async function togglePredictorPush(event) {
+    const toggle = event.target;
+    const target = toggle.checked;
+    toggle.disabled = true;
+    setText("predictor-push-state", "保存中");
+    try {
+      const { response, payload } = await predictorRequest("/api/predictor/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Stock-Watcher-Action": "predictor-config" },
+        body: JSON.stringify({ push_enabled: target }),
+      });
+      if (!response.ok || !payload) throw new Error(payload?.error || `开关保存失败（HTTP ${response.status}）`);
+      renderPredictorView(payload);
+      setText("live-status", target ? "5 分钟预测飞书推送已开启。" : "5 分钟预测飞书推送已关闭，预测仍会保存。");
+      show("predictor-notice", false);
+    } catch (error) {
+      toggle.checked = !target;
+      setText("predictor-push-state", target ? "已关闭" : "已开启");
+      predictorError(`推送开关未保存：${error.message}`);
+    } finally {
+      toggle.disabled = state.predictor?.write_enabled !== true;
+    }
+  }
+
   async function refreshRankings() {
     if (state.refreshing) return;
     state.refreshing = true;
@@ -179,6 +304,7 @@
       updateReportDates(data);
       show("dashboard-content", true);
       show("error-state", false);
+      void loadPredictor();
       setText("live-status", `报告日期已刷新，共 ${data.stocks.length} 支股票。`);
     } catch (error) {
       setText("error-title", state.data ? "刷新失败，数据已过期" : "排名报告加载失败");
@@ -204,6 +330,7 @@
     syncURL(event.target.value, latestDate);
     loadReport(event.target.value);
   });
+  byId("predictor-push-toggle").addEventListener("change", togglePredictorPush);
   setInterval(() => { if (!document.hidden) refreshRankings(); }, 60000);
   document.addEventListener("visibilitychange", () => {
     setText("auto-refresh-label", document.hidden ? "页面隐藏，自动刷新已暂停" : "每 60 秒自动刷新报告列表");

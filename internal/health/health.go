@@ -30,6 +30,7 @@ type Status struct {
 	MinuteSource  string            `json:"minute_source"`
 	MinuteCurrent int               `json:"minute_current"`
 	MinuteEnabled bool              `json:"minute_enabled"`
+	Predictor     *PredictorStatus  `json:"predictor,omitempty"`
 }
 
 func Read(ctx context.Context, c config.Config, db *storage.MarketDB, now time.Time) (Status, error) {
@@ -79,6 +80,10 @@ func Read(ctx context.Context, c config.Config, db *storage.MarketDB, now time.T
 	}
 	out.Ready = true
 	out.Available = data.Available
+	if predictor, issues := predictorHealth(view, c, cal, now); predictor != nil {
+		out.Predictor = predictor
+		out.Issues = append(out.Issues, issues...)
+	}
 	out.AnalysisReady = data.ReportReady
 	out.Task = data.Task
 	if len(c.Stocks) == 0 {

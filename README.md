@@ -171,6 +171,8 @@ func main() {
 | `sync` | 同步整池行情、指数与全量板块并生成报告 | 是 | 否 |
 | `sync-context` | 只补跑指数与板块同步，用于排障 | 是 | 否 |
 | `sync-intraday` | 手动执行一轮 5 分钟采集 | 是 | 否 |
+| `train-predictor` | 在停止 `run` 后手动训练下一有效期模型 | 是 | 否 |
+| `predictor-status` | 只读查看预测模型、开关和最近状态 | 否 | 否 |
 | `preview` | 输出全池观察排名和研究结果 | 否 | 否 |
 | `research` | 输出研究统计 | 否 | 否 |
 | `experiment` | 运行或派生策略实验 | 是 | 否 |
@@ -249,11 +251,11 @@ func main() {
 | `/` | 已完成交易日、覆盖率、筛选数量和导航摘要 |
 | `/stocks` | 全股池搜索、行业/数据状态筛选与排序 |
 | `/chart` | 日 K、成交量、MA5/10/20、前复权/不复权切换和分钟周期 |
-| `/rankings` | 当前及历史日推排名 |
+| `/rankings` | 当前及历史日推排名、5 分钟实验预测与推送开关 |
 | `/experiments` | 策略实验室、父子实验、样本对比和固定数据快照 |
 | `/calculator` | 浏览器内仓位、持仓、剩余风险与净止盈价计算 |
 
-网页接口全部只读，仅接受 GET/HEAD：`/healthz`、`/api/dashboard`、`/api/reports?as_of=YYYY-MM-DD`、`/api/history?code=sz000001` 和 `/api/intraday?code=sz000001&period=5`。摘要页和股票页每分钟刷新，刷新不会触发行情下载或消息推送。
+除受保护的推送开关外，网页接口只读：`/healthz`、`/api/dashboard`、`/api/reports?as_of=YYYY-MM-DD`、`/api/history?code=sz000001`、`/api/intraday?code=sz000001&period=5`、`/api/predictions?date=YYYY-MM-DD` 和 `/api/predictor` 接受 GET/HEAD；`PUT /api/predictor/config` 只接受 loopback/同源且带固定动作头的请求，用于开关飞书预测推送。摘要页和股票页每分钟刷新，刷新不会触发行情下载或消息推送。
 
 网页没有内置账号或权限系统，默认仅监听 `127.0.0.1:8080`。远程访问必须使用受控网络或已有认证反向代理；代理应保留根路径、`/api/` 和 `/assets/`。
 
@@ -275,6 +277,9 @@ func main() {
 | `STOCK_WATCHER_FEISHU_CREDENTIALS_FILE` | 显式设置时才启用旧 `feishu.config` 兼容 |
 | `STOCK_WATCHER_STRATEGY_ENABLED` | 是否启用全池短周期排名 |
 | `STOCK_WATCHER_INTRADAY_ENABLED` | 是否启用 5 分钟采集 |
+| `STOCK_WATCHER_PREDICTOR_ENABLED` | 是否启用 5 分钟实验预测 |
+| `STOCK_WATCHER_PREDICTOR_PUSH_ENABLED` | 是否推送聚合预测卡；关闭后仍保存预测 |
+| `STOCK_WATCHER_PREDICTOR_TRAIN_AT` | 收盘后训练时间，默认 `15:30` |
 | `STOCK_WATCHER_MARKET_PROVIDERS` | 逗号分隔的行情源顺序 |
 | `TUSHARE_TOKEN` | 可选 Tushare Token；缺失时跳过 Tushare |
 
@@ -345,6 +350,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | `internal/monitor` | 整池同步、启动刷新、调度、重试和账本迁移 |
 | `internal/selection` | 趋势筛选与报告事件组装 |
 | `internal/strategy` | 前复权特征、成交模拟、排名、滚动验证和留出样本 |
+| `internal/predictor` | 5 分钟 pooled GBDT、特征、卡尔曼趋势、预测库与投递 |
 | `internal/dashboard` | 内嵌 HTML/CSS/JavaScript、SVG K 线和只读 API |
 | `internal/notify` | 版本化消息、通道接口和投递账本 |
 | `internal/feishu` | 卡片、签名、HTTP/业务码确认和错误分类 |
@@ -362,6 +368,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | 看板视觉 | [深色主题与环境层 3D](docs/dashboard-visual-design.md) |
 | 开发与发布 | [开发、CI 与发布包](docs/development.md) · [测试范围](tests/README.md) |
 | 策略研究 | [推荐门槛诊断](docs/strategy-diagnostics.md) · [策略实验室](docs/experiments.md) · [实验快照](docs/experiment-result-snapshots.md) |
+| 5 分钟预测 | [5 分钟价格预测](docs/minute-predictor.md) |
 | 研究与工具 | [单股价格策略](docs/单股价格策略.md) · [底部形态](docs/bottom-signals.md) |
 | 容器 | [Compose 部署与升级](docker/README.md) |
 
@@ -370,7 +377,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 - 仅覆盖沪深 A 股，不提供逐笔行情、盘口深度或自动交易。
 - 日线来自多个上游，分钟线当前只采集腾讯 5 分钟原始线并派生 15/30/60 分钟；上游窗口和修订规则可能变化。
 - 内置交易日历当前覆盖 2026 年，过期后必须升级；测试覆盖变量不得用于生产。
-- 网页没有账号、角色和写入接口，远程暴露必须依赖受控网络或已有认证代理。
+- 网页没有账号或角色体系；除受保护的预测推送开关外没有写入接口，远程暴露必须依赖受控网络或已有认证代理。
 - 飞书投递为至少一次语义，请求成功后、确认落盘前崩溃可能产生重复消息。
 - 共享盘故障、临时网络错误或数据覆盖不足时，本轮不会发布缓存推荐；已有数据保留等待重试。
 - 研究结果受样本、费用假设、流动性和成交边界影响，历史统计不代表未来收益。

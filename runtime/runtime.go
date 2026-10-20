@@ -20,6 +20,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/marketcontext"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/monitor"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/predictor"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 )
 
@@ -77,6 +78,7 @@ type Runtime struct {
 	monitor       *monitor.Monitor
 	minuteClient  *market.MinuteClient
 	minuteMonitor *intraday.Monitor
+	predictor     *predictor.Monitor
 	dashboard     http.Handler
 	runMonitor    func(context.Context) error
 
@@ -205,7 +207,21 @@ func New(opts Options) (*Runtime, error) {
 		r.minuteClient = market.NewMinuteClient(cfg)
 		r.minuteMonitor = intraday.New(cfg, store, marketDB, r.minuteClient, log)
 	}
-	r.dashboard = dashboard.NewHandler(cfg, marketDB, log)
+	if cfg.Predictor.Enabled {
+		predictorMonitor, err := predictor.New(cfg, store, marketDB, noticeChannels, log)
+		if err != nil {
+			return nil, err
+		}
+		if predictorMonitor != nil {
+			predictorMonitor.BuildVersion = version
+			r.predictor = predictorMonitor
+		}
+	}
+	if r.predictor != nil {
+		r.dashboard = dashboard.NewHandlerWithPredictor(cfg, marketDB, log, r.predictor)
+	} else {
+		r.dashboard = dashboard.NewHandler(cfg, marketDB, log)
+	}
 	r.runMonitor = r.runMonitors
 	opened = true
 	return r, nil
@@ -276,6 +292,9 @@ func (r *Runtime) runMonitors(ctx context.Context) error {
 	if r.minuteMonitor != nil {
 		runners = append(runners, r.minuteMonitor.Run)
 	}
+	if r.predictor != nil {
+		runners = append(runners, r.predictor.Run)
+	}
 	return runMonitors(ctx, runners...)
 }
 
@@ -314,6 +333,10 @@ func (r *Runtime) release() error {
 	if r.closeChannels != nil {
 		r.closeChannels()
 		r.closeChannels = nil
+	}
+	if r.predictor != nil {
+		errs = append(errs, r.predictor.Close())
+		r.predictor = nil
 	}
 	if r.minuteClient != nil {
 		r.minuteClient.Close()

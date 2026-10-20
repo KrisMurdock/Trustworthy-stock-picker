@@ -73,6 +73,8 @@ def fixture(directory, empty, partial=False, gates=False):
     args = ["go", "run", "./tests/fixtures/dashboard", "-data", str(directory / "data")]
     if empty:
         args.append("-empty")
+    else:
+        args.append("-predictor")
     if partial:
         args.append("-partial")
     if gates:
@@ -102,6 +104,8 @@ def service(args, empty=False, partial=False, gates=False):
             "STOCK_WATCHER_FEISHU_ENABLED": "false",
             "STOCK_WATCHER_INTRADAY_ENABLED": "false",
             "STOCK_WATCHER_STRATEGY_ENABLED": "false",
+            "STOCK_WATCHER_PREDICTOR_ENABLED": "true",
+            "STOCK_WATCHER_PREDICTOR_PUSH_ENABLED": "true",
             "STOCK_WATCHER_REQUEST_TIMEOUT": "1s",
             "STOCK_WATCHER_MARKET_PROVIDERS": "tencent",
             "STOCK_WATCHER_POLL_INTERVAL": "1h",
@@ -138,6 +142,9 @@ def service(args, empty=False, partial=False, gates=False):
                     "STOCK_WATCHER_FEISHU_ENABLED": "false",
                     "STOCK_WATCHER_INTRADAY_ENABLED": "false",
                     "STOCK_WATCHER_STRATEGY_ENABLED": "false",
+                    "STOCK_WATCHER_PREDICTOR_ENABLED": "true",
+                    "STOCK_WATCHER_PREDICTOR_PUSH_ENABLED": "true",
+                    "STOCK_WATCHER_PREDICTOR_WRITE_MODE": "all",
                     "STOCK_WATCHER_REQUEST_TIMEOUT": "1s",
                     "STOCK_WATCHER_MARKET_PROVIDERS": "tencent",
                     "STOCK_WATCHER_POLL_INTERVAL": "1h",
@@ -518,6 +525,18 @@ def populated_checks(context, page, url, args, directory, env):
     expect(page.get_by_test_id("ranking-row").filter(has_text="测试消费")).to_contain_text("观察")
     expect(page.get_by_test_id("ranking-row").filter(has_text="测试消费")).to_contain_text("延续分 —（今日未涨）")
     expect(page).to_have_url(url + "/rankings")
+    expect(page.get_by_test_id("predictor-panel")).to_be_visible()
+    expect(page.get_by_test_id("predictor-row")).to_have_count(2)
+    expect(page.get_by_test_id("predictor-row").filter(has_text="sz000001")).to_contain_text("+0.60%")
+    toggle = page.get_by_test_id("predictor-push-toggle")
+    expect(toggle).to_be_checked()
+    toggle.uncheck()
+    expect(page.locator("#predictor-push-state")).to_have_text("已关闭")
+    predictor_state = context.request.get(url + "/api/predictor").json()
+    assert predictor_state["push_enabled"] is False
+    page.reload(wait_until="networkidle")
+    expect(page.get_by_test_id("predictor-row")).to_have_count(2)
+    expect(page.get_by_test_id("predictor-push-toggle")).not_to_be_checked()
 
     if not args.image:
         missing_pool_env = dict(env)
@@ -552,6 +571,7 @@ def chart_checks(page, url, state, args):
     for period in (5, 10, 20):
         expect(page.get_by_test_id(f"kline-ma{period}")).to_have_count(1)
         expected = sum(bar["close"] for bar in history["bars"][-period:]) / period
+        actual_text = page.locator(f"#chart-ma{period}").inner_text()
         expect(page.locator(f"#chart-ma{period}")).to_contain_text(f"{expected:.2f}")
     # Actual SVG geometry reflects OHLC; fixtures include rising and falling bodies.
     candle = page.get_by_test_id("kline-candle").last

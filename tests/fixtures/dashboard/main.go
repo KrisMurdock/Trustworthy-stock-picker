@@ -4,12 +4,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/bottomstudy"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/experiment"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/predictor"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
@@ -23,6 +25,7 @@ func main() {
 	empty := flag.Bool("empty", false, "initialize without published snapshots")
 	partial := flag.Bool("partial", false, "save market data without a report after coverage failure")
 	gates := flag.Bool("gates", false, "seed rejected strategy rules and an empty recommendation holdout")
+	predictorFixture := flag.Bool("predictor", false, "seed an experimental minute predictor model, status and predictions")
 	flag.Parse()
 	if err := seed(*root, *empty, *partial, *gates); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -33,7 +36,77 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+		if *predictorFixture {
+			if err := seedPredictor(*root); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		}
 	}
+}
+
+func seedPredictor(root string) error {
+	now := time.Now().In(market.Shanghai)
+	date := now.Format("2006-01-02")
+	day, err := time.ParseInLocation("2006-01-02", date, market.Shanghai)
+	if err != nil {
+		return err
+	}
+	input := day.Add(9*time.Hour + 35*time.Minute)
+	target := input.Add(5 * time.Minute)
+	info := predictor.ModelInfo{
+		SchemaVersion: predictor.ArtifactSchemaVersion, CreatedAt: now.UTC(), DataFrom: "2026-09-18", DataTo: date,
+		ValidFor: date, FeatureVersion: predictor.FeatureVersion, FeatureNames: predictor.FeatureNames(), CodeVersion: "fixture",
+		Metrics: predictor.ModelMetrics{Samples: 640, Days: 4, MAE: predictor.TargetMetrics{High: 0.004, Low: 0.004, Close: 0.003},
+			BaselineLastMAE: predictor.TargetMetrics{High: 0.006, Low: 0.006, Close: 0.005}},
+	}
+	artifact := &predictor.Artifact{
+		SchemaVersion: predictor.ArtifactSchemaVersion, Info: info,
+		Hyperparameters: predictor.DefaultTrainOptions().Hyperparameters,
+		Base:            map[predictor.Target]float64{predictor.TargetHigh: 0.004, predictor.TargetLow: -0.004, predictor.TargetClose: 0},
+		Trees:           map[predictor.Target][]predictor.Tree{predictor.TargetHigh: {}, predictor.TargetLow: {}, predictor.TargetClose: {}},
+		LabelClip:       map[predictor.Target]float64{predictor.TargetHigh: 0.05, predictor.TargetLow: 0.05, predictor.TargetClose: 0.05},
+	}
+	sealed, err := predictor.SealArtifact(artifact)
+	if err != nil {
+		return err
+	}
+	predictions, err := predictor.OpenDB(root)
+	if err != nil {
+		return err
+	}
+	defer predictions.Close()
+	for index, code := range []string{"sz000001", "sh600519"} {
+		base := 10.25 + float64(index)*187.75
+		if _, err := predictions.InsertPrediction(context.Background(), predictor.Prediction{
+			Code: code, Date: date, InputEnd: input, TargetEnd: target, ModelID: artifact.Info.ModelID, BasePrice: base,
+			HighPct: 0.006, LowPct: -0.004, ClosePct: 0.002, Trend: "偏强", Confidence: "中", TrendScore: 1.2, CreatedAt: now.UTC(),
+		}); err != nil {
+			return err
+		}
+	}
+	store, err := storage.Open(root, false)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	modelPath := "models/intraday/" + artifact.Info.ModelID + "/model.json"
+	if err := store.Write(modelPath, json.RawMessage(sealed)); err != nil {
+		return err
+	}
+	if err := store.Write("models/intraday/current.json", predictor.ModelPointer{
+		SchemaVersion: 1, ModelID: artifact.Info.ModelID, Path: modelPath, Checksum: artifact.Info.Checksum, ValidFor: date, CreatedAt: artifact.Info.CreatedAt,
+	}); err != nil {
+		return err
+	}
+	if err := predictor.WriteStatus(store, predictor.Status{
+		Version: predictor.StatusSchemaVersion, Enabled: true, PushEnabled: true, ModelID: artifact.Info.ModelID,
+		ModelValidFor: date, TrainedAt: artifact.Info.CreatedAt, LastPredictionAt: now.UTC(), LastPredictionEnd: target,
+		PredictionsToday: 2, UpdatedAt: now.UTC(),
+	}); err != nil {
+		return err
+	}
+	return predictor.WriteRuntimeConfig(store, predictor.RuntimeConfig{PushEnabled: true})
 }
 
 func seed(root string, empty, partial, gates bool) error {

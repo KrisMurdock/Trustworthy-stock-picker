@@ -47,6 +47,18 @@
           <div id="ranking-table-wrap" class="table-scroll ranking-scroll" role="region" aria-label="每日排名表，可横向滚动" tabindex="0" hidden><table class="ranking-table"><caption class="sr-only">所选报告日期的每日排名、推荐依据与风险</caption><thead><tr><th scope="col" class="rank-column">排名</th><th scope="col">股票</th><th scope="col" id="ranking-score-label" class="numeric">机会分</th><th scope="col">推荐状态</th><th scope="col">观察依据</th><th scope="col">风险提示</th></tr></thead><tbody id="ranking-body"></tbody></table></div>
           <div class="panel-footer"><span id="ranking-footer">排名以已保存的报告为准</span><span>仅供研究参考，不构成投资建议</span></div>
         </section>
+        <section id="predictor" class="panel" aria-labelledby="predictor-title" data-testid="predictor-panel" hidden>
+          <div class="panel-heading">
+            <div><p class="eyebrow">5-MINUTE FORECAST</p><h2 id="predictor-title">5 分钟预测 <span id="predictor-count" class="count-tag">—</span></h2><p id="predictor-description" class="section-description">仅针对今日日报入选股票，预测下一根 5 分钟 K 线的高点、低点和收盘价。</p></div>
+            <div class="predictor-controls"><label for="predictor-push-toggle">飞书推送</label><label class="mode-switch"><input id="predictor-push-toggle" type="checkbox" data-testid="predictor-push-toggle" disabled><span id="predictor-push-state">读取中</span></label></div>
+          </div>
+          <div id="predictor-notice" class="notice notice-info report-notice" role="status" data-testid="predictor-notice" hidden></div>
+          <div id="predictor-empty" class="section-empty" data-testid="predictor-empty" hidden><span class="empty-symbol" aria-hidden="true">≈</span><strong>当前没有 5 分钟预测</strong><p>需要今日日报入选股票、有效模型和已完成的 5 分钟输入 bar。</p></div>
+          <div id="predictor-table-wrap" class="table-scroll" role="region" aria-label="5 分钟预测表，可横向滚动" tabindex="0" hidden>
+            <table class="ranking-table"><caption class="sr-only">今日入选股票的下一根 5 分钟 K 线预测</caption><thead><tr><th scope="col">股票</th><th scope="col" class="numeric">基准价</th><th scope="col" class="numeric">预测高</th><th scope="col" class="numeric">预测低</th><th scope="col" class="numeric">预测收</th><th scope="col">趋势</th><th scope="col">置信</th><th scope="col">目标时间</th></tr></thead><tbody id="predictor-body"></tbody></table>
+          </div>
+          <div class="panel-footer"><span id="predictor-footer">实验性预测，不构成投资建议</span><span>手动交易，系统不连接券商</span></div>
+        </section>
       </div>
       <footer class="site-footer"><span>STOCK WATCHER <span class="footer-separator">/</span> 每日有据，观察有序</span><span>行情与指标来自已保存的交易日快照</span></footer>
       <p id="live-status" class="sr-only" aria-live="polite" aria-atomic="true"></p>

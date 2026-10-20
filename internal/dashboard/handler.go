@@ -52,6 +52,7 @@ type handler struct {
 	health      func(context.Context) (health.Status, error)
 	experiments experimentReader
 	review      reviewReader
+	predictor   PredictorController
 	config      config.Config
 	llm         *config.LLMRuntime
 	stocks      []config.Stock
@@ -66,11 +67,21 @@ func NewHandler(c config.Config, db *storage.MarketDB, log *logging.Logger) http
 	return newHandler(c, db, log)
 }
 
+// NewHandlerWithPredictor attaches the optional five-minute forecaster surface
+// while preserving NewHandler for hosts that do not run it.
+func NewHandlerWithPredictor(c config.Config, db *storage.MarketDB, log *logging.Logger, predictor PredictorController) http.Handler {
+	return newHandlerWithPredictor(c, db, log, predictor)
+}
+
 func newHandler(c config.Config, db snapshotReader, log *logging.Logger) http.Handler {
+	return newHandlerWithPredictor(c, db, log, nil)
+}
+
+func newHandlerWithPredictor(c config.Config, db snapshotReader, log *logging.Logger, predictorController PredictorController) http.Handler {
 	if log == nil {
 		log = logging.Nop()
 	}
-	h := &handler{experiments: storage.ExperimentView{Root: c.DataDir, RequireCIFS: c.RequireCIFS}, config: c, llm: config.NewLLMRuntime(c.LLM), stocks: append([]config.Stock(nil), c.Stocks...), adjust: c.Daily.Adjust, db: db, log: log}
+	h := &handler{experiments: storage.ExperimentView{Root: c.DataDir, RequireCIFS: c.RequireCIFS}, predictor: predictorController, config: c, llm: config.NewLLMRuntime(c.LLM), stocks: append([]config.Stock(nil), c.Stocks...), adjust: c.Daily.Adjust, db: db, log: log}
 	if marketDB, ok := db.(*storage.MarketDB); ok {
 		h.health = func(ctx context.Context) (health.Status, error) { return health.Read(ctx, c, marketDB, time.Now()) }
 		h.review = review.New(newReviewLoader(c, marketDB))
@@ -133,6 +144,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, r, http.StatusOK, explainSnapshot(snapshot))
 	case "/api/experiments", "/api/experiment-history":
 		h.serveExperiments(w, r)
+	case "/api/predictions":
+		h.servePredictions(w, r)
+	case "/api/predictor":
+		h.servePredictor(w, r)
+	case "/api/predictor/config":
+		h.servePredictorConfig(w, r)
 	case "/api/history":
 		values, err := url.ParseQuery(r.URL.RawQuery)
 		codes := values["code"]
@@ -328,6 +345,8 @@ func allowedMethod(r *http.Request) bool {
 	switch r.URL.Path {
 	case "/api/llm/config":
 		return r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodPut
+	case "/api/predictor/config":
+		return r.Method == http.MethodPut
 	case "/api/llm/config/test", "/api/master/chat", "/api/review/analysis":
 		return r.Method == http.MethodPost
 	default:
@@ -339,6 +358,8 @@ func allowedMethods(path string) string {
 	switch path {
 	case "/api/llm/config":
 		return "GET, HEAD, PUT"
+	case "/api/predictor/config":
+		return "PUT"
 	case "/api/llm/config/test", "/api/master/chat", "/api/review/analysis":
 		return "POST"
 	default:

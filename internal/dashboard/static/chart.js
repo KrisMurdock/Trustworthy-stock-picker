@@ -187,7 +187,7 @@ window.StockChart = class {
     points.forEach((bar, i) => {
       const hit = this.svg("rect", { x: left + i * step, y: 22, width: step, height: 358, class: "chart-hit" });
       hit.append(this.svg("title", {}, `${bar.date} 开 ${this.format(bar.open)} 高 ${this.format(bar.high)} 低 ${this.format(bar.low)} 收 ${this.format(bar.close)}`));
-      hit.addEventListener("pointerenter", () => this.inspect(i));
+      hit.addEventListener("pointermove", () => this.inspect(i));
       hit.addEventListener("click", () => this.inspect(i));
       svg.append(hit);
     });
