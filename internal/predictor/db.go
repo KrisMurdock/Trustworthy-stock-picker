@@ -37,11 +37,16 @@ func OpenDB(dataDir string) (*DB, error) {
 			return nil, errors.New("cannot configure predictions database")
 		}
 	}
+	previousVersion, err := predictionUserVersion(handle)
+	if err != nil {
+		handle.Close()
+		return nil, err
+	}
 	if _, err := handle.Exec(predictionSchema); err != nil {
 		handle.Close()
 		return nil, errors.New("cannot initialize predictions database")
 	}
-	if err := migratePredictionSchema(handle); err != nil {
+	if err := migratePredictionSchema(handle, previousVersion); err != nil {
 		handle.Close()
 		return nil, err
 	}
@@ -63,7 +68,6 @@ func (d *DB) Close() error {
 func (d *DB) Path() string { return d.path }
 
 const predictionSchema = `
-PRAGMA user_version=2;
 CREATE TABLE IF NOT EXISTS model_run (
 	model_id TEXT PRIMARY KEY,
 	created_at TEXT NOT NULL,
@@ -117,7 +121,20 @@ CREATE TABLE IF NOT EXISTS kalman_state (
 );
 `
 
-func migratePredictionSchema(handle *sql.DB) error {
+func predictionUserVersion(handle *sql.DB) (int, error) {
+	var version int
+	if err := handle.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return 0, errors.New("cannot inspect predictions database")
+	}
+	return version, nil
+}
+
+func migratePredictionSchema(handle *sql.DB, previousVersion int) error {
+	if previousVersion < PredictionSchemaVersion {
+		if _, err := handle.Exec(`DELETE FROM model_run`); err != nil {
+			return errors.New("cannot migrate predictions database")
+		}
+	}
 	rows, err := handle.Query(`PRAGMA table_info(prediction)`)
 	if err != nil {
 		return errors.New("cannot inspect predictions database")
@@ -142,6 +159,11 @@ func migratePredictionSchema(handle *sql.DB) error {
 	rows.Close()
 	if !hasInference {
 		if _, err := handle.Exec(`ALTER TABLE prediction ADD COLUMN inference_ms REAL NOT NULL DEFAULT 0`); err != nil {
+			return errors.New("cannot migrate predictions database")
+		}
+	}
+	if previousVersion < PredictionSchemaVersion {
+		if _, err := handle.Exec(fmt.Sprintf(`PRAGMA user_version=%d`, PredictionSchemaVersion)); err != nil {
 			return errors.New("cannot migrate predictions database")
 		}
 	}

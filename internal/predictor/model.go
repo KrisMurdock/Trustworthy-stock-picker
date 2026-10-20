@@ -91,6 +91,25 @@ func SealArtifact(a *Artifact) ([]byte, error) {
 	return json.MarshalIndent(a, "", "  ")
 }
 
+// ResealArtifact refreshes the checksum after metadata changes while keeping
+// the already assigned model ID stable.
+func ResealArtifact(a *Artifact) ([]byte, error) {
+	if a == nil {
+		return nil, errors.New("predictor artifact is nil")
+	}
+	if a.Info.ModelID == "" {
+		return nil, errors.New("predictor artifact has no model ID")
+	}
+	a.Info.Checksum = ""
+	canonical, err := json.Marshal(a)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(canonical)
+	a.Info.Checksum = hex.EncodeToString(sum[:])
+	return json.MarshalIndent(a, "", "  ")
+}
+
 func LoadModel(data []byte) (*Model, error) {
 	var a Artifact
 	decoder := json.NewDecoder(bytes.NewReader(data))

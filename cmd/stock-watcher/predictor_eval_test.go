@@ -63,7 +63,7 @@ func TestPredictorEvalIsDeterministicAndReadOnly(t *testing.T) {
 	if err := json.Unmarshal([]byte(first), &report); err != nil {
 		t.Fatalf("predictor-eval did not emit one JSON object: %v", err)
 	}
-	if report["schema_version"] == nil || report["windows"] == nil {
+	if report["schema_version"] != float64(2) || report["windows"] == nil || report["metrics"] == nil {
 		t.Fatalf("unexpected evaluation report: %s", first)
 	}
 

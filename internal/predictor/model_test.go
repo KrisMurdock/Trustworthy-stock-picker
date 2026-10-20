@@ -113,3 +113,30 @@ func TestSealedArtifactIsDeterministicJSON(t *testing.T) {
 	}
 	_ = dataB
 }
+
+func TestResealArtifactKeepsModelIDAndLoads(t *testing.T) {
+	artifact := testArtifact()
+	first, err := SealArtifact(&artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelID := artifact.Info.ModelID
+	artifact.Info.DataTo = "2026-10-20"
+	resealed, err := ResealArtifact(&artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artifact.Info.ModelID != modelID {
+		t.Fatalf("model ID changed from %q to %q", modelID, artifact.Info.ModelID)
+	}
+	if bytes.Equal(first, resealed) {
+		t.Fatal("reseal did not update metadata or checksum")
+	}
+	loaded, err := LoadModel(resealed)
+	if err != nil {
+		t.Fatalf("load resealed artifact: %v", err)
+	}
+	if loaded.Artifact.Info.DataTo != "2026-10-20" || loaded.Artifact.Info.ModelID != modelID {
+		t.Fatalf("unexpected resealed metadata: %+v", loaded.Artifact.Info)
+	}
+}

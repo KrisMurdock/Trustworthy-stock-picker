@@ -11,6 +11,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/experiment"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/modeleval"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/predictor"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
@@ -57,8 +58,7 @@ func seedPredictor(root string) error {
 	info := predictor.ModelInfo{
 		SchemaVersion: predictor.ArtifactSchemaVersion, CreatedAt: now.UTC(), DataFrom: "2026-09-18", DataTo: date,
 		ValidFor: date, FeatureVersion: predictor.FeatureVersion, FeatureNames: predictor.FeatureNames(), CodeVersion: "fixture",
-		Metrics: predictor.ModelMetrics{Samples: 640, Days: 4, MAE: predictor.TargetMetrics{High: 0.004, Low: 0.004, Close: 0.003},
-			BaselineLastMAE: predictor.TargetMetrics{High: 0.006, Low: 0.006, Close: 0.005}},
+		Metrics: fixtureMetricRecords("model:candidate"),
 	}
 	artifact := &predictor.Artifact{
 		SchemaVersion: predictor.ArtifactSchemaVersion, Info: info,
@@ -68,6 +68,11 @@ func seedPredictor(root string) error {
 		LabelClip:       map[predictor.Target]float64{predictor.TargetHigh: 0.05, predictor.TargetLow: 0.05, predictor.TargetClose: 0.05},
 	}
 	sealed, err := predictor.SealArtifact(artifact)
+	if err != nil {
+		return err
+	}
+	artifact.Info.Metrics = fixtureMetricRecords(modeleval.ModelSubject(artifact.Info.ModelID))
+	sealed, err = predictor.ResealArtifact(artifact)
 	if err != nil {
 		return err
 	}
@@ -233,6 +238,28 @@ func history(stock config.Stock, day string, at time.Time, index, count int) mar
 		bars[left], bars[right] = bars[right], bars[left]
 	}
 	return market.History{Version: 1, Code: stock.Code, Name: stock.Name, Source: "tencent", Adjust: "qfq", DataField: "qfqday", VolumeUnit: "provider_raw", AsOf: day, FetchedAt: at, Bars: bars}
+}
+
+func fixtureMetricRecords(subject string) []modeleval.MetricRecord {
+	records := []modeleval.MetricRecord{}
+	for _, target := range []string{modeleval.TargetHigh, modeleval.TargetLow, modeleval.TargetClose} {
+		modelValue := 0.004
+		if target == modeleval.TargetClose {
+			modelValue = 0.003
+		}
+		records = append(records, modeleval.MetricRecord{
+			MetricID: modeleval.MetricPointMAE, Family: modeleval.FamilyPoint, Role: modeleval.RolePrimary,
+			Subject: subject, Target: target, Space: modeleval.SpaceReturn, Unit: modeleval.UnitBPS,
+			Aggregation: modeleval.AggregationDayEqual, Value: modeleval.Float(modelValue * 10000),
+			Applicability: modeleval.ApplicabilityOK, Samples: 640, Days: 4, Stocks: 2, HigherIsBetter: false,
+		}, modeleval.MetricRecord{
+			MetricID: modeleval.MetricPointMAE, Family: modeleval.FamilyPoint, Role: modeleval.RoleDiagnostic,
+			Subject: modeleval.BaselineSubject(modeleval.BaselineLastPrice), Target: target, Space: modeleval.SpaceReturn,
+			Unit: modeleval.UnitBPS, Aggregation: modeleval.AggregationDayEqual, Value: modeleval.Float(0.005 * 10000),
+			Applicability: modeleval.ApplicabilityOK, Samples: 640, Days: 4, Stocks: 2, HigherIsBetter: false,
+		})
+	}
+	return records
 }
 
 func seedExperiments(root string) error {

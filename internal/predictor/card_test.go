@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/modeleval"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
 )
 
@@ -15,11 +16,7 @@ func TestBuildCardAggregatesPredictions(t *testing.T) {
 	target := time.Date(2026, 10, 20, 9, 40, 0, 0, market.Shanghai)
 	info := ModelInfo{
 		ModelID: "m1", DataTo: "2026-10-19",
-		Metrics: ModelMetrics{
-			Samples:         6000,
-			MAE:             TargetMetrics{High: 0.02, Low: 0.02, Close: 0.02},
-			BaselineLastMAE: TargetMetrics{High: 0.01, Low: 0.01, Close: 0.01},
-		},
+		Metrics: cardTestMetrics(6000),
 	}
 	predictions := []Prediction{{
 		Code: "sh600000", InputEnd: target.Add(-5 * time.Minute), BasePrice: 10,
@@ -67,9 +64,72 @@ func TestBuildCardAggregatesPredictions(t *testing.T) {
 	if got := fieldValue(model.Fields, "模型"); got != "m1" {
 		t.Fatalf("model=%q", got)
 	}
+	if got := fieldValue(model.Fields, "验证 MAE"); got != "高 2.00% · 低 2.00% · 收 2.00%" {
+		t.Fatalf("validation MAE=%q", got)
+	}
+	if status := strings.Join(model.Lines, " "); !strings.Contains(status, "基线 MAE：高 1.00% · 低 1.00% · 收 1.00%") {
+		t.Fatalf("baseline MAE status=%q", status)
+	}
 	if status := strings.Join(model.Lines, " "); !strings.Contains(status, "未优于基线") {
 		t.Fatalf("model status=%q", status)
 	}
+	if status := strings.Join(model.Lines, " "); !strings.Contains(status, "包络未优于基线") || !strings.Contains(status, "验证日不足 10 天") {
+		t.Fatalf("guardrail warnings missing: %q", status)
+	}
+}
+
+func cardTestMetrics(samples int) []modeleval.MetricRecord {
+	records := []modeleval.MetricRecord{}
+	for _, target := range []string{modeleval.TargetHigh, modeleval.TargetLow, modeleval.TargetClose} {
+		for _, subject := range []string{modeleval.ModelSubject("m1"), modeleval.BaselineSubject(modeleval.BaselineLastPrice)} {
+			value := 100.0
+			if subject == modeleval.ModelSubject("m1") {
+				value = 200.0
+			}
+			records = append(records, modeleval.MetricRecord{
+				MetricID: modeleval.MetricPointMAE, Family: modeleval.FamilyPoint, Role: modeleval.RolePrimary,
+				Subject: subject, Target: target, Space: modeleval.SpaceReturn, Unit: modeleval.UnitBPS,
+				Aggregation: modeleval.AggregationDayEqual, Value: modeleval.Float(value),
+				Applicability: modeleval.ApplicabilityOK, Samples: samples, Days: 6, Stocks: 5,
+				HigherIsBetter: false,
+			})
+		}
+	}
+	records = append(records,
+		modeleval.MetricRecord{
+			MetricID: modeleval.MetricDirectionAccuracy, Family: modeleval.FamilyDirection, Role: modeleval.RoleGuardrail,
+			Subject: modeleval.ModelSubject("m1"), Target: modeleval.TargetClose, Space: modeleval.SpaceNone,
+			Unit: modeleval.UnitRatio, Aggregation: modeleval.AggregationDayEqual, Value: modeleval.Float(0.48),
+			Applicability: modeleval.ApplicabilityOK, Samples: samples, Days: 6, Stocks: 5, HigherIsBetter: true,
+		},
+		modeleval.MetricRecord{
+			MetricID: modeleval.MetricDirectionAccuracy, Family: modeleval.FamilyDirection, Role: modeleval.RoleGuardrail,
+			Subject: modeleval.BaselineSubject(modeleval.BaselineMajority), Target: modeleval.TargetClose,
+			Space: modeleval.SpaceNone, Unit: modeleval.UnitRatio, Aggregation: modeleval.AggregationDayEqual,
+			Value: modeleval.Float(0.50), Applicability: modeleval.ApplicabilityOK,
+			Samples: samples, Days: 6, Stocks: 5, HigherIsBetter: true,
+		},
+		modeleval.MetricRecord{
+			MetricID: modeleval.MetricPointEnvelopeHitRate, Family: modeleval.FamilyPoint, Role: modeleval.RoleGuardrail,
+			Subject: modeleval.ModelSubject("m1"), Target: modeleval.TargetAll, Space: modeleval.SpaceNone,
+			Unit: modeleval.UnitRatio, Aggregation: modeleval.AggregationDayEqual, Value: modeleval.Float(0.20),
+			Applicability: modeleval.ApplicabilityOK, Samples: samples, Days: 6, Stocks: 5, HigherIsBetter: true,
+		},
+		modeleval.MetricRecord{
+			MetricID: modeleval.MetricPointContradictionRate, Family: modeleval.FamilyPoint, Role: modeleval.RoleGuardrail,
+			Subject: modeleval.ModelSubject("m1"), Target: modeleval.TargetAll, Space: modeleval.SpaceNone,
+			Unit: modeleval.UnitRatio, Aggregation: modeleval.AggregationDayEqual, Value: modeleval.Float(0.02),
+			Applicability: modeleval.ApplicabilityOK, Samples: samples, Days: 6, Stocks: 5, HigherIsBetter: false,
+		},
+		modeleval.MetricRecord{
+			MetricID: modeleval.MetricPointEnvelopeHitRate, Family: modeleval.FamilyPoint, Role: modeleval.RoleDiagnostic,
+			Subject: modeleval.BaselineSubject(modeleval.BaselineLastPrice), Target: modeleval.TargetAll,
+			Space: modeleval.SpaceNone, Unit: modeleval.UnitRatio, Aggregation: modeleval.AggregationDayEqual,
+			Value: modeleval.Float(0.25), Applicability: modeleval.ApplicabilityOK,
+			Samples: samples, Days: 6, Stocks: 5, HigherIsBetter: true,
+		},
+	)
+	return records
 }
 
 func TestBuildCardRejectsEmptyPredictions(t *testing.T) {

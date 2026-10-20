@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/modeleval"
 )
 
 func predGBDTInfo() ModelInfo {
@@ -76,6 +77,18 @@ func predGBDTReverse(samples []Sample) []Sample {
 		out[i], out[j] = out[j], out[i]
 	}
 	return out
+}
+
+func findMetricRecord(t *testing.T, records []modeleval.MetricRecord, metricID, subject, target string, space modeleval.Space, aggregation modeleval.Aggregation) modeleval.MetricRecord {
+	t.Helper()
+	for _, record := range records {
+		if record.MetricID == metricID && record.Subject == subject && record.Target == target &&
+			record.Space == space && record.Aggregation == aggregation {
+			return record
+		}
+	}
+	t.Fatalf("metric %s subject=%s target=%s space=%s aggregation=%s not found", metricID, subject, target, space, aggregation)
+	return modeleval.MetricRecord{}
 }
 
 func TestTrainDeterministic(t *testing.T) {
@@ -152,18 +165,26 @@ func TestEvaluateBeatsLastBarBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Train: %v", err)
 	}
-	metrics, bands, err := Evaluate(&Model{Artifact: *artifact}, validation)
+	records, bands, err := Evaluate(&Model{Artifact: *artifact}, validation)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if metrics.Samples != len(validation) {
-		t.Fatalf("evaluated %d samples, want %d", metrics.Samples, len(validation))
+	subject := modeleval.ModelSubject(artifact.Info.ModelID)
+	if artifact.Info.ModelID == "" {
+		subject = "model:candidate"
 	}
-	if metrics.MAE.Close >= metrics.BaselineLastMAE.Close {
-		t.Fatalf("model close MAE %v did not beat last-bar baseline %v", metrics.MAE.Close, metrics.BaselineLastMAE.Close)
+	sampleCount, _, ok := metricSampleSummary(records, subject)
+	if !ok || sampleCount != len(validation) {
+		t.Fatalf("evaluated %d samples, want %d", sampleCount, len(validation))
 	}
-	if metrics.DirectionAccuracy < 0.6 {
-		t.Fatalf("direction accuracy %v is unexpectedly low", metrics.DirectionAccuracy)
+	modelMAE := findMetricRecord(t, records, modeleval.MetricPointMAE, subject, modeleval.TargetClose, modeleval.SpaceReturn, modeleval.AggregationDayEqual)
+	baselineMAE := findMetricRecord(t, records, modeleval.MetricPointMAE, modeleval.BaselineSubject(modeleval.BaselineLastPrice), modeleval.TargetClose, modeleval.SpaceReturn, modeleval.AggregationDayEqual)
+	if modelMAE.Value == nil || baselineMAE.Value == nil || *modelMAE.Value >= *baselineMAE.Value {
+		t.Fatalf("model close MAE %v did not beat last-bar baseline %v", modelMAE.Value, baselineMAE.Value)
+	}
+	direction := findMetricRecord(t, records, modeleval.MetricDirectionAccuracy, subject, modeleval.TargetClose, modeleval.SpaceNone, modeleval.AggregationDayEqual)
+	if direction.Value == nil || *direction.Value < 0.6 {
+		t.Fatalf("direction accuracy %v is unexpectedly low", direction.Value)
 	}
 	if bands.High <= 0 || bands.Low <= 0 || bands.Close <= 0 {
 		t.Fatalf("residual bands must be positive: %+v", bands)
@@ -172,15 +193,17 @@ func TestEvaluateBeatsLastBarBaseline(t *testing.T) {
 
 func TestWalkForwardPoolsValidationDays(t *testing.T) {
 	samples := predGBDTSamples(6, 30)
-	metrics, bands, err := WalkForward(samples, predGBDTInfo(), 2, predGBDTOptions())
+	records, bands, err := WalkForward(samples, predGBDTInfo(), 2, predGBDTOptions())
 	if err != nil {
 		t.Fatalf("WalkForward: %v", err)
 	}
-	if metrics.Samples != 60 {
-		t.Fatalf("walk-forward evaluated %d samples, want 60", metrics.Samples)
+	subject := "model:candidate"
+	sampleCount, dayCount, ok := metricSampleSummary(records, subject)
+	if !ok || sampleCount != 60 {
+		t.Fatalf("walk-forward evaluated %d samples, want 60", sampleCount)
 	}
-	if metrics.Days != 2 {
-		t.Fatalf("walk-forward covered %d days, want 2", metrics.Days)
+	if dayCount != 2 {
+		t.Fatalf("walk-forward covered %d days, want 2", dayCount)
 	}
 	if bands.Close <= 0 {
 		t.Fatalf("walk-forward close band must be positive: %+v", bands)

@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
+
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/modeleval"
 )
 
 type TrainOptions struct {
@@ -114,25 +117,44 @@ func Train(samples []Sample, info ModelInfo, opts TrainOptions) (*Artifact, erro
 }
 
 // Evaluate scores an artifact against samples and returns calibration metrics.
-func Evaluate(model *Model, samples []Sample) (ModelMetrics, TargetMetrics, error) {
+func Evaluate(model *Model, samples []Sample) ([]modeleval.MetricRecord, TargetMetrics, error) {
 	if model == nil {
-		return ModelMetrics{}, TargetMetrics{}, errors.New("predictor model is not loaded")
+		return nil, TargetMetrics{}, errors.New("predictor model is not loaded")
 	}
-	acc := newEvalAccumulator()
-	if err := acc.score(model, samples); err != nil {
-		return ModelMetrics{}, TargetMetrics{}, err
+	acc := newMetricAccumulator()
+	for _, sample := range samples {
+		if sample.InputClose <= 0 {
+			continue
+		}
+		actual := TargetMetrics{
+			High:  sample.Labels[TargetHigh],
+			Low:   sample.Labels[TargetLow],
+			Close: sample.Labels[TargetClose],
+		}
+		if !targetMetricsFinite(actual) {
+			continue
+		}
+		predicted, err := model.Predict(sample.Features)
+		if err != nil {
+			return nil, TargetMetrics{}, err
+		}
+		acc.add(sample, predicted)
 	}
-	if acc.samples == 0 {
-		return ModelMetrics{}, TargetMetrics{}, errors.New("predictor evaluation has no valid samples")
+	if acc.sampleCount() == 0 {
+		return nil, TargetMetrics{}, errors.New("predictor evaluation has no valid samples")
 	}
-	return acc.metrics(), acc.bands(), nil
+	subject := modeleval.ModelSubject(model.Artifact.Info.ModelID)
+	if strings.TrimSpace(model.Artifact.Info.ModelID) == "" {
+		subject = "model:candidate"
+	}
+	return evaluationRecords(acc, subject), acc.bands(), nil
 }
 
 // WalkForward trains on each day before a validation day and reports pooled
 // out-of-sample metrics plus an absolute-error band for the card.
-func WalkForward(samples []Sample, info ModelInfo, validationDays int, opts TrainOptions) (ModelMetrics, TargetMetrics, error) {
+func WalkForward(samples []Sample, info ModelInfo, validationDays int, opts TrainOptions) ([]modeleval.MetricRecord, TargetMetrics, error) {
 	if len(samples) == 0 {
-		return ModelMetrics{}, TargetMetrics{}, errNoPredictionSamples
+		return nil, TargetMetrics{}, errNoPredictionSamples
 	}
 	if validationDays <= 0 {
 		validationDays = 3
@@ -146,13 +168,13 @@ func WalkForward(samples []Sample, info ModelInfo, validationDays int, opts Trai
 		}
 	}
 	if len(dates) < 2 {
-		return ModelMetrics{}, TargetMetrics{}, errors.New("predictor walk-forward requires at least two trading days")
+		return nil, TargetMetrics{}, errors.New("predictor walk-forward requires at least two trading days")
 	}
 	start := len(dates) - validationDays
 	if start < 1 {
 		start = 1
 	}
-	acc := newEvalAccumulator()
+	acc := newMetricAccumulator()
 	folds := 0
 	for i := start; i < len(dates); i++ {
 		date := dates[i]
@@ -170,21 +192,54 @@ func WalkForward(samples []Sample, info ModelInfo, validationDays int, opts Trai
 			continue
 		}
 		foldInfo := info
-		foldInfo.Metrics = ModelMetrics{}
+		foldInfo.Metrics = nil
 		foldInfo.Residuals = TargetMetrics{}
 		artifact, err := Train(train, foldInfo, opts)
 		if err != nil {
-			return ModelMetrics{}, TargetMetrics{}, err
+			return nil, TargetMetrics{}, err
 		}
-		if err := acc.score(&Model{Artifact: *artifact}, validation); err != nil {
-			return ModelMetrics{}, TargetMetrics{}, err
+		model := &Model{Artifact: *artifact}
+		for _, sample := range validation {
+			if sample.InputClose <= 0 {
+				continue
+			}
+			actual := TargetMetrics{
+				High:  sample.Labels[TargetHigh],
+				Low:   sample.Labels[TargetLow],
+				Close: sample.Labels[TargetClose],
+			}
+			if !targetMetricsFinite(actual) {
+				continue
+			}
+			predicted, err := model.Predict(sample.Features)
+			if err != nil {
+				return nil, TargetMetrics{}, err
+			}
+			acc.add(sample, predicted)
 		}
 		folds++
 	}
 	if folds == 0 {
-		return ModelMetrics{}, TargetMetrics{}, errors.New("predictor walk-forward produced no validation folds")
+		return nil, TargetMetrics{}, errors.New("predictor walk-forward produced no validation folds")
 	}
-	return acc.metrics(), acc.bands(), nil
+	if acc.sampleCount() == 0 {
+		return nil, TargetMetrics{}, errors.New("predictor walk-forward produced no valid validation samples")
+	}
+	subject := modeleval.ModelSubject(info.ModelID)
+	if strings.TrimSpace(info.ModelID) == "" {
+		subject = "model:candidate"
+	}
+	return evaluationRecords(acc, subject), acc.bands(), nil
+}
+
+func evaluationRecords(acc *metricAccumulator, subject string) []modeleval.MetricRecord {
+	records := acc.records(subject, nil, func(sample metricSample) TargetMetrics { return sample.Predicted }, true)
+	records = append(records, acc.records(modeleval.BaselineSubject(modeleval.BaselineLastPrice), nil,
+		func(sample metricSample) TargetMetrics { return sample.Last }, false)...)
+	records = append(records, acc.records(modeleval.BaselineSubject(modeleval.BaselineRange), nil,
+		func(sample metricSample) TargetMetrics { return sample.Range }, false)...)
+	records = append(records, acc.majorityRecords(modeleval.BaselineSubject(modeleval.BaselineMajority), nil)...)
+	return sortUniqueRecords(records)
 }
 
 func normalizeTrainOptions(opts TrainOptions) TrainOptions {
@@ -499,94 +554,6 @@ func splitScore(leftSum, leftCount, rightSum, rightCount, l2 float64) float64 {
 		right = rightSum * rightSum / (rightCount + l2)
 	}
 	return left + right
-}
-
-type evalAccumulator struct {
-	samples        int
-	days           map[string]struct{}
-	mae            TargetMetrics
-	baselineLast   TargetMetrics
-	baselineRange  TargetMetrics
-	directionHits  int
-	coverageHits   int
-	absoluteErrors map[Target][]float64
-}
-
-func newEvalAccumulator() *evalAccumulator {
-	return &evalAccumulator{
-		days: map[string]struct{}{},
-		absoluteErrors: map[Target][]float64{
-			TargetHigh:  {},
-			TargetLow:   {},
-			TargetClose: {},
-		},
-	}
-}
-
-func (a *evalAccumulator) score(model *Model, samples []Sample) error {
-	for i := range samples {
-		sample := samples[i]
-		if sample.InputClose <= 0 {
-			continue
-		}
-		actual := TargetMetrics{High: sample.Labels[TargetHigh], Low: sample.Labels[TargetLow], Close: sample.Labels[TargetClose]}
-		if math.IsNaN(actual.High) || math.IsNaN(actual.Low) || math.IsNaN(actual.Close) ||
-			math.IsInf(actual.High, 0) || math.IsInf(actual.Low, 0) || math.IsInf(actual.Close, 0) {
-			continue
-		}
-		predicted, err := model.Predict(sample.Features)
-		if err != nil {
-			return err
-		}
-		a.samples++
-		a.days[sample.Date] = struct{}{}
-		last := TargetMetrics{
-			High:  sample.InputHigh/sample.InputClose - 1,
-			Low:   sample.InputLow/sample.InputClose - 1,
-			Close: 0,
-		}
-		rangeBaseline := TargetMetrics{High: sample.BaselineRange / 2, Low: -sample.BaselineRange / 2, Close: 0}
-		for _, target := range Targets {
-			abs := math.Abs(predicted[target] - actual.value(target))
-			a.mae.accumulate(target, abs)
-			a.baselineLast.accumulate(target, math.Abs(last.value(target)-actual.value(target)))
-			a.baselineRange.accumulate(target, math.Abs(rangeBaseline.value(target)-actual.value(target)))
-			a.absoluteErrors[target] = append(a.absoluteErrors[target], abs)
-		}
-		predClose := predicted[TargetClose]
-		actualClose := actual.Close
-		if (predClose > 0 && actualClose > 0) || (predClose < 0 && actualClose < 0) || (predClose == 0 && actualClose == 0) {
-			a.directionHits++
-		}
-		if predicted[TargetHigh] >= actual.High && predicted[TargetLow] <= actual.Low {
-			a.coverageHits++
-		}
-	}
-	return nil
-}
-
-func (a *evalAccumulator) metrics() ModelMetrics {
-	if a.samples == 0 {
-		return ModelMetrics{}
-	}
-	n := float64(a.samples)
-	return ModelMetrics{
-		Samples:           a.samples,
-		Days:              len(a.days),
-		MAE:               a.mae.divided(a.samples),
-		BaselineLastMAE:   a.baselineLast.divided(a.samples),
-		BaselineRangeMAE:  a.baselineRange.divided(a.samples),
-		DirectionAccuracy: float64(a.directionHits) / n,
-		Coverage:          float64(a.coverageHits) / n,
-	}
-}
-
-func (a *evalAccumulator) bands() TargetMetrics {
-	return TargetMetrics{
-		High:  percentile90(a.absoluteErrors[TargetHigh]),
-		Low:   percentile90(a.absoluteErrors[TargetLow]),
-		Close: percentile90(a.absoluteErrors[TargetClose]),
-	}
 }
 
 func percentile90(values []float64) float64 {

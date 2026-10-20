@@ -15,6 +15,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/modeleval"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
@@ -128,12 +129,12 @@ func monitorNewTestMonitor(t *testing.T, now time.Time) (*Monitor, *monitorFakeR
 
 func monitorTestModel(validFor string) *Model {
 	opts := DefaultTrainOptions()
+	modelID := "model-" + validFor
 	info := ModelInfo{
-		SchemaVersion: ArtifactSchemaVersion, ModelID: "model-" + validFor,
+		SchemaVersion: ArtifactSchemaVersion, ModelID: modelID,
 		CreatedAt: time.Date(2026, 10, 20, 15, 30, 0, 0, market.Shanghai), ValidFor: validFor,
 		FeatureVersion: FeatureVersion, FeatureNames: FeatureNames(),
-		Metrics: ModelMetrics{Samples: 10000, Days: 100, MAE: TargetMetrics{High: 0.01, Low: 0.01, Close: 0.01},
-			BaselineLastMAE: TargetMetrics{High: 0.02, Low: 0.02, Close: 0.02}},
+		Metrics: monitorMetricRecords(modelID, 10000, 100),
 	}
 	return &Model{Artifact: Artifact{
 		SchemaVersion: ArtifactSchemaVersion, Info: info, Hyperparameters: opts.Hyperparameters,
@@ -141,6 +142,27 @@ func monitorTestModel(validFor string) *Model {
 		Trees:     map[Target][]Tree{TargetHigh: {}, TargetLow: {}, TargetClose: {}},
 		LabelClip: map[Target]float64{TargetHigh: 0.05, TargetLow: 0.05, TargetClose: 0.05},
 	}}
+}
+
+func monitorMetricRecords(modelID string, samples, days int) []modeleval.MetricRecord {
+	subject := "model:candidate"
+	if modelID != "" {
+		subject = modeleval.ModelSubject(modelID)
+	}
+	return []modeleval.MetricRecord{
+		{
+			MetricID: modeleval.MetricPointMAE, Family: modeleval.FamilyPoint, Role: modeleval.RolePrimary,
+			Subject: subject, Target: modeleval.TargetClose, Space: modeleval.SpaceReturn, Unit: modeleval.UnitBPS,
+			Aggregation: modeleval.AggregationDayEqual, Value: modeleval.Float(100), Applicability: modeleval.ApplicabilityOK,
+			Samples: samples, Days: days, Stocks: 1,
+		},
+		{
+			MetricID: modeleval.MetricPointMAE, Family: modeleval.FamilyPoint, Role: modeleval.RoleDiagnostic,
+			Subject: modeleval.BaselineSubject(modeleval.BaselineLastPrice), Target: modeleval.TargetClose,
+			Space: modeleval.SpaceReturn, Unit: modeleval.UnitBPS, Aggregation: modeleval.AggregationDayEqual,
+			Value: modeleval.Float(200), Applicability: modeleval.ApplicabilityOK, Samples: samples, Days: days, Stocks: 1,
+		},
+	}
 }
 
 func monitorSetModel(m *Monitor, validFor string) {
@@ -514,8 +536,8 @@ func TestTrainWritesArtifactPointerAndMetadata(t *testing.T) {
 		t.Fatalf("prepare old model: %v", err)
 	}
 	m.samplesBuilder = func(Data) ([]Sample, error) { return monitorSyntheticSamples(6), nil }
-	m.walker = func(samples []Sample, _ ModelInfo, _ int, _ TrainOptions) (ModelMetrics, TargetMetrics, error) {
-		return ModelMetrics{Samples: len(samples), Days: 6}, TargetMetrics{High: 0.01, Low: 0.01, Close: 0.01}, nil
+	m.walker = func(samples []Sample, _ ModelInfo, _ int, _ TrainOptions) ([]modeleval.MetricRecord, TargetMetrics, error) {
+		return monitorMetricRecords("", len(samples), 6), TargetMetrics{High: 0.01, Low: 0.01, Close: 0.01}, nil
 	}
 	m.trainer = func(_ []Sample, info ModelInfo, opts TrainOptions) (*Artifact, error) {
 		time.Sleep(5 * time.Millisecond)
@@ -561,6 +583,9 @@ func TestTrainWritesArtifactPointerAndMetadata(t *testing.T) {
 	}
 	if loaded.Artifact.Info.ModelID != info.ModelID {
 		t.Fatalf("artifact model id mismatch")
+	}
+	if samples, _, ok := metricSampleSummary(loaded.Artifact.Info.Metrics, modeleval.ModelSubject(info.ModelID)); !ok || samples == 0 {
+		t.Fatalf("artifact metrics are not bound to the final model ID: %+v", loaded.Artifact.Info.Metrics)
 	}
 	recorded, err := m.DB.ModelInfo(context.Background(), info.ModelID)
 	if err != nil {
@@ -740,7 +765,7 @@ func TestTrainWithRealBuilders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("train: %v", err)
 	}
-	if info.ValidFor != "2026-10-21" || info.Metrics.Samples == 0 || m.model == nil {
+	if samples, _, ok := metricSampleSummary(info.Metrics, modeleval.ModelSubject(info.ModelID)); info.ValidFor != "2026-10-21" || !ok || samples == 0 || m.model == nil {
 		t.Fatalf("unexpected trained model: %+v", info)
 	}
 	if _, err := m.DB.ModelInfo(context.Background(), info.ModelID); err != nil {
@@ -786,8 +811,8 @@ func TestTrainExcludesSameSessionSamples(t *testing.T) {
 			{Code: "sh600000", Date: "2026-10-20", InputEnd: now, Features: features},
 		}, nil
 	}
-	m.walker = func([]Sample, ModelInfo, int, TrainOptions) (ModelMetrics, TargetMetrics, error) {
-		return ModelMetrics{Samples: 1, Days: 1}, TargetMetrics{}, nil
+	m.walker = func([]Sample, ModelInfo, int, TrainOptions) ([]modeleval.MetricRecord, TargetMetrics, error) {
+		return monitorMetricRecords("", 1, 1), TargetMetrics{}, nil
 	}
 	var trained []Sample
 	m.trainer = func(samples []Sample, info ModelInfo, _ TrainOptions) (*Artifact, error) {

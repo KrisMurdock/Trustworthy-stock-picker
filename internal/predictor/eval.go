@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/modeleval"
 )
 
-const EvaluationSchemaVersion = 1
+const EvaluationSchemaVersion = 2
 const unanimityRule = "all window close predictions share a direction"
 
 var ErrEvaluationUnavailable = errors.New("predictor evaluation data unavailable")
@@ -44,43 +45,34 @@ type EvaluationDay struct {
 type DayProvider func(date string) (EvaluationDay, error)
 
 type EvaluationReport struct {
-	SchemaVersion  int              `json:"schema_version"`
-	Status         string           `json:"status"`
-	AsOf           string           `json:"as_of"`
-	FeatureVersion int              `json:"feature_version"`
-	ValidationDays int              `json:"validation_days"`
-	ValidationFrom string           `json:"validation_from,omitempty"`
-	ValidationTo   string           `json:"validation_to,omitempty"`
-	DataFrom       string           `json:"data_from,omitempty"`
-	DataTo         string           `json:"data_to,omitempty"`
-	Windows        []WindowResult   `json:"windows"`
-	Strategies     []StrategyResult `json:"strategies"`
-	Regimes        []RegimeResult   `json:"regimes"`
-	Universes      []UniverseResult `json:"universes,omitempty"`
-	Skipped        []string         `json:"skipped,omitempty"`
-	Notes          []string         `json:"notes,omitempty"`
+	SchemaVersion  int                      `json:"schema_version"`
+	Status         string                   `json:"status"`
+	AsOf           string                   `json:"as_of"`
+	FeatureVersion int                      `json:"feature_version"`
+	ValidationDays int                      `json:"validation_days"`
+	ValidationFrom string                   `json:"validation_from,omitempty"`
+	ValidationTo   string                   `json:"validation_to,omitempty"`
+	DataFrom       string                   `json:"data_from,omitempty"`
+	DataTo         string                   `json:"data_to,omitempty"`
+	Metrics        []modeleval.MetricRecord `json:"metrics"`
+	Windows        []WindowResult           `json:"windows"`
+	Strategies     []StrategyResult         `json:"strategies"`
+	Regimes        []RegimeResult           `json:"regimes"`
+	Universes      []UniverseResult         `json:"universes,omitempty"`
+	Skipped        []string                 `json:"skipped,omitempty"`
+	Notes          []string                 `json:"notes,omitempty"`
 }
 
 type WindowResult struct {
-	Days       int          `json:"days"`
-	Weight     float64      `json:"weight"`
-	Available  bool         `json:"available"`
-	Metrics    ModelMetrics `json:"metrics"`
-	Comparison *Comparison  `json:"comparison,omitempty"`
+	Days      int     `json:"days"`
+	Weight    float64 `json:"weight"`
+	Available bool    `json:"available"`
 }
 
 type StrategyResult struct {
-	Name       string        `json:"name"`
-	Available  bool          `json:"available"`
-	Metrics    ModelMetrics  `json:"metrics"`
-	Comparison *Comparison   `json:"comparison,omitempty"`
-	Filter     *FilterResult `json:"filter,omitempty"`
-}
-
-type Comparison struct {
-	Baseline          string        `json:"baseline"`
-	MAEImprovementPct TargetMetrics `json:"mae_improvement_pct"`
-	DayWinRate        TargetMetrics `json:"day_win_rate"`
+	Name      string        `json:"name"`
+	Available bool          `json:"available"`
+	Filter    *FilterResult `json:"filter,omitempty"`
 }
 
 type FilterResult struct {
@@ -112,6 +104,7 @@ func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayPro
 		Status:         "insufficient_history",
 		AsOf:           opts.AsOf,
 		FeatureVersion: FeatureVersion,
+		Metrics:        []modeleval.MetricRecord{},
 		Windows:        []WindowResult{},
 		Strategies:     []StrategyResult{},
 		Regimes:        []RegimeResult{},
@@ -298,12 +291,12 @@ func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayPro
 	}
 	for i, spec := range windows {
 		name := fmt.Sprintf("window-%d", spec.Days)
-		report.Windows[i].Available = all[name] != nil && all[name].samples > 0
-		report.Windows[i].Metrics = metricsOf(all[name])
-		report.Windows[i].Comparison = compareTo(all[name], all["B0"], "B0")
+		report.Windows[i].Available = all[name] != nil && all[name].sampleCount() > 0
 	}
-	report.Strategies = strategyResults(all, []string{"B0", "N0-last", "N0-range", "E0", "E1", "E1-filtered", "B0-filtered"}, filter)
+	strategyOrder := []string{"B0", "N0-last", "N0-range", "E0", "E1", "E1-filtered", "B0-filtered"}
+	report.Strategies = strategyResults(all, strategyOrder, filter)
 	report.Regimes = regimeResults(byRegime, byRegimeFilter)
+	report.Metrics = rollingMetricRecords(all, byRegime, windows, strategyOrder)
 	if retainedFilterSamples == 0 {
 		report.Notes = append(report.Notes, "the unanimity filter retained no validation samples")
 	}
@@ -504,75 +497,6 @@ func dedupeStrings(values []string) []string {
 	return out
 }
 
-type metricAccumulator struct {
-	samples       int
-	days          map[string]struct{}
-	mae           TargetMetrics
-	baselineLast  TargetMetrics
-	baselineRange TargetMetrics
-	directionHits int
-	coverageHits  int
-	dayAbs        map[string]TargetMetrics
-	daySamples    map[string]int
-}
-
-func newMetricAccumulator() *metricAccumulator {
-	return &metricAccumulator{
-		days:       map[string]struct{}{},
-		dayAbs:     map[string]TargetMetrics{},
-		daySamples: map[string]int{},
-	}
-}
-
-func (a *metricAccumulator) add(sample Sample, predicted map[Target]float64) {
-	if a == nil || sample.InputClose <= 0 {
-		return
-	}
-	actual := TargetMetrics{High: sample.Labels[TargetHigh], Low: sample.Labels[TargetLow], Close: sample.Labels[TargetClose]}
-	if !finite(actual.High) || !finite(actual.Low) || !finite(actual.Close) || !finite(predicted[TargetHigh]) || !finite(predicted[TargetLow]) || !finite(predicted[TargetClose]) {
-		return
-	}
-	last := TargetMetrics{High: sample.InputHigh/sample.InputClose - 1, Low: sample.InputLow/sample.InputClose - 1, Close: 0}
-	rangeBaseline := TargetMetrics{High: sample.BaselineRange / 2, Low: -sample.BaselineRange / 2, Close: 0}
-	a.samples++
-	a.days[sample.Date] = struct{}{}
-	a.daySamples[sample.Date]++
-	dayAbs := a.dayAbs[sample.Date]
-	for _, target := range Targets {
-		abs := math.Abs(predicted[target] - actual.value(target))
-		a.mae.accumulate(target, abs)
-		a.baselineLast.accumulate(target, math.Abs(last.value(target)-actual.value(target)))
-		a.baselineRange.accumulate(target, math.Abs(rangeBaseline.value(target)-actual.value(target)))
-		dayAbs.accumulate(target, abs)
-	}
-	a.dayAbs[sample.Date] = dayAbs
-	if sameDirection(predicted[TargetClose], actual.Close) {
-		a.directionHits++
-	}
-	if predicted[TargetHigh] >= actual.High && predicted[TargetLow] <= actual.Low {
-		a.coverageHits++
-	}
-}
-
-func (a *metricAccumulator) metrics() ModelMetrics {
-	if a == nil || a.samples == 0 {
-		return ModelMetrics{}
-	}
-	return ModelMetrics{
-		Samples: a.samples, Days: len(a.days), MAE: a.mae.divided(a.samples),
-		BaselineLastMAE: a.baselineLast.divided(a.samples), BaselineRangeMAE: a.baselineRange.divided(a.samples),
-		DirectionAccuracy: float64(a.directionHits) / float64(a.samples),
-		Coverage:          float64(a.coverageHits) / float64(a.samples),
-	}
-}
-
-func (a *metricAccumulator) dayMAE(day string, target Target) (float64, bool) {
-	if a == nil || a.daySamples[day] == 0 {
-		return 0, false
-	}
-	return a.dayAbs[day].value(target) / float64(a.daySamples[day]), true
-}
-
 func scoreSample(all map[string]*metricAccumulator, regimes map[string]map[string]*metricAccumulator, regime, name string, sample Sample, predicted map[Target]float64) {
 	if all[name] == nil {
 		all[name] = newMetricAccumulator()
@@ -587,61 +511,15 @@ func scoreSample(all map[string]*metricAccumulator, regimes map[string]map[strin
 	regimes[regime][name].add(sample, predicted)
 }
 
-func metricsOf(acc *metricAccumulator) ModelMetrics {
-	if acc == nil {
-		return ModelMetrics{}
-	}
-	return acc.metrics()
-}
-
-func compareTo(strategy, baseline *metricAccumulator, baselineName string) *Comparison {
-	if strategy == nil || baseline == nil || strategy.samples == 0 || baseline.samples == 0 {
-		return nil
-	}
-	sm, bm := strategy.metrics().MAE, baseline.metrics().MAE
-	comparison := &Comparison{Baseline: baselineName}
-	for _, target := range Targets {
-		base := bm.value(target)
-		if base > 0 {
-			comparison.MAEImprovementPct.set(target, (base-sm.value(target))/base*100)
-		}
-		wins, total := 0, 0
-		for day := range baseline.days {
-			b, ok := baseline.dayMAE(day, target)
-			if !ok {
-				continue
-			}
-			s, ok := strategy.dayMAE(day, target)
-			if !ok {
-				continue
-			}
-			total++
-			if s < b {
-				wins++
-			}
-		}
-		if total > 0 {
-			comparison.DayWinRate.set(target, float64(wins)/float64(total))
-		}
-	}
-	return comparison
-}
-
 func strategyResults(all map[string]*metricAccumulator, order []string, filter *FilterResult) []StrategyResult {
 	out := make([]StrategyResult, 0, len(order))
 	for _, name := range order {
 		acc := all[name]
-		if acc == nil || acc.samples == 0 {
-			out = append(out, StrategyResult{Name: name, Available: false, Metrics: ModelMetrics{}})
+		if acc == nil || acc.sampleCount() == 0 {
+			out = append(out, StrategyResult{Name: name, Available: false})
 			continue
 		}
-		result := StrategyResult{Name: name, Available: true, Metrics: acc.metrics()}
-		switch name {
-		case "E0", "E1":
-			result.Comparison = compareTo(acc, all["B0"], "B0")
-		case "E1-filtered":
-			result.Comparison = compareTo(acc, all["B0-filtered"], "B0-filtered")
-		}
+		result := StrategyResult{Name: name, Available: true}
 		if name == "E1" || name == "E1-filtered" {
 			copied := *filter
 			if name == "E1" {
@@ -669,16 +547,10 @@ func regimeResults(byRegime map[string]map[string]*metricAccumulator, filters ma
 		}
 		for _, name := range []string{"B0", "N0-last", "N0-range", "E0", "E1", "E1-filtered", "B0-filtered"} {
 			acc := accs[name]
-			if acc == nil || acc.samples == 0 {
+			if acc == nil || acc.sampleCount() == 0 {
 				continue
 			}
-			strategy := StrategyResult{Name: name, Available: true, Metrics: acc.metrics()}
-			switch name {
-			case "E0", "E1":
-				strategy.Comparison = compareTo(acc, accs["B0"], "B0")
-			case "E1-filtered":
-				strategy.Comparison = compareTo(acc, accs["B0-filtered"], "B0-filtered")
-			}
+			strategy := StrategyResult{Name: name, Available: true}
 			if name == "E1" || name == "E1-filtered" {
 				copied := filter
 				if name == "E1" {
@@ -695,21 +567,43 @@ func regimeResults(byRegime map[string]map[string]*metricAccumulator, filters ma
 	return out
 }
 
-func (m *TargetMetrics) set(target Target, value float64) {
-	switch target {
-	case TargetHigh:
-		m.High = value
-	case TargetLow:
-		m.Low = value
-	case TargetClose:
-		m.Close = value
+func rollingMetricRecords(all map[string]*metricAccumulator, byRegime map[string]map[string]*metricAccumulator, windows []WindowSpec, strategyOrder []string) []modeleval.MetricRecord {
+	records := []modeleval.MetricRecord{}
+	candidate := func(sample metricSample) TargetMetrics { return sample.Predicted }
+	for _, spec := range windows {
+		if accumulator := all[fmt.Sprintf("window-%d", spec.Days)]; accumulator != nil {
+			records = append(records, accumulator.records(fmt.Sprintf("window:%d", spec.Days), nil, candidate, true)...)
+		}
 	}
-}
-
-func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }
-
-func sameDirection(left, right float64) bool {
-	return (left > 0 && right > 0) || (left < 0 && right < 0) || (left == 0 && right == 0)
+	for _, name := range strategyOrder {
+		if accumulator := all[name]; accumulator != nil {
+			records = append(records, accumulator.records("strategy:"+name, nil, candidate, true)...)
+		}
+	}
+	for _, regime := range []string{MarketUp, MarketRange, MarketDown, MarketUnknown} {
+		accumulators := byRegime[regime]
+		if len(accumulators) == 0 {
+			continue
+		}
+		regimeSlice := []modeleval.SliceDimension{{Name: "regime", Value: regime}}
+		for _, name := range strategyOrder {
+			if accumulator := accumulators[name]; accumulator != nil {
+				records = append(records, accumulator.records("strategy:"+name, regimeSlice, candidate, false)...)
+			}
+		}
+	}
+	if accumulator := all["N0-last"]; accumulator != nil {
+		records = append(records, accumulator.records(modeleval.BaselineSubject(modeleval.BaselineLastPrice), nil,
+			func(sample metricSample) TargetMetrics { return sample.Last }, false)...)
+	}
+	if accumulator := all["N0-range"]; accumulator != nil {
+		records = append(records, accumulator.records(modeleval.BaselineSubject(modeleval.BaselineRange), nil,
+			func(sample metricSample) TargetMetrics { return sample.Range }, false)...)
+	}
+	if accumulator := all["B0"]; accumulator != nil {
+		records = append(records, accumulator.majorityRecords(modeleval.BaselineSubject(modeleval.BaselineMajority), nil)...)
+	}
+	return sortUniqueRecords(records)
 }
 
 func ratio(part, total int) float64 {

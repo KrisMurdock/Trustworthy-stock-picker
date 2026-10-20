@@ -16,6 +16,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/modeleval"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
@@ -51,8 +52,8 @@ type Monitor struct {
 	samplesBuilder   func(Data) ([]Sample, error)
 	inferenceBuilder func(Data, string, time.Time) (FeatureVector, market.MinuteBar, error)
 	trainer          func([]Sample, ModelInfo, TrainOptions) (*Artifact, error)
-	walker           func([]Sample, ModelInfo, int, TrainOptions) (ModelMetrics, TargetMetrics, error)
-	evaluator        func(*Model, []Sample) (ModelMetrics, TargetMetrics, error)
+	walker           func([]Sample, ModelInfo, int, TrainOptions) ([]modeleval.MetricRecord, TargetMetrics, error)
+	evaluator        func(*Model, []Sample) ([]modeleval.MetricRecord, TargetMetrics, error)
 
 	workMu sync.Mutex
 
@@ -669,12 +670,16 @@ func (m *Monitor) Train(ctx context.Context, now time.Time) (ModelInfo, error) {
 			artifact.Info.Residuals = residuals
 		}
 	}
-	if artifact.Info.Metrics.Samples == 0 {
-		artifact.Info.Metrics.Samples = len(samples)
-		artifact.Info.Metrics.Days = len(days)
+	if artifact.Info.Metrics == nil {
+		artifact.Info.Metrics = []modeleval.MetricRecord{}
 	}
 	artifact.Info.TrainDurationMS = time.Since(started).Milliseconds()
 	sealed, err := SealArtifact(artifact)
+	if err != nil {
+		return ModelInfo{}, err
+	}
+	artifact.Info.Metrics = bindMetricSubject(artifact.Info.Metrics, artifact.Info.ModelID)
+	sealed, err = ResealArtifact(artifact)
 	if err != nil {
 		return ModelInfo{}, err
 	}
@@ -715,9 +720,26 @@ func (m *Monitor) Train(ctx context.Context, now time.Time) (ModelInfo, error) {
 	if err != nil {
 		return ModelInfo{}, err
 	}
+	samplesCount, metricDays, _ := metricSampleSummary(info.Metrics, modeleval.ModelSubject(info.ModelID))
+	if samplesCount == 0 {
+		samplesCount = len(samples)
+	}
+	if metricDays == 0 {
+		metricDays = len(days)
+	}
 	m.Log.Info("Predictor model trained", "model_id", info.ModelID, "valid_for", info.ValidFor,
-		"samples", info.Metrics.Samples, "days", len(days), "train_ms", info.TrainDurationMS)
+		"samples", samplesCount, "days", metricDays, "train_ms", info.TrainDurationMS)
 	return info, nil
+}
+
+func bindMetricSubject(records []modeleval.MetricRecord, modelID string) []modeleval.MetricRecord {
+	subject := modeleval.ModelSubject(modelID)
+	for index := range records {
+		if records[index].Subject == "model:candidate" || records[index].Subject == "" {
+			records[index].Subject = subject
+		}
+	}
+	return records
 }
 
 func (m *Monitor) pruneModels(current string) {

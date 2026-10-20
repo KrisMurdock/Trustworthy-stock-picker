@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/modeleval"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
 )
 
@@ -241,15 +242,28 @@ func previousResultRows(comparisons []previousComparison, names map[string]strin
 func modelSection(model ModelInfo) notify.Section {
 	samples := "—"
 	mae := "—"
-	if model.Metrics.Samples > 0 {
-		samples = fmt.Sprintf("%d", model.Metrics.Samples)
+	summary, ok := modelMetricSummary(model)
+	if ok && summary.samples > 0 {
+		samples = fmt.Sprintf("%d", summary.samples)
 		mae = fmt.Sprintf("高 %.2f%% · 低 %.2f%% · 收 %.2f%%",
-			model.Metrics.MAE.High*100, model.Metrics.MAE.Low*100, model.Metrics.MAE.Close*100)
+			bpsToPercent(summary.mae.High), bpsToPercent(summary.mae.Low), bpsToPercent(summary.mae.Close))
 	}
 	lines := []string{"基准价=上一根 5 分钟收盘；预测为下一根 K 线的点估计。"}
-	if model.Metrics.Samples > 0 {
+	if ok && summary.samples > 0 {
 		lines = append(lines, fmt.Sprintf("基线 MAE：高 %.2f%% · 低 %.2f%% · 收 %.2f%%",
-			model.Metrics.BaselineLastMAE.High*100, model.Metrics.BaselineLastMAE.Low*100, model.Metrics.BaselineLastMAE.Close*100))
+			bpsToPercent(summary.baseline.High), bpsToPercent(summary.baseline.Low), bpsToPercent(summary.baseline.Close)))
+	}
+	if ok && summary.directionOK {
+		lines = append(lines, fmt.Sprintf("方向准确率：%.2f%%（多数类 %.2f%%）",
+			summary.directionAccuracy*100, summary.directionBaseline*100))
+	}
+	if ok && summary.envelopeOK {
+		envelope := fmt.Sprintf("包络命中率：%.2f%% · 矛盾率：%.2f%%",
+			summary.envelopeHitRate*100, summary.contradictionRate*100)
+		if summary.envelopeBaselineOK {
+			envelope += fmt.Sprintf("（朴素 %.2f%%）", summary.envelopeBaselineHit*100)
+		}
+		lines = append(lines, envelope)
 	}
 	if warning := modelWarning(model); warning != "" {
 		lines = append(lines, warning)
@@ -269,19 +283,132 @@ func modelSection(model ModelInfo) notify.Section {
 }
 
 func modelWarning(model ModelInfo) string {
-	if model.Metrics.Samples <= 0 {
+	summary, ok := modelMetricSummary(model)
+	if !ok || summary.samples <= 0 {
 		return ""
 	}
 	warnings := []string{}
-	if !betterThanBaseline(model.Metrics.MAE.High, model.Metrics.BaselineLastMAE.High) ||
-		!betterThanBaseline(model.Metrics.MAE.Low, model.Metrics.BaselineLastMAE.Low) ||
-		!betterThanBaseline(model.Metrics.MAE.Close, model.Metrics.BaselineLastMAE.Close) {
+	if !betterThanBaseline(summary.mae.High, summary.baseline.High) ||
+		!betterThanBaseline(summary.mae.Low, summary.baseline.Low) ||
+		!betterThanBaseline(summary.mae.Close, summary.baseline.Close) {
 		warnings = append(warnings, "⚠️ 未优于基线")
 	}
-	if model.Metrics.Samples < 5000 {
+	if summary.directionOK && summary.directionAccuracy <= summary.directionBaseline {
+		warnings = append(warnings, "⚠️ 方向未优于多数类")
+	}
+	if summary.envelopeOK && summary.contradictionRate > 0.05 {
+		warnings = append(warnings, "⚠️ 高低收矛盾率过高")
+	}
+	if summary.envelopeOK && summary.envelopeBaselineOK && summary.envelopeHitRate < summary.envelopeBaselineHit {
+		warnings = append(warnings, "⚠️ 包络未优于基线")
+	}
+	if summary.days > 0 && summary.days < 10 {
+		warnings = append(warnings, "⚠️ 验证日不足 10 天")
+	}
+	if summary.samples < 5000 {
 		warnings = append(warnings, "⚠️ 样本不足")
 	}
 	return strings.Join(warnings, " · ")
+}
+
+type cardMetricSummary struct {
+	samples             int
+	days                int
+	mae                 TargetMetrics
+	baseline            TargetMetrics
+	directionAccuracy   float64
+	directionBaseline   float64
+	directionOK         bool
+	envelopeHitRate     float64
+	envelopeBaselineHit float64
+	envelopeBaselineOK  bool
+	contradictionRate   float64
+	envelopeOK          bool
+}
+
+func modelMetricSummary(model ModelInfo) (cardMetricSummary, bool) {
+	subject := modeleval.ModelSubject(model.ModelID)
+	if strings.TrimSpace(model.ModelID) == "" {
+		subject = "model:candidate"
+	}
+	closeMAE, ok := findCardMetric(model.Metrics, modeleval.MetricPointMAE, subject, modeleval.TargetClose, modeleval.SpaceReturn, modeleval.AggregationDayEqual, "")
+	if !ok {
+		return cardMetricSummary{}, false
+	}
+	summary := cardMetricSummary{samples: closeMAE.Samples, days: closeMAE.Days}
+	for _, target := range []string{modeleval.TargetHigh, modeleval.TargetLow, modeleval.TargetClose} {
+		record, found := findCardMetric(model.Metrics, modeleval.MetricPointMAE, subject, target, modeleval.SpaceReturn, modeleval.AggregationDayEqual, "")
+		if !found {
+			continue
+		}
+		setCardTarget(&summary.mae, target, *record.Value)
+	}
+	for _, target := range []string{modeleval.TargetHigh, modeleval.TargetLow, modeleval.TargetClose} {
+		record, found := findCardMetric(model.Metrics, modeleval.MetricPointMAE, modeleval.BaselineSubject(modeleval.BaselineLastPrice), target, modeleval.SpaceReturn, modeleval.AggregationDayEqual, "")
+		if !found {
+			continue
+		}
+		setCardTarget(&summary.baseline, target, *record.Value)
+	}
+	if record, found := findCardMetric(model.Metrics, modeleval.MetricDirectionAccuracy, subject, modeleval.TargetClose, modeleval.SpaceNone, modeleval.AggregationDayEqual, ""); found {
+		summary.directionAccuracy = *record.Value
+		summary.directionOK = true
+	}
+	if record, found := findCardMetric(model.Metrics, modeleval.MetricDirectionAccuracy, modeleval.BaselineSubject(modeleval.BaselineMajority), modeleval.TargetClose, modeleval.SpaceNone, modeleval.AggregationDayEqual, ""); found {
+		summary.directionBaseline = *record.Value
+	}
+	if record, found := findCardMetric(model.Metrics, modeleval.MetricPointEnvelopeHitRate, subject, modeleval.TargetAll, modeleval.SpaceNone, modeleval.AggregationDayEqual, ""); found {
+		summary.envelopeHitRate = *record.Value
+		summary.envelopeOK = true
+	}
+	if record, found := findCardMetric(model.Metrics, modeleval.MetricPointContradictionRate, subject, modeleval.TargetAll, modeleval.SpaceNone, modeleval.AggregationDayEqual, ""); found {
+		summary.contradictionRate = *record.Value
+		summary.envelopeOK = true
+	}
+	for _, baseline := range []string{modeleval.BaselineLastPrice, modeleval.BaselineRange} {
+		record, found := findCardMetric(model.Metrics, modeleval.MetricPointEnvelopeHitRate, modeleval.BaselineSubject(baseline),
+			modeleval.TargetAll, modeleval.SpaceNone, modeleval.AggregationDayEqual, "")
+		if !found {
+			continue
+		}
+		if !summary.envelopeBaselineOK || *record.Value > summary.envelopeBaselineHit {
+			summary.envelopeBaselineHit = *record.Value
+			summary.envelopeBaselineOK = true
+		}
+	}
+	return summary, true
+}
+
+func findCardMetric(records []modeleval.MetricRecord, metricID, subject, target string, space modeleval.Space, aggregation modeleval.Aggregation, baseline string) (modeleval.MetricRecord, bool) {
+	for _, record := range records {
+		if record.MetricID != metricID || record.Subject != subject || record.Target != target ||
+			record.Space != space || record.Aggregation != aggregation || record.Baseline != baseline {
+			continue
+		}
+		if record.Applicability != modeleval.ApplicabilityOK || record.Value == nil {
+			continue
+		}
+		if len(record.Slice) != 0 {
+			continue
+		}
+		return record, true
+	}
+	return modeleval.MetricRecord{}, false
+}
+
+func setCardTarget(metrics *TargetMetrics, target string, amount float64) {
+	switch target {
+	case modeleval.TargetHigh:
+		metrics.High = amount
+	case modeleval.TargetLow:
+		metrics.Low = amount
+	case modeleval.TargetClose:
+		metrics.Close = amount
+	}
+}
+
+func bpsToPercent(value float64) float64 {
+	return value / 100
 }
 
 func valueOrDash(value string) string {

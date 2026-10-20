@@ -5,11 +5,13 @@ package predictor
 
 import (
 	"time"
+
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/modeleval"
 )
 
 const (
-	ArtifactSchemaVersion   = 1
-	PredictionSchemaVersion = 1
+	ArtifactSchemaVersion   = 2
+	PredictionSchemaVersion = 3
 	FeatureVersion          = 1
 	StatusSchemaVersion     = 1
 )
@@ -85,31 +87,21 @@ type TargetMetrics struct {
 	Close float64 `json:"close"`
 }
 
-type ModelMetrics struct {
-	Samples           int           `json:"samples"`
-	Days              int           `json:"days"`
-	MAE               TargetMetrics `json:"mae"`
-	BaselineLastMAE   TargetMetrics `json:"baseline_last_mae"`
-	BaselineRangeMAE  TargetMetrics `json:"baseline_range_mae"`
-	DirectionAccuracy float64       `json:"direction_accuracy"`
-	Coverage          float64       `json:"coverage"`
-}
-
 type ModelInfo struct {
-	SchemaVersion   int           `json:"schema_version"`
-	ModelID         string        `json:"model_id"`
-	CreatedAt       time.Time     `json:"created_at"`
-	DataFrom        string        `json:"data_from"`
-	DataTo          string        `json:"data_to"`
-	ValidFor        string        `json:"valid_for"`
-	FeatureVersion  int           `json:"feature_version"`
-	FeatureNames    []string      `json:"feature_names"`
-	Metrics         ModelMetrics  `json:"metrics"`
-	Residuals       TargetMetrics `json:"residual_bands"`
-	CodeVersion     string        `json:"code_version"`
-	Checksum        string        `json:"checksum"`
-	ArtifactPath    string        `json:"artifact_path"`
-	TrainDurationMS int64         `json:"train_duration_ms,omitempty"`
+	SchemaVersion   int                      `json:"schema_version"`
+	ModelID         string                   `json:"model_id"`
+	CreatedAt       time.Time                `json:"created_at"`
+	DataFrom        string                   `json:"data_from"`
+	DataTo          string                   `json:"data_to"`
+	ValidFor        string                   `json:"valid_for"`
+	FeatureVersion  int                      `json:"feature_version"`
+	FeatureNames    []string                 `json:"feature_names"`
+	Metrics         []modeleval.MetricRecord `json:"metrics"`
+	Residuals       TargetMetrics            `json:"residual_bands"`
+	CodeVersion     string                   `json:"code_version"`
+	Checksum        string                   `json:"checksum"`
+	ArtifactPath    string                   `json:"artifact_path"`
+	TrainDurationMS int64                    `json:"train_duration_ms,omitempty"`
 }
 
 type LatencyStats struct {

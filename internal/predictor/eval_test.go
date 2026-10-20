@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/modeleval"
 )
 
 func evalSyntheticSamples(days, perDay int) []Sample {
@@ -100,13 +101,29 @@ func TestEvaluateRollingWindowsCommonDates(t *testing.T) {
 			continue
 		}
 		strategy := evalFindStrategy(t, report, name)
-		if !strategy.Available || strategy.Metrics.Samples == 0 {
+		if !strategy.Available {
 			t.Fatalf("strategy %s unavailable: %+v", name, strategy)
 		}
 	}
 	e1 := evalFindStrategy(t, report, "E1")
-	if e1.Filter == nil || e1.Comparison == nil || e1.Comparison.Baseline != "B0" {
-		t.Fatalf("E1 comparison/filter missing: %+v", e1)
+	if e1.Filter == nil {
+		t.Fatalf("E1 filter missing: %+v", e1)
+	}
+	if report.SchemaVersion != EvaluationSchemaVersion || len(report.Metrics) == 0 {
+		t.Fatalf("report metrics missing: schema=%d records=%d", report.SchemaVersion, len(report.Metrics))
+	}
+	if samples, days, ok := metricSampleSummary(report.Metrics, "strategy:E1"); !ok || samples == 0 || days != 2 {
+		t.Fatalf("strategy metric summary = %d samples, %d days, ok=%v", samples, days, ok)
+	}
+	if samples, days, ok := metricSampleSummary(report.Metrics, "window:2"); !ok || samples == 0 || days != 2 {
+		t.Fatalf("window metric summary = %d samples, %d days, ok=%v", samples, days, ok)
+	}
+	for _, subject := range []string{"strategy:E1", "window:2"} {
+		reserved := findMetricRecord(t, report.Metrics, modeleval.MetricIntervalEmpiricalCoverage, subject, modeleval.TargetAll, modeleval.SpaceNone, modeleval.AggregationPooled)
+		if reserved.Applicability != modeleval.ApplicabilityNotApplicable || reserved.Value != nil ||
+			reserved.Reason != "point estimate model has no calibrated interval" {
+			t.Fatalf("%s reserved metric = %+v", subject, reserved)
+		}
 	}
 	if len(report.Regimes) != 2 {
 		t.Fatalf("regimes=%+v want up and range", report.Regimes)
@@ -129,6 +146,191 @@ func TestEvaluateRollingWindowsCommonDates(t *testing.T) {
 	}
 	if string(first) != string(second) {
 		t.Fatal("evaluation output is not deterministic")
+	}
+}
+
+func addMetricTestSample(accumulator *metricAccumulator, date, code string, actualClose, predictedClose float64) {
+	inputClose := 100.0
+	sample := Sample{
+		Code:          code,
+		Date:          date,
+		InputClose:    inputClose,
+		InputHigh:     inputClose * 1.002,
+		InputLow:      inputClose * 0.998,
+		BaselineRange: 0.01,
+		Labels: map[Target]float64{
+			TargetHigh:  actualClose,
+			TargetLow:   actualClose,
+			TargetClose: actualClose,
+		},
+	}
+	accumulator.add(sample, map[Target]float64{
+		TargetHigh:  predictedClose,
+		TargetLow:   predictedClose,
+		TargetClose: predictedClose,
+	})
+}
+
+func TestMetricDayEqualAndPooledAggregation(t *testing.T) {
+	accumulator := newMetricAccumulator()
+	addMetricTestSample(accumulator, "2026-09-01", "sh600000", 0.01, 0)
+	for index := 0; index < 3; index++ {
+		addMetricTestSample(accumulator, "2026-09-02", "sh600000", 0.01, 0.01)
+	}
+	records := accumulator.records("model:candidate", nil, func(sample metricSample) TargetMetrics { return sample.Predicted }, false)
+	dayEqual := findMetricRecord(t, records, modeleval.MetricPointMAE, "model:candidate", modeleval.TargetClose, modeleval.SpaceReturn, modeleval.AggregationDayEqual)
+	pooled := findMetricRecord(t, records, modeleval.MetricPointMAE, "model:candidate", modeleval.TargetClose, modeleval.SpaceReturn, modeleval.AggregationPooled)
+	if dayEqual.Value == nil || math.Abs(*dayEqual.Value-50) > 1e-9 {
+		t.Fatalf("day-equal MAE = %v bps, want 50", dayEqual.Value)
+	}
+	if pooled.Value == nil || math.Abs(*pooled.Value-25) > 1e-9 {
+		t.Fatalf("pooled MAE = %v bps, want 25", pooled.Value)
+	}
+	if dayEqual.Samples != 4 || dayEqual.Days != 2 || dayEqual.Stocks != 1 {
+		t.Fatalf("unexpected day-equal counts: %+v", dayEqual)
+	}
+	if dayEqual.CI == nil || dayEqual.CI.Applicability != modeleval.ApplicabilityInsufficientData || dayEqual.CI.Reason != "fewer than 10 validation days" {
+		t.Fatalf("short-run CI = %+v", dayEqual.CI)
+	}
+}
+
+func TestMetricNonzeroDirectionTreatsPredictedZeroAsMiss(t *testing.T) {
+	accumulator := newMetricAccumulator()
+	addMetricTestSample(accumulator, "2026-09-01", "sh600000", 0.01, 0)
+	records := accumulator.records("model:candidate", nil, func(sample metricSample) TargetMetrics { return sample.Predicted }, false)
+	accuracy := findMetricRecord(t, records, modeleval.MetricDirectionAccuracy, "model:candidate", modeleval.TargetClose, modeleval.SpaceNone, modeleval.AggregationDayEqual)
+	if accuracy.Value == nil || *accuracy.Value != 0 {
+		t.Fatalf("predicted zero accuracy = %v, want 0", accuracy.Value)
+	}
+	if accuracy.Spec == nil || accuracy.Spec.Label == nil || accuracy.Spec.Label.Mode != "nonzero_sign" {
+		t.Fatalf("direction label spec = %+v", accuracy.Spec)
+	}
+}
+
+func TestMetricMajorityBaseline(t *testing.T) {
+	accumulator := newMetricAccumulator()
+	addMetricTestSample(accumulator, "2026-09-01", "sh600000", 0.01, 0.01)
+	addMetricTestSample(accumulator, "2026-09-02", "sh600000", 0.01, -0.01)
+	addMetricTestSample(accumulator, "2026-09-03", "sh600000", 0.01, 0.01)
+	addMetricTestSample(accumulator, "2026-09-04", "sh600000", -0.01, -0.01)
+	records := accumulator.majorityRecords(modeleval.BaselineSubject(modeleval.BaselineMajority), nil)
+	accuracy := findMetricRecord(t, records, modeleval.MetricDirectionAccuracy, modeleval.BaselineSubject(modeleval.BaselineMajority), modeleval.TargetClose, modeleval.SpaceNone, modeleval.AggregationDayEqual)
+	if accuracy.Value == nil || math.Abs(*accuracy.Value-0.75) > 1e-12 {
+		t.Fatalf("majority accuracy = %v, want 0.75", accuracy.Value)
+	}
+	if accuracy.Spec == nil || accuracy.Spec.Label == nil || accuracy.Spec.Label.Mode != "nonzero_sign" {
+		t.Fatalf("majority label spec = %+v", accuracy.Spec)
+	}
+}
+
+func TestMetricSkillFormula(t *testing.T) {
+	accumulator := newMetricAccumulator()
+	addMetricTestSample(accumulator, "2026-09-01", "sh600000", 0.02, 0.01)
+	records := accumulator.records("model:candidate", nil, func(sample metricSample) TargetMetrics { return sample.Predicted }, false)
+	skill := findMetricRecord(t, records, modeleval.MetricPointSkillMAE, "model:candidate", modeleval.TargetClose, modeleval.SpaceReturn, modeleval.AggregationDayEqual)
+	if skill.Value == nil || math.Abs(*skill.Value-0.5) > 1e-12 {
+		t.Fatalf("skill MAE = %v, want 0.5", skill.Value)
+	}
+	if skill.Baseline != modeleval.BaselineLastPrice || skill.Spec == nil || skill.Spec.Comparison == nil ||
+		skill.Spec.Comparison.Formula != "1 - candidate / baseline" || skill.Spec.Comparison.BaselineMetricID != modeleval.MetricPointMAE {
+		t.Fatalf("skill comparison spec = %+v", skill.Spec)
+	}
+}
+
+func TestMetricNAAndReservedRecords(t *testing.T) {
+	accumulator := newMetricAccumulator()
+	addMetricTestSample(accumulator, "2026-09-01", "sh600000", 0.01, 0.01)
+	records := accumulator.records("model:candidate", nil, func(sample metricSample) TargetMetrics { return sample.Predicted }, true)
+	r2 := findMetricRecord(t, records, modeleval.MetricPointR2, "model:candidate", modeleval.TargetClose, modeleval.SpacePrice, modeleval.AggregationPooled)
+	if r2.Value != nil || r2.Applicability != modeleval.ApplicabilityInsufficientData || r2.Reason == "" {
+		t.Fatalf("constant-price R2 = %+v", r2)
+	}
+	if !r2.HigherIsBetter {
+		t.Fatal("point.r2 must be marked higher-is-better")
+	}
+	reserved := findMetricRecord(t, records, modeleval.MetricIntervalEmpiricalCoverage, "model:candidate", modeleval.TargetAll, modeleval.SpaceNone, modeleval.AggregationPooled)
+	if reserved.Value != nil || reserved.Applicability != modeleval.ApplicabilityNotApplicable || reserved.Reason != "point estimate model has no calibrated interval" {
+		t.Fatalf("reserved interval record = %+v", reserved)
+	}
+	foundQuantile := false
+	for _, record := range records {
+		if record.Spec != nil && record.Spec.Label != nil && record.Spec.Label.Mode == "quantile_30_70" {
+			foundQuantile = true
+			if record.Applicability != modeleval.ApplicabilityInsufficientData || record.Value != nil ||
+				record.Reason != "quantile thresholds require training-window fit" {
+				t.Fatalf("quantile record = %+v", record)
+			}
+		}
+	}
+	if !foundQuantile {
+		t.Fatal("quantile direction records are missing")
+	}
+	reservedCount := 0
+	for _, record := range records {
+		if record.Family == modeleval.FamilyInterval || record.Family == modeleval.FamilyRanking || record.Family == modeleval.FamilyTrading {
+			reservedCount++
+		}
+		if err := record.Validate(); err != nil {
+			t.Fatalf("invalid metric record %+v: %v", record, err)
+		}
+	}
+	if reservedCount != 11 {
+		t.Fatalf("reserved records = %d, want 11", reservedCount)
+	}
+	if samples, days, ok := metricSampleSummary(records, "model:candidate"); !ok || samples != 1 || days != 1 {
+		t.Fatalf("metric sample summary = %d samples, %d days, ok=%v", samples, days, ok)
+	}
+}
+
+func TestMetricRecordsDeterministic(t *testing.T) {
+	forward := newMetricAccumulator()
+	reverse := newMetricAccumulator()
+	samples := [][2]float64{{0.01, 0.005}, {-0.02, -0.01}, {0.03, 0.04}, {0, 0.01}}
+	for index, sample := range samples {
+		addMetricTestSample(forward, evalDates(4)[index], "sh600000", sample[0], sample[1])
+	}
+	for index := len(samples) - 1; index >= 0; index-- {
+		addMetricTestSample(reverse, evalDates(4)[index], "sh600000", samples[index][0], samples[index][1])
+	}
+	selector := func(sample metricSample) TargetMetrics { return sample.Predicted }
+	first := forward.records("model:candidate", nil, selector, true)
+	second := reverse.records("model:candidate", nil, selector, true)
+	firstJSON, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondJSON, err := json.Marshal(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(firstJSON) != string(secondJSON) {
+		t.Fatal("metric records depend on sample insertion order")
+	}
+	previousKey := ""
+	for _, record := range first {
+		key, err := record.CanonicalKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if previousKey != "" && key <= previousKey {
+			t.Fatalf("metric records are not strictly sorted/unique at %s", key)
+		}
+		previousKey = key
+	}
+}
+
+func TestMetricConfidenceIntervalWithEnoughDays(t *testing.T) {
+	accumulator := newMetricAccumulator()
+	for index := 0; index < 10; index++ {
+		addMetricTestSample(accumulator, evalDates(10)[index], "sh600000", 0.01, 0.005+float64(index)*0.0001)
+	}
+	records := accumulator.records("model:candidate", nil, func(sample metricSample) TargetMetrics { return sample.Predicted }, false)
+	mae := findMetricRecord(t, records, modeleval.MetricPointMAE, "model:candidate", modeleval.TargetClose, modeleval.SpaceReturn, modeleval.AggregationDayEqual)
+	if mae.CI == nil || mae.CI.Applicability != modeleval.ApplicabilityOK || mae.CI.Lower == nil || mae.CI.Upper == nil {
+		t.Fatalf("MAE CI = %+v", mae.CI)
+	}
+	if mae.CI.Method != "paired_day_block_bootstrap" || mae.CI.Confidence != 0.95 || mae.CI.Resamples != 10000 || mae.CI.Seed != 1949 {
+		t.Fatalf("MAE CI contract = %+v", mae.CI)
 	}
 }
 
