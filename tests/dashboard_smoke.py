@@ -920,7 +920,7 @@ def main():
             # Switching stock/report intentionally cancels the preceding fetch.
             # DOM assertions below verify the selected result wins the race.
             def network_failure(request):
-                canceled_selection = request.failure == "net::ERR_ABORTED" and urlparse(request.url).path in ("/api/history", "/api/reports", "/api/experiments", "/api/experiment-history", "/api/intraday")
+                canceled_selection = request.failure == "net::ERR_ABORTED" and urlparse(request.url).path in ("/api/status", "/api/dashboard", "/api/history", "/api/reports", "/api/experiments", "/api/experiment-history", "/api/intraday")
                 # Context teardown (reduced-motion/mobile/WebGL-fallback probes)
                 # aborts in-flight static assets; those never reach the user.
                 canceled_asset = request.failure == "net::ERR_ABORTED" and request.resource_type in ("script", "stylesheet", "font", "image")
