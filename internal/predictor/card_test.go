@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
 )
 
 func TestBuildCardAggregatesPredictions(t *testing.T) {
@@ -21,7 +22,8 @@ func TestBuildCardAggregatesPredictions(t *testing.T) {
 		},
 	}
 	predictions := []Prediction{{
-		Code: "sh600000", BasePrice: 10, HighPct: 0.01, LowPct: -0.01, ClosePct: 0,
+		Code: "sh600000", InputEnd: target.Add(-5 * time.Minute), BasePrice: 10,
+		HighPct: 0.01, LowPct: -0.01, ClosePct: 0,
 		Trend: "偏强", Confidence: "中",
 	}}
 	message, err := BuildCard(date, target, info, predictions, CardData{Names: map[string]string{"sh600000": "浦发银行"}})
@@ -34,27 +36,34 @@ func TestBuildCardAggregatesPredictions(t *testing.T) {
 	if !message.ExpiresAt.Equal(target) {
 		t.Fatalf("expiry=%s want %s", message.ExpiresAt, target)
 	}
-	if !strings.Contains(message.Title, "5分钟预测") {
+	if message.Title != "5 分钟价格预测" || !strings.Contains(message.Subtitle, "09:35 → 09:40") ||
+		message.HeaderIcon != "insert-chart_outlined" || message.WidthMode != "fill" {
 		t.Fatalf("title=%q", message.Title)
 	}
-	if len(message.Sections) == 0 || message.Sections[0].Table == nil || len(message.Sections[0].Table.Rows) != 1 {
+	if len(message.Sections) != 3 || len(message.Sections[0].Fields) != 4 || message.Sections[1].Table == nil || len(message.Sections[1].Table.Rows) != 1 {
 		t.Fatalf("missing prediction table row")
 	}
-	for _, column := range message.Sections[0].Table.Columns {
+	if got := fieldValue(message.Sections[0].Fields, "预测窗口"); got != "09:35 → 09:40" {
+		t.Fatalf("prediction window=%q", got)
+	}
+	for _, column := range message.Sections[1].Table.Columns {
 		if !strings.HasSuffix(column.Width, "%") {
 			t.Fatalf("card table width must be a percentage: %s=%q", column.Key, column.Width)
 		}
 	}
-	if column := message.Sections[0].Table.Columns[0]; column.Key != "name" || column.Label != "名称" {
+	if column := message.Sections[1].Table.Columns[0]; column.Key != "name" || column.Label != "名称" {
 		t.Fatalf("first column=%+v want stock name", column)
 	}
-	row := message.Sections[0].Table.Rows[0]
-	if row[0].Text != "浦发银行" || !strings.HasPrefix(row[2].Text, "10.10") || !strings.HasPrefix(row[3].Text, "9.90") {
+	row := message.Sections[1].Table.Rows[0]
+	if row[0].Text != "浦发银行" || !strings.HasPrefix(row[2].Text, "10.10") || !strings.HasPrefix(row[3].Text, "9.90") || row[5].Text != "偏强 · 中" {
 		t.Fatalf("unexpected row: %+v", row)
 	}
-	meta := strings.Join(message.Sections[0].Lines, " ")
-	if !strings.Contains(meta, "m1") || !strings.Contains(meta, "未优于基线") {
-		t.Fatalf("meta=%q", meta)
+	model := message.Sections[2]
+	if got := fieldValue(model.Fields, "模型"); got != "m1" {
+		t.Fatalf("model=%q", got)
+	}
+	if status := strings.Join(model.Lines, " "); !strings.Contains(status, "未优于基线") {
+		t.Fatalf("model status=%q", status)
 	}
 }
 
@@ -85,10 +94,16 @@ func TestBuildCardReportsPreviousActualDeviation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build card: %v", err)
 	}
-	if len(message.Sections) < 3 || message.Sections[1].Heading != "上一根实际对比" || message.Sections[1].Table == nil {
+	if len(message.Sections) < 4 || message.Sections[2].Heading != "✅ 上一根实际对比" || message.Sections[2].Table == nil {
 		t.Fatalf("missing previous actual section: %+v", message.Sections)
 	}
-	row := message.Sections[1].Table.Rows[0]
+	if got := fieldValue(message.Sections[0].Fields, "上根确认"); got != "1 / 1" {
+		t.Fatalf("confirmed=%q", got)
+	}
+	if got := fieldValue(message.Sections[0].Fields, "上根收盘误差"); got != "2.00pp" {
+		t.Fatalf("close error=%q", got)
+	}
+	row := message.Sections[2].Table.Rows[0]
 	want := []string{"浦发银行", "10.30 (+3.00%)", "10.10 (+1.00%)", "10.20 (+2.00%)", "+0.20 (+2.00pp)", "+0.20 (+2.00pp)", "+0.20 (+2.00pp)"}
 	for index := range want {
 		if row[index].Text != want[index] {
@@ -110,8 +125,23 @@ func TestBuildCardMarksUnresolvedPreviousActual(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build card: %v", err)
 	}
-	row := message.Sections[1].Table.Rows[0]
+	if got := fieldValue(message.Sections[0].Fields, "上根确认"); got != "0 / 1" {
+		t.Fatalf("confirmed=%q", got)
+	}
+	if got := fieldValue(message.Sections[0].Fields, "上根收盘误差"); got != "待确认" {
+		t.Fatalf("close error=%q", got)
+	}
+	row := message.Sections[2].Table.Rows[0]
 	if row[1].Text != "待确认" || row[4].Text != "—" {
 		t.Fatalf("unresolved previous actual row: %+v", row)
 	}
+}
+
+func fieldValue(fields []notify.Field, label string) string {
+	for _, field := range fields {
+		if field.Label == label {
+			return field.Value
+		}
+	}
+	return ""
 }

@@ -3,6 +3,7 @@ package predictor
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -15,96 +16,73 @@ type CardData struct {
 	Actuals  []Actual
 }
 
+type previousComparison struct {
+	Prediction Prediction
+	Actual     Actual
+	Resolved   bool
+}
+
 func BuildCard(date string, targetEnd time.Time, model ModelInfo, preds []Prediction, data CardData) (notify.Message, error) {
 	if len(preds) == 0 {
 		return notify.Message{}, errors.New("predictor card requires at least one prediction")
 	}
-	rows := make([][]notify.TableCell, 0, len(preds))
-	for _, p := range preds {
-		high := p.BasePrice * (1 + p.HighPct)
-		low := p.BasePrice * (1 + p.LowPct)
-		closePrice := p.BasePrice * (1 + p.ClosePct)
-		rows = append(rows, []notify.TableCell{
-			{Text: stockName(p.Code, data.Names)},
-			{Text: fmt.Sprintf("%.2f", p.BasePrice)},
-			{Text: fmt.Sprintf("%.2f (%s)", high, pct(p.HighPct)), Tone: tone(p.HighPct)},
-			{Text: fmt.Sprintf("%.2f (%s)", low, pct(p.LowPct)), Tone: tone(p.LowPct)},
-			{Text: fmt.Sprintf("%.2f (%s)", closePrice, pct(p.ClosePct)), Tone: tone(p.ClosePct)},
-			{Text: p.Trend, Tone: trendTone(p.Trend)},
-			{Text: p.Confidence},
-		})
-	}
-	warning := ""
-	if model.Metrics.Samples > 0 && (!betterThanBaseline(model.Metrics.MAE.High, model.Metrics.BaselineLastMAE.High) ||
-		!betterThanBaseline(model.Metrics.MAE.Low, model.Metrics.BaselineLastMAE.Low) ||
-		!betterThanBaseline(model.Metrics.MAE.Close, model.Metrics.BaselineLastMAE.Close)) {
-		warning = " ⚠ 未优于基线"
-	}
-	if model.Metrics.Samples > 0 && model.Metrics.Samples < 5000 {
-		warning += " ⚠ 样本不足"
-	}
-	meta := fmt.Sprintf("基准价=上一根5分钟收盘 · 模型 %s · 训练至 %s · 样本 %d%s",
-		model.ModelID, model.DataTo, model.Metrics.Samples, warning)
-	mae := fmt.Sprintf("上根 MAE：高 %.2f%% / 低 %.2f%% / 收 %.2f%%（基线 高 %.2f%% / 低 %.2f%% / 收 %.2f%%）",
-		model.Metrics.MAE.High*100, model.Metrics.MAE.Low*100, model.Metrics.MAE.Close*100,
-		model.Metrics.BaselineLastMAE.High*100, model.Metrics.BaselineLastMAE.Low*100, model.Metrics.BaselineLastMAE.Close*100)
+	comparisons := matchPrevious(data.Previous, data.Actuals)
+	confirmed, meanCloseError := previousSummary(comparisons)
+	window := predictionWindow(preds, targetEnd)
 	sections := []notify.Section{
 		{
-			Lines: []string{meta},
+			Fields: summaryFields(preds, window, comparisons, confirmed, meanCloseError),
+		},
+		{
+			Heading: "📊 本轮预测",
 			Table: &notify.Table{
 				PageSize:          20,
 				RowHeight:         "low",
 				FreezeFirstColumn: true,
 				Columns: []notify.TableColumn{
-					{Key: "name", Label: "名称", Kind: notify.TableText, Width: "14%"},
-					{Key: "price", Label: "现价", Kind: notify.TableText, Width: "10%"},
-					{Key: "high", Label: "预测高", Kind: notify.TableChange, Width: "16%"},
-					{Key: "low", Label: "预测低", Kind: notify.TableChange, Width: "16%"},
-					{Key: "close", Label: "预测收", Kind: notify.TableChange, Width: "16%"},
-					{Key: "trend", Label: "趋势", Kind: notify.TableChange, Width: "14%"},
-					{Key: "confidence", Label: "置信", Kind: notify.TableStatus, Width: "14%"},
+					{Key: "name", Label: "名称", Kind: notify.TableText, Width: "22%"},
+					{Key: "price", Label: "现价", Kind: notify.TableText, Width: "12%", Align: "right"},
+					{Key: "high", Label: "预测高", Kind: notify.TableChange, Width: "18%", Align: "right"},
+					{Key: "low", Label: "预测低", Kind: notify.TableChange, Width: "18%", Align: "right"},
+					{Key: "close", Label: "预测收", Kind: notify.TableChange, Width: "18%", Align: "right"},
+					{Key: "signal", Label: "信号", Kind: notify.TableChange, Width: "12%", Align: "center"},
 				},
-				Rows: rows,
+				Rows: predictionRows(preds, data.Names),
 			},
 		},
 	}
-	if previous := previousResultRows(data.Previous, data.Actuals, data.Names); len(previous) > 0 {
-		target := data.Previous[0].TargetEnd.Format("15:04")
+	if len(comparisons) > 0 {
+		target := comparisons[0].Prediction.TargetEnd.Format("15:04")
 		sections = append(sections, notify.Section{
-			Heading: "上一根实际对比",
-			Lines:   []string{fmt.Sprintf("%s 实际值与该根预测对比；偏差=实际-预测", target)},
+			Heading: "✅ 上一根实际对比",
+			Lines:   []string{fmt.Sprintf("%s 实际 vs 预测 · 偏差 = 实际 − 预测", target)},
 			Table: &notify.Table{
 				PageSize:          20,
 				RowHeight:         "low",
 				FreezeFirstColumn: true,
 				Columns: []notify.TableColumn{
-					{Key: "name", Label: "名称", Kind: notify.TableText, Width: "16%"},
-					{Key: "actual_high", Label: "实际高", Kind: notify.TableText, Width: "12%"},
-					{Key: "actual_low", Label: "实际低", Kind: notify.TableText, Width: "12%"},
-					{Key: "actual_close", Label: "实际收", Kind: notify.TableText, Width: "12%"},
-					{Key: "high_diff", Label: "高偏差", Kind: notify.TableChange, Width: "16%"},
-					{Key: "low_diff", Label: "低偏差", Kind: notify.TableChange, Width: "16%"},
-					{Key: "close_diff", Label: "收偏差", Kind: notify.TableChange, Width: "16%"},
+					{Key: "name", Label: "名称", Kind: notify.TableText, Width: "18%"},
+					{Key: "actual_high", Label: "实际高", Kind: notify.TableText, Width: "13%", Align: "right"},
+					{Key: "actual_low", Label: "实际低", Kind: notify.TableText, Width: "13%", Align: "right"},
+					{Key: "actual_close", Label: "实际收", Kind: notify.TableText, Width: "13%", Align: "right"},
+					{Key: "high_diff", Label: "高偏差", Kind: notify.TableChange, Width: "14%", Align: "right"},
+					{Key: "low_diff", Label: "低偏差", Kind: notify.TableChange, Width: "14%", Align: "right"},
+					{Key: "close_diff", Label: "收偏差", Kind: notify.TableChange, Width: "15%", Align: "right"},
 				},
-				Rows: previous,
+				Rows: previousResultRows(comparisons, data.Names),
 			},
 		})
 	}
-	sections = append(sections, notify.Section{
-		Heading:  "模型状态",
-		Optional: true,
-		Lines: []string{
-			mae,
-			"实验性预测，不构成投资建议；T+1 手动交易。",
-			"预测为点估计，不代表保证区间；数据延迟或模型过期时不推送。",
-		},
-	})
+	sections = append(sections, modelSection(model))
 	return notify.Message{
 		Version:        2,
 		EventID:        fmt.Sprintf("intraday:%s:%d", date, targetEnd.Unix()),
 		DisplayEventID: fmt.Sprintf("intraday:%s", date),
 		PartLabel:      "5分钟预测",
-		Title:          fmt.Sprintf("A股龙头池 · %s 5分钟预测（实验）", targetEnd.Format("15:04")),
+		Title:          "5 分钟价格预测",
+		Subtitle:       fmt.Sprintf("%s %s · 龙头池 · 实验性", date, window),
+		HeaderIcon:     "insert-chart_outlined",
+		WidthMode:      "fill",
 		Template:       "orange",
 		TrimPolicy:     notify.TrimNone,
 		ExpiresAt:      targetEnd,
@@ -112,18 +90,98 @@ func BuildCard(date string, targetEnd time.Time, model ModelInfo, preds []Predic
 	}, nil
 }
 
-func previousResultRows(previous []Prediction, actuals []Actual, names map[string]string) [][]notify.TableCell {
-	if len(previous) == 0 {
-		return nil
+func predictionWindow(preds []Prediction, targetEnd time.Time) string {
+	target := targetEnd.Format("15:04")
+	if len(preds) > 0 && !preds[0].InputEnd.IsZero() {
+		return preds[0].InputEnd.Format("15:04") + " → " + target
 	}
+	return target
+}
+
+func summaryFields(preds []Prediction, window string, comparisons []previousComparison, confirmed int, meanCloseError float64) []notify.Field {
+	confirmedText := "首根"
+	errorText := "—"
+	if len(comparisons) > 0 {
+		confirmedText = fmt.Sprintf("%d / %d", confirmed, len(comparisons))
+		errorText = "待确认"
+		if confirmed > 0 {
+			errorText = fmt.Sprintf("%.2fpp", meanCloseError*100)
+		}
+	}
+	return []notify.Field{
+		{Label: "预测窗口", Value: window},
+		{Label: "预测标的", Value: fmt.Sprintf("%d 只", len(preds))},
+		{Label: "上根确认", Value: confirmedText},
+		{Label: "上根收盘误差", Value: errorText},
+	}
+}
+
+func predictionRows(preds []Prediction, names map[string]string) [][]notify.TableCell {
+	rows := make([][]notify.TableCell, 0, len(preds))
+	for _, prediction := range preds {
+		high := prediction.BasePrice * (1 + prediction.HighPct)
+		low := prediction.BasePrice * (1 + prediction.LowPct)
+		closePrice := prediction.BasePrice * (1 + prediction.ClosePct)
+		signal := prediction.Trend
+		if prediction.Confidence != "" {
+			if signal != "" {
+				signal += " · "
+			}
+			signal += prediction.Confidence
+		}
+		if signal == "" {
+			signal = "—"
+		}
+		rows = append(rows, []notify.TableCell{
+			{Text: stockName(prediction.Code, names)},
+			{Text: fmt.Sprintf("%.2f", prediction.BasePrice)},
+			{Text: fmt.Sprintf("%.2f (%s)", high, pct(prediction.HighPct)), Tone: tone(prediction.HighPct)},
+			{Text: fmt.Sprintf("%.2f (%s)", low, pct(prediction.LowPct)), Tone: tone(prediction.LowPct)},
+			{Text: fmt.Sprintf("%.2f (%s)", closePrice, pct(prediction.ClosePct)), Tone: tone(prediction.ClosePct)},
+			{Text: signal, Tone: trendTone(prediction.Trend)},
+		})
+	}
+	return rows
+}
+
+func matchPrevious(previous []Prediction, actuals []Actual) []previousComparison {
 	actualByKey := make(map[string]Actual, len(actuals))
 	for _, actual := range actuals {
 		actualByKey[predictionKey(actual.Code, actual.ModelID)] = actual
 	}
-	rows := make([][]notify.TableCell, 0, len(previous))
+	out := make([]previousComparison, 0, len(previous))
 	for _, prediction := range previous {
 		actual, ok := actualByKey[predictionKey(prediction.Code, prediction.ModelID)]
-		if !ok || actual.Status != "resolved" || prediction.BasePrice <= 0 {
+		out = append(out, previousComparison{
+			Prediction: prediction,
+			Actual:     actual,
+			Resolved:   ok && actual.Status == "resolved" && prediction.BasePrice > 0,
+		})
+	}
+	return out
+}
+
+func previousSummary(comparisons []previousComparison) (int, float64) {
+	confirmed := 0
+	sum := 0.0
+	for _, comparison := range comparisons {
+		if comparison.Resolved {
+			confirmed++
+			sum += math.Abs(comparison.Actual.ClosePct - comparison.Prediction.ClosePct)
+		}
+	}
+	if confirmed == 0 {
+		return 0, 0
+	}
+	return confirmed, sum / float64(confirmed)
+}
+
+func previousResultRows(comparisons []previousComparison, names map[string]string) [][]notify.TableCell {
+	rows := make([][]notify.TableCell, 0, len(comparisons))
+	for _, comparison := range comparisons {
+		prediction := comparison.Prediction
+		actual := comparison.Actual
+		if !comparison.Resolved {
 			rows = append(rows, []notify.TableCell{
 				{Text: stockName(prediction.Code, names)},
 				{Text: "待确认"},
@@ -149,6 +207,59 @@ func previousResultRows(previous []Prediction, actuals []Actual, names map[strin
 		})
 	}
 	return rows
+}
+
+func modelSection(model ModelInfo) notify.Section {
+	samples := "—"
+	mae := "—"
+	if model.Metrics.Samples > 0 {
+		samples = fmt.Sprintf("%d", model.Metrics.Samples)
+		mae = fmt.Sprintf("高 %.2f%% · 低 %.2f%% · 收 %.2f%%",
+			model.Metrics.MAE.High*100, model.Metrics.MAE.Low*100, model.Metrics.MAE.Close*100)
+	}
+	lines := []string{"基准价=上一根 5 分钟收盘；预测为下一根 K 线的点估计。"}
+	if model.Metrics.Samples > 0 {
+		lines = append(lines, fmt.Sprintf("基线 MAE：高 %.2f%% · 低 %.2f%% · 收 %.2f%%",
+			model.Metrics.BaselineLastMAE.High*100, model.Metrics.BaselineLastMAE.Low*100, model.Metrics.BaselineLastMAE.Close*100))
+	}
+	if warning := modelWarning(model); warning != "" {
+		lines = append(lines, warning)
+	}
+	lines = append(lines, "实验性预测，不构成投资建议；T+1 手动交易。")
+	return notify.Section{
+		Heading:  "⚙️ 模型状态",
+		Optional: true,
+		Fields: []notify.Field{
+			{Label: "模型", Value: valueOrDash(model.ModelID)},
+			{Label: "训练截止", Value: valueOrDash(model.DataTo)},
+			{Label: "训练样本", Value: samples},
+			{Label: "验证 MAE", Value: mae},
+		},
+		Lines: lines,
+	}
+}
+
+func modelWarning(model ModelInfo) string {
+	if model.Metrics.Samples <= 0 {
+		return ""
+	}
+	warnings := []string{}
+	if !betterThanBaseline(model.Metrics.MAE.High, model.Metrics.BaselineLastMAE.High) ||
+		!betterThanBaseline(model.Metrics.MAE.Low, model.Metrics.BaselineLastMAE.Low) ||
+		!betterThanBaseline(model.Metrics.MAE.Close, model.Metrics.BaselineLastMAE.Close) {
+		warnings = append(warnings, "⚠️ 未优于基线")
+	}
+	if model.Metrics.Samples < 5000 {
+		warnings = append(warnings, "⚠️ 样本不足")
+	}
+	return strings.Join(warnings, " · ")
+}
+
+func valueOrDash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "—"
+	}
+	return value
 }
 
 func predictionKey(code, modelID string) string {

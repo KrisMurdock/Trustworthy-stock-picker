@@ -190,12 +190,16 @@ func tableElement(table *notify.Table) map[string]any {
 	columns := make([]any, 0, len(table.Columns))
 	for _, column := range table.Columns {
 		rendered := map[string]any{
-			"name":         column.Key,
-			"display_name": escape(column.Label),
-			"data_type":    tableDataType(column.Kind),
+			"name":           column.Key,
+			"display_name":   escape(column.Label),
+			"data_type":      tableDataType(column.Kind),
+			"vertical_align": "center",
 		}
 		if column.Width != "" {
 			rendered["width"] = column.Width
+		}
+		if column.Align != "" {
+			rendered["horizontal_align"] = column.Align
 		}
 		columns = append(columns, rendered)
 	}
@@ -292,6 +296,16 @@ func cardPayload(message notify.Message, content string) map[string]any {
 	if title == "" {
 		title = "Notification"
 	}
+	header := map[string]any{
+		"template": cardTemplate(message.Template),
+		"title":    map[string]any{"tag": "plain_text", "content": title},
+	}
+	if message.Subtitle != "" {
+		header["subtitle"] = map[string]any{"tag": "plain_text", "content": message.Subtitle}
+	}
+	if message.HeaderIcon != "" {
+		header["ud_icon"] = map[string]any{"token": message.HeaderIcon}
+	}
 	elements := []any{map[string]any{
 		"tag":  "div",
 		"text": map[string]any{"tag": "lark_md", "content": content},
@@ -299,15 +313,16 @@ func cardPayload(message notify.Message, content string) map[string]any {
 	if message.Version == 2 {
 		elements = structuredElements(message)
 	}
+	card := map[string]any{
+		"header":   header,
+		"elements": elements,
+	}
+	if message.WidthMode != "" {
+		card["config"] = map[string]any{"width_mode": message.WidthMode}
+	}
 	return map[string]any{
 		"msg_type": "interactive",
-		"card": map[string]any{
-			"header": map[string]any{
-				"template": cardTemplate(message.Template),
-				"title":    map[string]any{"tag": "plain_text", "content": title},
-			},
-			"elements": elements,
-		},
+		"card":     card,
 	}
 }
 

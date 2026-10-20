@@ -14,6 +14,9 @@ type Message struct {
 	DisplayEventID string    `json:"display_event_id,omitempty"`
 	PartLabel      string    `json:"part_label,omitempty"`
 	Title          string    `json:"title"`
+	Subtitle       string    `json:"subtitle,omitempty"`
+	HeaderIcon     string    `json:"header_icon,omitempty"`
+	WidthMode      string    `json:"width_mode,omitempty"`
 	Sections       []Section `json:"sections"`
 	Template       string    `json:"template,omitempty"`
 	TrimPolicy     string    `json:"trim_policy,omitempty"`
@@ -46,6 +49,7 @@ type TableColumn struct {
 	Label string          `json:"label"`
 	Kind  TableColumnKind `json:"kind"`
 	Width string          `json:"width,omitempty"`
+	Align string          `json:"align,omitempty"`
 }
 
 type TableCell struct {

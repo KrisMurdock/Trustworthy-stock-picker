@@ -81,6 +81,21 @@ func TestStructuredCardRendersFieldsAndEventID(t *testing.T) {
 	}
 }
 
+func TestStructuredCardRendersHeaderSubtitleAndIcon(t *testing.T) {
+	card, _ := decodeCard(t, Card(notify.Message{
+		Version: 2, Title: "5 分钟价格预测", Subtitle: "2026-10-20 09:35 → 09:40 · 龙头池",
+		HeaderIcon: "insert-chart_outlined", WidthMode: "fill",
+	}))
+	header, _ := card["header"].(map[string]any)
+	subtitle, _ := header["subtitle"].(map[string]any)
+	icon, _ := header["ud_icon"].(map[string]any)
+	config, _ := card["config"].(map[string]any)
+	if subtitle["tag"] != "plain_text" || !strings.Contains(subtitle["content"].(string), "09:35") ||
+		icon["token"] != "insert-chart_outlined" || config["width_mode"] != "fill" {
+		t.Fatalf("unexpected header: %+v", header)
+	}
+}
+
 func TestStructuredCardRendersNativeTable(t *testing.T) {
 	payload := Card(notify.Message{
 		Version: 2,
@@ -95,7 +110,7 @@ func TestStructuredCardRendersNativeTable(t *testing.T) {
 				Columns: []notify.TableColumn{
 					{Key: "stock", Label: "标的", Kind: notify.TableText, Width: "26%"},
 					{Key: "status", Label: "状态", Kind: notify.TableStatus},
-					{Key: "change", Label: "涨跌", Kind: notify.TableChange},
+					{Key: "change", Label: "涨跌", Kind: notify.TableChange, Align: "right"},
 				},
 				Rows: [][]notify.TableCell{
 					{{Text: "1 · sz000001 名称"}, {Text: "可执行"}, {Text: "+1.20%", Tone: notify.TonePositive}},
@@ -147,6 +162,10 @@ func TestStructuredCardRendersNativeTable(t *testing.T) {
 	assertColumn(0, "stock", "标的", "text", "26%")
 	assertColumn(1, "status", "状态", "options", "")
 	assertColumn(2, "change", "涨跌", "lark_md", "")
+	priceColumn, _ := columns[2].(map[string]any)
+	if priceColumn["horizontal_align"] != "right" || priceColumn["vertical_align"] != "center" {
+		t.Fatalf("unexpected column alignment: %+v", priceColumn)
+	}
 	rows, _ := table["rows"].([]any)
 	if len(rows) != 3 {
 		t.Fatalf("unexpected rows: %+v", rows)

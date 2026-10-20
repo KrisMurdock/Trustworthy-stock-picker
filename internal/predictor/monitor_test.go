@@ -255,7 +255,7 @@ func TestPredictOncePersistsAndIsIdempotent(t *testing.T) {
 	if len(channel.sent) != 1 {
 		t.Fatalf("sent=%d want 1", len(channel.sent))
 	}
-	if first := channel.sent[0].Sections[0].Table.Rows[0][0].Text; first != "Test" {
+	if first := channel.sent[0].Sections[1].Table.Rows[0][0].Text; first != "Test" {
 		t.Fatalf("first card column=%q want stock name", first)
 	}
 
@@ -310,11 +310,11 @@ func TestPredictOnceReconcilesArrivedTargetBar(t *testing.T) {
 	if monitorAbsDiff(highPct, 0.03) > 1e-9 || monitorAbsDiff(lowPct, 0.01) > 1e-9 || monitorAbsDiff(closePct, 0.02) > 1e-9 {
 		t.Fatalf("actual pct high=%v low=%v close=%v", highPct, lowPct, closePct)
 	}
-	if len(channel.sent) != 2 || len(channel.sent[1].Sections) < 3 {
+	if len(channel.sent) != 2 || len(channel.sent[1].Sections) < 4 {
 		t.Fatalf("sent cards=%d, second card sections=%+v", len(channel.sent), channel.sent)
 	}
-	actualSection := channel.sent[1].Sections[1]
-	if actualSection.Heading != "上一根实际对比" || actualSection.Table == nil || len(actualSection.Table.Rows) != 1 {
+	actualSection := channel.sent[1].Sections[2]
+	if actualSection.Heading != "✅ 上一根实际对比" || actualSection.Table == nil || len(actualSection.Table.Rows) != 1 {
 		t.Fatalf("unexpected previous actual section: %+v", actualSection)
 	}
 	row := actualSection.Table.Rows[0]
