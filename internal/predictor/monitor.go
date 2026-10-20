@@ -752,6 +752,7 @@ func (m *Monitor) loadModel() error {
 	m.status.ModelID = model.Artifact.Info.ModelID
 	m.status.ModelValidFor = model.Artifact.Info.ValidFor
 	m.status.TrainedAt = model.Artifact.Info.CreatedAt
+	m.status.TrainDurationMS = model.Artifact.Info.TrainDurationMS
 	return nil
 }
 

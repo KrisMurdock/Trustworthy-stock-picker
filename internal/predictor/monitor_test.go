@@ -462,6 +462,13 @@ func TestTrainWritesArtifactPointerAndMetadata(t *testing.T) {
 	if status.ModelID != info.ModelID || status.ModelValidFor != "2026-10-21" || status.TrainDurationMS != info.TrainDurationMS {
 		t.Fatalf("status=%+v", status)
 	}
+	m.status.TrainDurationMS = 0
+	if err := m.loadModel(); err != nil {
+		t.Fatalf("reload model: %v", err)
+	}
+	if m.status.TrainDurationMS != info.TrainDurationMS {
+		t.Fatalf("model reload did not restore train duration: %d want %d", m.status.TrainDurationMS, info.TrainDurationMS)
+	}
 	if _, err := os.Stat(filepath.Join(m.Config.DataDir, "models", "intraday", "old-model")); !os.IsNotExist(err) {
 		t.Fatalf("old model directory was not pruned: %v", err)
 	}
