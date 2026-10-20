@@ -1,575 +1,404 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1020" viewBox="0 0 1600 1020" role="img" aria-labelledby="title desc">
   <title id="title">Stock Watcher 选股工作原理</title>
-  <desc id="desc">从股票池、价格源、状态源和分钟线出发，经过完整窗口校验与覆盖率门禁，写入 SQLite，再由特征、历史证据、结构门控生成可执行推荐、观察候选或排除结果，最后进入报告归档、只读看板、复盘与 AI 归因以及飞书投递。</desc>
+  <desc id="desc">四层结构：主链路完成股票池与时间约束、多源采集与完整性门禁、特征与结构排名、报告发布与消费；持久化层保存 market.db、context.db、predictions.db 和 state；观察层提供健康状态、5 分钟实验预测与复盘 AI，只读且不反写排名；边界与降级说明单股隔离、覆盖率不足、结构未知、T+1 过期和模型缺失。</desc>
 
   <defs>
+    <style>
+      .sans { font-family: "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .mono { font-family: "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace; }
+      .stage-title { font-size: 26px; font-weight: 700; fill: #14243D; letter-spacing: -0.5px; }
+      .section-title { font-size: 19px; font-weight: 700; fill: #14243D; letter-spacing: -0.2px; }
+      .row-title { font-size: 17px; font-weight: 650; fill: #1B2E4B; }
+      .row-copy { font-size: 14.5px; fill: #56677F; }
+      .body { font-size: 14px; fill: #56677F; }
+      .small { font-size: 12.5px; fill: #7E8DA3; }
+      .eyebrow { font-size: 12px; font-weight: 700; fill: #8090A8; letter-spacing: 1.7px; }
+      .chip { font-size: 11.5px; font-weight: 700; fill: #3D5F9E; letter-spacing: 1.1px; }
+      .db-title { font-size: 17px; font-weight: 700; fill: #113F3A; }
+      .guard-title { font-size: 13.5px; font-weight: 700; }
+      .guard-copy { font-size: 13.5px; fill: #687990; }
+    </style>
+
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#F8FBFF"/>
-      <stop offset="0.52" stop-color="#F3F7FC"/>
-      <stop offset="1" stop-color="#EEF4FA"/>
+      <stop offset="0" stop-color="#F8FAFE"/>
+      <stop offset="0.56" stop-color="#F4F7FC"/>
+      <stop offset="1" stop-color="#EFF4FA"/>
     </linearGradient>
-    <linearGradient id="headerLine" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#2F6BFF" stop-opacity="0"/>
-      <stop offset="0.28" stop-color="#2F6BFF" stop-opacity="0.85"/>
-      <stop offset="0.62" stop-color="#0E9F8A" stop-opacity="0.8"/>
-      <stop offset="1" stop-color="#D97706" stop-opacity="0"/>
+    <linearGradient id="topLine" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2563EB" stop-opacity="0"/>
+      <stop offset="0.24" stop-color="#2563EB"/>
+      <stop offset="0.54" stop-color="#0F9F8A"/>
+      <stop offset="0.78" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#DC2626" stop-opacity="0"/>
     </linearGradient>
     <linearGradient id="blueGrad" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#2F6BFF"/>
-      <stop offset="1" stop-color="#7FA7FF"/>
+      <stop offset="0" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#60A5FA"/>
     </linearGradient>
     <linearGradient id="tealGrad" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#0E9F8A"/>
-      <stop offset="1" stop-color="#5ACBB8"/>
+      <stop offset="0" stop-color="#0F9F8A"/>
+      <stop offset="1" stop-color="#5DCEB8"/>
     </linearGradient>
     <linearGradient id="violetGrad" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#6D5BD0"/>
-      <stop offset="1" stop-color="#A493F3"/>
+      <stop offset="0" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#B79CFF"/>
+    </linearGradient>
+    <linearGradient id="redGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#DC2626"/>
+      <stop offset="1" stop-color="#F59E8B"/>
     </linearGradient>
     <linearGradient id="amberGrad" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0" stop-color="#D97706"/>
-      <stop offset="1" stop-color="#F2B34F"/>
+      <stop offset="1" stop-color="#F7B955"/>
     </linearGradient>
-    <linearGradient id="greenGrad" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#12805C"/>
-      <stop offset="1" stop-color="#47BD92"/>
-    </linearGradient>
-    <linearGradient id="logoGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2F6BFF"/>
-      <stop offset="1" stop-color="#0E9F8A"/>
-    </linearGradient>
-    <radialGradient id="glowBlue" cx="50%" cy="50%" r="50%">
-      <stop offset="0" stop-color="#BBD2FF" stop-opacity="0.55"/>
-      <stop offset="1" stop-color="#BBD2FF" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="glowTeal" cx="50%" cy="50%" r="50%">
-      <stop offset="0" stop-color="#B8EEE4" stop-opacity="0.45"/>
-      <stop offset="1" stop-color="#B8EEE4" stop-opacity="0"/>
-    </radialGradient>
-    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
-      <path d="M32 0H0V32" fill="none" stroke="#DCE7F5" stroke-width="1" stroke-opacity="0.42"/>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse">
+      <circle cx="1.5" cy="1.5" r="1.1" fill="#C9D7E8" fill-opacity="0.42"/>
     </pattern>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
-      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#183153" flood-opacity="0.09"/>
+    <filter id="panelShadow" x="-5%" y="-10%" width="110%" height="125%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#1C3456" flood-opacity="0.06"/>
     </filter>
-    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="160%">
-      <feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#183153" flood-opacity="0.06"/>
+    <filter id="cardShadow" x="-8%" y="-8%" width="116%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#1C3456" flood-opacity="0.07"/>
     </filter>
-    <marker id="arrowSolid" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 10 5 0 10Z" fill="#5B7FAE"/>
-    </marker>
-    <marker id="arrowGreen" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 10 5 0 10Z" fill="#12805C"/>
-    </marker>
-    <marker id="arrowRed" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 10 5 0 10Z" fill="#D64545"/>
-    </marker>
-    <marker id="arrowAmber" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 10 5 0 10Z" fill="#D97706"/>
-    </marker>
 
-    <symbol id="i-pool" viewBox="0 0 24 24">
-      <rect x="4" y="5" width="10" height="10" rx="2"/>
-      <rect x="9" y="9" width="11" height="10" rx="2"/>
-      <circle cx="16.5" cy="7.5" r="1.2" fill="currentColor" stroke="none"/>
+    <symbol id="i-input" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <ellipse cx="12" cy="5.5" rx="6.5" ry="2.7"/>
+        <path d="M5.5 5.5v6c0 1.5 2.9 2.7 6.5 2.7s6.5-1.2 6.5-2.7v-6"/>
+        <path d="M5.5 11.5v6c0 1.5 2.9 2.7 6.5 2.7s6.5-1.2 6.5-2.7v-6"/>
+      </g>
     </symbol>
-    <symbol id="i-cloud" viewBox="0 0 24 24">
-      <path d="M7 18h10a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.1 9.6 4.5 4.5 0 0 0 7 18Z"/>
-      <path d="M12 11v6M9.5 14.5 12 17l2.5-2.5"/>
+    <symbol id="i-shield" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3.3 19 6v5.2c0 4.2-2.8 7.4-7 9.5-4.2-2.1-7-5.3-7-9.5V6l7-2.7Z"/>
+        <path d="m8.7 11.8 2.1 2.1 4.5-4.6"/>
+      </g>
     </symbol>
-    <symbol id="i-calendar" viewBox="0 0 24 24">
-      <rect x="4" y="5" width="16" height="15" rx="2"/>
-      <path d="M8 3v4M16 3v4M4 10h16"/>
-      <path d="m8.5 14 2 2 4-4"/>
+    <symbol id="i-rank" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 19.5h16"/>
+        <path d="M6.5 17v-5.5M12 17V7M17.5 17V9.5"/>
+        <path d="m5.5 8.5 5-4 4 2.5 4-4.5"/>
+      </g>
     </symbol>
-    <symbol id="i-clock" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="8"/>
-      <path d="M12 7v5l3 2"/>
-    </symbol>
-    <symbol id="i-layers" viewBox="0 0 24 24">
-      <path d="m12 3 8 4-8 4-8-4 8-4Z"/>
-      <path d="m4 12 8 4 8-4"/>
-      <path d="m4 17 8 4 8-4"/>
-    </symbol>
-    <symbol id="i-download" viewBox="0 0 24 24">
-      <path d="M12 3v11M8 10l4 4 4-4"/>
-      <path d="M4 18v2h16v-2"/>
-    </symbol>
-    <symbol id="i-shield-check" viewBox="0 0 24 24">
-      <path d="M12 3 5 6v5c0 4.4 3 7.4 7 9 4-1.6 7-4.6 7-9V6l-7-3Z"/>
-      <path d="m8.5 12 2.2 2.2 4.8-5"/>
-    </symbol>
-    <symbol id="i-gate" viewBox="0 0 24 24">
-      <path d="M4 5h16l-6 7v6l-4 2v-8L4 5Z"/>
-    </symbol>
-    <symbol id="i-chart" viewBox="0 0 24 24">
-      <path d="M4 19V5M4 19h16"/>
-      <path d="m7 15 4-4 3 2 5-6"/>
-    </symbol>
-    <symbol id="i-bars" viewBox="0 0 24 24">
-      <path d="M5 19V9M12 19V5M19 19v-7M3 19h18"/>
-    </symbol>
-    <symbol id="i-lock-shield" viewBox="0 0 24 24">
-      <path d="M12 3 5 6v5c0 4.4 3 7.4 7 9 4-1.6 7-4.6 7-9V6l-7-3Z"/>
-      <rect x="9" y="11" width="6" height="5" rx="1"/>
-      <path d="M10.5 11V9.5a1.5 1.5 0 0 1 3 0V11"/>
-    </symbol>
-    <symbol id="i-doc" viewBox="0 0 24 24">
-      <path d="M7 3h7l4 4v14H7z"/>
-      <path d="M14 3v5h4M10 13h5M10 17h5"/>
-    </symbol>
-    <symbol id="i-monitor" viewBox="0 0 24 24">
-      <rect x="3" y="4" width="18" height="12" rx="2"/>
-      <path d="M9 20h6M12 16v4"/>
-    </symbol>
-    <symbol id="i-search-spark" viewBox="0 0 24 24">
-      <circle cx="10" cy="10" r="6"/>
-      <path d="m15 15 5 5"/>
-      <path d="m19 3 .9 2.1L22 6l-2.1.9L19 9l-.9-2.1L16 6l2.1-.9L19 3Z"/>
-    </symbol>
-    <symbol id="i-bell" viewBox="0 0 24 24">
-      <path d="M6 9a6 6 0 0 1 12 0c0 7 2 7 2 9H4c0-2 2-2 2-9Z"/>
-      <path d="M10 21h4"/>
+    <symbol id="i-send" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m3.5 11.5 17-7-5.2 15-3.8-6.2-8-1.8Z"/>
+        <path d="m11.5 13.3 4.2-4.4"/>
+      </g>
     </symbol>
     <symbol id="i-db" viewBox="0 0 24 24">
-      <ellipse cx="12" cy="5" rx="7" ry="3"/>
-      <path d="M5 5v7c0 1.7 3.1 3 7 3s7-1.3 7-3V5"/>
-      <path d="M5 12v7c0 1.7 3.1 3 7 3s7-1.3 7-3v-7"/>
+      <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <ellipse cx="12" cy="5.5" rx="6.5" ry="2.7"/>
+        <path d="M5.5 5.5v6c0 1.5 2.9 2.7 6.5 2.7s6.5-1.2 6.5-2.7v-6"/>
+        <path d="M5.5 11.5v6c0 1.5 2.9 2.7 6.5 2.7s6.5-1.2 6.5-2.7v-6"/>
+      </g>
     </symbol>
-    <symbol id="i-alert" viewBox="0 0 24 24">
-      <path d="M12 3 2.5 20h19L12 3Z"/>
-      <path d="M12 9v5"/>
-      <circle cx="12" cy="17" r="0.8" fill="currentColor" stroke="none"/>
+    <symbol id="i-pulse" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 12h4l2.2-5 4.1 10 2.2-5H21"/>
+      </g>
+    </symbol>
+    <symbol id="i-flask" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 3h6M10 3v5l-5 9.1A2.3 2.3 0 0 0 7 20.5h10a2.3 2.3 0 0 0 2-3.4L14 8V3"/>
+        <path d="M7.3 15h9.4"/>
+      </g>
+    </symbol>
+    <symbol id="i-review" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="10.5" cy="10.5" r="5.5"/>
+        <path d="m15 15 5 5M8 10.5h5M10.5 8v5"/>
+      </g>
     </symbol>
   </defs>
 
-  <style>
-    .sans { font-family: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; }
-    .mono { font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
-    .title { font-weight: 700; fill: #142033; }
-    .body { font-weight: 400; fill: #4E6078; }
-    .muted { font-weight: 400; fill: #7A8AA0; }
-    .label { font-weight: 600; fill: #35506F; }
-    .tiny { font-size: 10.8px; }
-    .small { font-size: 11.8px; }
-    .card-title { font-size: 15px; font-weight: 700; fill: #1B2B43; }
-    .card-sub { font-size: 11.4px; fill: #6B7C93; }
-    use { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-  </style>
+  <rect width="1600" height="1020" fill="url(#bg)"/>
+  <rect width="1600" height="1020" fill="url(#dots)"/>
+  <rect width="1600" height="6" fill="url(#topLine)"/>
 
-  <rect width="1600" height="1000" fill="url(#bg)"/>
-  <rect width="1600" height="1000" fill="url(#grid)"/>
-  <circle cx="1330" cy="80" r="270" fill="url(#glowTeal)"/>
-  <circle cx="110" cy="880" r="230" fill="url(#glowBlue)"/>
-  <rect x="0" y="0" width="1600" height="5" fill="url(#headerLine)"/>
-
-  <!-- Header -->
   <g class="sans">
-    <g filter="url(#shadow)">
-      <rect x="48" y="42" width="54" height="54" rx="16" fill="url(#logoGrad)"/>
+    <!-- Header -->
+    <g filter="url(#panelShadow)">
+      <rect x="24" y="20" width="1552" height="96" rx="24" fill="#FFFFFF" fill-opacity="0.94" stroke="#DFE7F2"/>
     </g>
-    <path d="M67 64v16M79 58v21M91 67v13" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round"/>
-    <rect x="63" y="69" width="8" height="8" rx="2" fill="#FFFFFF"/>
-    <rect x="75" y="63" width="8" height="11" rx="2" fill="#FFFFFF" opacity="0.9"/>
-    <rect x="87" y="72" width="8" height="6" rx="2" fill="#FFFFFF" opacity="0.78"/>
-    <text x="122" y="70" class="title" font-size="30">Stock Watcher</text>
-    <text x="122" y="96" class="body" font-size="14.5">A 股龙头股池 · 选股工作原理</text>
-    <text x="122" y="113" class="muted" font-size="11.2">多源行情 → 完整性门禁 → 可复核的观察排名与可执行推荐</text>
+    <rect x="56" y="42" width="7" height="44" rx="3.5" fill="url(#blueGrad)"/>
+    <text x="80" y="65" font-size="32" font-weight="750" fill="#14243D" letter-spacing="-0.8">Stock Watcher</text>
+    <text x="82" y="89" class="body" font-size="15.5">A 股龙头股池 · 从十年行情到次日决策卡</text>
 
-    <rect x="1080" y="44" width="472" height="36" rx="18" fill="#FFFFFF" fill-opacity="0.72" stroke="#DDE6F2"/>
-    <path d="M1096 62h24" stroke="#5B7FAE" stroke-width="2.2" marker-end="url(#arrowSolid)"/>
-    <text x="1128" y="66" class="muted" font-size="10.5">主链路</text>
-    <circle cx="1192" cy="62" r="4.5" fill="#12805C"/>
-    <text x="1202" y="66" class="muted" font-size="10.5">可执行</text>
-    <circle cx="1282" cy="62" r="4.5" fill="#D97706"/>
-    <text x="1292" y="66" class="muted" font-size="10.5">观察</text>
-    <path d="M1370 62h24" stroke="#7A8AA0" stroke-width="2.2" stroke-dasharray="5 5" marker-end="url(#arrowSolid)"/>
-    <text x="1402" y="66" class="muted" font-size="10.5">降级 / 只读</text>
-  </g>
-  <path d="M48 124H1552" stroke="#DDE6F2" stroke-width="1"/>
+    <rect x="988" y="38" width="104" height="25" rx="8" fill="#F3F7FF" stroke="#DCE7FA"/>
+    <text x="1040" y="55" text-anchor="middle" class="chip" font-size="10.5">PURE GO</text>
+    <rect x="1102" y="38" width="104" height="25" rx="8" fill="#F2FBF9" stroke="#D4EEE8"/>
+    <text x="1154" y="55" text-anchor="middle" class="chip" fill="#0B6B5D" font-size="10.5">SQLITE</text>
+    <rect x="1216" y="38" width="140" height="25" rx="8" fill="#F7F5FF" stroke="#E2D9FF"/>
+    <text x="1286" y="55" text-anchor="middle" class="chip" fill="#5B21B6" font-size="10.5">SINGLE BINARY</text>
+    <rect x="1366" y="38" width="162" height="25" rx="8" fill="#FFF8F6" stroke="#F7DBD4"/>
+    <text x="1447" y="55" text-anchor="middle" class="chip" fill="#9A3412" font-size="10.5">EMBEDDED UI</text>
 
-  <!-- Section 01: inputs -->
-  <g class="sans">
-    <rect x="48" y="150" width="292" height="620" rx="24" fill="#FFFFFF" fill-opacity="0.84" stroke="#DDE6F2" filter="url(#softShadow)"/>
-    <rect x="72" y="148" width="244" height="4" rx="2" fill="url(#blueGrad)"/>
-    <circle cx="72" cy="178" r="14" fill="#EAF1FF" stroke="#BFD3FF"/>
-    <text x="72" y="182.5" text-anchor="middle" class="mono" font-size="11" font-weight="700" fill="#2F6BFF">01</text>
-    <text x="96" y="184" class="title" font-size="17">输入与约束</text>
-    <text x="96" y="202" class="muted" font-size="10.8">POOL · SOURCES · TIME</text>
+    <circle cx="992" cy="87" r="5" fill="#2563EB"/>
+    <text x="1004" y="91" class="small" font-size="13">主链路</text>
+    <circle cx="1088" cy="87" r="5" fill="#0F9F8A"/>
+    <text x="1100" y="91" class="small" font-size="13">持久化</text>
+    <circle cx="1192" cy="87" r="5" fill="#7C3AED"/>
+    <text x="1204" y="91" class="small" font-size="13">观察 / 实验</text>
+    <circle cx="1324" cy="87" r="5" fill="#DC2626"/>
+    <text x="1336" y="91" class="small" font-size="13">失败 / 降级</text>
 
-    <g filter="url(#softShadow)">
-      <rect x="64" y="206" width="260" height="62" rx="14" fill="#FFFFFF" stroke="#E3EBF6"/>
-    </g>
-    <rect x="64" y="206" width="4" height="62" rx="2" fill="#2F6BFF"/>
-    <rect x="76" y="218" width="28" height="28" rx="9" fill="#EAF1FF"/>
-    <use href="#i-pool" x="82" y="224" width="16" height="16" style="color:#2F6BFF"/>
-    <text x="114" y="230" class="card-title">股票池</text>
-    <text x="114" y="247" class="card-sub">leaders.yaml · 行业 / 代码 / 上市日</text>
+    <!-- Main pipeline -->
+    <rect x="24" y="126" width="1552" height="424" rx="24" fill="#F5F8FF" fill-opacity="0.86" stroke="#DCE6F6"/>
+    <rect x="48" y="142" width="4" height="20" rx="2" fill="#2563EB"/>
+    <text x="62" y="159" class="section-title">选股主链路</text>
+    <text x="172" y="159" class="eyebrow" font-size="11">DAILY SELECTION</text>
+    <text x="1552" y="159" text-anchor="end" class="body" font-size="13.5">15:00 收盘 → 18:05 选股 → 次日 09:30 停止推送</text>
 
-    <g filter="url(#softShadow)">
-      <rect x="64" y="282" width="260" height="104" rx="14" fill="#FFFFFF" stroke="#E3EBF6"/>
-    </g>
-    <rect x="64" y="282" width="4" height="104" rx="2" fill="#2F6BFF"/>
-    <rect x="76" y="294" width="28" height="28" rx="9" fill="#EAF1FF"/>
-    <use href="#i-cloud" x="82" y="300" width="16" height="16" style="color:#2F6BFF"/>
-    <text x="114" y="306" class="card-title">价格源</text>
-    <text x="114" y="323" class="card-sub">完整窗口 · 多源回退</text>
-    <g class="mono" font-size="9.8" fill="#35506F">
-      <rect x="78" y="334" width="70" height="22" rx="7" fill="#F3F7FF" stroke="#D8E5F7"/>
-      <text x="113" y="349" text-anchor="middle">Tencent</text>
-      <rect x="154" y="334" width="56" height="22" rx="7" fill="#F3F7FF" stroke="#D8E5F7"/>
-      <text x="182" y="349" text-anchor="middle">Sina</text>
-      <rect x="216" y="334" width="92" height="22" rx="7" fill="#F3F7FF" stroke="#D8E5F7"/>
-      <text x="262" y="349" text-anchor="middle">BaoStock</text>
-      <rect x="78" y="362" width="70" height="22" rx="7" fill="#F3F7FF" stroke="#D8E5F7"/>
-      <text x="113" y="377" text-anchor="middle">Tushare</text>
-      <rect x="154" y="362" width="92" height="22" rx="7" fill="#F3F7FF" stroke="#D8E5F7"/>
-      <text x="200" y="377" text-anchor="middle">Eastmoney</text>
-    </g>
+    <!-- Stage 01: inputs -->
+    <g class="sans">
+      <g filter="url(#cardShadow)">
+        <rect x="48" y="174" width="350" height="348" rx="20" fill="#FFFFFF" stroke="#E1E8F2"/>
+      </g>
+      <rect x="54" y="174" width="338" height="5" rx="2.5" fill="url(#blueGrad)"/>
+      <use href="#i-input" x="318" y="188" width="52" height="52" opacity="0.10" style="color:#2563EB"/>
+      <text x="70" y="204" class="eyebrow" fill="#2563EB">STEP 01</text>
+      <text x="70" y="240" class="stage-title">输入与约束</text>
+      <text x="70" y="262" class="eyebrow">POOL · WINDOW · CLOCK</text>
 
-    <g filter="url(#softShadow)">
-      <rect x="64" y="400" width="260" height="74" rx="14" fill="#FFFFFF" stroke="#E3EBF6"/>
-    </g>
-    <rect x="64" y="400" width="4" height="74" rx="2" fill="#2F6BFF"/>
-    <rect x="76" y="412" width="28" height="28" rx="9" fill="#EAF1FF"/>
-    <use href="#i-calendar" x="82" y="418" width="16" height="16" style="color:#2F6BFF"/>
-    <text x="114" y="424" class="card-title">状态源</text>
-    <text x="114" y="441" class="card-sub">交易日历 · 停牌 · 上市信息</text>
-    <text x="78" y="461" class="tiny" fill="#7A8AA0">权威状态用于解释“无 bar”，不伪造 K 线</text>
+      <rect x="66" y="284" width="314" height="56" rx="12" fill="#F8FAFD" stroke="#E9EFF7"/>
+      <rect x="66" y="294" width="3" height="36" rx="1.5" fill="#2563EB"/>
+      <text x="82" y="307" class="row-title">股池与时间</text>
+      <text x="82" y="327" class="row-copy">leaders.yaml · 交易日历 / 停牌 / T+1</text>
 
-    <g filter="url(#softShadow)">
-      <rect x="64" y="488" width="260" height="64" rx="14" fill="#FFFFFF" stroke="#E3EBF6"/>
-    </g>
-    <rect x="64" y="488" width="4" height="64" rx="2" fill="#2F6BFF"/>
-    <rect x="76" y="500" width="28" height="28" rx="9" fill="#EAF1FF"/>
-    <use href="#i-clock" x="82" y="506" width="16" height="16" style="color:#2F6BFF"/>
-    <text x="114" y="512" class="card-title">分钟线</text>
-    <text x="114" y="529" class="card-sub">腾讯 5m · 15/30/60 聚合</text>
-    <text x="278" y="529" text-anchor="end" class="mono tiny" fill="#2F6BFF">≤640</text>
+      <rect x="66" y="348" width="314" height="56" rx="12" fill="#F8FAFD" stroke="#E9EFF7"/>
+      <rect x="66" y="358" width="3" height="36" rx="1.5" fill="#2563EB"/>
+      <text x="82" y="371" class="row-title">行情窗口</text>
+      <text x="82" y="391" class="row-copy">10 年原始线 + 独立 qfq 分析窗口</text>
 
-    <g filter="url(#softShadow)">
-      <rect x="64" y="566" width="260" height="88" rx="14" fill="#FFFFFF" stroke="#E3EBF6"/>
-    </g>
-    <rect x="64" y="566" width="4" height="88" rx="2" fill="#D97706"/>
-    <rect x="76" y="578" width="28" height="28" rx="9" fill="#FFF4E5"/>
-    <use href="#i-layers" x="82" y="584" width="16" height="16" style="color:#D97706"/>
-    <text x="114" y="590" class="card-title">市场环境</text>
-    <text x="114" y="607" class="card-sub">5 个核心指数 + 行业/概念板块</text>
-    <text x="78" y="629" class="tiny" fill="#A25B00">并行写入 context.db，不参与选股排名</text>
-    <text x="78" y="644" class="tiny" fill="#7A8AA0">失败只影响复盘上下文，不阻断股票报告</text>
+      <rect x="66" y="412" width="314" height="56" rx="12" fill="#F8FAFD" stroke="#E9EFF7"/>
+      <rect x="66" y="422" width="3" height="36" rx="1.5" fill="#2563EB"/>
+      <text x="82" y="435" class="row-title">分钟上下文</text>
+      <text x="82" y="455" class="row-copy">5m 采集 · 15/30/60 派生 · 实验预测</text>
 
-    <rect x="64" y="668" width="260" height="80" rx="14" fill="#F8FAFD" stroke="#E3EBF6"/>
-    <text x="78" y="690" class="label" font-size="12">运行节奏</text>
-    <text x="78" y="709" class="tiny" fill="#607089">18:05 调度 · 北京时间</text>
-    <text x="78" y="726" class="tiny" fill="#607089">次日 09:30 前有效 · T+1</text>
-    <rect x="238" y="681" width="70" height="22" rx="8" fill="#EAF1FF" stroke="#BFD3FF"/>
-    <text x="273" y="696" text-anchor="middle" class="mono" font-size="9" fill="#2F6BFF">RUN</text>
-  </g>
-
-  <!-- Section 02: collect and gate -->
-  <g class="sans">
-    <rect x="372" y="150" width="352" height="620" rx="24" fill="#FFFFFF" fill-opacity="0.84" stroke="#DDE6F2" filter="url(#softShadow)"/>
-    <rect x="396" y="148" width="304" height="4" rx="2" fill="url(#tealGrad)"/>
-    <circle cx="396" cy="178" r="14" fill="#E6F7F3" stroke="#B9E6DC"/>
-    <text x="396" y="182.5" text-anchor="middle" class="mono" font-size="11" font-weight="700" fill="#0E9F8A">02</text>
-    <text x="420" y="184" class="title" font-size="17">采集与完整性门禁</text>
-    <text x="420" y="202" class="muted" font-size="10.8">COLLECT · VALIDATE · GATE</text>
-
-    <g filter="url(#softShadow)">
-      <rect x="388" y="206" width="320" height="96" rx="14" fill="#FFFFFF" stroke="#E3EBF6"/>
-    </g>
-    <rect x="388" y="206" width="4" height="96" rx="2" fill="#0E9F8A"/>
-    <rect x="400" y="218" width="28" height="28" rx="9" fill="#E6F7F3"/>
-    <use href="#i-download" x="406" y="224" width="16" height="16" style="color:#0E9F8A"/>
-    <text x="438" y="230" class="card-title">完整窗口抓取</text>
-    <text x="438" y="247" class="card-sub">按源顺序尝试，整窗回退</text>
-    <text x="404" y="269" class="tiny" fill="#607089">十年原始窗口与分析窗口取更长</text>
-    <text x="404" y="285" class="tiny" fill="#607089">前复权窗口完整刷新；不复权按字段一致增量合并</text>
-    <rect x="642" y="220" width="50" height="22" rx="8" fill="#E6F7F3" stroke="#B9E6DC"/>
-    <text x="667" y="235" text-anchor="middle" class="mono" font-size="9" fill="#0E9F8A">×5</text>
-
-    <g filter="url(#softShadow)">
-      <rect x="388" y="316" width="320" height="122" rx="14" fill="#FFFFFF" stroke="#E3EBF6"/>
-    </g>
-    <rect x="388" y="316" width="4" height="122" rx="2" fill="#0E9F8A"/>
-    <rect x="400" y="328" width="28" height="28" rx="9" fill="#E6F7F3"/>
-    <use href="#i-shield-check" x="406" y="334" width="16" height="16" style="color:#0E9F8A"/>
-    <text x="438" y="340" class="card-title">逐股校验</text>
-    <text x="438" y="357" class="card-sub">交易日 · 上市日 · 分页 · 复权</text>
-    <text x="404" y="378" class="tiny" fill="#607089">成交量单位 · 历史覆盖 · 数值边界</text>
-    <g class="mono" font-size="8.8" fill="#35506F">
-      <rect x="404" y="390" width="54" height="20" rx="7" fill="#F3F7FF" stroke="#D8E5F7"/>
-      <text x="431" y="404" text-anchor="middle">CAL</text>
-      <rect x="464" y="390" width="58" height="20" rx="7" fill="#F3F7FF" stroke="#D8E5F7"/>
-      <text x="493" y="404" text-anchor="middle">QFQ</text>
-      <rect x="528" y="390" width="54" height="20" rx="7" fill="#F3F7FF" stroke="#D8E5F7"/>
-      <text x="555" y="404" text-anchor="middle">UNIT</text>
-      <rect x="588" y="390" width="68" height="20" rx="7" fill="#F3F7FF" stroke="#D8E5F7"/>
-      <text x="622" y="404" text-anchor="middle">PAGE</text>
-    </g>
-    <text x="404" y="427" class="tiny" fill="#A25B00">可隔离错误 → 记录原因并跳过；临时错误 → 中止本轮</text>
-
-    <g filter="url(#softShadow)">
-      <rect x="388" y="452" width="320" height="124" rx="14" fill="#FFFFFF" stroke="#E3EBF6"/>
-    </g>
-    <rect x="388" y="452" width="4" height="124" rx="2" fill="#0E9F8A"/>
-    <rect x="400" y="464" width="28" height="28" rx="9" fill="#E6F7F3"/>
-    <use href="#i-gate" x="406" y="470" width="16" height="16" style="color:#0E9F8A"/>
-    <text x="438" y="476" class="card-title">发布门禁</text>
-    <text x="438" y="493" class="card-sub">两项都通过才生成报告</text>
-    <rect x="404" y="504" width="140" height="48" rx="10" fill="#EAF1FF" stroke="#CFDdFF"/>
-    <text x="474" y="521" text-anchor="middle" class="tiny" fill="#2F6BFF">十年完整性</text>
-    <text x="474" y="543" text-anchor="middle" class="mono" font-size="19" font-weight="700" fill="#2F6BFF">≥ 95%</text>
-    <rect x="552" y="504" width="140" height="48" rx="10" fill="#E6F7F3" stroke="#B9E6DC"/>
-    <text x="622" y="521" text-anchor="middle" class="tiny" fill="#0E9F8A">当日可分析</text>
-    <text x="622" y="543" text-anchor="middle" class="mono" font-size="19" font-weight="700" fill="#0E9F8A">≥ 90%</text>
-    <text x="404" y="567" class="tiny" fill="#A25B00">任一不足 → 不发布推荐报告</text>
-
-    <path d="M548 576V584" stroke="#D64545" stroke-width="1.8" stroke-dasharray="5 5" marker-end="url(#arrowRed)"/>
-    <rect x="388" y="590" width="320" height="84" rx="14" fill="#FDECEC" stroke="#F3B9B9" stroke-dasharray="6 5"/>
-    <rect x="400" y="602" width="28" height="28" rx="9" fill="#FFFFFF" fill-opacity="0.72"/>
-    <use href="#i-alert" x="406" y="608" width="16" height="16" style="color:#D64545"/>
-    <text x="438" y="614" class="card-title" fill="#B33A3A">覆盖率不足时</text>
-    <text x="438" y="631" class="tiny" fill="#8F4A4A">保存已通过校验的行情与同步状态</text>
-    <text x="404" y="652" class="tiny" fill="#8F4A4A">不写报告 · 不投递 · 保留诊断与隔离原因</text>
-    <text x="404" y="667" class="tiny" fill="#8F4A4A">旧报告不会被标成本轮成功</text>
-
-    <rect x="388" y="690" width="320" height="46" rx="12" fill="#F8FAFD" stroke="#E3EBF6"/>
-    <use href="#i-db" x="402" y="702" width="15" height="15" style="color:#607089"/>
-    <text x="426" y="710" class="tiny" fill="#607089">逐股检查点可恢复；整池事务落库</text>
-    <text x="426" y="725" class="tiny" fill="#7A8AA0">同一数据目录只允许一个写进程</text>
-  </g>
-
-  <!-- Section 03: selection -->
-  <g class="sans">
-    <rect x="756" y="150" width="352" height="620" rx="24" fill="#FFFFFF" fill-opacity="0.84" stroke="#DDE6F2" filter="url(#softShadow)"/>
-    <rect x="780" y="148" width="304" height="4" rx="2" fill="url(#violetGrad)"/>
-    <circle cx="780" cy="178" r="14" fill="#F0EDFF" stroke="#D4CCFF"/>
-    <text x="780" y="182.5" text-anchor="middle" class="mono" font-size="11" font-weight="700" fill="#6D5BD0">03</text>
-    <text x="804" y="184" class="title" font-size="17">选股与结构门控</text>
-    <text x="804" y="202" class="muted" font-size="10.8">FEATURES · EVIDENCE · RANK</text>
-
-    <g filter="url(#softShadow)">
-      <rect x="772" y="206" width="320" height="96" rx="14" fill="#FFFFFF" stroke="#E3EBF6"/>
-    </g>
-    <rect x="772" y="206" width="4" height="96" rx="2" fill="#6D5BD0"/>
-    <rect x="784" y="218" width="28" height="28" rx="9" fill="#F0EDFF"/>
-    <use href="#i-chart" x="790" y="224" width="16" height="16" style="color:#6D5BD0"/>
-    <text x="822" y="230" class="card-title">特征与成交模拟</text>
-    <text x="822" y="247" class="card-sub">前复权特征 · 不复权成交</text>
-    <text x="788" y="269" class="tiny" fill="#607089">费用 / 滑点 / T+1 / 涨跌停 / 预算</text>
-    <text x="788" y="285" class="tiny" fill="#607089">3% 净目标 · -3% 净止损 · 5 日到期</text>
-    <rect x="1030" y="220" width="50" height="22" rx="8" fill="#F0EDFF" stroke="#D4CCFF"/>
-    <text x="1055" y="235" text-anchor="middle" class="mono" font-size="9" fill="#6D5BD0">RAW</text>
-
-    <g filter="url(#softShadow)">
-      <rect x="772" y="316" width="320" height="104" rx="14" fill="#FFFFFF" stroke="#E3EBF6"/>
-    </g>
-    <rect x="772" y="316" width="4" height="104" rx="2" fill="#6D5BD0"/>
-    <rect x="784" y="328" width="28" height="28" rx="9" fill="#F0EDFF"/>
-    <use href="#i-bars" x="790" y="334" width="16" height="16" style="color:#6D5BD0"/>
-    <text x="822" y="340" class="card-title">历史证据</text>
-    <text x="822" y="357" class="card-sub">样本数 · 信号日 · 平均净收益</text>
-    <text x="788" y="379" class="tiny" fill="#607089">达标率 · 最差回撤 · 独立留出验证</text>
-    <g class="mono" font-size="8.8" fill="#35506F">
-      <rect x="788" y="391" width="76" height="20" rx="7" fill="#F3F7FF" stroke="#D8E5F7"/>
-      <text x="826" y="405" text-anchor="middle">≥60 SAMPLES</text>
-      <rect x="872" y="391" width="74" height="20" rx="7" fill="#F3F7FF" stroke="#D8E5F7"/>
-      <text x="909" y="405" text-anchor="middle">≥40 DATES</text>
-      <rect x="954" y="391" width="104" height="20" rx="7" fill="#FFF4E5" stroke="#F5D9A8"/>
-      <text x="1006" y="405" text-anchor="middle" fill="#A25B00">HOLDOUT</text>
+      <rect x="66" y="482" width="314" height="30" rx="9" fill="#EAF1FF" stroke="#D5E3FF"/>
+      <text x="78" y="502" class="chip">OUTPUT</text>
+      <text x="146" y="502" class="body" fill="#244C9A">有效股票 + 可分析窗口</text>
     </g>
 
-    <g filter="url(#softShadow)">
-      <rect x="772" y="434" width="320" height="104" rx="14" fill="#FFFFFF" stroke="#E3EBF6"/>
+    <!-- Stage 02: collect and gate -->
+    <g class="sans">
+      <g filter="url(#cardShadow)">
+        <rect x="422" y="174" width="356" height="348" rx="20" fill="#FFFFFF" stroke="#E1E8F2"/>
+      </g>
+      <rect x="428" y="174" width="344" height="5" rx="2.5" fill="url(#blueGrad)"/>
+      <use href="#i-shield" x="692" y="188" width="52" height="52" opacity="0.10" style="color:#2563EB"/>
+      <text x="444" y="204" class="eyebrow" fill="#2563EB">STEP 02</text>
+      <text x="444" y="240" class="stage-title">采集与门禁</text>
+      <text x="444" y="262" class="eyebrow">COLLECT · VALIDATE · GATE</text>
+
+      <rect x="440" y="284" width="320" height="56" rx="12" fill="#F8FAFD" stroke="#E9EFF7"/>
+      <rect x="440" y="294" width="3" height="36" rx="1.5" fill="#2563EB"/>
+      <text x="456" y="307" class="row-title">多源完整窗口</text>
+      <text x="456" y="327" class="row-copy">腾讯 → 新浪 → BaoStock → Tushare → 东财</text>
+
+      <rect x="440" y="348" width="320" height="56" rx="12" fill="#F8FAFD" stroke="#E9EFF7"/>
+      <rect x="440" y="358" width="3" height="36" rx="1.5" fill="#2563EB"/>
+      <text x="456" y="371" class="row-title">逐股校验</text>
+      <text x="456" y="391" class="row-copy">交易日 / 复权 / 分页 / 成交量 / 上市日</text>
+
+      <rect x="440" y="412" width="320" height="56" rx="12" fill="#F8FAFD" stroke="#E9EFF7"/>
+      <rect x="440" y="422" width="3" height="36" rx="1.5" fill="#2563EB"/>
+      <text x="456" y="435" class="row-title">发布门禁</text>
+      <text x="456" y="455" class="row-copy">十年 ≥95% · 当日可分析 ≥90%</text>
+
+      <rect x="440" y="482" width="320" height="30" rx="9" fill="#EAF1FF" stroke="#D5E3FF"/>
+      <text x="452" y="502" class="chip">OUTPUT</text>
+      <text x="514" y="502" class="body" fill="#244C9A">可发布行情 + 隔离原因</text>
     </g>
-    <rect x="772" y="434" width="4" height="104" rx="2" fill="#6D5BD0"/>
-    <rect x="784" y="446" width="28" height="28" rx="9" fill="#F0EDFF"/>
-    <use href="#i-lock-shield" x="790" y="452" width="16" height="16" style="color:#6D5BD0"/>
-    <text x="822" y="458" class="card-title">结构门控</text>
-    <text x="822" y="475" class="card-sub">日线定方向 · 30m/5m 只有否决权</text>
-    <text x="788" y="497" class="tiny" fill="#607089">数据不足 / 错日 / 错源 → unknown</text>
-    <text x="788" y="513" class="tiny" fill="#607089">未知不按通过处理，不递补推荐</text>
-    <rect x="1008" y="446" width="72" height="22" rx="8" fill="#FFF4E5" stroke="#F5D9A8"/>
-    <text x="1044" y="461" text-anchor="middle" class="mono" font-size="8.6" fill="#A25B00">SHADOW</text>
 
-    <g filter="url(#shadow)">
-      <rect x="772" y="552" width="320" height="138" rx="16" fill="#FFFFFF" stroke="#DDE6F2"/>
+    <!-- Stage 03: rank and gate -->
+    <g class="sans">
+      <g filter="url(#cardShadow)">
+        <rect x="802" y="174" width="372" height="348" rx="20" fill="#FFFFFF" stroke="#E1E8F2"/>
+      </g>
+      <rect x="808" y="174" width="360" height="5" rx="2.5" fill="url(#blueGrad)"/>
+      <use href="#i-rank" x="1096" y="188" width="52" height="52" opacity="0.10" style="color:#2563EB"/>
+      <text x="824" y="204" class="eyebrow" fill="#2563EB">STEP 03</text>
+      <text x="824" y="240" class="stage-title">排名与门控</text>
+      <text x="824" y="262" class="eyebrow">FEATURES · EVIDENCE · GUARD</text>
+
+      <rect x="820" y="284" width="336" height="56" rx="12" fill="#F8FAFD" stroke="#E9EFF7"/>
+      <rect x="820" y="294" width="3" height="36" rx="1.5" fill="#2563EB"/>
+      <text x="836" y="307" class="row-title">特征与成交</text>
+      <text x="836" y="327" class="row-copy">qfq 特征 + raw 成交 + 费用 / 滑点</text>
+
+      <rect x="820" y="348" width="336" height="56" rx="12" fill="#F8FAFD" stroke="#E9EFF7"/>
+      <rect x="820" y="358" width="3" height="36" rx="1.5" fill="#2563EB"/>
+      <text x="836" y="371" class="row-title">历史证据</text>
+      <text x="836" y="391" class="row-copy">≥60 样本 · ≥40 信号日 · 独立留出</text>
+
+      <rect x="820" y="412" width="336" height="56" rx="12" fill="#F8FAFD" stroke="#E9EFF7"/>
+      <rect x="820" y="422" width="3" height="36" rx="1.5" fill="#2563EB"/>
+      <text x="836" y="435" class="row-title">结构门控</text>
+      <text x="836" y="455" class="row-copy">shadow 记录；enforce 仅 pass 入选</text>
+
+      <rect x="820" y="482" width="336" height="30" rx="9" fill="#F3F7FF" stroke="#E1EAF8"/>
+      <text x="832" y="502" class="chip">OUTPUT</text>
+      <circle cx="940" cy="497" r="4" fill="#15803D"/>
+      <text x="950" y="502" class="body" font-size="14" fill="#28604A">可执行</text>
+      <circle cx="1018" cy="497" r="4" fill="#D97706"/>
+      <text x="1028" y="502" class="body" font-size="14" fill="#8A5A0A">观察</text>
+      <circle cx="1086" cy="497" r="4" fill="#DC2626"/>
+      <text x="1096" y="502" class="body" font-size="14" fill="#8F3434">排除</text>
     </g>
-    <text x="790" y="578" class="label" font-size="13">当日决策</text>
-    <text x="1074" y="578" text-anchor="end" class="tiny" fill="#7A8AA0">排名 ≠ 推荐</text>
-    <rect x="790" y="590" width="284" height="26" rx="9" fill="#E7F7EF"/>
-    <circle cx="804" cy="603" r="4" fill="#12805C"/>
-    <text x="816" y="607" class="label" font-size="11" fill="#12805C">可执行推荐</text>
-    <text x="1062" y="607" text-anchor="end" class="tiny" fill="#5E7A6F">全部门槛 + 参考计划</text>
-    <rect x="790" y="622" width="284" height="26" rx="9" fill="#FFF4E5"/>
-    <circle cx="804" cy="635" r="4" fill="#D97706"/>
-    <text x="816" y="639" class="label" font-size="11" fill="#A25B00">观察候选</text>
-    <text x="1062" y="639" text-anchor="end" class="tiny" fill="#8A6A3D">保留排名，不可执行</text>
-    <rect x="790" y="654" width="284" height="26" rx="9" fill="#F3F6FA"/>
-    <circle cx="804" cy="667" r="4" fill="#7A8AA0"/>
-    <text x="816" y="671" class="label" font-size="11" fill="#607089">排除 / 过滤</text>
-    <text x="1062" y="671" text-anchor="end" class="tiny" fill="#7A8AA0">数据、风险或结构原因</text>
 
-    <path d="M1092 486h20v230h-20" fill="none" stroke="#D97706" stroke-width="1.8" stroke-dasharray="5 5" marker-end="url(#arrowAmber)"/>
-    <rect x="772" y="704" width="320" height="52" rx="12" fill="#FFF9EF" stroke="#F5D9A8" stroke-dasharray="6 5"/>
-    <use href="#i-alert" x="788" y="717" width="15" height="15" style="color:#D97706"/>
-    <text x="812" y="722" class="tiny" fill="#8A5A12">enforce：fail / unknown → 只能进入观察候选</text>
-    <text x="812" y="738" class="tiny" fill="#8A5A12">shadow：只记录证据，不改变正式推荐</text>
-  </g>
+    <!-- Stage 04: publish and consume -->
+    <g class="sans">
+      <g filter="url(#cardShadow)">
+        <rect x="1198" y="174" width="354" height="348" rx="20" fill="#FFFFFF" stroke="#E1E8F2"/>
+      </g>
+      <rect x="1204" y="174" width="342" height="5" rx="2.5" fill="url(#blueGrad)"/>
+      <use href="#i-send" x="1480" y="188" width="52" height="52" opacity="0.10" style="color:#2563EB"/>
+      <text x="1220" y="204" class="eyebrow" fill="#2563EB">STEP 04</text>
+      <text x="1220" y="240" class="stage-title">发布与消费</text>
+      <text x="1220" y="262" class="eyebrow">ARCHIVE · READ · DELIVER</text>
 
-  <!-- Section 04: publish and consume -->
-  <g class="sans">
-    <rect x="1140" y="150" width="412" height="620" rx="24" fill="#FFFFFF" fill-opacity="0.84" stroke="#DDE6F2" filter="url(#softShadow)"/>
-    <rect x="1164" y="148" width="364" height="4" rx="2" fill="url(#amberGrad)"/>
-    <circle cx="1164" cy="178" r="14" fill="#FFF4E5" stroke="#F5D9A8"/>
-    <text x="1164" y="182.5" text-anchor="middle" class="mono" font-size="11" font-weight="700" fill="#D97706">04</text>
-    <text x="1188" y="184" class="title" font-size="17">发布与消费</text>
-    <text x="1188" y="202" class="muted" font-size="10.8">ARCHIVE · READ · DELIVER</text>
+      <rect x="1216" y="284" width="318" height="56" rx="12" fill="#F8FAFD" stroke="#E9EFF7"/>
+      <rect x="1216" y="294" width="3" height="36" rx="1.5" fill="#2563EB"/>
+      <text x="1232" y="307" class="row-title">报告归档</text>
+      <text x="1232" y="327" class="row-copy">冻结输入 / revision / 同事务发布</text>
 
-    <g filter="url(#shadow)">
-      <rect x="1156" y="206" width="380" height="88" rx="14" fill="#FFFFFF" stroke="#E3EBF6"/>
+      <rect x="1216" y="348" width="318" height="56" rx="12" fill="#F8FAFD" stroke="#E9EFF7"/>
+      <rect x="1216" y="358" width="3" height="36" rx="1.5" fill="#2563EB"/>
+      <text x="1232" y="371" class="row-title">只读看板</text>
+      <text x="1232" y="391" class="row-copy">排名 / K 线 / 策略实验室 / 复盘</text>
+
+      <rect x="1216" y="412" width="318" height="56" rx="12" fill="#F8FAFD" stroke="#E9EFF7"/>
+      <rect x="1216" y="422" width="3" height="36" rx="1.5" fill="#2563EB"/>
+      <text x="1232" y="435" class="row-title">飞书决策卡</text>
+      <text x="1232" y="455" class="row-copy">按日期与通道去重；T+1 09:30 过期</text>
+
+      <rect x="1216" y="482" width="318" height="30" rx="9" fill="#EAF1FF" stroke="#D5E3FF"/>
+      <text x="1228" y="502" class="chip">OUTPUT</text>
+      <text x="1292" y="502" class="body" fill="#244C9A">行动卡 + 可追溯报告</text>
     </g>
-    <rect x="1156" y="206" width="4" height="88" rx="2" fill="#12805C"/>
-    <rect x="1168" y="218" width="28" height="28" rx="9" fill="#E7F7EF"/>
-    <use href="#i-doc" x="1174" y="224" width="16" height="16" style="color:#12805C"/>
-    <text x="1206" y="230" class="card-title">报告归档</text>
-    <text x="1206" y="247" class="card-sub">冻结输入 · revision · 构建版本</text>
-    <text x="1172" y="270" class="tiny" fill="#607089">仅覆盖率通过后写入；旧修订保持可复核</text>
-    <rect x="1458" y="220" width="62" height="22" rx="8" fill="#E7F7EF" stroke="#B9E6DC"/>
-    <text x="1489" y="235" text-anchor="middle" class="mono" font-size="9" fill="#12805C">FROZEN</text>
 
-    <path d="M1176 294v382" stroke="#C9D7EA" stroke-width="2"/>
-    <circle cx="1176" cy="326" r="3.5" fill="#C9D7EA"/>
-    <circle cx="1176" cy="440" r="3.5" fill="#C9D7EA"/>
-    <circle cx="1176" cy="572" r="3.5" fill="#C9D7EA"/>
-    <path d="M1176 326h12" stroke="#5B7FAE" stroke-width="1.8" marker-end="url(#arrowSolid)"/>
-    <path d="M1176 440h12" stroke="#5B7FAE" stroke-width="1.8" marker-end="url(#arrowSolid)"/>
-    <path d="M1176 572h12" stroke="#5B7FAE" stroke-width="1.8" marker-end="url(#arrowSolid)"/>
-
-    <g filter="url(#softShadow)">
-      <rect x="1196" y="326" width="340" height="86" rx="14" fill="#FFFFFF" stroke="#E3EBF6"/>
+    <!-- Main flow connectors -->
+    <g aria-hidden="true">
+      <circle cx="410" cy="348" r="12" fill="#FFFFFF" stroke="#C7D7EE" stroke-width="1.4"/>
+      <path d="M404 348h12M412 343l5 5-5 5" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="790" cy="348" r="12" fill="#FFFFFF" stroke="#C7D7EE" stroke-width="1.4"/>
+      <path d="M784 348h12M792 343l5 5-5 5" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="1186" cy="348" r="12" fill="#FFFFFF" stroke="#C7D7EE" stroke-width="1.4"/>
+      <path d="M1180 348h12M1188 343l5 5-5 5" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     </g>
-    <rect x="1196" y="326" width="4" height="86" rx="2" fill="#2F6BFF"/>
-    <rect x="1208" y="338" width="28" height="28" rx="9" fill="#EAF1FF"/>
-    <use href="#i-monitor" x="1214" y="344" width="16" height="16" style="color:#2F6BFF"/>
-    <text x="1246" y="350" class="card-title">内嵌只读看板</text>
-    <text x="1246" y="367" class="card-sub">首页 / 个股 / K 线 / 排名</text>
-    <text x="1212" y="390" class="tiny" fill="#607089">实验 / 复盘 / 仓位计算器 · 不触发同步或投递</text>
-    <rect x="1458" y="340" width="62" height="22" rx="8" fill="#EAF1FF" stroke="#BFD3FF"/>
-    <text x="1489" y="355" text-anchor="middle" class="mono" font-size="9" fill="#2F6BFF">READ</text>
 
-    <g filter="url(#softShadow)">
-      <rect x="1196" y="440" width="340" height="104" rx="14" fill="#FFFFFF" stroke="#E3EBF6"/>
+    <!-- Persistence layer -->
+    <rect x="24" y="566" width="1552" height="148" rx="24" fill="#F2FBF9" fill-opacity="0.92" stroke="#CFEEE7"/>
+    <rect x="48" y="582" width="4" height="20" rx="2" fill="#0F9F8A"/>
+    <text x="62" y="599" class="section-title">持久化层</text>
+    <text x="160" y="599" class="eyebrow" fill="#0B6B5D">PERSISTENCE</text>
+    <text x="1552" y="599" text-anchor="end" class="body" font-size="13.5">同一 data_dir · 单一写进程 · 原子提交</text>
+
+    <g filter="url(#cardShadow)">
+      <rect x="48" y="612" width="470" height="86" rx="14" fill="#FFFFFF" stroke="#D8EEE9"/>
     </g>
-    <rect x="1196" y="440" width="4" height="104" rx="2" fill="#6D5BD0"/>
-    <rect x="1208" y="452" width="28" height="28" rx="9" fill="#F0EDFF"/>
-    <use href="#i-search-spark" x="1214" y="458" width="16" height="16" style="color:#6D5BD0"/>
-    <text x="1246" y="464" class="card-title">复盘 + AI 归因</text>
-    <text x="1246" y="481" class="card-sub">冻结报告 → 确定性证据包</text>
-    <text x="1212" y="504" class="tiny" fill="#607089">T+1/T+3/T+5 检查点 · 证据编号可追溯</text>
-    <text x="1212" y="520" class="tiny" fill="#607089">AI 仅在用户点击后调用，不自动触发</text>
-    <text x="1212" y="536" class="tiny" fill="#A25B00">只读：不反向修改排名、报告或推荐</text>
-    <rect x="1458" y="454" width="62" height="22" rx="8" fill="#F0EDFF" stroke="#D4CCFF"/>
-    <text x="1489" y="469" text-anchor="middle" class="mono" font-size="9" fill="#6D5BD0">ON CLICK</text>
+    <rect x="48" y="628" width="4" height="54" rx="2" fill="#0F9F8A"/>
+    <text x="68" y="639" class="mono db-title">market.db</text>
+    <text x="68" y="661" class="body" fill="#3C5A55">行情 · 分钟 · 报告 · 快照 · 同步状态</text>
+    <text x="68" y="680" class="small" fill="#6C8F88">schema 6 · 主数据与报告修订</text>
+    <rect x="438" y="622" width="62" height="22" rx="7" fill="#E7F8F4" stroke="#C9EADF"/>
+    <text x="469" y="637" text-anchor="middle" class="chip" fill="#0B6B5D" font-size="9.5">SCHEMA 6</text>
 
-    <g filter="url(#softShadow)">
-      <rect x="1196" y="572" width="340" height="104" rx="14" fill="#FFFFFF" stroke="#E3EBF6"/>
+    <g filter="url(#cardShadow)">
+      <rect x="538" y="612" width="300" height="86" rx="14" fill="#FFFFFF" stroke="#D8EEE9"/>
     </g>
-    <rect x="1196" y="572" width="4" height="104" rx="2" fill="#D97706"/>
-    <rect x="1208" y="584" width="28" height="28" rx="9" fill="#FFF4E5"/>
-    <use href="#i-bell" x="1214" y="590" width="16" height="16" style="color:#D97706"/>
-    <text x="1246" y="596" class="card-title">飞书通知</text>
-    <text x="1246" y="613" class="card-sub">决策卡 + 详情卡</text>
-    <text x="1212" y="636" class="tiny" fill="#607089">账本按数据日期/通道去重，失败退避重试</text>
-    <text x="1212" y="652" class="tiny" fill="#607089">主卡与详情卡按依赖顺序投递</text>
-    <text x="1212" y="668" class="tiny" fill="#A25B00">T+1 09:30 后过期，不再发送旧推荐</text>
-    <rect x="1458" y="586" width="62" height="22" rx="8" fill="#FFF4E5" stroke="#F5D9A8"/>
-    <text x="1489" y="601" text-anchor="middle" class="mono" font-size="9" fill="#A25B00">T+1</text>
+    <rect x="538" y="628" width="4" height="54" rx="2" fill="#F59E0B"/>
+    <text x="558" y="639" class="mono db-title" fill="#66440C">context.db</text>
+    <text x="558" y="661" class="body" fill="#5C5543">指数 / 板块复盘上下文</text>
+    <text x="558" y="680" class="small" fill="#8D8063">并行旁路 · 不参与排名</text>
 
-    <path d="M1366 676v6" stroke="#D64545" stroke-width="1.8" stroke-dasharray="5 5" marker-end="url(#arrowRed)"/>
-    <rect x="1196" y="690" width="340" height="62" rx="12" fill="#FDECEC" stroke="#F3B9B9" stroke-dasharray="6 5"/>
-    <use href="#i-alert" x="1212" y="704" width="15" height="15" style="color:#D64545"/>
-    <text x="1236" y="710" class="tiny" fill="#8F4A4A">超过 T+1 有效窗口</text>
-    <text x="1236" y="726" class="tiny" fill="#8F4A4A">账本标记 expired · 不重发缓存推荐</text>
-    <text x="1236" y="741" class="tiny" fill="#8F4A4A">失败重试不会重新下载整池行情</text>
-  </g>
+    <g filter="url(#cardShadow)">
+      <rect x="858" y="612" width="330" height="86" rx="14" fill="#FFFFFF" stroke="#D8EEE9"/>
+    </g>
+    <rect x="858" y="628" width="4" height="54" rx="2" fill="#7C3AED"/>
+    <text x="878" y="639" class="mono db-title" fill="#4C287D">predictions.db</text>
+    <text x="878" y="661" class="body" fill="#574A67">5m 预测 · 实际值 · 卡尔曼状态</text>
+    <text x="878" y="680" class="small" fill="#857493">实验数据 · 可选功能</text>
 
-  <!-- Main flow arrows -->
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M340 422h32" stroke="#5B7FAE" stroke-width="2.2" marker-end="url(#arrowSolid)"/>
-    <text x="356" y="412" text-anchor="middle" class="sans tiny" fill="#7A8AA0">完整窗口</text>
+    <g filter="url(#cardShadow)">
+      <rect x="1208" y="612" width="344" height="86" rx="14" fill="#FFFFFF" stroke="#D8EEE9"/>
+    </g>
+    <rect x="1208" y="628" width="4" height="54" rx="2" fill="#0F9F8A"/>
+    <text x="1228" y="639" class="mono db-title">state/</text>
+    <text x="1228" y="661" class="body" fill="#3C5A55">投递账本 · 预测开关 · 健康状态</text>
+    <text x="1228" y="680" class="small" fill="#6C8F88">运行状态 · 原子 JSON</text>
 
-    <path d="M548 302v14" stroke="#5B7FAE" stroke-width="2.2" marker-end="url(#arrowSolid)"/>
-    <path d="M548 438v14" stroke="#5B7FAE" stroke-width="2.2" marker-end="url(#arrowSolid)"/>
-    <path d="M548 576v14" stroke="#5B7FAE" stroke-width="2.2" marker-end="url(#arrowSolid)"/>
+    <!-- Observation layer -->
+    <rect x="24" y="730" width="1552" height="148" rx="24" fill="#F7F5FF" fill-opacity="0.92" stroke="#E1D9FF"/>
+    <rect x="48" y="746" width="4" height="20" rx="2" fill="#7C3AED"/>
+    <text x="62" y="763" class="section-title">观察层</text>
+    <text x="132" y="763" class="eyebrow" fill="#5B21B6">READ-ONLY / EXPERIMENTAL</text>
+    <text x="1552" y="763" text-anchor="end" class="body" font-size="13.5">只读读取主链路结果 · 不反写排名或推荐</text>
 
-    <path d="M932 302v14" stroke="#5B7FAE" stroke-width="2.2" marker-end="url(#arrowSolid)"/>
-    <path d="M932 420v14" stroke="#5B7FAE" stroke-width="2.2" marker-end="url(#arrowSolid)"/>
-    <path d="M932 538v14" stroke="#5B7FAE" stroke-width="2.2" marker-end="url(#arrowSolid)"/>
+    <g filter="url(#cardShadow)">
+      <rect x="48" y="774" width="500" height="84" rx="14" fill="#FFFFFF" stroke="#E2DDF1"/>
+    </g>
+    <rect x="48" y="788" width="4" height="56" rx="2" fill="#0F9F8A"/>
+    <use href="#i-pulse" x="66" y="796" width="24" height="24" style="color:#0F9F8A"/>
+    <text x="102" y="803" class="row-title" font-size="17.5">健康状态</text>
+    <text x="102" y="825" class="body">同步心跳 · 覆盖率 · 通知积压 · 模型新鲜度</text>
+    <text x="102" y="845" class="small">health / /api/status / predictor-status · 只读</text>
+    <rect x="430" y="786" width="98" height="22" rx="7" fill="#E7F8F4" stroke="#C9EADF"/>
+    <text x="479" y="801" text-anchor="middle" class="chip" fill="#0B6B5D" font-size="9.5">READ ONLY</text>
 
-    <path d="M708 514h48" stroke="#5B7FAE" stroke-width="2.2" marker-end="url(#arrowSolid)"/>
-    <text x="732" y="504" text-anchor="middle" class="sans tiny" fill="#7A8AA0">通过</text>
+    <g filter="url(#cardShadow)">
+      <rect x="568" y="774" width="500" height="84" rx="14" fill="#FFFFFF" stroke="#F0E2C7"/>
+    </g>
+    <rect x="568" y="788" width="4" height="56" rx="2" fill="#D97706"/>
+    <use href="#i-flask" x="586" y="796" width="24" height="24" style="color:#D97706"/>
+    <text x="622" y="803" class="row-title" font-size="17.5">5 分钟实验预测</text>
+    <text x="622" y="825" class="body">优先 Selected，为空回退观察 Top N；预测下一根 high/low/close</text>
+    <text x="622" y="845" class="small">无可用报告则跳过 · 15:30 训练次日模型 · 推送只控飞书</text>
+    <rect x="950" y="786" width="98" height="22" rx="7" fill="#FFF4E5" stroke="#F5D9A8"/>
+    <text x="999" y="801" text-anchor="middle" class="chip" fill="#A25B00" font-size="9.5">OPTIONAL</text>
 
-    <path d="M1092 620h28V250h36" stroke="#5B7FAE" stroke-width="2.4" marker-end="url(#arrowSolid)"/>
-    <text x="1128" y="430" transform="rotate(-90 1128 430)" text-anchor="middle" class="sans tiny" fill="#5B7FAE">发布报告</text>
-  </g>
+    <g filter="url(#cardShadow)">
+      <rect x="1088" y="774" width="464" height="84" rx="14" fill="#FFFFFF" stroke="#E2DDF1"/>
+    </g>
+    <rect x="1088" y="788" width="4" height="56" rx="2" fill="#7C3AED"/>
+    <use href="#i-review" x="1106" y="796" width="24" height="24" style="color:#7C3AED"/>
+    <text x="1142" y="803" class="row-title" font-size="17.5">复盘 + AI</text>
+    <text x="1142" y="825" class="body">冻结报告 → 确定性证据包；T+1 / T+3 / T+5</text>
+    <text x="1142" y="845" class="small">AI 仅在点击后调用 · 不修改排名或报告</text>
+    <rect x="1420" y="786" width="104" height="22" rx="7" fill="#F2EDFF" stroke="#DCCFFF"/>
+    <text x="1472" y="801" text-anchor="middle" class="chip" fill="#5B21B6" font-size="9.5">ON CLICK</text>
 
-  <!-- Storage foundation -->
-  <g class="sans">
-    <rect x="372" y="804" width="1180" height="104" rx="20" fill="#FFFFFF" fill-opacity="0.86" stroke="#DDE6F2" filter="url(#softShadow)"/>
-    <text x="392" y="826" class="label" font-size="12">持久化 / 单一事实源</text>
-    <text x="392" y="844" class="tiny" fill="#7A8AA0">本地磁盘 / CIFS · 单写锁 · 事务</text>
+    <!-- Guardrails -->
+    <rect x="24" y="894" width="1552" height="94" rx="24" fill="#FFF7F5" fill-opacity="0.94" stroke="#F8D9D1"/>
+    <rect x="48" y="908" width="4" height="20" rx="2" fill="#DC2626"/>
+    <text x="62" y="925" class="section-title">边界与降级</text>
+    <text x="172" y="925" class="eyebrow" fill="#9A3412">FAIL CLOSED · NO LOCAL FALLBACK</text>
+    <text x="1552" y="925" text-anchor="end" class="small" font-size="12.5">机会分 ≠ 成功概率 · 不连接券商 · 不自动下单</text>
 
-    <rect x="520" y="818" width="500" height="72" rx="14" fill="#F8FBFF" stroke="#D8E5F7"/>
-    <rect x="520" y="818" width="4" height="72" rx="2" fill="#2F6BFF"/>
-    <use href="#i-db" x="538" y="836" width="18" height="18" style="color:#2F6BFF"/>
-    <text x="566" y="840" class="mono" font-size="13" font-weight="700" fill="#1B2B43">market.db</text>
-    <text x="566" y="858" class="tiny" fill="#607089">行情 · 状态 · 分钟 · 报告 · 修订 · 检查点</text>
-    <text x="566" y="875" class="tiny" fill="#7A8AA0">SQLite · 写连接 FULL / 读连接 query_only</text>
-    <rect x="944" y="830" width="58" height="22" rx="8" fill="#EAF1FF" stroke="#BFD3FF"/>
-    <text x="973" y="845" text-anchor="middle" class="mono" font-size="9" fill="#2F6BFF">SCHEMA 6</text>
+    <rect x="48" y="936" width="286" height="40" rx="12" fill="#FFFFFF" stroke="#F3C7BE"/>
+    <rect x="48" y="947" width="3" height="18" rx="1.5" fill="#DC2626"/>
+    <text x="64" y="961" class="guard-copy"><tspan class="guard-title" fill="#9A3412">单股失败</tspan> → 记录原因，继续整池</text>
 
-    <rect x="1036" y="818" width="250" height="72" rx="14" fill="#FFF9EF" stroke="#F5D9A8"/>
-    <rect x="1036" y="818" width="4" height="72" rx="2" fill="#D97706"/>
-    <use href="#i-layers" x="1052" y="836" width="18" height="18" style="color:#D97706"/>
-    <text x="1080" y="840" class="mono" font-size="13" font-weight="700" fill="#1B2B43">context.db</text>
-    <text x="1080" y="858" class="tiny" fill="#8A6A3D">指数 / 板块 / 同步状态</text>
-    <text x="1080" y="875" class="tiny" fill="#8A6A3D">复盘上下文，不参与排名</text>
+    <rect x="352" y="936" width="286" height="40" rx="12" fill="#FFFFFF" stroke="#F3C7BE"/>
+    <rect x="352" y="947" width="3" height="18" rx="1.5" fill="#DC2626"/>
+    <text x="368" y="961" class="guard-copy"><tspan class="guard-title" fill="#9A3412">覆盖率不足</tspan> → 保存行情，不发布不投递</text>
 
-    <rect x="1300" y="818" width="236" height="72" rx="14" fill="#F8FAFD" stroke="#E3EBF6"/>
-    <use href="#i-doc" x="1316" y="836" width="18" height="18" style="color:#607089"/>
-    <text x="1344" y="840" class="label" font-size="12">其他持久状态</text>
-    <text x="1344" y="858" class="tiny" fill="#607089">experiments.db · calendar.db</text>
-    <text x="1344" y="875" class="tiny" fill="#607089">state/delivery.json</text>
+    <rect x="656" y="936" width="286" height="40" rx="12" fill="#FFFFFF" stroke="#F3C7BE"/>
+    <rect x="656" y="947" width="3" height="18" rx="1.5" fill="#DC2626"/>
+    <text x="672" y="961" class="guard-copy"><tspan class="guard-title" fill="#9A3412">结构 fail/unknown</tspan> → 仅观察</text>
 
-    <!-- write and read relationships -->
-    <path d="M548 736v82" fill="none" stroke="#5B7FAE" stroke-width="2.2" marker-end="url(#arrowSolid)"/>
-    <text x="558" y="778" class="tiny" fill="#7A8AA0">写入</text>
-    <path d="M932 804v-34" fill="none" stroke="#5B7FAE" stroke-width="2.2" marker-end="url(#arrowSolid)"/>
-    <text x="942" y="786" class="tiny" fill="#7A8AA0">读取</text>
-    <path d="M1366 804v-34" fill="none" stroke="#5B7FAE" stroke-width="2.2" stroke-dasharray="5 5" marker-end="url(#arrowSolid)"/>
-    <text x="1376" y="786" class="tiny" fill="#7A8AA0">只读</text>
+    <rect x="960" y="936" width="286" height="40" rx="12" fill="#FFFFFF" stroke="#F3C7BE"/>
+    <rect x="960" y="947" width="3" height="18" rx="1.5" fill="#DC2626"/>
+    <text x="976" y="961" class="guard-copy"><tspan class="guard-title" fill="#9A3412">T+1 过期</tspan> → expired，不重发</text>
 
-    <!-- context is a parallel lane, never part of ranking -->
-    <path d="M324 610h24v184h812v24" fill="none" stroke="#D97706" stroke-width="1.7" stroke-dasharray="5 5" marker-end="url(#arrowAmber)"/>
-    <text x="760" y="784" text-anchor="middle" class="tiny" fill="#A25B00">并行同步 · 不参与选股</text>
-  </g>
+    <rect x="1264" y="936" width="286" height="40" rx="12" fill="#FFFFFF" stroke="#F3C7BE"/>
+    <rect x="1264" y="947" width="3" height="18" rx="1.5" fill="#DC2626"/>
+    <text x="1280" y="961" class="guard-copy"><tspan class="guard-title" fill="#9A3412">模型缺失/过期</tspan> → 不预测不推送，进 health</text>
 
-  <!-- Run cadence -->
-  <g class="sans">
-    <text x="48" y="948" class="label" font-size="12">时间线</text>
-    <path d="M160 944H1120" stroke="#D8E5F7" stroke-width="2"/>
-    <circle cx="240" cy="944" r="5" fill="#FFFFFF" stroke="#2F6BFF" stroke-width="2.5"/>
-    <circle cx="680" cy="944" r="5" fill="#FFFFFF" stroke="#0E9F8A" stroke-width="2.5"/>
-    <circle cx="1120" cy="944" r="5" fill="#FFFFFF" stroke="#D97706" stroke-width="2.5"/>
-    <text x="240" y="928" text-anchor="middle" class="mono" font-size="10" fill="#2F6BFF">15:00</text>
-    <text x="240" y="966" text-anchor="middle" class="tiny" fill="#607089">收盘</text>
-    <text x="680" y="928" text-anchor="middle" class="mono" font-size="10" fill="#0E9F8A">18:05</text>
-    <text x="680" y="966" text-anchor="middle" class="tiny" fill="#607089">调度 · 同步 · 研究</text>
-    <text x="1120" y="928" text-anchor="middle" class="mono" font-size="10" fill="#D97706">次日 09:30</text>
-    <text x="1120" y="966" text-anchor="middle" class="tiny" fill="#607089">旧推荐过期</text>
-    <text x="1552" y="966" text-anchor="end" class="tiny" fill="#7A8AA0">机会分 ≠ 成功概率 · 不构成投资建议</text>
+    <text x="48" y="1010" class="small" font-size="12">本项目用于数据工程与量化研究，不连接券商、不自动下单，也不把机会分或历史统计表述为收益承诺。</text>
   </g>
 </svg>
