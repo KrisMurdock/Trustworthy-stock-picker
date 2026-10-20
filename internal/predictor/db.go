@@ -185,6 +185,37 @@ func (d *DB) InsertActual(ctx context.Context, a Actual) error {
 	return nil
 }
 
+func (d *DB) ActualsForTarget(ctx context.Context, targetEnd time.Time) ([]Actual, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT code,target_end_unix,model_id,high_pct,low_pct,close_pct,status,resolved_at
+		FROM prediction_actual WHERE target_end_unix=? ORDER BY code`, targetEnd.Unix())
+	if err != nil {
+		return nil, errors.New("cannot read predictor actuals")
+	}
+	defer rows.Close()
+	out := []Actual{}
+	for rows.Next() {
+		var actual Actual
+		var target int64
+		var resolved string
+		if err := rows.Scan(&actual.Code, &target, &actual.ModelID, &actual.HighPct, &actual.LowPct,
+			&actual.ClosePct, &actual.Status, &resolved); err != nil {
+			return nil, errors.New("cannot decode predictor actual")
+		}
+		actual.TargetEnd = time.Unix(target, 0).In(market.Shanghai)
+		parsed, err := time.Parse(time.RFC3339Nano, resolved)
+		if err != nil {
+			return nil, errors.New("invalid predictor actual timestamp")
+		}
+		actual.ResolvedAt = parsed
+		out = append(out, actual)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("cannot read predictor actuals")
+	}
+	return out, nil
+}
+
 func (d *DB) PendingForTarget(ctx context.Context, date string, targetEnd time.Time) ([]Prediction, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT code,date,input_end_unix,target_end_unix,model_id,base_price_micros,

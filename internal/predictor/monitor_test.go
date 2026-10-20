@@ -255,6 +255,9 @@ func TestPredictOncePersistsAndIsIdempotent(t *testing.T) {
 	if len(channel.sent) != 1 {
 		t.Fatalf("sent=%d want 1", len(channel.sent))
 	}
+	if first := channel.sent[0].Sections[0].Table.Rows[0][0].Text; first != "Test" {
+		t.Fatalf("first card column=%q want stock name", first)
+	}
 
 	again, err := m.PredictOnce(context.Background(), monitorAt(t, "2026-10-20 09:36:00"))
 	if err != nil {
@@ -274,18 +277,24 @@ func TestPredictOncePersistsAndIsIdempotent(t *testing.T) {
 
 func TestPredictOnceReconcilesArrivedTargetBar(t *testing.T) {
 	now := monitorAt(t, "2026-10-20 09:35:10")
-	m, reader, _ := monitorNewTestMonitor(t, now)
+	m, reader, channel := monitorNewTestMonitor(t, now)
 	monitorSetModel(m, "2026-10-20")
 	reader.reports["2026-10-19"] = monitorReportFor("2026-10-20")
 	reader.minutes["sh600000"] = []market.MinuteBar{monitorMinuteBar(t, "2026-10-20", "09:35", 10, 10.1, 9.9, 10)}
 	if _, err := m.PredictOnce(context.Background(), now); err != nil {
 		t.Fatalf("initial predict: %v", err)
 	}
+	if err := m.flush(context.Background(), now); err != nil {
+		t.Fatalf("initial flush: %v", err)
+	}
 
 	reader.minutes["sh600000"] = append(reader.minutes["sh600000"], monitorMinuteBar(t, "2026-10-20", "09:40", 10, 10.3, 10.1, 10.2))
 	next := monitorAt(t, "2026-10-20 09:40:10")
 	if _, err := m.PredictOnce(context.Background(), next); err != nil {
 		t.Fatalf("second predict: %v", err)
+	}
+	if err := m.flush(context.Background(), next); err != nil {
+		t.Fatalf("second flush: %v", err)
 	}
 	var status string
 	var highPct, lowPct, closePct float64
@@ -300,6 +309,17 @@ func TestPredictOnceReconcilesArrivedTargetBar(t *testing.T) {
 	}
 	if monitorAbsDiff(highPct, 0.03) > 1e-9 || monitorAbsDiff(lowPct, 0.01) > 1e-9 || monitorAbsDiff(closePct, 0.02) > 1e-9 {
 		t.Fatalf("actual pct high=%v low=%v close=%v", highPct, lowPct, closePct)
+	}
+	if len(channel.sent) != 2 || len(channel.sent[1].Sections) < 3 {
+		t.Fatalf("sent cards=%d, second card sections=%+v", len(channel.sent), channel.sent)
+	}
+	actualSection := channel.sent[1].Sections[1]
+	if actualSection.Heading != "上一根实际对比" || actualSection.Table == nil || len(actualSection.Table.Rows) != 1 {
+		t.Fatalf("unexpected previous actual section: %+v", actualSection)
+	}
+	row := actualSection.Table.Rows[0]
+	if row[1].Text != "10.30 (+3.00%)" || row[4].Text != "+0.20 (+2.00pp)" {
+		t.Fatalf("unexpected previous actual row: %+v", row)
 	}
 }
 

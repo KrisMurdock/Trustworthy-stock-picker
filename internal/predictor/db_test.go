@@ -56,6 +56,10 @@ func TestDBPredictionLifecycle(t *testing.T) {
 	if err := db.InsertActual(ctx, actual); err != nil {
 		t.Fatalf("insert actual: %v", err)
 	}
+	actuals, err := db.ActualsForTarget(ctx, prediction.TargetEnd)
+	if err != nil || len(actuals) != 1 || actuals[0].Status != "resolved" || actuals[0].HighPct != 0.02 {
+		t.Fatalf("actuals=%+v err=%v", actuals, err)
+	}
 	actual.Status = "unresolved"
 	if err := db.InsertActual(ctx, actual); err != nil {
 		t.Fatalf("upsert actual: %v", err)

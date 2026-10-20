@@ -348,7 +348,27 @@ func (m *Monitor) PredictOnce(ctx context.Context, now time.Time) (Result, error
 
 	pushed := false
 	if pushEnabled && len(current) > 0 {
-		message, err := BuildCard(date, slot.TargetEnd, info, current)
+		names := make(map[string]string, len(selected))
+		for _, stock := range selected {
+			names[stock.Code] = stock.Name
+		}
+		previous, err := m.DB.PendingForTarget(ctx, date, slot.InputEnd)
+		if err != nil {
+			return result, err
+		}
+		filteredPrevious := make([]Prediction, 0, len(previous))
+		for _, prediction := range previous {
+			if prediction.ModelID == info.ModelID {
+				filteredPrevious = append(filteredPrevious, prediction)
+			}
+		}
+		actuals, err := m.DB.ActualsForTarget(ctx, slot.InputEnd)
+		if err != nil {
+			return result, err
+		}
+		message, err := BuildCard(date, slot.TargetEnd, info, current, CardData{
+			Names: names, Previous: filteredPrevious, Actuals: actuals,
+		})
 		if err != nil {
 			return result, err
 		}
