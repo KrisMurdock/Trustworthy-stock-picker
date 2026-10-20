@@ -451,15 +451,19 @@ func shortCandidateDetailSections(r selection.Report, diagnosis *diagnostics.Rep
 		if candidate.Rank > mainTableRows {
 			heading = "推荐补充 · " + heading
 		}
+		fields := []notify.Field{{Label: "机会分", Value: fmt.Sprintf("%.1f", score)}}
+		if candidate.Continuation != nil {
+			fields = append(fields, notify.Field{Label: "上涨延续分", Value: continuationSummary(candidate.Continuation)})
+		}
+		fields = append(fields,
+			notify.Field{Label: "历史证据", Value: evidence},
+			notify.Field{Label: "依据", Value: tags(candidate.Reasons)},
+			notify.Field{Label: "规则", Value: tags(candidate.Rules)},
+		)
 		sections = append(sections, notify.Section{
 			Heading: heading,
-			Fields: []notify.Field{
-				{Label: "机会分", Value: fmt.Sprintf("%.1f", score)},
-				{Label: "历史证据", Value: evidence},
-				{Label: "依据", Value: tags(candidate.Reasons)},
-				{Label: "规则", Value: tags(candidate.Rules)},
-			},
-			Lines: lines,
+			Fields:  fields,
+			Lines:   lines,
 		})
 	}
 	return sections
@@ -542,6 +546,21 @@ func candidateScoreFormula(breakdown *strategy.ScoreBreakdown) string {
 		return "未记录"
 	}
 	return escape(breakdown.Formula)
+}
+
+func continuationSummary(continuation *strategy.ContinuationStats) string {
+	if continuation == nil {
+		return "未计算"
+	}
+	switch continuation.Status {
+	case "ready":
+		return fmt.Sprintf("%.1f（次日收盘高于信号日收盘 %.1f%%，保守下界 %.1f%%，%d 笔 / %d 日）",
+			continuation.Score, continuation.Rate*100, continuation.LowerBound*100, continuation.Samples, continuation.Dates)
+	case "not_applicable":
+		return "今日未上涨，暂不适用"
+	default:
+		return "样本不足，暂不评分"
+	}
 }
 
 func diagnosticRuleLine(rule diagnostics.Rule) string {

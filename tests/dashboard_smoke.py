@@ -408,7 +408,9 @@ def populated_checks(context, page, url, args, directory, env):
     page.get_by_test_id("report-date-select").select_option(LATEST)
     expect(page.get_by_test_id("ranking-row")).to_have_count(2)
     expect(page.get_by_test_id("ranking-row").filter(has_text="测试银行")).to_contain_text("推荐")
+    expect(page.get_by_test_id("ranking-row").filter(has_text="测试银行")).to_contain_text("延续分 46.0")
     expect(page.get_by_test_id("ranking-row").filter(has_text="测试消费")).to_contain_text("观察")
+    expect(page.get_by_test_id("ranking-row").filter(has_text="测试消费")).to_contain_text("延续分 —（今日未涨）")
     expect(page).to_have_url(url + "/rankings")
 
     if not args.image:

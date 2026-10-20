@@ -28,65 +28,68 @@ type Sample struct {
 	Features  Features
 	Rules     []string
 	Outcomes  map[string]Outcome
+	NextDay   *NextDay
 }
 type Stats struct {
-	Rule                 string          `json:"rule"`
-	Target               float64         `json:"target_net_pct"`
-	Horizon              int             `json:"holding_days"`
-	Samples              int             `json:"samples"`
-	Dates                int             `json:"distinct_signal_dates"`
-	Resolved             int             `json:"resolved"`
-	Targets              int             `json:"targets"`
-	Stops                int             `json:"stops"`
-	Timeouts             int             `json:"timeouts"`
-	Unresolved           int             `json:"unresolved"`
-	HitRate              float64         `json:"target_rate"`
-	LowerBound           float64         `json:"target_rate_lower_bound"`
-	MeanNet              float64         `json:"mean_resolved_net_pct"`
-	MeanDays             float64         `json:"mean_resolved_holding_days"`
-	WorstNet             float64         `json:"worst_resolved_net_pct"`
-	MeanMAE              float64         `json:"mean_max_adverse_net_pct"`
-	WorstMAE             float64         `json:"worst_max_adverse_net_pct"`
-	ProfitRate           float64         `json:"resolved_profit_rate"`
-	Ambiguous            int             `json:"ambiguous_trades"`
-	SkippedEntries       int             `json:"skipped_entries"`
-	UnknownEntries       int             `json:"unknown_entry_paths"`
-	LossLimitPct         float64         `json:"net_loss_limit_pct,omitempty"`
-	LossBreaches         int             `json:"net_loss_limit_breaches"`
-	Profit25             int             `json:"net_profit_2_5_count"`
-	Profit30             int             `json:"net_profit_3_count"`
-	Profit25Rate         float64         `json:"net_profit_2_5_rate"`
-	Profit30Rate         float64         `json:"net_profit_3_rate"`
-	HighTouchSamples     int             `json:"high_touch_samples"`
-	HighTouchUnknown     int             `json:"high_touch_unknown"`
-	HighTouch25          int             `json:"high_touch_2_5_count"`
-	HighTouch30          int             `json:"high_touch_3_count"`
-	HighTouch25Rate      float64         `json:"high_touch_2_5_rate"`
-	HighTouch30Rate      float64         `json:"high_touch_3_rate"`
-	HighTouch25Days      float64         `json:"mean_first_high_touch_2_5_days"`
-	HighTouch30Days      float64         `json:"mean_first_high_touch_3_days"`
-	HighTouchAmbiguous   int             `json:"high_touch_order_unknown"`
-	NextDay25            int             `json:"next_day_2_5_count"`
-	NextDay30            int             `json:"next_day_3_count"`
-	NextDay25Rate        float64         `json:"next_day_2_5_rate"`
-	NextDay30Rate        float64         `json:"next_day_3_rate"`
-	EntryDayKnown        int             `json:"entry_day_known"`
-	EntryDayPositive     int             `json:"entry_day_positive"`
-	EntryDayNonPositive  int             `json:"entry_day_nonpositive"`
-	EntryDayUnknown      int             `json:"entry_day_unknown"`
-	EntryDayPositiveRate float64         `json:"entry_day_positive_rate"`
-	Joint25              int             `json:"joint_2_5_count"`
-	Joint30              int             `json:"joint_3_count"`
-	Joint25Rate          float64         `json:"joint_2_5_rate"`
-	Joint30Rate          float64         `json:"joint_3_rate"`
-	Touch25DaySum        int             `json:"-"`
-	Touch30DaySum        int             `json:"-"`
-	MAESum               float64         `json:"-"`
-	Profits              int             `json:"-"`
-	NetSum               float64         `json:"-"`
-	DaySum               int             `json:"-"`
-	DateSet              map[string]bool `json:"-"`
-	Cohort               CohortStats     `json:"cohort"`
+	Rule                 string             `json:"rule"`
+	Target               float64            `json:"target_net_pct"`
+	Horizon              int                `json:"holding_days"`
+	Samples              int                `json:"samples"`
+	Dates                int                `json:"distinct_signal_dates"`
+	Resolved             int                `json:"resolved"`
+	Targets              int                `json:"targets"`
+	Stops                int                `json:"stops"`
+	Timeouts             int                `json:"timeouts"`
+	Unresolved           int                `json:"unresolved"`
+	HitRate              float64            `json:"target_rate"`
+	LowerBound           float64            `json:"target_rate_lower_bound"`
+	MeanNet              float64            `json:"mean_resolved_net_pct"`
+	MeanDays             float64            `json:"mean_resolved_holding_days"`
+	WorstNet             float64            `json:"worst_resolved_net_pct"`
+	MeanMAE              float64            `json:"mean_max_adverse_net_pct"`
+	WorstMAE             float64            `json:"worst_max_adverse_net_pct"`
+	ProfitRate           float64            `json:"resolved_profit_rate"`
+	Ambiguous            int                `json:"ambiguous_trades"`
+	SkippedEntries       int                `json:"skipped_entries"`
+	UnknownEntries       int                `json:"unknown_entry_paths"`
+	LossLimitPct         float64            `json:"net_loss_limit_pct,omitempty"`
+	LossBreaches         int                `json:"net_loss_limit_breaches"`
+	Profit25             int                `json:"net_profit_2_5_count"`
+	Profit30             int                `json:"net_profit_3_count"`
+	Profit25Rate         float64            `json:"net_profit_2_5_rate"`
+	Profit30Rate         float64            `json:"net_profit_3_rate"`
+	HighTouchSamples     int                `json:"high_touch_samples"`
+	HighTouchUnknown     int                `json:"high_touch_unknown"`
+	HighTouch25          int                `json:"high_touch_2_5_count"`
+	HighTouch30          int                `json:"high_touch_3_count"`
+	HighTouch25Rate      float64            `json:"high_touch_2_5_rate"`
+	HighTouch30Rate      float64            `json:"high_touch_3_rate"`
+	HighTouch25Days      float64            `json:"mean_first_high_touch_2_5_days"`
+	HighTouch30Days      float64            `json:"mean_first_high_touch_3_days"`
+	HighTouchAmbiguous   int                `json:"high_touch_order_unknown"`
+	NextDay25            int                `json:"next_day_2_5_count"`
+	NextDay30            int                `json:"next_day_3_count"`
+	NextDay25Rate        float64            `json:"next_day_2_5_rate"`
+	NextDay30Rate        float64            `json:"next_day_3_rate"`
+	EntryDayKnown        int                `json:"entry_day_known"`
+	EntryDayPositive     int                `json:"entry_day_positive"`
+	EntryDayNonPositive  int                `json:"entry_day_nonpositive"`
+	EntryDayUnknown      int                `json:"entry_day_unknown"`
+	EntryDayPositiveRate float64            `json:"entry_day_positive_rate"`
+	Joint25              int                `json:"joint_2_5_count"`
+	Joint30              int                `json:"joint_3_count"`
+	Joint25Rate          float64            `json:"joint_2_5_rate"`
+	Joint30Rate          float64            `json:"joint_3_rate"`
+	Touch25DaySum        int                `json:"-"`
+	Touch30DaySum        int                `json:"-"`
+	MAESum               float64            `json:"-"`
+	Profits              int                `json:"-"`
+	NetSum               float64            `json:"-"`
+	DaySum               int                `json:"-"`
+	DateSet              map[string]bool    `json:"-"`
+	Cohort               CohortStats        `json:"cohort"`
+	Continuation         *ContinuationStats `json:"continuation,omitempty"`
+	continuationDates    map[string]bool
 }
 type Evaluation struct {
 	Method         string      `json:"method"`
@@ -153,6 +156,7 @@ type Candidate struct {
 	Plan                      *Plan                   `json:"reference_plan,omitempty"`
 	Chan                      *ChanEvidence           `json:"chan,omitempty"`
 	StructureGuard            *StructureGuardEvidence `json:"structure_guard,omitempty"`
+	Continuation              *ContinuationStats      `json:"continuation,omitempty"`
 }
 
 // ScoreBreakdown records the arithmetic behind a candidate's opportunity
@@ -299,17 +303,22 @@ func finalize(s Stats) Stats {
 		s.HighTouch30Rate = float64(s.HighTouch30) / float64(s.Samples)
 		s.Profit25Rate = float64(s.Profit25) / float64(s.Samples)
 		s.Profit30Rate = float64(s.Profit30) / float64(s.Samples)
-		n, p, z := float64(s.Samples), float64(s.Targets)/float64(s.Samples), 1.96
+		p := float64(s.Targets) / float64(s.Samples)
 		s.HitRate = p
 		// Cross-stock and overlapping observations are correlated. Cap effective n at dates.
-		n = math.Min(n, float64(max(1, s.Dates)))
-		s.LowerBound = (p + z*z/(2*n) - z*math.Sqrt(p*(1-p)/n+z*z/(4*n*n))) / (1 + z*z/n)
+		s.LowerBound = wilsonLower(p, max(1, min(s.Samples, s.Dates)))
 	}
 	if s.Resolved > 0 {
 		s.MeanNet = s.NetSum / float64(s.Resolved)
 		s.MeanDays = float64(s.DaySum) / float64(s.Resolved)
 		s.MeanMAE = s.MAESum / float64(s.Resolved)
 		s.ProfitRate = float64(s.Profits) / float64(s.Resolved)
+	}
+	if s.Continuation != nil {
+		if s.continuationDates != nil {
+			s.Continuation.Dates = len(s.continuationDates)
+		}
+		finalizeContinuation(s.Continuation)
 	}
 	return s
 }
@@ -318,8 +327,23 @@ func statsFor(samples []Sample, cutoff string, s config.Strategy) []Stats {
 	for _, rule := range ruleNames {
 		for _, target := range []float64{2.5, 3} {
 			for _, h := range horizons(s) {
-				x := Stats{Rule: rule, Target: target, Horizon: h}
+				x := Stats{Rule: rule, Target: target, Horizon: h, Continuation: newContinuationStats()}
 				for _, sample := range samples {
+					if sample.NextDay != nil && sample.NextDay.Date < cutoff && sample.Features.Return1 > 0 {
+						for _, matched := range sample.Rules {
+							if matched == rule {
+								x.Continuation.Samples++
+								if sample.NextDay.Higher {
+									x.Continuation.Hits++
+								}
+								if x.continuationDates == nil {
+									x.continuationDates = map[string]bool{}
+								}
+								x.continuationDates[sample.Date] = true
+								break
+							}
+						}
+					}
 					end := labelEnd(sample, target, h)
 					if end == "" || end >= cutoff {
 						continue
@@ -384,6 +408,24 @@ func rank(code, name string, f Features, stats []Stats, s config.Strategy) Candi
 		c.ScoreBreakdown.Final = c.Score
 		c.Risks = append(c.Risks, "insufficient_or_unprofitable_evidence")
 	}
+	continuationRule := "baseline"
+	continuation := find(stats, continuationRule, s.TargetNetPct, s.MaxHoldingDays).Continuation
+	if c.Evidence != nil {
+		if candidateContinuation := find(stats, c.Evidence.Rule, s.TargetNetPct, s.MaxHoldingDays).Continuation; candidateContinuation != nil && candidateContinuation.Status == "ready" {
+			continuationRule = c.Evidence.Rule
+			continuation = candidateContinuation
+		}
+	}
+	if continuation == nil {
+		continuation = newContinuationStats()
+	}
+	copy := *continuation
+	copy.Rule = continuationRule
+	if f.Return1 <= 0 {
+		copy.Status = "not_applicable"
+		copy.Score = 0
+	}
+	c.Continuation = &copy
 	if f.MA20Slope > 0 {
 		c.Reasons = append(c.Reasons, "rising_ma20")
 	}
@@ -662,6 +704,14 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 				continue
 			}
 			sample := Sample{Code: h.Code, Date: date, LabelEnds: map[string]string{}, Features: f, Outcomes: map[string]Outcome{}}
+			if next, err := cal.Next(date); err == nil && i+1 < len(r.Bars) && r.Bars[i+1].Date == next {
+				factor := h.Bars[i].Close / r.Bars[i].Close
+				rawFactor := h.Bars[i+1].Close / r.Bars[i+1].Close
+				if math.Abs(rawFactor/factor-1) <= 0.002 {
+					pct := (r.Bars[i+1].Close/r.Bars[i].Close - 1) * 100
+					sample.NextDay = &NextDay{Date: r.Bars[i+1].Date, ClosePct: pct, Higher: pct > 0}
+				}
+			}
 			corporate := false
 			for _, target := range []float64{2.5, 3} {
 				for _, days := range horizons(s) {

@@ -31,8 +31,12 @@ func statsTimeline(samples []Sample, dates []string, s config.Strategy) map[stri
 		}
 	}
 	events := make(map[statsKey][]maturityEvent, len(keys))
+	continuationEvents := make(map[string][]maturityEvent, len(ruleNames))
 	for _, sample := range samples {
 		for _, rule := range sample.Rules {
+			if sample.NextDay != nil && sample.Features.Return1 > 0 {
+				continuationEvents[rule] = append(continuationEvents[rule], maturityEvent{end: sample.NextDay.Date, sample: sample})
+			}
 			for _, target := range []float64{2.5, 3} {
 				for _, horizon := range hs {
 					end := labelEnd(sample, target, horizon)
@@ -50,6 +54,11 @@ func statsTimeline(samples []Sample, dates []string, s config.Strategy) map[stri
 		sort.SliceStable(list, func(i, j int) bool { return list[i].end < list[j].end })
 		events[k] = list
 	}
+	for rule := range continuationEvents {
+		list := continuationEvents[rule]
+		sort.SliceStable(list, func(i, j int) bool { return list[i].end < list[j].end })
+		continuationEvents[rule] = list
+	}
 	ordered := append([]string{}, dates...)
 	sort.Strings(ordered)
 	unique := ordered[:0]
@@ -60,8 +69,38 @@ func statsTimeline(samples []Sample, dates []string, s config.Strategy) map[stri
 	}
 	accumulators := make(map[statsKey]Stats, len(keys))
 	positions := make(map[statsKey]int, len(keys))
+	continuationAccumulators := make(map[string]ContinuationStats, len(ruleNames))
+	continuationDates := make(map[string]map[string]bool, len(ruleNames))
+	continuationPositions := make(map[string]int, len(ruleNames))
 	out := make(map[string][]Stats, len(unique))
 	for _, date := range unique {
+		continuationByRule := make(map[string]*ContinuationStats, len(ruleNames))
+		for _, rule := range ruleNames {
+			acc, ok := continuationAccumulators[rule]
+			if !ok {
+				acc = *newContinuationStats()
+			}
+			list := continuationEvents[rule]
+			pos := continuationPositions[rule]
+			for pos < len(list) && list[pos].end < date {
+				sample := list[pos].sample
+				acc.Samples++
+				if sample.NextDay.Higher {
+					acc.Hits++
+				}
+				if continuationDates[rule] == nil {
+					continuationDates[rule] = map[string]bool{}
+				}
+				continuationDates[rule][sample.Date] = true
+				pos++
+			}
+			acc.Dates = len(continuationDates[rule])
+			finalizeContinuation(&acc)
+			copy := acc
+			continuationByRule[rule] = &copy
+			continuationAccumulators[rule] = acc
+			continuationPositions[rule] = pos
+		}
 		stats := make([]Stats, 0, len(keys))
 		for _, k := range keys {
 			acc := accumulators[k]
@@ -79,6 +118,10 @@ func statsTimeline(samples []Sample, dates []string, s config.Strategy) map[stri
 			snapshot := acc
 			snapshot.Dates = len(acc.DateSet)
 			snapshot.DateSet = nil
+			if continuation := continuationByRule[k.rule]; continuation != nil {
+				copy := *continuation
+				snapshot.Continuation = &copy
+			}
 			stats = append(stats, finalize(snapshot))
 		}
 		out[date] = stats

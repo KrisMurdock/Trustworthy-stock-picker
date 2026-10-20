@@ -393,6 +393,7 @@ func TestShortDetailsPaginateAndAppendSelectedOutsideTop10(t *testing.T) {
 	}
 	rank11 := shortCandidate("sz000011", "补充候选", 11, 50, true)
 	rank11.Risks = []string{"upper_wick", "extended_price", "historical_net_loss_limit_breached", "cash_insufficient"}
+	rank11.Continuation = &strategy.ContinuationStats{Version: 1, Label: strategy.ContinuationLabel, Rule: "momentum", Samples: 80, Dates: 40, Hits: 48, Rate: .6, LowerBound: .49, Score: 49, Status: "ready"}
 	top1 := r.Ranking[0]
 	r.Selected = []selection.Candidate{
 		{Code: top1.Code, Name: top1.Name, Ranking: &top1},
@@ -440,7 +441,7 @@ func TestShortDetailsPaginateAndAppendSelectedOutsideTop10(t *testing.T) {
 	}
 
 	supplement := detailSectionByCode(t, cards, "sz000011")
-	wantFields := []string{"机会分", "历史证据", "依据", "规则"}
+	wantFields := []string{"机会分", "上涨延续分", "历史证据", "依据", "规则"}
 	if len(supplement.Fields) != len(wantFields) {
 		t.Fatalf("supplement fields = %+v", supplement.Fields)
 	}

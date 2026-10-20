@@ -93,8 +93,8 @@ func seed(root string, empty, partial, gates bool) error {
 		if day == "2026-10-13" {
 			report.Version, report.Strategy = 2, "short_horizon_v1"
 			report.Ranking = []strategy.Candidate{
-				{Code: stocks[0].Code, Name: stocks[0].Name, Rank: 1, Score: 88.5, Recommended: true, Reasons: []string{"证据充分"}, Risks: []string{}, Rules: []string{"trend"}},
-				{Code: stocks[1].Code, Name: stocks[1].Name, Rank: 2, Score: 62.5, Recommended: false, Reasons: []string{"历史样本不足"}, Risks: []string{"evidence"}, Rules: []string{}},
+				{Code: stocks[0].Code, Name: stocks[0].Name, Rank: 1, Score: 88.5, Recommended: true, Reasons: []string{"证据充分"}, Risks: []string{}, Rules: []string{"trend"}, Continuation: &strategy.ContinuationStats{Version: 1, Label: strategy.ContinuationLabel, Rule: "momentum", Samples: 120, Dates: 40, Hits: 66, Rate: .55, LowerBound: .46, Score: 46, Status: "ready"}},
+				{Code: stocks[1].Code, Name: stocks[1].Name, Rank: 2, Score: 62.5, Recommended: false, Reasons: []string{"历史样本不足"}, Risks: []string{"evidence"}, Rules: []string{}, Continuation: &strategy.ContinuationStats{Version: 1, Label: strategy.ContinuationLabel, Rule: "baseline", Status: "not_applicable"}},
 			}
 			report.Selected = []selection.Candidate{{Code: stocks[0].Code, Name: stocks[0].Name, Sector: stocks[0].Sector, Close: 10.25, ChangePct: 2.5, Metrics: selection.Metrics{Score: 85}, Ranking: &report.Ranking[0]}}
 			report.Research = &strategy.Research{Version: 1, Strategy: report.Strategy, AsOf: day, SampleCount: 120, ValidationPassed: false, Limitations: []string{"仅用于浏览器测试"}}

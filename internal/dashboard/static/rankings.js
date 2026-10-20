@@ -45,7 +45,7 @@
     const selected = new Set(list(report.selected).map((entry) => entry.code));
     setText("ranking-count", number(entries.length));
     setText("ranking-score-label", modern ? "机会分" : "趋势分");
-    setText("ranking-description", modern ? "机会分用于排序，不代表成功概率。推荐状态与入选推送分别展示。" : "历史趋势报告：按报告中的入选顺序展示，分数为趋势分。");
+    setText("ranking-description", modern ? "机会分用于排序，不代表成功概率。延续分为独立的上涨日次日观察指标，暂不计入机会分；推荐状态与入选推送分别展示。" : "历史趋势报告：按报告中的入选顺序展示，分数为趋势分。");
     setText("ranking-footer", modern ? `机会排名 ${number(entries.length)} 支 · 推荐 ${number(recommended)} 支 · 入选推送 ${number(selected.size)} 支` : `历史趋势排名 · 入选推送 ${number(entries.length)} 支`);
     byId("report-meta").replaceChildren(el("span", "", `报告日期 ${report.as_of || "—"}`), el("span", "", `目标交易日 ${report.target_trading_date || "—"}`), el("span", "", `生成于 ${formatTime(report.generated_at)}`));
     if (report.selection_enabled === false) {
@@ -76,7 +76,19 @@
       const rank = modern ? entry.rank : index + 1;
       const rankCell = el("td");
       rankCell.append(el("span", `rank-badge${isNumber(rank) && rank <= 3 ? " rank-top" : ""}`, number(rank)));
-      row.append(rankCell, stockIdentity(entry), el("td", "numeric score-value", number(modern ? entry.opportunity_score : entry.metrics?.score, modern ? 1 : 0)));
+      const scoreCell = el("td", "numeric score-value", number(modern ? entry.opportunity_score : entry.metrics?.score, modern ? 1 : 0));
+      if (modern && entry.continuation) {
+        const continuation = entry.continuation;
+        let label = "延续分样本不足";
+        if (continuation.status === "ready") label = `延续分 ${number(continuation.score, 1)}`;
+        else if (continuation.status === "not_applicable") label = "延续分 —（今日未涨）";
+        const detail = el("span", "state-detail", label);
+        if (continuation.status === "ready") {
+          detail.title = `历史同类上涨信号：次日收盘高于信号日收盘 ${number(continuation.rate * 100, 1)}%，保守下界 ${number(continuation.lower_bound * 100, 1)}%，${number(continuation.samples)} 笔 / ${number(continuation.signal_dates)} 个信号日，规则 ${displayLabel(continuation.rule)}`;
+        }
+        scoreCell.append(detail);
+      }
+      row.append(rankCell, stockIdentity(entry), scoreCell);
       const recommendationCell = el("td");
       if (modern) recommendationCell.append(el("span", `tag ${entry.recommended === true ? "tag-recommended" : "tag-observe"}`, entry.recommended === true ? "推荐" : "观察"));
       else recommendationCell.append(el("span", "tag tag-selected", "入选推送"));
