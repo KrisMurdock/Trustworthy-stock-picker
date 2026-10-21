@@ -13,11 +13,26 @@ if command -v systemctl >/dev/null && command -v ps >/dev/null &&
   fi
 fi
 make build
+public_tunnel_override_set=false
+public_tunnel_override=''
+if [[ ${STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED+x} ]]; then
+  public_tunnel_override="$STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED"
+  public_tunnel_override_set=true
+fi
 if [[ -f .env ]]; then
   set -a
   source .env
   set +a
 fi
+if [[ "$public_tunnel_override_set" == true ]]; then
+  export STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED="$public_tunnel_override"
+fi
+public_tunnel_enabled="$(printf '%s' "${STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+case "$public_tunnel_enabled" in
+  true|1|t) ;;
+  false|0|f|'') ;;
+  *) printf 'Invalid STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED; use true or false.\n' >&2; exit 1 ;;
+esac
 if [[ -n "$SERVICE_PID" ]]; then
   # Validate without opening the shared writer or migrating its live ledger.
   ./bin/stock-watcher check-config
@@ -32,5 +47,8 @@ if [[ -n "$SERVICE_PID" ]]; then
     exit 1
   fi
   printf '%s\n' 'Starting in foreground. Ctrl+C stops this process; use systemctl start stock-watcher.service to return to background operation.'
+fi
+if [[ "$public_tunnel_enabled" =~ ^(true|1|t)$ ]]; then
+  exec bash scripts/public-tunnel.sh
 fi
 exec ./bin/stock-watcher run

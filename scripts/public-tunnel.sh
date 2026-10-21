@@ -37,15 +37,31 @@ fail() {
   exit 1
 }
 
-if ! command -v cloudflared >/dev/null 2>&1; then
-  fail 'cloudflared is required. On macOS run: brew install cloudflared'
+public_tunnel_override_set=false
+public_tunnel_override=''
+if [[ ${STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED+x} ]]; then
+  public_tunnel_override="$STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED"
+  public_tunnel_override_set=true
 fi
-
 if [[ -f .env ]]; then
   set -a
   # shellcheck disable=SC1091
   source .env
   set +a
+fi
+if [[ "$public_tunnel_override_set" == true ]]; then
+  export STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED="$public_tunnel_override"
+fi
+
+public_tunnel_enabled="$(printf '%s' "${STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+case "$public_tunnel_enabled" in
+  true|1|t) ;;
+  false|0|f|'') fail 'public tunnel is disabled; set STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=true to start it' ;;
+  *) fail 'invalid STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED; use true or false' ;;
+esac
+
+if ! command -v cloudflared >/dev/null 2>&1; then
+  fail 'cloudflared is required. On macOS run: brew install cloudflared'
 fi
 
 export STOCK_WATCHER_WEB_ADDR="$LOCAL_ADDR"

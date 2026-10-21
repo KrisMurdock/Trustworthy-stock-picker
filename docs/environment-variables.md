@@ -22,6 +22,7 @@
 | STOCK_WATCHER_WEB_ENABLED | true | 是否启动只读网页 |
 | STOCK_WATCHER_WEB_ADDR | 127.0.0.1:8080 | 网页监听地址；容器内由 Compose 覆盖为 0.0.0.0:8080 |
 | STOCK_WATCHER_WEB_PUBLIC_READ_ONLY | false | 公网匿名模式；只允许 GET/HEAD，并隐藏 AI 与预测写入口 |
+| STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED | false | 临时 Cloudflare 公网隧道启动开关；仅 `scripts/run.sh` 读取，默认不开放公网 |
 | STOCK_WATCHER_DAILY_RUN_AT | 18:05 | 每日调度时间，必须为 16:00 之后 |
 | STOCK_WATCHER_DAILY_HISTORY_DAYS | 365 | 分析窗口，允许 90～7300 天 |
 | STOCK_WATCHER_DAILY_ADJUST | qfq | 分析复权口径：none/qfq/hfq |
@@ -194,6 +195,6 @@ AI 配置按字段合并，优先级为环境变量 > `llm.config` > 内置默�
 
 Compose 固定容器内数据 `/data`、股池 `/app/leaders.yaml`、日志 `/logs`，并关闭颜色。绑定挂载的相对路径按 Compose 文件所在目录解析，默认示例使用 `../` 指回仓库根目录；生产建议改为绝对路径。宿主路径必须预先存在，Compose 不会自动创建。本地目录部署保持 `STOCK_WATCHER_REQUIRE_CIFS=false`，共享盘部署设为 `true`。
 
-`run` 同时启动监控任务和网页，默认只允许本机访问。设置 `STOCK_WATCHER_WEB_ENABLED=false` 可以关闭网页。`STOCK_WATCHER_WEB_PUBLIC_READ_ONLY=true` 表示网页将面向匿名公网：应用只接受 GET/HEAD，隐藏 AI 与预测写入口，并对配置、模型对话、归因和 Predictor 写入返回 404。该开关不提供认证或限流，普通远程部署仍应使用受控网络或已有认证反向代理。容器内固定监听 `0.0.0.0:8080`，并用 `STOCK_WATCHER_WEB_BIND` 控制宿主机入口。应用使用根路径 `/`，反向代理应保留 `/api/` 和 `/assets/` 路径；不支持直接挂到子路径前缀。
+`run` 同时启动监控任务和网页，默认只允许本机访问。设置 `STOCK_WATCHER_WEB_ENABLED=false` 可以关闭网页。`STOCK_WATCHER_WEB_PUBLIC_READ_ONLY=true` 表示网页将面向匿名公网：应用只接受 GET/HEAD，隐藏 AI 与预测写入口，并对配置、模型对话、归因和 Predictor 写入返回 404。该开关不提供认证或限流，普通远程部署仍应使用受控网络或已有认证反向代理。`STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED` 默认 `false`，只由源码仓库的 `scripts/run.sh` 启动器读取；设为 `true` 后 `make run` 会改用 Cloudflare Quick Tunnel 启动匿名只读入口。Compose 和 systemd 直接运行二进制，不会启动该隧道。容器内固定监听 `0.0.0.0:8080`，并用 `STOCK_WATCHER_WEB_BIND` 控制宿主机入口。应用使用根路径 `/`，反向代理应保留 `/api/` 和 `/assets/` 路径；不支持直接挂到子路径前缀。
 
 Compose 长挂载与 env_file 语义参见 [Docker 官方服务配置](https://docs.docker.com/reference/compose-file/services/)。本配置要求 Docker Compose 2.30.0 或更高版本。

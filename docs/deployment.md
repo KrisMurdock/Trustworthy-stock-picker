@@ -35,11 +35,11 @@ journalctl -u stock-watcher.service -n 50 --no-pager
 
 ## 家用机器临时公网入口
 
-家用机器没有公网 IP 或域名时，可使用 Cloudflare Quick Tunnel 临时发布匿名只读网页。先安装 `cloudflared`，确认 `.env` 中的股池和数据目录有效，再运行 `make public`。脚本固定本地监听 `127.0.0.1:18080`，强制 `STOCK_WATCHER_WEB_PUBLIC_READ_ONLY=true`、`STOCK_WATCHER_LLM_WRITE_MODE=off`、`STOCK_WATCHER_PREDICTOR_WRITE_MODE=off`、`STOCK_WATCHER_PREDICTOR_PUSH_ENABLED=false` 和 `STOCK_WATCHER_FEISHU_ENABLED=false`，执行 `check-config/init/check` 后启动主程序与隧道；健康检查通过后打印 HTTPS URL，并写入 `.scratch/public-tunnel/url`。
+家用机器没有公网 IP 或域名时，可使用 Cloudflare Quick Tunnel 临时发布匿名只读网页。该入口默认关闭；先安装 `cloudflared`，确认 `.env` 中的股池和数据目录有效，再显式设置 `STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=true` 并运行 `make run`。脚本固定本地监听 `127.0.0.1:18080`，强制 `STOCK_WATCHER_WEB_PUBLIC_READ_ONLY=true`、`STOCK_WATCHER_LLM_WRITE_MODE=off`、`STOCK_WATCHER_PREDICTOR_WRITE_MODE=off`、`STOCK_WATCHER_PREDICTOR_PUSH_ENABLED=false` 和 `STOCK_WATCHER_FEISHU_ENABLED=false`，执行 `check-config/init/check` 后启动主程序与隧道；健康检查通过后打印 HTTPS URL，并写入 `.scratch/public-tunnel/url`。未开启该环境变量时，`make run` 只启动本机网页。
 
 该模式不需要路由器端口转发，适合演示和短期分享，但 URL 是临时的：进程停止、机器休眠或隧道重连后可能变化，Cloudflare Quick Tunnel 不提供可用性承诺。公网模式不是认证；它只公开行情和复盘读接口，所有非 GET/HEAD 请求以及 AI 配置、对话、归因和模型测试接口都在应用层返回 404。长期稳定地址需要自有域名与命名隧道，或自有域名 + 认证反向代理。
 
-macOS 可使用 `tmux new-session -d -s stock-public 'bash scripts/public-tunnel.sh'` 让服务脱离当前终端；用 `tmux attach -t stock-public` 查看日志，用 `cat .scratch/public-tunnel/url` 读取当前地址。机器重启后要重新执行启动命令，临时地址也会变化。
+macOS 可使用 `tmux new-session -d -s stock-public 'STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=true bash scripts/public-tunnel.sh'` 让服务脱离当前终端；用 `tmux attach -t stock-public` 查看日志，用 `cat .scratch/public-tunnel/url` 读取当前地址。机器重启后要重新执行启动命令，临时地址也会变化。
 
 ## 部署后验收与排障
 

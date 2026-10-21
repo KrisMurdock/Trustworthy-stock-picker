@@ -267,7 +267,7 @@ func main() {
 
 ### 家用机器临时公网入口
 
-没有公网 IP、域名或云服务器时，可运行 `make public`。该命令要求本机已安装 `cloudflared`，启动匿名只读网页和 Cloudflare Quick Tunnel，并打印临时 HTTPS 地址；不需要路由器端口转发。脚本强制只允许 GET/HEAD，关闭 AI、Predictor 推送和飞书配置入口，地址也会写入 `.scratch/public-tunnel/url`。
+没有公网 IP、域名或云服务器时，可显式设置 `STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=true` 后运行 `make run`。该开关默认 `false`，不会自动开放公网；开启后要求本机已安装 `cloudflared`，启动匿名只读网页和 Cloudflare Quick Tunnel，并打印临时 HTTPS 地址，不需要路由器端口转发。脚本强制只允许 GET/HEAD，关闭 AI、Predictor 推送和飞书配置入口，地址也会写入 `.scratch/public-tunnel/url`。
 
 Quick Tunnel 的地址在进程重启、机器休眠或隧道重连后可能变化，且没有可用性承诺。公网只读模式不是账号认证；不要把它当作长期生产部署。长期稳定入口需要自有域名和命名隧道，或认证反向代理。
 
@@ -285,6 +285,7 @@ Quick Tunnel 的地址在进程重启、机器休眠或隧道重连后可能变�
 | `STOCK_WATCHER_REQUIRE_CIFS` | 是否强制数据目录位于 CIFS；默认 `false`，共享盘模式设为 `true` |
 | `STOCK_WATCHER_WEB_ADDR` | 网页监听地址，默认 `127.0.0.1:8080` |
 | `STOCK_WATCHER_WEB_PUBLIC_READ_ONLY` | 公网匿名模式；只允许 GET/HEAD 并隐藏 AI 与预测写入口 |
+| `STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED` | 临时 Cloudflare 公网隧道启动开关，默认 `false`；只由 `make run` 启动器读取 |
 | `STOCK_WATCHER_FEISHU_ENABLED` | 是否启用飞书投递 |
 | `FEISHU_WEBHOOK` / `FEISHU_SECRET` | 飞书 webhook 与可选签名密钥，只从环境读取 |
 | `STOCK_WATCHER_FEISHU_CREDENTIALS_FILE` | 显式设置时才启用旧 `feishu.config` 兼容 |

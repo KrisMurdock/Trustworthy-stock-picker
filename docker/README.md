@@ -45,7 +45,7 @@ docker compose --env-file .env -f docker/compose.yaml exec stock-watcher stock-w
 
 `check` 是读写探针与配置检查；服务主命令为 `run`，Compose 用只读 `health` 检查就绪。默认宿主机端口为 `127.0.0.1:8080`，网页与 API 共用该端口；`/api/status` 的业务降级与容器 healthy 分开判断。容器内 `/data` 映射宿主机数据目录（本地磁盘或 CIFS 挂载），`/logs` 是本地有限滚动日志。
 
-`STOCK_WATCHER_WEB_BIND` 可调整宿主机入口；容器内固定监听 `0.0.0.0:8080`。健康检查使用只读 `health` 命令，不调用远端行情或飞书。匿名公网入口必须显式设置 `STOCK_WATCHER_WEB_PUBLIC_READ_ONLY=true`；该模式只允许 GET/HEAD，并隐藏 AI 与预测写入口。
+`STOCK_WATCHER_WEB_BIND` 可调整宿主机入口；容器内固定监听 `0.0.0.0:8080`。健康检查使用只读 `health` 命令，不调用远端行情或飞书。匿名公网入口必须显式设置 `STOCK_WATCHER_WEB_PUBLIC_READ_ONLY=true`；该模式只允许 GET/HEAD，并隐藏 AI 与预测写入口。Compose 不启动 Cloudflare 隧道，默认也不会开放公网；临时公网入口由宿主机启动器的 `STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=true` 控制。
 
 ## 升级、停止与回滚
 

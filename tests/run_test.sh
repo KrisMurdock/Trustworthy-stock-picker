@@ -81,4 +81,27 @@ test "$(cat "$TRACE")" == build
 printf '%s\n' 'RUN_TEST_VALUE=loaded' > "$FIXTURE/.env"
 run_make
 grep -q '^env loaded$' "$TRACE"
-echo 'Run passed: real handoff ordering, build/config/stop failures, dry-run, alternate service, denied/timeout and dotenv.'
+
+printf '%s\n' \
+  'RUN_TEST_VALUE=loaded' \
+  'STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=maybe' > "$FIXTURE/.env"
+if run_make; then echo 'Invalid public tunnel switch accepted' >&2; exit 1; fi
+grep -q 'Invalid STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED' "$FIXTURE/output"
+! grep -q '^exec run ' "$TRACE"
+
+cat > "$FIXTURE/scripts/public-tunnel.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'public %s\n' "$STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED" >> "$TRACE"
+SH
+printf '%s\n' \
+  'RUN_TEST_VALUE=loaded' \
+  'STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=true' > "$FIXTURE/.env"
+run_make
+grep -q '^public true$' "$TRACE"
+! grep -q '^exec run' "$TRACE"
+
+STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=false run_make
+grep -q '^exec run$' "$TRACE"
+! grep -q '^public ' "$TRACE"
+
+echo 'Run passed: real handoff ordering, build/config/stop failures, dry-run, alternate service, denied/timeout, dotenv and public-tunnel gating/override.'

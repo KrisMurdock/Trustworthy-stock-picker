@@ -24,6 +24,7 @@ trap cleanup EXIT INT TERM HUP
 mkdir -p "$FIXTURE/scripts" "$FIXTURE/bin" "$FIXTURE/mock"
 cp "$ROOT_DIR/scripts/public-tunnel.sh" "$FIXTURE/scripts/"
 printf '%s\n' \
+  'STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=false' \
   'STOCK_WATCHER_WEB_PUBLIC_READ_ONLY=false' \
   'STOCK_WATCHER_PREDICTOR_WRITE_MODE=all' \
   'STOCK_WATCHER_PREDICTOR_PUSH_ENABLED=true' \
@@ -65,6 +66,40 @@ export STOCK_WATCHER_PREDICTOR_WRITE_MODE=all
 export STOCK_WATCHER_PREDICTOR_PUSH_ENABLED=true
 export STOCK_WATCHER_FEISHU_ENABLED=true
 
+if bash "$FIXTURE/scripts/public-tunnel.sh" > "$FIXTURE/disabled-output" 2>&1; then
+  echo 'Disabled public tunnel started unexpectedly' >&2
+  exit 1
+fi
+grep -q 'public tunnel is disabled' "$FIXTURE/disabled-output"
+[[ ! -s "$TRACE" ]]
+
+printf '%s\n' \
+  'STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=maybe' \
+  'STOCK_WATCHER_WEB_PUBLIC_READ_ONLY=false' \
+  'STOCK_WATCHER_PREDICTOR_WRITE_MODE=all' \
+  'STOCK_WATCHER_PREDICTOR_PUSH_ENABLED=true' \
+  'STOCK_WATCHER_FEISHU_ENABLED=true' > "$FIXTURE/.env"
+if bash "$FIXTURE/scripts/public-tunnel.sh" > "$FIXTURE/invalid-output" 2>&1; then
+  echo 'Invalid public tunnel switch accepted' >&2
+  exit 1
+fi
+grep -q 'invalid STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED' "$FIXTURE/invalid-output"
+[[ ! -s "$TRACE" ]]
+
+printf '%s\n' \
+  'STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=true' \
+  'STOCK_WATCHER_WEB_PUBLIC_READ_ONLY=false' \
+  'STOCK_WATCHER_PREDICTOR_WRITE_MODE=all' \
+  'STOCK_WATCHER_PREDICTOR_PUSH_ENABLED=true' \
+  'STOCK_WATCHER_FEISHU_ENABLED=true' > "$FIXTURE/.env"
+
+if STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=false bash "$FIXTURE/scripts/public-tunnel.sh" > "$FIXTURE/override-output" 2>&1; then
+  echo 'Process environment did not override enabled dotenv value' >&2
+  exit 1
+fi
+grep -q 'public tunnel is disabled' "$FIXTURE/override-output"
+[[ ! -s "$TRACE" ]]
+
 bash "$FIXTURE/scripts/public-tunnel.sh" > "$FIXTURE/output" 2>&1 &
 WRAPPER_PID=$!
 
@@ -104,4 +139,4 @@ done
 APP_PID=''
 TUNNEL_PID=''
 
-echo 'Public tunnel passed: startup order, forced read-only mode, URL and child cleanup.'
+echo 'Public tunnel passed: disabled/invalid gating, explicit override, startup order, forced read-only mode, URL and child cleanup.'
