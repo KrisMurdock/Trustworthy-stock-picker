@@ -60,6 +60,8 @@ func run(args []string) error {
 	validationDays := f.Int("validation-days", 20, "number of common out-of-sample trading days (predictor-eval only)")
 	halfLife := f.Int("half-life", 60, "E1 exponential window half-life in trading days (predictor-eval only)")
 	allowLateReports := f.Bool("allow-late-reports", false, "allow archived reports generated after target open when as_of is before target (predictor-eval only)")
+	baselineOnly := f.Bool("baseline-only", false, "evaluate only the expanding B0 baseline (predictor-eval only)")
+	evalUniverse := f.String("universe", "report", "report or config-diagnostic universe (predictor-eval only)")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -86,7 +88,7 @@ func run(args []string) error {
 	if command != "predictor-eval" && (*windows != "40,60,120" || *validationDays != 20 || *halfLife != 60) {
 		return errors.New("predictor-eval flags require the predictor-eval command")
 	}
-	if command != "predictor-eval" && *allowLateReports {
+	if command != "predictor-eval" && (*allowLateReports || *baselineOnly || *evalUniverse != "report") {
 		return errors.New("predictor-eval flags require the predictor-eval command")
 	}
 	if command != "plan" && (*code != "" || *entry != 0) {
@@ -142,7 +144,7 @@ func run(args []string) error {
 	if command == "predictor-eval" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		return runPredictorEval(ctx, c, *asof, *windows, *validationDays, *halfLife, *allowLateReports)
+		return runPredictorEval(ctx, c, *asof, *windows, *validationDays, *halfLife, *allowLateReports, *baselineOnly, *evalUniverse)
 	}
 	options, err := logging.EnvOptions()
 	if err != nil {

@@ -27,10 +27,25 @@ type predictorEvalMeta struct {
 	codes  []string
 }
 
-func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg string, validationDays, halfLife int, allowLateReports bool) error {
-	windows, err := parsePredictorWindows(windowsArg)
-	if err != nil {
-		return err
+const (
+	evalUniverseReport           = "report"
+	evalUniverseConfigDiagnostic = "config-diagnostic"
+)
+
+func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg string, validationDays, halfLife int, allowLateReports, baselineOnly bool, universe string) error {
+	if universe == "" {
+		universe = evalUniverseReport
+	}
+	if universe != evalUniverseReport && universe != evalUniverseConfigDiagnostic {
+		return errors.New("predictor-eval universe must be report or config-diagnostic")
+	}
+	windows := []predictor.WindowSpec{}
+	var err error
+	if !baselineOnly {
+		windows, err = parsePredictorWindows(windowsArg)
+		if err != nil {
+			return err
+		}
 	}
 	if validationDays < 1 || validationDays > 60 {
 		return errors.New("predictor-eval validation-days must be between 1 and 60")
@@ -55,17 +70,20 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	if err != nil {
 		return err
 	}
-	maxWindow := windows[len(windows)-1].Days
-	requiredDays := validationDays + maxWindow
+	requiredDays := validationDays + c.Predictor.MinTrainingDays
+	if !baselineOnly {
+		requiredDays = validationDays + windows[len(windows)-1].Days
+	}
 	if len(tradingDays) < requiredDays {
 		report, err := predictor.EvaluateRollingWindows(ctx, nil, emptyEvalProvider, predictor.EvaluationOptions{
-			AsOf: asof, Windows: windows, TradingDays: tradingDays,
+			AsOf: asof, Windows: windows, BaselineOnly: baselineOnly, TradingDays: tradingDays,
 			MinTrainingDays: c.Predictor.MinTrainingDays, HalfLifeDays: halfLife,
 			TrainOptions: predictor.DefaultTrainOptions(),
 		})
 		if err != nil {
 			return err
 		}
+		report.Universe = universe
 		report.Notes = append(report.Notes, fmt.Sprintf("insufficient calendar history: need %d trading days, have %d", requiredDays, len(tradingDays)))
 		return json.NewEncoder(os.Stdout).Encode(report)
 	}
@@ -88,52 +106,67 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	notes := []string{}
 	metas := map[string]predictorEvalMeta{}
 	codes := map[string]bool{}
-	for _, date := range candidateDates {
-		report, source, err := predictor.LoadPointInTimeReport(ctx, marketDB, date, cal, allowLateReports)
-		if errors.Is(err, fs.ErrNotExist) {
-			notes = append(notes, "no point-in-time report for "+date)
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		topN := report.TopN
-		if topN <= 0 {
-			topN = c.Selection.TopN
-		}
-		stocks, observed := predictor.ReportUniverse(report, c.Stocks, topN)
-		if len(stocks) == 0 {
-			notes = append(notes, "empty evaluation universe for "+date)
-			continue
-		}
-		if observed {
-			notes = append(notes, "observation ranking used for "+date)
-		}
-		if source != "archive" {
-			if source == "archive-late" {
-				notes = append(notes, "late-generated archive report used for "+date+"; as_of is before target")
-			} else if source == "selection_run-late" {
-				notes = append(notes, "late-generated mutable selection_run report used for "+date+"; as_of is before target")
-			} else {
-				notes = append(notes, "mutable selection_run report used for "+date)
-			}
-		}
-		dayCodes := make([]string, 0, len(stocks))
-		for _, stock := range stocks {
-			dayCodes = append(dayCodes, stock.Code)
+	if universe == evalUniverseConfigDiagnostic {
+		stocks := append([]config.Stock(nil), c.Stocks...)
+		sort.Slice(stocks, func(i, j int) bool { return stocks[i].Code < stocks[j].Code })
+		dayCodes := make([]string, len(stocks))
+		for i, stock := range stocks {
+			dayCodes[i] = stock.Code
 			codes[stock.Code] = true
 		}
-		metas[date] = predictorEvalMeta{report: report, source: source, stocks: stocks, codes: dayCodes}
+		for _, date := range candidateDates {
+			metas[date] = predictorEvalMeta{source: evalUniverseConfigDiagnostic, stocks: stocks, codes: dayCodes}
+		}
+		notes = append(notes, "config-diagnostic universe uses the current configured pool for every validation day; it is not formal point-in-time acceptance")
+	} else {
+		for _, date := range candidateDates {
+			report, source, err := predictor.LoadPointInTimeReport(ctx, marketDB, date, cal, allowLateReports)
+			if errors.Is(err, fs.ErrNotExist) {
+				notes = append(notes, "no point-in-time report for "+date)
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			topN := report.TopN
+			if topN <= 0 {
+				topN = c.Selection.TopN
+			}
+			stocks, observed := predictor.ReportUniverse(report, c.Stocks, topN)
+			if len(stocks) == 0 {
+				notes = append(notes, "empty evaluation universe for "+date)
+				continue
+			}
+			if observed {
+				notes = append(notes, "observation ranking used for "+date)
+			}
+			if source != "archive" {
+				if source == "archive-late" {
+					notes = append(notes, "late-generated archive report used for "+date+"; as_of is before target")
+				} else if source == "selection_run-late" {
+					notes = append(notes, "late-generated mutable selection_run report used for "+date+"; as_of is before target")
+				} else {
+					notes = append(notes, "mutable selection_run report used for "+date)
+				}
+			}
+			dayCodes := make([]string, 0, len(stocks))
+			for _, stock := range stocks {
+				dayCodes = append(dayCodes, stock.Code)
+				codes[stock.Code] = true
+			}
+			metas[date] = predictorEvalMeta{report: report, source: source, stocks: stocks, codes: dayCodes}
+		}
 	}
 	if len(metas) == 0 {
 		report, err := predictor.EvaluateRollingWindows(ctx, nil, emptyEvalProvider, predictor.EvaluationOptions{
-			AsOf: asof, Windows: windows, TradingDays: tradingDays,
+			AsOf: asof, Windows: windows, BaselineOnly: baselineOnly, TradingDays: tradingDays,
 			MinTrainingDays: c.Predictor.MinTrainingDays, HalfLifeDays: halfLife,
 			TrainOptions: predictor.DefaultTrainOptions(),
 		})
 		if err != nil {
 			return err
 		}
+		report.Universe = universe
 		report.Notes = append(report.Notes, notes...)
 		return json.NewEncoder(os.Stdout).Encode(report)
 	}
@@ -193,13 +226,14 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 		}, nil
 	}
 	report, err := predictor.EvaluateRollingWindows(ctx, candidateDates, provider, predictor.EvaluationOptions{
-		AsOf: asof, Windows: windows, TradingDays: tradingDays, MarketStates: regimes,
+		AsOf: asof, Windows: windows, BaselineOnly: baselineOnly, TradingDays: tradingDays, MarketStates: regimes,
 		MinTrainingDays: c.Predictor.MinTrainingDays, HalfLifeDays: halfLife,
 		TrainOptions: predictor.DefaultTrainOptions(),
 	})
 	if err != nil {
 		return err
 	}
+	report.Universe = universe
 	report.Notes = append(report.Notes, notes...)
 	return json.NewEncoder(os.Stdout).Encode(report)
 }
