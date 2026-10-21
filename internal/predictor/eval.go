@@ -27,6 +27,7 @@ type WindowSpec struct {
 type EvaluationOptions struct {
 	AsOf            string
 	Windows         []WindowSpec
+	BaselineOnly    bool
 	TradingDays     []string
 	MarketStates    map[string]string
 	MinTrainingDays int
@@ -46,6 +47,8 @@ type DayProvider func(date string) (EvaluationDay, error)
 
 type EvaluationReport struct {
 	SchemaVersion  int                      `json:"schema_version"`
+	Mode           string                   `json:"mode"`
+	Universe       string                   `json:"universe,omitempty"`
 	Status         string                   `json:"status"`
 	AsOf           string                   `json:"as_of"`
 	FeatureVersion int                      `json:"feature_version"`
@@ -55,6 +58,7 @@ type EvaluationReport struct {
 	DataFrom       string                   `json:"data_from,omitempty"`
 	DataTo         string                   `json:"data_to,omitempty"`
 	Metrics        []modeleval.MetricRecord `json:"metrics"`
+	Days           []DayResult              `json:"days,omitempty"`
 	Windows        []WindowResult           `json:"windows"`
 	Strategies     []StrategyResult         `json:"strategies"`
 	Regimes        []RegimeResult           `json:"regimes"`
@@ -67,6 +71,13 @@ type WindowResult struct {
 	Days      int     `json:"days"`
 	Weight    float64 `json:"weight"`
 	Available bool    `json:"available"`
+}
+
+type DayResult struct {
+	Date              string `json:"date"`
+	TrainingDays      int    `json:"training_days"`
+	TrainingSamples   int    `json:"training_samples"`
+	ValidationSamples int    `json:"validation_samples"`
 }
 
 type StrategyResult struct {
@@ -101,10 +112,12 @@ type UniverseResult struct {
 func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayProvider, opts EvaluationOptions) (EvaluationReport, error) {
 	report := EvaluationReport{
 		SchemaVersion:  EvaluationSchemaVersion,
+		Mode:           "rolling",
 		Status:         "insufficient_history",
 		AsOf:           opts.AsOf,
 		FeatureVersion: FeatureVersion,
 		Metrics:        []modeleval.MetricRecord{},
+		Days:           []DayResult{},
 		Windows:        []WindowResult{},
 		Strategies:     []StrategyResult{},
 		Regimes:        []RegimeResult{},
@@ -121,13 +134,21 @@ func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayPro
 	if opts.HalfLifeDays <= 0 {
 		opts.HalfLifeDays = 60
 	}
-	windows, weights, err := normalizeWindows(opts.Windows, opts.HalfLifeDays)
-	if err != nil {
-		return report, err
+	if opts.BaselineOnly {
+		report.Mode = "baseline"
 	}
-	report.Windows = make([]WindowResult, 0, len(windows))
-	for i, spec := range windows {
-		report.Windows = append(report.Windows, WindowResult{Days: spec.Days, Weight: weights[i]})
+	var windows []WindowSpec
+	var weights []float64
+	if !opts.BaselineOnly {
+		var err error
+		windows, weights, err = normalizeWindows(opts.Windows, opts.HalfLifeDays)
+		if err != nil {
+			return report, err
+		}
+		report.Windows = make([]WindowResult, 0, len(windows))
+		for i, spec := range windows {
+			report.Windows = append(report.Windows, WindowResult{Days: spec.Days, Weight: weights[i]})
+		}
 	}
 	tradingDays := normalizeDays(opts.TradingDays)
 	if len(tradingDays) == 0 {
@@ -140,6 +161,7 @@ func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayPro
 	}
 
 	all := map[string]*metricAccumulator{}
+	byDay := map[string]map[string]*metricAccumulator{}
 	byRegime := map[string]map[string]*metricAccumulator{}
 	byRegimeFilter := map[string]*filterAccumulator{}
 	commonDates := []string{}
@@ -179,29 +201,31 @@ func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayPro
 			continue
 		}
 		windowTrain := make(map[int][]Sample, len(windows))
-		windowsReady := true
-		for _, spec := range windows {
-			windowDays := lastTradingDays(before, spec.Days)
-			if len(windowDays) != spec.Days {
-				report.Skipped = append(report.Skipped, fmt.Sprintf("%s:window_%d_insufficient", date, spec.Days))
-				windowsReady = false
-				break
+		if !opts.BaselineOnly {
+			windowsReady := true
+			for _, spec := range windows {
+				windowDays := lastTradingDays(before, spec.Days)
+				if len(windowDays) != spec.Days {
+					report.Skipped = append(report.Skipped, fmt.Sprintf("%s:window_%d_insufficient", date, spec.Days))
+					windowsReady = false
+					break
+				}
+				if missingSampleDays(day.Samples, windowDays) {
+					report.Skipped = append(report.Skipped, fmt.Sprintf("%s:window_%d_missing_session", date, spec.Days))
+					windowsReady = false
+					break
+				}
+				train := samplesOnDates(day.Samples, windowDays)
+				if len(train) == 0 {
+					report.Skipped = append(report.Skipped, fmt.Sprintf("%s:window_%d_no_samples", date, spec.Days))
+					windowsReady = false
+					break
+				}
+				windowTrain[spec.Days] = train
 			}
-			if missingSampleDays(day.Samples, windowDays) {
-				report.Skipped = append(report.Skipped, fmt.Sprintf("%s:window_%d_missing_session", date, spec.Days))
-				windowsReady = false
-				break
+			if !windowsReady {
+				continue
 			}
-			train := samplesOnDates(day.Samples, windowDays)
-			if len(train) == 0 {
-				report.Skipped = append(report.Skipped, fmt.Sprintf("%s:window_%d_no_samples", date, spec.Days))
-				windowsReady = false
-				break
-			}
-			windowTrain[spec.Days] = train
-		}
-		if !windowsReady {
-			continue
 		}
 
 		b0Model, err := trainEvaluationModel(b0Train, date, opts.TrainOptions)
@@ -214,19 +238,24 @@ func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayPro
 		}
 
 		windowPreds := make(map[int][]map[Target]float64, len(windows))
-		for _, spec := range windows {
-			model, err := trainEvaluationModel(windowTrain[spec.Days], date, opts.TrainOptions)
-			if err != nil {
-				return report, fmt.Errorf("train window %d for %s: %w", spec.Days, date, err)
+		if !opts.BaselineOnly {
+			for _, spec := range windows {
+				model, err := trainEvaluationModel(windowTrain[spec.Days], date, opts.TrainOptions)
+				if err != nil {
+					return report, fmt.Errorf("train window %d for %s: %w", spec.Days, date, err)
+				}
+				preds, err := predictEvaluationSamples(model, validation)
+				if err != nil {
+					return report, fmt.Errorf("predict window %d for %s: %w", spec.Days, date, err)
+				}
+				windowPreds[spec.Days] = preds
 			}
-			preds, err := predictEvaluationSamples(model, validation)
-			if err != nil {
-				return report, fmt.Errorf("predict window %d for %s: %w", spec.Days, date, err)
-			}
-			windowPreds[spec.Days] = preds
 		}
 
 		commonDates = append(commonDates, date)
+		report.Days = append(report.Days, DayResult{
+			Date: date, TrainingDays: len(before), TrainingSamples: len(b0Train), ValidationSamples: len(validation),
+		})
 		state := opts.MarketStates[date]
 		if state == "" {
 			state = MarketUnknown
@@ -243,12 +272,22 @@ func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayPro
 			scoreSample(all, byRegime, state, "B0", sample, b0Preds[i])
 			scoreSample(all, byRegime, state, "N0-last", sample, naiveLastPrediction(sample))
 			scoreSample(all, byRegime, state, "N0-range", sample, naiveRangePrediction(sample))
+			dayAcc := byDayAccumulators(byDay, date)
+			scoreDaySample(dayAcc, "B0", sample, b0Preds[i])
+			scoreDaySample(dayAcc, "N0-last", sample, naiveLastPrediction(sample))
+			scoreDaySample(dayAcc, "N0-range", sample, naiveRangePrediction(sample))
+			if opts.BaselineOnly {
+				continue
+			}
 			for _, spec := range windows {
 				scoreSample(all, byRegime, state, fmt.Sprintf("window-%d", spec.Days), sample, windowPreds[spec.Days][i])
+				scoreDaySample(dayAcc, fmt.Sprintf("window-%d", spec.Days), sample, windowPreds[spec.Days][i])
 			}
 			e0, e1 := combineWindowPredictions(windowPreds, windows, weights, i)
 			scoreSample(all, byRegime, state, "E0", sample, e0)
 			scoreSample(all, byRegime, state, "E1", sample, e1)
+			scoreDaySample(dayAcc, "E0", sample, e0)
+			scoreDaySample(dayAcc, "E1", sample, e1)
 
 			dispersion := windowCloseDispersion(windowPreds, windows, i)
 			dispersions = append(dispersions, dispersion)
@@ -265,12 +304,18 @@ func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayPro
 				regimeFilter.retained++
 				scoreSample(all, byRegime, state, "E1-filtered", sample, e1)
 				scoreSample(all, byRegime, state, "B0-filtered", sample, b0Preds[i])
+				scoreDaySample(dayAcc, "E1-filtered", sample, e1)
+				scoreDaySample(dayAcc, "B0-filtered", sample, b0Preds[i])
 			}
 		}
 	}
 
 	if len(commonDates) == 0 {
-		report.Notes = append(report.Notes, "no common validation day had every requested window and B0")
+		if opts.BaselineOnly {
+			report.Notes = append(report.Notes, "no validation day had a trainable B0 model")
+		} else {
+			report.Notes = append(report.Notes, "no common validation day had every requested window and B0")
+		}
 		report.Skipped = dedupeStrings(report.Skipped)
 		return report, nil
 	}
@@ -293,11 +338,15 @@ func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayPro
 		name := fmt.Sprintf("window-%d", spec.Days)
 		report.Windows[i].Available = all[name] != nil && all[name].sampleCount() > 0
 	}
-	strategyOrder := []string{"B0", "N0-last", "N0-range", "E0", "E1", "E1-filtered", "B0-filtered"}
+	strategyOrder := []string{"B0", "N0-last", "N0-range"}
+	if !opts.BaselineOnly {
+		strategyOrder = append(strategyOrder, "E0", "E1", "E1-filtered", "B0-filtered")
+	}
 	report.Strategies = strategyResults(all, strategyOrder, filter)
 	report.Regimes = regimeResults(byRegime, byRegimeFilter)
 	report.Metrics = rollingMetricRecords(all, byRegime, windows, strategyOrder)
-	if retainedFilterSamples == 0 {
+	report.Metrics = sortUniqueRecords(append(report.Metrics, dailyMetricRecords(byDay, commonDates, strategyOrder)...))
+	if !opts.BaselineOnly && retainedFilterSamples == 0 {
 		report.Notes = append(report.Notes, "the unanimity filter retained no validation samples")
 	}
 	return report, nil
@@ -511,6 +560,20 @@ func scoreSample(all map[string]*metricAccumulator, regimes map[string]map[strin
 	regimes[regime][name].add(sample, predicted)
 }
 
+func byDayAccumulators(byDay map[string]map[string]*metricAccumulator, date string) map[string]*metricAccumulator {
+	if byDay[date] == nil {
+		byDay[date] = map[string]*metricAccumulator{}
+	}
+	return byDay[date]
+}
+
+func scoreDaySample(all map[string]*metricAccumulator, name string, sample Sample, predicted map[Target]float64) {
+	if all[name] == nil {
+		all[name] = newMetricAccumulator()
+	}
+	all[name].add(sample, predicted)
+}
+
 func strategyResults(all map[string]*metricAccumulator, order []string, filter *FilterResult) []StrategyResult {
 	out := make([]StrategyResult, 0, len(order))
 	for _, name := range order {
@@ -604,6 +667,24 @@ func rollingMetricRecords(all map[string]*metricAccumulator, byRegime map[string
 		records = append(records, accumulator.majorityRecords(modeleval.BaselineSubject(modeleval.BaselineMajority), nil)...)
 	}
 	return sortUniqueRecords(records)
+}
+
+func dailyMetricRecords(byDay map[string]map[string]*metricAccumulator, dates []string, strategyOrder []string) []modeleval.MetricRecord {
+	records := []modeleval.MetricRecord{}
+	candidate := func(sample metricSample) TargetMetrics { return sample.Predicted }
+	for _, date := range dates {
+		accumulators := byDay[date]
+		if len(accumulators) == 0 {
+			continue
+		}
+		slice := []modeleval.SliceDimension{{Name: "date", Value: date}}
+		for _, name := range strategyOrder {
+			if accumulator := accumulators[name]; accumulator != nil {
+				records = append(records, accumulator.records("strategy:"+name, slice, candidate, false)...)
+			}
+		}
+	}
+	return records
 }
 
 func ratio(part, total int) float64 {

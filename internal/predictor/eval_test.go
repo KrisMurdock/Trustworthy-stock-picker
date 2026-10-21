@@ -118,6 +118,20 @@ func TestEvaluateRollingWindowsCommonDates(t *testing.T) {
 	if samples, days, ok := metricSampleSummary(report.Metrics, "window:2"); !ok || samples == 0 || days != 2 {
 		t.Fatalf("window metric summary = %d samples, %d days, ok=%v", samples, days, ok)
 	}
+	if len(report.Days) != 2 || report.Days[0].ValidationSamples == 0 || report.Days[0].TrainingSamples == 0 {
+		t.Fatalf("daily fold metadata missing: %+v", report.Days)
+	}
+	foundDaily := false
+	for _, record := range report.Metrics {
+		if record.Subject == "strategy:B0" && record.MetricID == modeleval.MetricPointMAE &&
+			record.Target == modeleval.TargetClose && record.Aggregation == modeleval.AggregationDayEqual &&
+			len(record.Slice) == 1 && record.Slice[0].Name == "date" && record.Slice[0].Value == days[6] {
+			foundDaily = record.Value != nil && record.Samples > 0
+		}
+	}
+	if !foundDaily {
+		t.Fatal("daily metric slice missing for B0")
+	}
 	for _, subject := range []string{"strategy:E1", "window:2"} {
 		reserved := findMetricRecord(t, report.Metrics, modeleval.MetricIntervalEmpiricalCoverage, subject, modeleval.TargetAll, modeleval.SpaceNone, modeleval.AggregationPooled)
 		if reserved.Applicability != modeleval.ApplicabilityNotApplicable || reserved.Value != nil ||
@@ -146,6 +160,39 @@ func TestEvaluateRollingWindowsCommonDates(t *testing.T) {
 	}
 	if string(first) != string(second) {
 		t.Fatal("evaluation output is not deterministic")
+	}
+}
+
+func TestEvaluateBaselineOnlySkipsRollingWindows(t *testing.T) {
+	days := evalDates(8)
+	samples := evalSyntheticSamples(8, 6)
+	provider := func(date string) (EvaluationDay, error) {
+		return EvaluationDay{Date: date, Samples: samples, Codes: []string{"sh600000"}}, nil
+	}
+	report, err := EvaluateRollingWindows(context.Background(), days[6:], provider, EvaluationOptions{
+		AsOf: days[7], BaselineOnly: true, TradingDays: days, MinTrainingDays: 2,
+		TrainOptions: evalOptions(t, days),
+	})
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if report.Mode != "baseline" || report.ValidationDays != 2 || len(report.Windows) != 0 {
+		t.Fatalf("unexpected baseline report: %+v", report)
+	}
+	if len(report.Strategies) != 3 {
+		t.Fatalf("baseline strategies=%+v want B0 and two N0 baselines", report.Strategies)
+	}
+	for _, name := range []string{"B0", "N0-last", "N0-range"} {
+		if strategy := evalFindStrategy(t, report, name); !strategy.Available {
+			t.Fatalf("baseline strategy %s unavailable", name)
+		}
+	}
+	for _, name := range []string{"E0", "E1", "B0-filtered"} {
+		for _, strategy := range report.Strategies {
+			if strategy.Name == name {
+				t.Fatalf("baseline-only unexpectedly emitted %s", name)
+			}
+		}
 	}
 }
 
