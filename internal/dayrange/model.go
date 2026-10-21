@@ -736,6 +736,9 @@ func baseSlice(slice []modeleval.SliceDimension) bool {
 			asOf = true
 		case "mode":
 			mode = true
+		case "coverage", "interval_method":
+		default:
+			return false
 		}
 	}
 	return asOf && mode

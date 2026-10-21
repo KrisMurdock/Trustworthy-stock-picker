@@ -142,6 +142,16 @@ func TestCheckGateUsesMarginalCoverageWidthAndPointError(t *testing.T) {
 	}
 }
 
+func TestCheckGateUsesOnlyBaseAggregateMetrics(t *testing.T) {
+	candidate, baseline := gateReports(9, .8, 10)
+	grouped := metricRecord(modeleval.MetricPointMAE, modeleval.TargetHigh, modeleval.SpacePrice, 100, 20, 20, modeleval.SliceDimension{Name: "code", Value: "sh600019"})
+	candidate.Metrics = append([]modeleval.MetricRecord{grouped}, candidate.Metrics...)
+	gate := CheckGate(candidate, baseline, 20, 100)
+	if gate.ValidationSamples != 100 || !gate.Passed {
+		t.Fatalf("grouped metric affected gate: %+v", gate)
+	}
+}
+
 func TestChronologicalSplitNeverLeaksValidation(t *testing.T) {
 	days := weekdayDays("2025-01-01", 220)
 	samples := make([]Sample, 0, len(days))

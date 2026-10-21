@@ -190,6 +190,16 @@ func (f fakeDayRangeMarket) LoadDayRangeData(context.Context, []config.Stock, st
 	return f.data, nil
 }
 
+type recordingDayRangeMarket struct {
+	data          MarketData
+	from, through string
+}
+
+func (f *recordingDayRangeMarket) LoadDayRangeData(_ context.Context, _ []config.Stock, from, through string) (MarketData, error) {
+	f.from, f.through = from, through
+	return f.data, nil
+}
+
 func mustDay(value string) time.Time {
 	day, err := time.ParseInLocation(time.DateOnly, value, shanghai)
 	if err != nil {
@@ -214,6 +224,19 @@ func serviceDays(c config.Config, start, end string) []string {
 		panic(err)
 	}
 	return days
+}
+
+func TestLoadDataUsesExchangeCalendarBeforeConfiguredCalendar(t *testing.T) {
+	c := serviceConfig()
+	c.Calendar.ValidFrom = "2026-01-01"
+	market := &recordingDayRangeMarket{}
+	service := NewService(c, newFakeDayRangeStore(), market, nil)
+	if _, err := service.loadData(context.Background(), "2026-10-21"); err != nil {
+		t.Fatal(err)
+	}
+	if market.from != "2025-04-24" || market.through != "2026-10-21" {
+		t.Fatalf("unexpected dayrange data window: %s through %s", market.from, market.through)
+	}
 }
 
 func newDayRangeServiceForTest(t *testing.T, now time.Time, data MarketData) (*Service, *fakeDayRangeStore) {

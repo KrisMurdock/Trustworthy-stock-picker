@@ -709,9 +709,6 @@ func (s *Service) loadData(ctx context.Context, through string) (MarketData, err
 		return MarketData{}, errors.New("invalid dayrange data date")
 	}
 	from := end.AddDate(0, 0, -s.Config.DayRange.HistoryDays-180).Format("2006-01-02")
-	if from < s.Config.Calendar.ValidFrom {
-		from = s.Config.Calendar.ValidFrom
-	}
 	return s.Market.LoadDayRangeData(ctx, s.Config.Stocks, from, through)
 }
 
