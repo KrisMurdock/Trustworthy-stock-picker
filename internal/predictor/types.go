@@ -98,6 +98,7 @@ type ModelInfo struct {
 	FeatureNames    []string                 `json:"feature_names"`
 	Metrics         []modeleval.MetricRecord `json:"metrics"`
 	Residuals       TargetMetrics            `json:"residual_bands"`
+	Calibration     *PredictionCalibration   `json:"calibration,omitempty"`
 	CodeVersion     string                   `json:"code_version"`
 	Checksum        string                   `json:"checksum"`
 	ArtifactPath    string                   `json:"artifact_path"`

@@ -28,11 +28,23 @@ type EvaluationOptions struct {
 	AsOf            string
 	Windows         []WindowSpec
 	BaselineOnly    bool
+	CalibrationGrid bool
 	TradingDays     []string
 	MarketStates    map[string]string
 	MinTrainingDays int
+	MaxTrainingDays int
 	HalfLifeDays    int
 	TrainOptions    TrainOptions
+	PredictionHook  func(PredictionRecord) error
+}
+
+type PredictionRecord struct {
+	Date          string        `json:"date"`
+	Code          string        `json:"code"`
+	InputEnd      time.Time     `json:"input_end"`
+	BaselineRange float64       `json:"baseline_range"`
+	Actual        TargetMetrics `json:"actual"`
+	Predicted     TargetMetrics `json:"predicted"`
 }
 
 type EvaluationDay struct {
@@ -107,6 +119,54 @@ type UniverseResult struct {
 	MarketState    string   `json:"market_state"`
 }
 
+// PredictionVariant applies a deterministic post-processing rule to the raw
+// B0 prediction. It is used only by predictor-eval to diagnose calibration
+// without retraining; production inference never applies an unvalidated
+// variant.
+type PredictionVariant struct {
+	Name            string
+	HighScale       float64
+	LowScale        float64
+	CloseScale      float64
+	HighRangeWeight float64
+	LowRangeWeight  float64
+	EnforceOrder    bool
+	RangeRatioMin   float64
+	RangeRatioMax   float64
+}
+
+var calibrationVariants = []PredictionVariant{
+	{Name: "B0-shrink75", HighScale: 0.75, LowScale: 0.75, CloseScale: 0.75},
+	{Name: "B0-shrink50", HighScale: 0.5, LowScale: 0.5, CloseScale: 0.5},
+	{Name: "B0-shrink25", HighScale: 0.25, LowScale: 0.25, CloseScale: 0.25},
+	{Name: "B0-close75", HighScale: 1, LowScale: 1, CloseScale: 0.75},
+	{Name: "B0-close50", HighScale: 1, LowScale: 1, CloseScale: 0.5},
+	{Name: "B0-close25", HighScale: 1, LowScale: 1, CloseScale: 0.25},
+	{Name: "B0-range10", HighScale: 0.9, LowScale: 0.9, CloseScale: 1, HighRangeWeight: 0.1, LowRangeWeight: 0.1},
+	{Name: "B0-range15", HighScale: 0.85, LowScale: 0.85, CloseScale: 1, HighRangeWeight: 0.15, LowRangeWeight: 0.15},
+	{Name: "B0-range20", HighScale: 0.8, LowScale: 0.8, CloseScale: 1, HighRangeWeight: 0.2, LowRangeWeight: 0.2},
+	{Name: "B0-range25", HighScale: 0.75, LowScale: 0.75, CloseScale: 1, HighRangeWeight: 0.25, LowRangeWeight: 0.25},
+	{Name: "B0-range30", HighScale: 0.7, LowScale: 0.7, CloseScale: 1, HighRangeWeight: 0.3, LowRangeWeight: 0.3},
+	{Name: "B0-range35", HighScale: 0.65, LowScale: 0.65, CloseScale: 1, HighRangeWeight: 0.35, LowRangeWeight: 0.35},
+	{Name: "B0-range40", HighScale: 0.6, LowScale: 0.6, CloseScale: 1, HighRangeWeight: 0.4, LowRangeWeight: 0.4},
+	{Name: "B0-range50", HighScale: 0.5, LowScale: 0.5, CloseScale: 1, HighRangeWeight: 0.5, LowRangeWeight: 0.5},
+	{Name: "B0-range60", HighScale: 0.4, LowScale: 0.4, CloseScale: 1, HighRangeWeight: 0.6, LowRangeWeight: 0.6},
+	{Name: "B0-hi15-lo35", HighScale: 0.85, LowScale: 0.65, CloseScale: 1, HighRangeWeight: 0.15, LowRangeWeight: 0.35},
+	{Name: "B0-hi20-lo40", HighScale: 0.8, LowScale: 0.6, CloseScale: 1, HighRangeWeight: 0.2, LowRangeWeight: 0.4},
+	{Name: "B0-hi25-lo35", HighScale: 0.75, LowScale: 0.65, CloseScale: 1, HighRangeWeight: 0.25, LowRangeWeight: 0.35},
+	{Name: "B0-hi30-lo50", HighScale: 0.7, LowScale: 0.5, CloseScale: 1, HighRangeWeight: 0.3, LowRangeWeight: 0.5},
+	{Name: "B0-range25-close50", HighScale: 0.75, LowScale: 0.75, CloseScale: 0.5, HighRangeWeight: 0.25, LowRangeWeight: 0.25},
+	{Name: "B0-range25-close25", HighScale: 0.75, LowScale: 0.75, CloseScale: 0.25, HighRangeWeight: 0.25, LowRangeWeight: 0.25},
+	{Name: "B0-range30-close50", HighScale: 0.7, LowScale: 0.7, CloseScale: 0.5, HighRangeWeight: 0.3, LowRangeWeight: 0.3},
+	{Name: "B0-range40-close50", HighScale: 0.6, LowScale: 0.6, CloseScale: 0.5, HighRangeWeight: 0.4, LowRangeWeight: 0.4},
+	{Name: "B0-range25-wide125-close25", HighScale: 0.75, LowScale: 0.75, CloseScale: 0.25, HighRangeWeight: 0.25, LowRangeWeight: 0.25, RangeRatioMin: 1.25},
+	{Name: "B0-range25-wide150-close25", HighScale: 0.75, LowScale: 0.75, CloseScale: 0.25, HighRangeWeight: 0.25, LowRangeWeight: 0.25, RangeRatioMin: 1.5},
+	{Name: "B0-range25-wide200-close25", HighScale: 0.75, LowScale: 0.75, CloseScale: 0.25, HighRangeWeight: 0.25, LowRangeWeight: 0.25, RangeRatioMin: 2},
+	{Name: "B0-range25-narrow100-close25", HighScale: 0.75, LowScale: 0.75, CloseScale: 0.25, HighRangeWeight: 0.25, LowRangeWeight: 0.25, RangeRatioMax: 1},
+	{Name: "B0-range50-wide150-close25", HighScale: 0.5, LowScale: 0.5, CloseScale: 0.25, HighRangeWeight: 0.5, LowRangeWeight: 0.5, RangeRatioMin: 1.5},
+	{Name: "B0-order", HighScale: 1, LowScale: 1, CloseScale: 1, EnforceOrder: true},
+}
+
 // EvaluateRollingWindows evaluates fixed-length rolling windows on a common
 // set of validation days. It never trains on the validation date or later.
 func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayProvider, opts EvaluationOptions) (EvaluationReport, error) {
@@ -169,6 +229,10 @@ func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayPro
 	retainedFilterSamples := 0
 	dispersions := []float64{}
 	dataFrom, dataTo := "", ""
+	variants := []PredictionVariant{}
+	if opts.CalibrationGrid {
+		variants = calibrationVariants
+	}
 
 	for _, date := range dates {
 		if err := ctx.Err(); err != nil {
@@ -195,7 +259,11 @@ func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayPro
 			report.Skipped = append(report.Skipped, date+":insufficient_training_days")
 			continue
 		}
-		b0Train := samplesOnDates(day.Samples, before)
+		b0Days := before
+		if opts.MaxTrainingDays > 0 && len(b0Days) > opts.MaxTrainingDays {
+			b0Days = lastTradingDays(b0Days, opts.MaxTrainingDays)
+		}
+		b0Train := samplesOnDates(day.Samples, b0Days)
 		if len(b0Train) == 0 {
 			report.Skipped = append(report.Skipped, date+":no_b0_training_samples")
 			continue
@@ -269,7 +337,20 @@ func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayPro
 		updateDataRange(&dataFrom, &dataTo, day.Samples)
 
 		for i, sample := range validation {
+			if opts.PredictionHook != nil {
+				actual := TargetMetrics{High: sample.Labels[TargetHigh], Low: sample.Labels[TargetLow], Close: sample.Labels[TargetClose]}
+				predicted := TargetMetrics{High: b0Preds[i][TargetHigh], Low: b0Preds[i][TargetLow], Close: b0Preds[i][TargetClose]}
+				if err := opts.PredictionHook(PredictionRecord{Date: sample.Date, Code: sample.Code, InputEnd: sample.InputEnd, BaselineRange: sample.BaselineRange, Actual: actual, Predicted: predicted}); err != nil {
+					return report, fmt.Errorf("record prediction for %s: %w", date, err)
+				}
+			}
 			scoreSample(all, byRegime, state, "B0", sample, b0Preds[i])
+			for _, variant := range variants {
+				transformed := applyPredictionVariant(sample, b0Preds[i], variant)
+				scoreSample(all, byRegime, state, variant.Name, sample, transformed)
+				dayAcc := byDayAccumulators(byDay, date)
+				scoreDaySample(dayAcc, variant.Name, sample, transformed)
+			}
 			scoreSample(all, byRegime, state, "N0-last", sample, naiveLastPrediction(sample))
 			scoreSample(all, byRegime, state, "N0-range", sample, naiveRangePrediction(sample))
 			dayAcc := byDayAccumulators(byDay, date)
@@ -339,6 +420,11 @@ func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayPro
 		report.Windows[i].Available = all[name] != nil && all[name].sampleCount() > 0
 	}
 	strategyOrder := []string{"B0", "N0-last", "N0-range"}
+	if opts.CalibrationGrid {
+		for _, variant := range variants {
+			strategyOrder = append(strategyOrder, variant.Name)
+		}
+	}
 	if !opts.BaselineOnly {
 		strategyOrder = append(strategyOrder, "E0", "E1", "E1-filtered", "B0-filtered")
 	}
@@ -558,6 +644,39 @@ func scoreSample(all map[string]*metricAccumulator, regimes map[string]map[strin
 		regimes[regime][name] = newMetricAccumulator()
 	}
 	regimes[regime][name].add(sample, predicted)
+}
+
+func applyPredictionVariant(sample Sample, predicted map[Target]float64, variant PredictionVariant) map[Target]float64 {
+	out := map[Target]float64{
+		TargetHigh:  predicted[TargetHigh] * variant.HighScale,
+		TargetLow:   predicted[TargetLow] * variant.LowScale,
+		TargetClose: predicted[TargetClose] * variant.CloseScale,
+	}
+	if variant.RangeRatioMin > 0 || variant.RangeRatioMax > 0 {
+		ratio := 0.0
+		if sample.BaselineRange > 0 {
+			ratio = (predicted[TargetHigh] - predicted[TargetLow]) / sample.BaselineRange
+		}
+		inside := (variant.RangeRatioMin <= 0 || ratio >= variant.RangeRatioMin) &&
+			(variant.RangeRatioMax <= 0 || ratio <= variant.RangeRatioMax)
+		if !inside {
+			out[TargetHigh] = predicted[TargetHigh]
+			out[TargetLow] = predicted[TargetLow]
+		}
+	}
+	if variant.HighRangeWeight > 0 {
+		rangeHigh := sample.BaselineRange / 2
+		out[TargetHigh] = (1-variant.HighRangeWeight)*predicted[TargetHigh] + variant.HighRangeWeight*rangeHigh
+	}
+	if variant.LowRangeWeight > 0 {
+		rangeLow := -sample.BaselineRange / 2
+		out[TargetLow] = (1-variant.LowRangeWeight)*predicted[TargetLow] + variant.LowRangeWeight*rangeLow
+	}
+	if variant.EnforceOrder {
+		out[TargetHigh] = math.Max(out[TargetHigh], out[TargetClose])
+		out[TargetLow] = math.Min(out[TargetLow], out[TargetClose])
+	}
+	return out
 }
 
 func byDayAccumulators(byDay map[string]map[string]*metricAccumulator, date string) map[string]*metricAccumulator {

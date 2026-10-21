@@ -130,6 +130,12 @@ func TestArtifactRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadModel: %v", err)
 	}
+	if artifact.Info.Calibration == nil || *artifact.Info.Calibration != DefaultPredictionCalibration() {
+		t.Fatalf("trained model metadata calibration = %+v", artifact.Info.Calibration)
+	}
+	if loaded.Artifact.Info.Calibration == nil || *loaded.Artifact.Info.Calibration != DefaultPredictionCalibration() {
+		t.Fatalf("loaded model metadata calibration = %+v", loaded.Artifact.Info.Calibration)
+	}
 	original := &Model{Artifact: *artifact}
 	for i := range samples {
 		want, err := original.Predict(samples[i].Features)

@@ -196,6 +196,48 @@ func TestEvaluateBaselineOnlySkipsRollingWindows(t *testing.T) {
 	}
 }
 
+func TestEvaluateCalibrationGridAddsDailyVariants(t *testing.T) {
+	days := evalDates(8)
+	samples := evalSyntheticSamples(8, 6)
+	provider := func(date string) (EvaluationDay, error) {
+		return EvaluationDay{Date: date, Samples: samples, Codes: []string{"sh600000"}}, nil
+	}
+	report, err := EvaluateRollingWindows(context.Background(), days[6:], provider, EvaluationOptions{
+		AsOf: days[7], BaselineOnly: true, CalibrationGrid: true, TradingDays: days, MinTrainingDays: 2,
+		TrainOptions: evalOptions(t, days),
+	})
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	const name = "B0-range25-close25"
+	if strategy := evalFindStrategy(t, report, name); !strategy.Available {
+		t.Fatalf("calibration strategy %s unavailable", name)
+	}
+	foundDaily := false
+	for _, record := range report.Metrics {
+		if record.Subject == "strategy:"+name && record.MetricID == modeleval.MetricPointMAE &&
+			record.Target == modeleval.TargetClose && record.Aggregation == modeleval.AggregationDayEqual &&
+			len(record.Slice) == 1 && record.Slice[0].Name == "date" && record.Slice[0].Value == days[6] {
+			foundDaily = record.Value != nil && record.Samples > 0
+		}
+	}
+	if !foundDaily {
+		t.Fatal("daily calibration metric slice missing")
+	}
+}
+
+func TestApplyPredictionVariantUsesUnscaledRangeBlend(t *testing.T) {
+	sample := Sample{BaselineRange: 0.02}
+	predicted := map[Target]float64{TargetHigh: 0.01, TargetLow: -0.008, TargetClose: 0.002}
+	got := applyPredictionVariant(sample, predicted, PredictionVariant{
+		Name: "range", HighScale: 0.5, LowScale: 0.5, CloseScale: 0.5,
+		HighRangeWeight: 0.25, LowRangeWeight: 0.25,
+	})
+	if math.Abs(got[TargetHigh]-0.01) > 1e-12 || math.Abs(got[TargetLow]-(-0.0085)) > 1e-12 || math.Abs(got[TargetClose]-0.001) > 1e-12 {
+		t.Fatalf("variant prediction = %+v", got)
+	}
+}
+
 func addMetricTestSample(accumulator *metricAccumulator, date, code string, actualClose, predictedClose float64) {
 	inputClose := 100.0
 	sample := Sample{

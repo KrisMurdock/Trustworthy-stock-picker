@@ -12,7 +12,8 @@ import (
 
 type TrainOptions struct {
 	Hyperparameters
-	LabelClip TargetMetrics
+	LabelClip   TargetMetrics
+	Calibration PredictionCalibration
 }
 
 var errNoPredictionSamples = errors.New("predictor has no training samples")
@@ -21,6 +22,7 @@ func DefaultTrainOptions() TrainOptions {
 	return TrainOptions{
 		Hyperparameters: Hyperparameters{Trees: 120, MaxDepth: 4, MinLeaf: 40, LearningRate: 0.05, L2: 1, Seed: 1949, Bins: 32},
 		LabelClip:       TargetMetrics{High: 0.05, Low: 0.05, Close: 0.05},
+		Calibration:     DefaultPredictionCalibration(),
 	}
 }
 
@@ -55,6 +57,7 @@ func Train(samples []Sample, info ModelInfo, opts TrainOptions) (*Artifact, erro
 	info.SchemaVersion = ArtifactSchemaVersion
 	info.FeatureVersion = FeatureVersion
 	info.FeatureNames = append([]string(nil), names...)
+	info.Calibration = &opts.Calibration
 	if info.DataFrom == "" {
 		info.DataFrom = ordered[0].Date
 	}
@@ -72,6 +75,7 @@ func Train(samples []Sample, info ModelInfo, opts TrainOptions) (*Artifact, erro
 		Base:            make(map[Target]float64, len(Targets)),
 		Trees:           make(map[Target][]Tree, len(Targets)),
 		LabelClip:       map[Target]float64{TargetHigh: opts.LabelClip.High, TargetLow: opts.LabelClip.Low, TargetClose: opts.LabelClip.Close},
+		Calibration:     &opts.Calibration,
 	}
 	for _, target := range Targets {
 		labels := make([]float64, len(ordered))
@@ -280,6 +284,7 @@ func normalizeTrainOptions(opts TrainOptions) TrainOptions {
 	if opts.LabelClip.Close <= 0 {
 		opts.LabelClip.Close = defaults.LabelClip.Close
 	}
+	opts.Calibration = opts.Calibration.normalized()
 	return opts
 }
 

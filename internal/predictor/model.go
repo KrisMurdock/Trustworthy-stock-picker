@@ -22,6 +22,43 @@ type Hyperparameters struct {
 	Bins         int     `json:"bins"`
 }
 
+// PredictionCalibration shrinks the raw boosted-tree point estimates after
+// clipping. It is recorded in the artifact so inference and evaluation use the
+// same scales; nil calibration means 1.0 for backward compatibility.
+type PredictionCalibration struct {
+	High  float64 `json:"high"`
+	Low   float64 `json:"low"`
+	Close float64 `json:"close"`
+}
+
+func DefaultPredictionCalibration() PredictionCalibration {
+	return PredictionCalibration{High: 1, Low: 1, Close: 1}
+}
+
+func (c PredictionCalibration) normalized() PredictionCalibration {
+	defaults := DefaultPredictionCalibration()
+	if c.High <= 0 || math.IsNaN(c.High) || math.IsInf(c.High, 0) {
+		c.High = defaults.High
+	}
+	if c.Low <= 0 || math.IsNaN(c.Low) || math.IsInf(c.Low, 0) {
+		c.Low = defaults.Low
+	}
+	if c.Close <= 0 || math.IsNaN(c.Close) || math.IsInf(c.Close, 0) {
+		c.Close = defaults.Close
+	}
+	return c
+}
+
+func (c PredictionCalibration) valid() bool {
+	values := []float64{c.High, c.Low, c.Close}
+	for _, value := range values {
+		if value <= 0 || value > 2 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return false
+		}
+	}
+	return true
+}
+
 type Node struct {
 	Feature     int     `json:"feature"`
 	Threshold   float64 `json:"threshold"`
@@ -37,12 +74,13 @@ type Tree struct {
 }
 
 type Artifact struct {
-	SchemaVersion   int                `json:"schema_version"`
-	Info            ModelInfo          `json:"info"`
-	Hyperparameters Hyperparameters    `json:"hyperparameters"`
-	Base            map[Target]float64 `json:"base"`
-	Trees           map[Target][]Tree  `json:"trees"`
-	LabelClip       map[Target]float64 `json:"label_clip"`
+	SchemaVersion   int                    `json:"schema_version"`
+	Info            ModelInfo              `json:"info"`
+	Hyperparameters Hyperparameters        `json:"hyperparameters"`
+	Base            map[Target]float64     `json:"base"`
+	Trees           map[Target][]Tree      `json:"trees"`
+	LabelClip       map[Target]float64     `json:"label_clip"`
+	Calibration     *PredictionCalibration `json:"calibration,omitempty"`
 }
 
 type Model struct {
@@ -126,6 +164,9 @@ func LoadModel(data []byte) (*Model, error) {
 	if len(a.Base) != len(Targets) || len(a.Trees) != len(Targets) || len(a.LabelClip) != len(Targets) {
 		return nil, errors.New("predictor model does not cover every target")
 	}
+	if a.Calibration != nil && !a.Calibration.valid() {
+		return nil, errors.New("invalid predictor calibration")
+	}
 	for _, target := range Targets {
 		if _, ok := a.Base[target]; !ok {
 			return nil, errors.New("predictor model is missing a target base")
@@ -180,6 +221,10 @@ func (m *Model) Predict(values []float64) (map[Target]float64, error) {
 		return nil, fmt.Errorf("predictor feature count mismatch: got %d want %d", len(values), len(m.Artifact.Info.FeatureNames))
 	}
 	out := make(map[Target]float64, len(Targets))
+	calibration := DefaultPredictionCalibration()
+	if m.Artifact.Calibration != nil {
+		calibration = m.Artifact.Calibration.normalized()
+	}
 	for _, target := range Targets {
 		sum := m.Artifact.Base[target]
 		for _, tree := range m.Artifact.Trees[target] {
@@ -190,6 +235,14 @@ func (m *Model) Predict(values []float64) (map[Target]float64, error) {
 		}
 		if math.IsNaN(sum) || math.IsInf(sum, 0) {
 			return nil, errors.New("predictor produced a non-finite value")
+		}
+		switch target {
+		case TargetHigh:
+			sum *= calibration.High
+		case TargetLow:
+			sum *= calibration.Low
+		case TargetClose:
+			sum *= calibration.Close
 		}
 		out[target] = sum
 	}

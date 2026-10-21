@@ -52,6 +52,41 @@ func TestModelArtifactRoundTripAndChecksum(t *testing.T) {
 	}
 }
 
+func TestModelAppliesPredictionCalibration(t *testing.T) {
+	artifact := testArtifact()
+	artifact.Calibration = &PredictionCalibration{High: 0.8, Low: 0.9, Close: 0.25}
+	data, err := SealArtifact(&artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := LoadModel(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := model.Predict([]float64{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(got[TargetHigh]-0.008) > 1e-12 || math.Abs(got[TargetLow]-0.009) > 1e-12 || math.Abs(got[TargetClose]-0.0025) > 1e-12 {
+		t.Fatalf("calibrated prediction = %+v", got)
+	}
+}
+
+func TestModelRejectsInvalidPredictionCalibration(t *testing.T) {
+	artifact := testArtifact()
+	artifact.Calibration = &PredictionCalibration{High: 0, Low: 1, Close: 1}
+	if _, err := SealArtifact(&artifact); err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	data, err := json.Marshal(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadModel(data); err == nil {
+		t.Fatal("invalid calibration was accepted")
+	}
+}
+
 func TestModelRejectsChecksumMismatch(t *testing.T) {
 	artifact := testArtifact()
 	data, err := SealArtifact(&artifact)
