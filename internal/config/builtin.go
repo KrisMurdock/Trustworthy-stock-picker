@@ -9,6 +9,8 @@ func Builtin() Config {
 	c.Strategy.Enabled = true
 	c.PoolFile = "leaders.yaml"
 	c.Selection.Enabled = true
+	c.FirstStage.Enabled = true
+	c.FirstStage.PushEnabled = true
 	c.Feishu.Enabled = true
 	c.Predictor.Enabled = true
 	c.Predictor.PushEnabled = true

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/diagnostics"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
@@ -15,6 +16,7 @@ import (
 const (
 	detailStocksPerPage = 8
 	mainTableRows       = 10
+	firstStagePerPage   = 25
 )
 
 var riskPriority = []string{
@@ -31,8 +33,9 @@ var riskPriority = []string{
 }
 
 type Cards struct {
-	Main    notify.Message
-	Details []notify.Message
+	Main       notify.Message
+	Details    []notify.Message
+	FirstStage []notify.Message
 }
 
 func FromSelection(r selection.Report) (Cards, error) {
@@ -76,8 +79,79 @@ func FromSelection(r selection.Report) (Cards, error) {
 			ExpiresAt:      expires,
 		})
 	}
+	firstStage := firstStageCards(r, expires)
 
-	return Cards{Main: main, Details: details}, nil
+	return Cards{Main: main, Details: details, FirstStage: firstStage}, nil
+}
+
+func firstStageCards(r selection.Report, expires time.Time) []notify.Message {
+	report := r.FirstStage
+	if report == nil || !report.PushEnabled || report.Status != firststage.StatusOK || len(report.Candidates) == 0 {
+		return nil
+	}
+	monthDay := r.Target
+	if len(monthDay) > 5 {
+		monthDay = monthDay[len(monthDay)-5:]
+	}
+	baseTitle := fmt.Sprintf("A股龙头池 · %s 初筛池 · %d 只", monthDay, len(report.Candidates))
+	pages := (len(report.Candidates) + firstStagePerPage - 1) / firstStagePerPage
+	cards := make([]notify.Message, 0, pages)
+	for page := 0; page < pages; page++ {
+		start := page * firstStagePerPage
+		end := min(start+firstStagePerPage, len(report.Candidates))
+		table := &notify.Table{
+			PageSize:          firstStagePerPage,
+			RowHeight:         "middle",
+			FreezeFirstColumn: true,
+			Columns: []notify.TableColumn{
+				{Key: "rank", Label: "排名", Kind: notify.TableText, Width: "7%"},
+				{Key: "stock", Label: "标的", Kind: notify.TableText, Width: "31%"},
+				{Key: "code", Label: "代码", Kind: notify.TableText, Width: "15%"},
+				{Key: "base", Label: "机会分", Kind: notify.TableText, Width: "14%"},
+				{Key: "model", Label: "模型分", Kind: notify.TableText, Width: "14%"},
+				{Key: "blend", Label: "综合分", Kind: notify.TableText, Width: "14%"},
+			},
+		}
+		for _, candidate := range report.Candidates[start:end] {
+			table.Rows = append(table.Rows, []notify.TableCell{
+				{Text: fmt.Sprintf("%d", candidate.Rank)},
+				{Text: escape(candidate.Name)},
+				{Text: candidate.Code},
+				{Text: fmt.Sprintf("%.1f", candidate.BaseScore)},
+				{Text: fmt.Sprintf("%.3f", candidate.ModelScore)},
+				{Text: fmt.Sprintf("%.3f", candidate.BlendScore)},
+			})
+		}
+		lines := []string{"高召回初筛仅用于第二层精排，不构成交易建议。"}
+		if page == 0 {
+			lines = []string{
+				"高召回初筛：保留未来3个交易日最高价相对信号日收盘触及 +1% 的候选；仅供第二层精排，不构成交易建议。",
+				fmt.Sprintf("信号日 %s · 目标日 %s · 有效 %d/%d · 模型 %s（训练截至 %s）", report.AsOf, report.Target, report.Eligible, report.PoolSize, report.ModelID, report.TrainedThrough),
+				"综合分 = 0.5 × 机会分日内排名 + 0.5 × 模型分日内排名。",
+			}
+		}
+		number := page + 1
+		title := baseTitle
+		if pages > 1 {
+			title = fmt.Sprintf("%s · %d/%d", baseTitle, number, pages)
+		}
+		cards = append(cards, notify.Message{
+			Version:        2,
+			EventID:        fmt.Sprintf("%s:first-stage:%02d", r.ID, number),
+			DisplayEventID: r.ID,
+			PartLabel:      fmt.Sprintf("初筛 %d/%d", number, pages),
+			Title:          title,
+			Sections: []notify.Section{{
+				Heading: fmt.Sprintf("第 %d～%d 名", start+1, end),
+				Lines:   lines,
+				Table:   table,
+			}},
+			Template:   "blue",
+			TrimPolicy: notify.TrimNone,
+			ExpiresAt:  expires,
+		})
+	}
+	return cards
 }
 
 func decisionBaseTitle(r selection.Report, short bool) string {

@@ -50,16 +50,18 @@ func applyEnvironment(c *Config) error {
 		}
 	}
 	for name, target := range map[string]*bool{
-		"STOCK_WATCHER_REQUIRE_CIFS":           &c.RequireCIFS,
-		"STOCK_WATCHER_WEB_ENABLED":            &c.Web.Enabled,
-		"STOCK_WATCHER_WEB_PUBLIC_READ_ONLY":   &c.Web.PublicReadOnly,
-		"STOCK_WATCHER_FEISHU_ENABLED":         &c.Feishu.Enabled,
-		"STOCK_WATCHER_INTRADAY_ENABLED":       &c.Intraday.Enabled,
-		"STOCK_WATCHER_STRATEGY_ENABLED":       &c.Strategy.Enabled,
-		"STOCK_WATCHER_SELECTION_ENABLED":      &c.Selection.Enabled,
-		"STOCK_WATCHER_CONTEXT_ENABLED":        &c.MarketContext.Enabled,
-		"STOCK_WATCHER_PREDICTOR_ENABLED":      &c.Predictor.Enabled,
-		"STOCK_WATCHER_PREDICTOR_PUSH_ENABLED": &c.Predictor.PushEnabled,
+		"STOCK_WATCHER_REQUIRE_CIFS":             &c.RequireCIFS,
+		"STOCK_WATCHER_WEB_ENABLED":              &c.Web.Enabled,
+		"STOCK_WATCHER_WEB_PUBLIC_READ_ONLY":     &c.Web.PublicReadOnly,
+		"STOCK_WATCHER_FEISHU_ENABLED":           &c.Feishu.Enabled,
+		"STOCK_WATCHER_INTRADAY_ENABLED":         &c.Intraday.Enabled,
+		"STOCK_WATCHER_STRATEGY_ENABLED":         &c.Strategy.Enabled,
+		"STOCK_WATCHER_SELECTION_ENABLED":        &c.Selection.Enabled,
+		"STOCK_WATCHER_CONTEXT_ENABLED":          &c.MarketContext.Enabled,
+		"STOCK_WATCHER_FIRST_STAGE_ENABLED":      &c.FirstStage.Enabled,
+		"STOCK_WATCHER_FIRST_STAGE_PUSH_ENABLED": &c.FirstStage.PushEnabled,
+		"STOCK_WATCHER_PREDICTOR_ENABLED":        &c.Predictor.Enabled,
+		"STOCK_WATCHER_PREDICTOR_PUSH_ENABLED":   &c.Predictor.PushEnabled,
 	} {
 		if value, ok := os.LookupEnv(name); ok {
 			parsed, err := strconv.ParseBool(strings.TrimSpace(value))
@@ -71,6 +73,7 @@ func applyEnvironment(c *Config) error {
 	}
 	for name, target := range map[string]*int{
 		"STOCK_WATCHER_DAILY_HISTORY_DAYS":          &c.Daily.HistoryDays,
+		"STOCK_WATCHER_FIRST_STAGE_BUDGET":          &c.FirstStage.Budget,
 		"STOCK_WATCHER_SELECTION_MIN_SCORE":         &c.Selection.MinScore,
 		"STOCK_WATCHER_SELECTION_TOP_N":             &c.Selection.TopN,
 		"STOCK_WATCHER_SYNC_INCREMENTAL_BARS":       &c.Sync.IncrementalBars,

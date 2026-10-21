@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
 	reportmessage "github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify/report"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 )
@@ -47,6 +48,13 @@ func (m *Monitor) prepareStartup(ctx context.Context) error {
 // Keep the first durable message per data date and channel, including pending
 // or blocked attempts. Report contents (and therefore IDs) can change on refresh.
 func (m *Monitor) enqueueReport(state *State, report selection.Report) (int, error) {
+	if first := report.FirstStage; first != nil {
+		if first.Status == firststage.StatusFailed {
+			m.Log.Warn("First-stage screening failed", "as_of", report.AsOf, "reason", first.Reason)
+		} else {
+			m.Log.Info("First-stage screening completed", "as_of", report.AsOf, "status", first.Status, "eligible", first.Eligible, "candidates", len(first.Candidates))
+		}
+	}
 	reason := ""
 	switch {
 	case len(m.channelNames()) == 0:

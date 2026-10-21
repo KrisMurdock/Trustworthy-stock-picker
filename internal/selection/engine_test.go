@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ type testEngine struct {
 	mutate  bool
 	invalid bool
 	enable  bool
+	first   bool
 }
 
 func (testEngine) Descriptor() EngineDescriptor {
@@ -30,6 +32,9 @@ func (e testEngine) Analyze(ctx context.Context, in Input) (Report, error) {
 	r.SelectionEnabled = e.enable
 	if e.invalid {
 		r.Selected = []Candidate{{Code: "sh600519"}}
+	}
+	if e.first {
+		r.FirstStage = &firststage.Report{Version: 1, Status: firststage.StatusOK, AsOf: in.AsOf, Target: in.Target, Budget: 1, Candidates: []firststage.Candidate{{Rank: 1, Code: "sh600519"}}}
 	}
 	return r, nil
 }
@@ -56,6 +61,9 @@ func TestEngineBoundaryCopiesInputsAndRejectsInvalidResults(t *testing.T) {
 	}
 	if _, err := Execute(context.Background(), testEngine{enable: true}, in, "test"); err == nil {
 		t.Fatal("algorithm enabled disabled publishing")
+	}
+	if _, err := Execute(context.Background(), testEngine{first: true}, in, "test"); err == nil {
+		t.Fatal("outside-pool first-stage result accepted")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

@@ -72,3 +72,40 @@ func TestGoldenMetricsAndCandidateFilters(t *testing.T) {
 		t.Fatal("stale pool should fail")
 	}
 }
+
+func TestFirstStageFailureDoesNotBlockTrendDecision(t *testing.T) {
+	bars := make([]market.Bar, 61)
+	for i := range bars {
+		close := 50 + 0.1*float64(i) + 0.4*math.Sin(float64(i)*1.5)
+		bars[i] = market.Bar{Open: close + 0.2, High: 100, Low: 1, Close: close, Volume: 100}
+	}
+	bars[len(bars)-1].Volume = 150
+	d, _ := time.Parse("2006-01-02", "2026-10-13")
+	for i := len(bars) - 1; i >= 0; i-- {
+		for d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
+			d = d.AddDate(0, 0, -1)
+		}
+		bars[i].Date = d.Format("2006-01-02")
+		d = d.AddDate(0, 0, -1)
+	}
+	c := config.Defaults()
+	c.Stocks = []config.Stock{{Code: "sz000001"}}
+	c.Selection.Enabled = true
+	c.FirstStage.Enabled = true
+	c.FirstStage.Budget = 0
+	h := market.History{Version: 1, Code: "sz000001", Name: "测试股票", Source: "tencent", DataField: "qfqday", VolumeUnit: "provider_raw", FetchedAt: time.Now(), AsOf: bars[len(bars)-1].Date, Adjust: "qfq", Bars: bars}
+	report, err := Build(c, []market.History{h}, h.AsOf, "2026-10-14", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.FirstStage == nil || report.FirstStage.Status != "failed" || report.FirstStage.Reason == "" {
+		t.Fatalf("first-stage failure was not recorded: %+v", report.FirstStage)
+	}
+	if len(report.Selected) != 1 {
+		t.Fatalf("first-stage failure blocked the trend decision: %+v", report)
+	}
+	same, err := Build(c, []market.History{h}, h.AsOf, "2026-10-14", time.Now().Add(time.Hour))
+	if err != nil || same.ID != report.ID {
+		t.Fatal("first-stage generation time changed the report id")
+	}
+}

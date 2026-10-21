@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"time"
 )
@@ -46,6 +47,7 @@ type Provenance struct {
 func SafeConfig(c config.Config) config.Config {
 	out := config.Config{Version: c.Version, Strategy: c.Strategy}
 	out.StructureGuard = c.StructureGuard
+	out.FirstStage = c.FirstStage
 	out.Stocks = append([]config.Stock(nil), c.Stocks...)
 	out.Analysis = c.Analysis
 	out.Daily = c.Daily
@@ -211,6 +213,30 @@ func Execute(ctx context.Context, e Engine, in Input, build string) (Report, err
 			return Report{}, errors.New("invalid algorithm ranking stock")
 		}
 		ranked[c.Code] = true
+	}
+	if first := result.FirstStage; first != nil {
+		if first.Version != firststage.ReportSchemaVersion || first.AsOf != in.AsOf || first.Target != in.Target {
+			return Report{}, errors.New("invalid first-stage report identity")
+		}
+		switch first.Status {
+		case firststage.StatusOK:
+			if first.Budget < 1 || len(first.Candidates) == 0 || len(first.Candidates) > first.Budget {
+				return Report{}, errors.New("invalid first-stage candidate count")
+			}
+		case firststage.StatusEmpty, firststage.StatusFailed:
+			if len(first.Candidates) != 0 {
+				return Report{}, errors.New("invalid first-stage empty report")
+			}
+		default:
+			return Report{}, errors.New("invalid first-stage status")
+		}
+		firstSeen := map[string]bool{}
+		for _, candidate := range first.Candidates {
+			if !available[candidate.Code] || firstSeen[candidate.Code] || candidate.Rank < 1 {
+				return Report{}, errors.New("invalid first-stage candidate stock")
+			}
+			firstSeen[candidate.Code] = true
+		}
 	}
 	if _, err := json.Marshal(result); err != nil {
 		return Report{}, errors.New("invalid algorithm numeric result")

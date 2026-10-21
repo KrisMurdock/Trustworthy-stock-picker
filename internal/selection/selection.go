@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/indicators"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
@@ -57,6 +58,7 @@ type Report struct {
 	Filtered         []Excluded           `json:"filtered"`
 	Ranking          []strategy.Candidate `json:"ranking,omitempty"`
 	Research         *strategy.Research   `json:"research,omitempty"`
+	FirstStage       *firststage.Report   `json:"first_stage,omitempty"`
 }
 
 func Score(bars []market.Bar) (Metrics, error) { return indicators.Score(bars) }
@@ -144,10 +146,9 @@ func Build(c config.Config, histories []market.History, asof, target string, now
 	})
 	r.Passed = len(ranked)
 	r.Selected = append(r.Selected, ranked[:min(len(ranked), c.Selection.TopN)]...)
+	attachFirstStage(&r, c, histories, asof, target, now)
 	// ID includes configuration, selected results and data date, not wall-clock generation time.
-	identity := r
-	identity.GeneratedAt = time.Time{}
-	identity.ID = ""
+	identity := reportIdentity(r)
 	data, _ := json.Marshal(identity)
 	sum := sha256.Sum256(data)
 	r.ID = hex.EncodeToString(sum[:12])
@@ -235,9 +236,8 @@ func buildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 			}
 		}
 	}
-	identity := r
-	identity.GeneratedAt = time.Time{}
-	identity.ID = ""
+	attachFirstStage(&r, c, histories, asof, target, now)
+	identity := reportIdentity(r)
 	data, err := json.Marshal(identity)
 	if err != nil {
 		return r, err
@@ -245,6 +245,36 @@ func buildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 	sum := sha256.Sum256(data)
 	r.ID = hex.EncodeToString(sum[:12])
 	return r, nil
+}
+
+func reportIdentity(report Report) Report {
+	report.GeneratedAt = time.Time{}
+	report.ID = ""
+	if report.FirstStage != nil {
+		firstStage := *report.FirstStage
+		firstStage.GeneratedAt = time.Time{}
+		report.FirstStage = &firstStage
+	}
+	return report
+}
+
+func attachFirstStage(report *Report, c config.Config, histories []market.History, asof, target string, now time.Time) {
+	if !c.FirstStage.Enabled {
+		return
+	}
+	result, err := firststage.Analyze(histories, c.Stocks, firststage.Options{
+		AsOf:        asof,
+		Target:      target,
+		Adjust:      c.Daily.Adjust,
+		Budget:      c.FirstStage.Budget,
+		PushEnabled: c.FirstStage.PushEnabled,
+		Now:         now,
+	})
+	if err != nil {
+		report.FirstStage = &result
+		return
+	}
+	report.FirstStage = &result
 }
 
 func recommendationFilterReason(risks []string) string {

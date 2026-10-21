@@ -55,6 +55,9 @@
 | STOCK_WATCHER_STRATEGY_MIN_TRAINING_DAYS | 40 | 最少训练信号日 |
 | STOCK_WATCHER_STRATEGY_HOLDOUT_DAYS | 40 | 留出样本天数 |
 | STOCK_WATCHER_STRATEGY_MIN_RANK_SCORE | 60 | 最低机会分 |
+| STOCK_WATCHER_FIRST_STAGE_ENABLED | true | 是否计算第一层高召回初筛；要求 `daily_adjust=qfq` |
+| STOCK_WATCHER_FIRST_STAGE_PUSH_ENABLED | true | 是否推送初筛池飞书卡；依赖初筛已启用 |
+| STOCK_WATCHER_FIRST_STAGE_BUDGET | 145 | 初筛候选池上限，允许 1～500；默认按 148 只股池保留 145 只 |
 | STOCK_WATCHER_STRUCTURE_GUARD_MODE | shadow | shadow 只观察；enforce 才进入可执行推荐 |
 | STOCK_WATCHER_SELECTION_ENABLED | true | 是否启用趋势筛选 |
 | STOCK_WATCHER_SELECTION_MIN_SCORE | 70 | 趋势最低分 |
@@ -64,6 +67,8 @@
 | STOCK_WATCHER_SELECTION_RSI_MAX | 80 | RSI 上限 |
 | STOCK_WATCHER_SELECTION_MIN_DAY_CHANGE | -3 | 单日跌幅下限（百分比） |
 | STOCK_WATCHER_SELECTION_MAX_DAY_CHANGE | 7 | 单日涨幅上限（百分比） |
+
+第一层初筛只生成第二层精排候选，不改变 `selected`、正式推荐或风险门槛。结果写入日报的 `first_stage` 字段；`push_enabled=true` 时与日报同一数据日期投递，每 25 只一页，卡片明确标注“仅供第二层精排，不构成交易建议”。初筛计算失败会记录在日报中，但不阻断主报告。
 
 ## 同步、日历与行情源
 

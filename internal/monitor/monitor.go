@@ -216,6 +216,12 @@ func enqueueCards(state *State, asof string, cards reportmessage.Cards, channels
 		}
 		previous = detail.EventID
 	}
+	for i, firstStage := range cards.FirstStage {
+		if err := state.EnqueuePart(asof, firstStage, channels, "first_stage", len(cards.Details)+i+1, previous); err != nil {
+			return err
+		}
+		previous = firstStage.EventID
+	}
 	return nil
 }
 
@@ -225,6 +231,11 @@ func markCardsDelivered(state *State, cards reportmessage.Cards, channel string)
 	}
 	for _, detail := range cards.Details {
 		if err := state.MarkDelivered(detail.EventID, channel); err != nil {
+			return err
+		}
+	}
+	for _, firstStage := range cards.FirstStage {
+		if err := state.MarkDelivered(firstStage.EventID, channel); err != nil {
 			return err
 		}
 	}
