@@ -7,14 +7,14 @@ import (
 
 func TestFirstStageDefaultsAndBuiltin(t *testing.T) {
 	first := DefaultFirstStage()
-	if first.Enabled || first.PushEnabled || first.Budget != 145 {
+	if first.Enabled || first.PushEnabled || first.Budget != 95 {
 		t.Fatalf("unexpected first-stage defaults: %+v", first)
 	}
 	if err := first.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	builtin := Builtin()
-	if !builtin.FirstStage.Enabled || !builtin.FirstStage.PushEnabled || builtin.FirstStage.Budget != 145 {
+	if !builtin.FirstStage.Enabled || !builtin.FirstStage.PushEnabled || builtin.FirstStage.Budget != 95 {
 		t.Fatalf("production first-stage is not enabled: %+v", builtin.FirstStage)
 	}
 }

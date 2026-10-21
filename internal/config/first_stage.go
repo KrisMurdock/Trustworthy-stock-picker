@@ -11,7 +11,7 @@ type FirstStage struct {
 }
 
 func DefaultFirstStage() FirstStage {
-	return FirstStage{Enabled: false, PushEnabled: false, Budget: 145}
+	return FirstStage{Enabled: false, PushEnabled: false, Budget: 95}
 }
 
 func (f FirstStage) Validate() error {

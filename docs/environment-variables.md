@@ -57,7 +57,7 @@
 | STOCK_WATCHER_STRATEGY_MIN_RANK_SCORE | 60 | 最低机会分 |
 | STOCK_WATCHER_FIRST_STAGE_ENABLED | true | 是否计算第一层高召回初筛；要求 `daily_adjust=qfq` |
 | STOCK_WATCHER_FIRST_STAGE_PUSH_ENABLED | true | 是否推送初筛池飞书卡；依赖初筛已启用 |
-| STOCK_WATCHER_FIRST_STAGE_BUDGET | 145 | 初筛候选池上限，允许 1～500；默认预算 145 只 |
+| STOCK_WATCHER_FIRST_STAGE_BUDGET | 95 | 初筛候选池上限，允许 1～500；默认预算 95 只 |
 | STOCK_WATCHER_SECOND_STAGE_ENABLED | true | 是否在第一层候选池上运行 JEV+树模型 Top10 精排；要求第一层已启用 |
 | STOCK_WATCHER_SECOND_STAGE_TOP_N | 10 | 第二层输出候选数，允许 1～100 |
 | STOCK_WATCHER_STRUCTURE_GUARD_MODE | shadow | shadow 只观察；enforce 才进入可执行推荐 |
