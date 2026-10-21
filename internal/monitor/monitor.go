@@ -1072,6 +1072,9 @@ func (m *Monitor) Cycle(ctx context.Context) error {
 	if _, err := m.enqueueReport(&state, report); err != nil {
 		return errors.Join(deliveryErr, err)
 	}
+	if _, reviewErr := m.enqueueFirstStageReview(ctx, &state, report.AsOf); reviewErr != nil {
+		m.Log.Warn("First-stage review enqueue failed", "as_of", report.AsOf, "reason", reviewErr.Error())
+	}
 	return errors.Join(deliveryErr, m.flushState(ctx, &state))
 }
 

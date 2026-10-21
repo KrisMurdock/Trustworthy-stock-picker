@@ -48,3 +48,35 @@ func TestFirstStageCardPagesStayBelowPayloadLimit(t *testing.T) {
 		t.Fatalf("first-stage card payload = %d bytes, limit %d", len(data), maxPayloadBytes)
 	}
 }
+
+func TestFirstStageReviewCardStaysBelowPayloadLimit(t *testing.T) {
+	candidates := make([]firststage.ReviewCandidate, 30)
+	for i := range candidates {
+		candidates[i] = firststage.ReviewCandidate{
+			Rank:           i + 1,
+			Code:           fmt.Sprintf("sz%06d", i+1),
+			Name:           strings.Repeat("测试股票", 8),
+			CloseReturnPct: -1.25,
+			HighReturnPct:  1.5,
+			Status:         "miss",
+		}
+	}
+	card, err := reportmessage.FirstStageReviewCard(firststage.ReviewReport{
+		Version: firststage.ReviewSchemaVersion, Status: firststage.ReviewStatusOK,
+		SignalDate: "2026-10-21", EvaluationDate: "2026-10-22", ThresholdPct: 1,
+		Selected: 30, Evaluated: 30, Hits: 18, Misses: 12, TouchHits: 22,
+		PoolHits: 40, PoolTouchHits: 52, SelectionHitRatePct: 60, RecallPct: 45,
+		RecallAvailable: true, TouchRecallPct: 42.31, TouchRecallAvailable: true,
+		Candidates: candidates,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(Card(card))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) > maxPayloadBytes {
+		t.Fatalf("first-stage review payload = %d bytes, limit %d", len(data), maxPayloadBytes)
+	}
+}

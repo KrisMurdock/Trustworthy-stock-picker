@@ -42,7 +42,13 @@ func (m *Monitor) prepareStartup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	m.Log.Info("Startup synchronization completed", "as_of", asof, "target", report.Target, "queued_channels", queued)
+	reviewQueued := false
+	if reviewed, reviewErr := m.enqueueFirstStageReview(ctx, &state, report.AsOf); reviewErr != nil {
+		m.Log.Warn("First-stage review enqueue failed", "as_of", report.AsOf, "reason", reviewErr.Error())
+	} else {
+		reviewQueued = reviewed
+	}
+	m.Log.Info("Startup synchronization completed", "as_of", asof, "target", report.Target, "queued_channels", queued, "first_stage_review_queued", reviewQueued)
 	return nil
 }
 

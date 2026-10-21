@@ -16,8 +16,8 @@ import (
 const (
 	detailStocksPerPage = 8
 	mainTableRows       = 10
-	firstStagePushLimit = 30
-	firstStagePerPage   = 30
+	firstStagePushLimit = firststage.PushLimit
+	firstStagePerPage   = firststage.PushLimit
 )
 
 var riskPriority = []string{
