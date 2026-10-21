@@ -420,3 +420,30 @@ func TestStatusReportsMissingStoreAsUnavailable(t *testing.T) {
 		t.Fatalf("missing evaluation should be not found: %v", err)
 	}
 }
+
+func TestStatusDefaultsToNextTargetWithLatestTrainingEvidence(t *testing.T) {
+	now := time.Date(2026, 10, 20, 8, 45, 0, 0, shanghai)
+	service, store := newDayRangeServiceForTest(t, now, MarketData{})
+	prediction := Prediction{PredictionID: "prediction-1", Code: "sz000001", TargetDate: "2026-10-20", Mode: ModePremarket, Status: "published"}
+	store.predictions[prediction.PredictionID] = prediction
+	if _, err := store.SaveAudit(context.Background(), "snapshot-1", "2026-10-19", now, Audit{AsOf: "2026-10-19", Unresolved: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveEvaluation(context.Background(), Evaluation{ModelID: "candidate-1", BaselineID: BaselineModelID, Mode: ModePremarket,
+		AsOf: "2026-10-19", CreatedAt: now, Gate: Gate{Passed: false}}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := service.Status(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Date != "2026-10-20" || status.PredictionCount != 1 {
+		t.Fatalf("status did not default to the next prediction target: %+v", status)
+	}
+	if status.Audit == nil || status.Audit.AsOf != "2026-10-19" || status.Evaluation == nil || status.Evaluation.AsOf != "2026-10-19" {
+		t.Fatalf("status lost the latest completed-session evidence: %+v", status)
+	}
+	if !containsString(status.Issues, "audit_has_unresolved_samples") || !containsString(status.Issues, "candidate_not_validated") {
+		t.Fatalf("status lost training gate diagnostics: %+v", status.Issues)
+	}
+}

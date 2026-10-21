@@ -261,18 +261,10 @@
       const status = await requestJSON("/api/day-range/status", state.controller.signal);
       if (requestID !== state.requestID) return;
       let response = null;
-      let evaluation = null;
+      let evaluation = status.evaluation || null;
       if (status.date) {
         response = await requestJSON(`/api/day-range?date=${encodeURIComponent(status.date)}`, state.controller.signal);
         if (requestID !== state.requestID) return;
-        if (status.evaluation) {
-          try {
-            evaluation = await requestJSON(`/api/day-range/evaluation?date=${encodeURIComponent(status.date)}`, state.controller.signal);
-          } catch (error) {
-            if (error.name === "AbortError") throw error;
-            evaluation = null;
-          }
-        }
       }
       if (requestID !== state.requestID) return;
       state.data = { status, response, evaluation };

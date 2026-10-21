@@ -489,21 +489,35 @@ func (s *Service) Status(ctx context.Context, asof string) (Status, error) {
 		status.Issues = append(status.Issues, "dayrange_store_unavailable")
 		return status, nil
 	}
-	if asof == "" {
-		if audit, err := s.Store.LatestAudit(ctx, ""); err == nil {
-			asof = audit.AsOf
-		}
-	}
-	if asof == "" {
-		completed, err := calendar.New(s.Config).Completed(s.now())
-		if err == nil {
-			asof = completed
-		} else {
+	statusDate, evidenceDate := asof, asof
+	if statusDate == "" {
+		cal := calendar.New(s.Config)
+		completed, err := cal.Completed(s.now())
+		if err != nil {
 			status.Issues = append(status.Issues, "calendar_unavailable")
+		} else {
+			evidenceDate = completed
+			target, err := cal.Next(completed)
+			if err != nil {
+				status.Issues = append(status.Issues, "calendar_unavailable")
+			} else {
+				statusDate = target
+			}
 		}
 	}
-	status.Date = asof
-	if audit, err := s.Store.LatestAudit(ctx, asof); err == nil {
+	if statusDate == "" {
+		if audit, err := s.Store.LatestAudit(ctx, ""); err == nil {
+			statusDate = audit.AsOf
+			if evidenceDate == "" {
+				evidenceDate = statusDate
+			}
+		}
+	}
+	if evidenceDate == "" {
+		evidenceDate = statusDate
+	}
+	status.Date = statusDate
+	if audit, err := s.Store.LatestAudit(ctx, evidenceDate); err == nil {
 		status.Audit = &audit
 		if audit.Audit.Unresolved > 0 {
 			status.Issues = append(status.Issues, "audit_has_unresolved_samples")
@@ -511,7 +525,7 @@ func (s *Service) Status(ctx context.Context, asof string) (Status, error) {
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		status.Issues = append(status.Issues, "audit_read_failed")
 	}
-	predictions, err := s.Store.LoadPredictions(ctx, asof, "")
+	predictions, err := s.Store.LoadPredictions(ctx, statusDate, "")
 	if err == nil {
 		status.PredictionCount = len(predictions)
 		for _, record := range predictions {
@@ -524,13 +538,13 @@ func (s *Service) Status(ctx context.Context, asof string) (Status, error) {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		status.Issues = append(status.Issues, "prediction_read_failed")
 	}
-	if evaluation, err := s.Store.LatestEvaluation(ctx, asof); err == nil {
+	if evaluation, err := s.Store.LatestEvaluation(ctx, evidenceDate); err == nil {
 		status.Evaluation = &evaluation
 		if !evaluation.Gate.Passed {
 			status.Issues = append(status.Issues, "candidate_not_validated")
 		}
 	}
-	if run, err := s.Store.LatestValidatedModelBefore(ctx, asof, maxModelAgeDays); err == nil {
+	if run, err := s.Store.LatestValidatedModelBefore(ctx, statusDate, maxModelAgeDays); err == nil {
 		view := ModelView{ModelID: run.ModelID, Kind: run.Kind, Status: string(run.Status), FeatureVersion: run.FeatureVersion,
 			CodeVersion: run.CodeVersion, TrainFrom: run.TrainFrom, TrainTo: run.TrainTo, CalibrationFrom: run.CalibrationFrom,
 			CalibrationTo: run.CalibrationTo, ValidationFrom: run.ValidationFrom, ValidationTo: run.ValidationTo,
