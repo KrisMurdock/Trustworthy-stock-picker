@@ -14,6 +14,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/channels"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/dashboard"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/dayrange"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/intraday"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
@@ -69,6 +70,7 @@ type Runtime struct {
 	log           *Logger
 	store         *storage.Store
 	marketDB      *storage.MarketDB
+	dayRangeDB    *storage.DayRangeDB
 	contextDB     *storage.ContextDB
 	contextClient *marketcontext.Client
 	contextSyncer *marketcontext.Syncer
@@ -79,6 +81,7 @@ type Runtime struct {
 	minuteClient  *market.MinuteClient
 	minuteMonitor *intraday.Monitor
 	predictor     *predictor.Monitor
+	dayRange      *dayrange.Service
 	dashboard     http.Handler
 	runMonitor    func(context.Context) error
 
@@ -133,6 +136,13 @@ func Init(cfg *Config) (string, error) {
 		}
 		defer contextDB.Close()
 	}
+	if resolved.DayRange.Enabled {
+		dayRangeDB, err := storage.InitDayRange(resolved.DataDir, resolved.RequireCIFS)
+		if err != nil {
+			return "", err
+		}
+		defer dayRangeDB.Close()
+	}
 	return marketDB.Path(), nil
 }
 
@@ -174,6 +184,18 @@ func New(opts Options) (*Runtime, error) {
 		return nil, err
 	}
 	r.marketDB = marketDB
+	dayRangeDB, err := storage.OpenDayRangeView(cfg.DataDir, cfg.RequireCIFS)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.DayRange.Enabled {
+		_ = dayRangeDB.Close()
+		dayRangeDB, err = storage.InitDayRange(cfg.DataDir, cfg.RequireCIFS)
+		if err != nil {
+			return nil, err
+		}
+	}
+	r.dayRangeDB = dayRangeDB
 	if cfg.MarketContext.Enabled {
 		contextDB, err := storage.InitContext(cfg.DataDir, cfg.RequireCIFS)
 		if err != nil {
@@ -217,11 +239,19 @@ func New(opts Options) (*Runtime, error) {
 			r.predictor = predictorMonitor
 		}
 	}
-	if r.predictor != nil {
-		r.dashboard = dashboard.NewHandlerWithPredictor(cfg, marketDB, log, r.predictor)
-	} else {
-		r.dashboard = dashboard.NewHandler(cfg, marketDB, log)
+	if r.dayRangeDB != nil && r.dayRangeDB.Available() {
+		r.dayRange = dayrange.NewService(cfg, r.dayRangeDB, marketDB, log)
+		r.dayRange.BuildVersion = version
 	}
+	var dayRangeReader dashboard.DayRangeReader
+	if r.dayRange != nil {
+		dayRangeReader = r.dayRange
+	}
+	var predictorController dashboard.PredictorController
+	if r.predictor != nil {
+		predictorController = r.predictor
+	}
+	r.dashboard = dashboard.NewHandlerWithDayRange(cfg, marketDB, log, predictorController, dayRangeReader)
 	r.runMonitor = r.runMonitors
 	opened = true
 	return r, nil
@@ -295,6 +325,9 @@ func (r *Runtime) runMonitors(ctx context.Context) error {
 	if r.predictor != nil {
 		runners = append(runners, r.predictor.Run)
 	}
+	if r.dayRange != nil && r.config.DayRange.Enabled {
+		runners = append(runners, r.dayRange.Run)
+	}
 	return runMonitors(ctx, runners...)
 }
 
@@ -353,6 +386,10 @@ func (r *Runtime) release() error {
 	if r.contextDB != nil {
 		errs = append(errs, r.contextDB.Close())
 		r.contextDB = nil
+	}
+	if r.dayRangeDB != nil {
+		errs = append(errs, r.dayRangeDB.Close())
+		r.dayRangeDB = nil
 	}
 	if r.marketDB != nil {
 		errs = append(errs, r.marketDB.Close())

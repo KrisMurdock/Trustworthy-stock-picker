@@ -34,7 +34,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-context|sync-intraday|backfill-minutes|status-backfill|status-refresh|status-audit|preview|research|experiment|plan|run|once|status|retry|train-predictor|predictor-status|predictor-eval [channel] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-context|sync-intraday|backfill-minutes|status-backfill|status-refresh|status-audit|preview|research|experiment|plan|run|once|status|retry|train-predictor|predictor-status|predictor-eval|train-dayrange|predict-dayrange|reconcile-dayrange|status-dayrange|replay-dayrange [channel] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -43,8 +43,8 @@ func run(args []string) error {
 	}
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
 	revision := f.String("revision", "", "saved report revision (replay only)")
-	asof := f.String("as-of", "", "completed data date (sync/context/status/preview/research/experiment/predictor-eval only)")
-	code := f.String("code", "", "stock code (plan only)")
+	asof := f.String("as-of", "", "data date (sync/context/status/preview/research/experiment/predictor-eval/dayrange commands only)")
+	code := f.String("code", "", "stock code (plan, predict-dayrange or replay-dayrange only)")
 	parent := f.String("parent", "", "parent experiment ID (experiment only)")
 	holdout := f.Bool("holdout", false, "consume the parent experiment's reserved holdout interval once (experiment only)")
 	policy := f.String("policy", "baseline", "conditional-{entry,rsi,macd,bollinger,confluence,all-three,guard,confluence-guard,chan-5-15-30}, baseline, upper-wick, risk-qualified or next-day-{baseline,upper-wick,low-volatility,pullback,breakout,momentum,volume-recovery,balanced,risk-qualified} (experiment only)")
@@ -60,6 +60,7 @@ func run(args []string) error {
 	validationDays := f.Int("validation-days", 20, "number of common out-of-sample trading days (predictor-eval only)")
 	halfLife := f.Int("half-life", 60, "E1 exponential window half-life in trading days (predictor-eval only)")
 	allowLateReports := f.Bool("allow-late-reports", false, "allow archived reports generated after target open when as_of is before target (predictor-eval only)")
+	dayRangeOffline := f.Bool("offline", false, "train and evaluate dayrange in a temporary store without writing production data (train-dayrange only)")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -70,7 +71,7 @@ func run(args []string) error {
 		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
-	case "check-config", "init", "check", "health", "replay", "sync", "sync-context", "sync-intraday", "backfill-minutes", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "plan", "run", "once", "status", "retry", "train-predictor", "predictor-status", "predictor-eval":
+	case "check-config", "init", "check", "health", "replay", "sync", "sync-context", "sync-intraday", "backfill-minutes", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "plan", "run", "once", "status", "retry", "train-predictor", "predictor-status", "predictor-eval", "train-dayrange", "predict-dayrange", "reconcile-dayrange", "status-dayrange", "replay-dayrange":
 	default:
 		return errors.New("unknown command")
 	}
@@ -80,8 +81,8 @@ func run(args []string) error {
 	if command != "replay" && *revision != "" {
 		return errors.New("revision requires replay")
 	}
-	if *asof != "" && command != "sync" && command != "sync-context" && command != "backfill-minutes" && command != "status-backfill" && command != "status-refresh" && command != "status-audit" && command != "preview" && command != "research" && command != "experiment" && command != "predictor-eval" {
-		return errors.New("as-of is supported by sync, context sync, minute backfill, status commands, preview, research, experiment and predictor-eval only")
+	if *asof != "" && command != "sync" && command != "sync-context" && command != "backfill-minutes" && command != "status-backfill" && command != "status-refresh" && command != "status-audit" && command != "preview" && command != "research" && command != "experiment" && command != "predictor-eval" && command != "train-dayrange" && command != "predict-dayrange" && command != "reconcile-dayrange" && command != "status-dayrange" && command != "replay-dayrange" {
+		return errors.New("as-of is supported by sync, context sync, minute backfill, status commands, preview, research, experiment, predictor-eval and dayrange commands only")
 	}
 	if command != "predictor-eval" && (*windows != "40,60,120" || *validationDays != 20 || *halfLife != 60) {
 		return errors.New("predictor-eval flags require the predictor-eval command")
@@ -89,8 +90,14 @@ func run(args []string) error {
 	if command != "predictor-eval" && *allowLateReports {
 		return errors.New("predictor-eval flags require the predictor-eval command")
 	}
-	if command != "plan" && (*code != "" || *entry != 0) {
-		return errors.New("trade price flags require the plan command")
+	if command != "train-dayrange" && *dayRangeOffline {
+		return errors.New("offline requires the train-dayrange command")
+	}
+	if command != "plan" && *entry != 0 {
+		return errors.New("entry-price requires the plan command")
+	}
+	if command != "plan" && command != "predict-dayrange" && command != "replay-dayrange" && *code != "" {
+		return errors.New("code is supported by plan, predict-dayrange and replay-dayrange only")
 	}
 	if command != "experiment" && (*parent != "" || *holdout || *policy != "baseline" || *through != "") {
 		return errors.New("experiment flags require the experiment command")
@@ -180,6 +187,9 @@ func run(args []string) error {
 	}
 	if command == "train-predictor" {
 		return trainPredictor(ctx, c, log)
+	}
+	if command == "train-dayrange" || command == "predict-dayrange" || command == "reconcile-dayrange" || command == "status-dayrange" || command == "replay-dayrange" {
+		return runDayRange(ctx, c, log, command, *asof, *code, *dayRangeOffline)
 	}
 	if command == "experiment" {
 		if *holdout {

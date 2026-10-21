@@ -44,6 +44,9 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_INTRADAY_TENCENT_ENDPOINT":        &c.Intraday.TencentEndpoint,
 		"STOCK_WATCHER_PREDICTOR_TRAIN_AT":               &c.Predictor.TrainAt,
 		"STOCK_WATCHER_PREDICTOR_WRITE_MODE":             &c.Predictor.WriteMode,
+		"STOCK_WATCHER_DAYRANGE_TRAIN_AT":                &c.DayRange.TrainAt,
+		"STOCK_WATCHER_DAYRANGE_PREDICT_AT":              &c.DayRange.PredictAt,
+		"STOCK_WATCHER_DAYRANGE_RECONCILE_AT":            &c.DayRange.ReconcileAt,
 	} {
 		if value, ok := os.LookupEnv(name); ok {
 			*target = value
@@ -63,6 +66,10 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_SECOND_STAGE_ENABLED":     &c.SecondStage.Enabled,
 		"STOCK_WATCHER_PREDICTOR_ENABLED":        &c.Predictor.Enabled,
 		"STOCK_WATCHER_PREDICTOR_PUSH_ENABLED":   &c.Predictor.PushEnabled,
+		"STOCK_WATCHER_DAYRANGE_ENABLED":         &c.DayRange.Enabled,
+		"STOCK_WATCHER_DAYRANGE_STOCK_FEATURES":  &c.DayRange.UseStockFeatures,
+		"STOCK_WATCHER_DAYRANGE_MARKET_FEATURES": &c.DayRange.UseMarketFeatures,
+		"STOCK_WATCHER_DAYRANGE_SECTOR_FEATURES": &c.DayRange.UseSectorFeatures,
 	} {
 		if value, ok := os.LookupEnv(name); ok {
 			parsed, err := strconv.ParseBool(strings.TrimSpace(value))
@@ -91,6 +98,11 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_PREDICTOR_MIN_TRAINING_DAYS": &c.Predictor.MinTrainingDays,
 		"STOCK_WATCHER_PREDICTOR_VALIDATION_DAYS":   &c.Predictor.ValidationDays,
 		"STOCK_WATCHER_PREDICTOR_KEEP_MODELS":       &c.Predictor.KeepModels,
+		"STOCK_WATCHER_DAYRANGE_HISTORY_DAYS":       &c.DayRange.HistoryDays,
+		"STOCK_WATCHER_DAYRANGE_MIN_TRAIN_DAYS":     &c.DayRange.MinTrainingDays,
+		"STOCK_WATCHER_DAYRANGE_CALIBRATION_DAYS":   &c.DayRange.CalibrationDays,
+		"STOCK_WATCHER_DAYRANGE_VALIDATION_DAYS":    &c.DayRange.ValidationDays,
+		"STOCK_WATCHER_DAYRANGE_KEEP_MODELS":        &c.DayRange.KeepModels,
 	} {
 		if value, ok := os.LookupEnv(name); ok {
 			parsed, err := strconv.Atoi(strings.TrimSpace(value))

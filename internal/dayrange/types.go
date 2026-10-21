@@ -1,5 +1,6 @@
-// Package dayrange evaluates frozen daily price-extreme forecasts. It does not
-// train models, load market data, infer outcomes, or execute trades.
+// Package dayrange builds frozen daily price-extreme snapshots, trains and
+// evaluates research models, and evaluates saved forecasts. It does not collect
+// live market data or execute trades.
 package dayrange
 
 import (

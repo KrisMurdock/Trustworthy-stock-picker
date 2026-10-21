@@ -27,6 +27,7 @@ type Stock struct {
 type Config struct {
 	Analysis       Analysis       `yaml:"analysis"`
 	Intraday       Intraday       `yaml:"intraday"`
+	DayRange       DayRange       `yaml:"dayrange"`
 	FirstStage     FirstStage     `yaml:"first_stage"`
 	SecondStage    SecondStage    `yaml:"second_stage"`
 	Predictor      Predictor      `yaml:"predictor"`
@@ -125,6 +126,7 @@ func Defaults() Config {
 	c.Market = DefaultMarket()
 	c.MarketContext = DefaultMarketContext()
 	c.Intraday = DefaultIntraday()
+	c.DayRange = DefaultDayRange()
 	c.FirstStage = DefaultFirstStage()
 	c.SecondStage = DefaultSecondStage()
 	c.Predictor = DefaultPredictor()
@@ -298,6 +300,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Intraday.Validate(); err != nil {
+		return err
+	}
+	if err := c.DayRange.Validate(); err != nil {
 		return err
 	}
 	if err := c.Predictor.Validate(); err != nil {
