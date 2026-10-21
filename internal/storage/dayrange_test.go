@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/dayrange"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/modeleval"
 )
@@ -212,6 +213,43 @@ func TestDayRangePredictionReadPropagatesActualStorageFailure(t *testing.T) {
 	}
 	if _, err := db.LoadPrediction(ctx, prediction.PredictionID); err == nil || err.Error() != "cannot read dayrange actual" {
 		t.Fatalf("single prediction swallowed actual storage failure: %v", err)
+	}
+}
+
+func TestLoadDayRangeDataReadsFractionalVolume(t *testing.T) {
+	root := t.TempDir()
+	db, err := InitMarket(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 10, 20, 19, 0, 0, 0, time.UTC)
+	if _, err := db.db.ExecContext(ctx, `INSERT INTO stock(code,name,sector,active,updated_at) VALUES('sz000001','测试','银行',1,?)`, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveCalendar(ctx, "2026-10-19", "2026-10-20", "exchange", []string{"2026-10-19", "2026-10-20"}, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, adjust := range []struct {
+		name      string
+		volume    float64
+		dataField string
+	}{{"qfq", 1234.5, "qfqday"}, {"none", 678.25, "day"}} {
+		if _, err := db.db.ExecContext(ctx, `INSERT INTO daily_bar(code,adjust,trade_date,open_micros,close_micros,high_micros,low_micros,volume_raw,volume_shares,data_field,source) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+			"sz000001", adjust.name, "2026-10-20", int64(10e6), int64(10.1e6), int64(10.2e6), int64(9.9e6), adjust.volume, 100, adjust.dataField, "tencent"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := db.LoadDayRangeData(ctx, []config.Stock{{Code: "sz000001", Name: "测试"}}, "2026-10-19", "2026-10-20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Series) != 1 || len(data.Series[0].Adjusted) != 1 || len(data.Series[0].Raw) != 1 {
+		t.Fatalf("unexpected dayrange data: %+v", data.Series)
+	}
+	if data.Series[0].Adjusted[0].Volume != 1234.5 || data.Series[0].Raw[0].Volume != 678.25 {
+		t.Fatalf("fractional volume was not preserved: adjusted=%v raw=%v", data.Series[0].Adjusted[0].Volume, data.Series[0].Raw[0].Volume)
 	}
 }
 

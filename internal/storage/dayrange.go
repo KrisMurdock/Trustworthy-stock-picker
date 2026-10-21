@@ -606,7 +606,8 @@ func (m *MarketDB) LoadDayRangeData(ctx context.Context, stocks []config.Stock, 
 	}
 	for rows.Next() {
 		var code, date, adjust, source string
-		var open, closeValue, high, low, volume int64
+		var open, closeValue, high, low int64
+		var volume float64
 		if err := rows.Scan(&code, &date, &adjust, &open, &closeValue, &high, &low, &volume, &source); err != nil {
 			rows.Close()
 			return out, errors.New("cannot decode dayrange daily data")
@@ -615,7 +616,7 @@ func (m *MarketDB) LoadDayRangeData(ctx context.Context, stocks []config.Stock, 
 		if item == nil {
 			continue
 		}
-		bar := market.Bar{Date: date, Open: float64(open) / 1e6, Close: float64(closeValue) / 1e6, High: float64(high) / 1e6, Low: float64(low) / 1e6, Volume: float64(volume)}
+		bar := market.Bar{Date: date, Open: float64(open) / 1e6, Close: float64(closeValue) / 1e6, High: float64(high) / 1e6, Low: float64(low) / 1e6, Volume: volume}
 		if adjust == "qfq" {
 			item.Adjusted = append(item.Adjusted, bar)
 			item.AdjustedSource[date] = source
