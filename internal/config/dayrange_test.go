@@ -5,6 +5,7 @@ import "testing"
 func TestDayRangeEnvironmentAndValidation(t *testing.T) {
 	c := Defaults()
 	t.Setenv("STOCK_WATCHER_DAYRANGE_ENABLED", "true")
+	t.Setenv("STOCK_WATCHER_DAYRANGE_PUSH_ENABLED", "false")
 	t.Setenv("STOCK_WATCHER_DAYRANGE_TRAIN_AT", "16:20")
 	t.Setenv("STOCK_WATCHER_DAYRANGE_PREDICT_AT", "08:30")
 	t.Setenv("STOCK_WATCHER_DAYRANGE_RECONCILE_AT", "19:10")
@@ -23,6 +24,9 @@ func TestDayRangeEnvironmentAndValidation(t *testing.T) {
 		c.DayRange.HistoryDays != 500 || c.DayRange.MinTrainingDays != 180 || c.DayRange.CalibrationDays != 45 ||
 		c.DayRange.ValidationDays != 30 || c.DayRange.KeepModels != 6 || c.DayRange.UseMarketFeatures {
 		t.Fatalf("dayrange environment was not applied: %+v", c.DayRange)
+	}
+	if c.DayRange.PushEnabled {
+		t.Fatalf("dayrange push environment was not applied: %+v", c.DayRange)
 	}
 	if err := c.DayRange.Validate(); err != nil {
 		t.Fatal(err)

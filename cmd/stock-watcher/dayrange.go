@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/channels"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/dayrange"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
@@ -30,7 +31,7 @@ func runDayRange(ctx context.Context, c config.Config, log *logging.Logger, comm
 			return err
 		}
 		defer dayRangeDB.Close()
-		return runDayRangeResult(ctx, c, log, command, asof, code, dayRangeDB, marketDB)
+		return runDayRangeResult(ctx, c, log, command, asof, code, dayRangeDB, marketDB, nil)
 	}
 	writable := command == "train-dayrange" || command == "predict-dayrange" || command == "reconcile-dayrange"
 	if command == "status-dayrange" || command == "replay-dayrange" {
@@ -69,13 +70,27 @@ func runDayRange(ctx context.Context, c config.Config, log *logging.Logger, comm
 	if dayRangeDB.Available() {
 		persistence = dayRangeDB
 	}
-	return runDayRangeResult(ctx, c, log, command, asof, code, persistence, marketDB)
+	var deliveryStore dayrange.DeliveryStore
+	if command == "predict-dayrange" {
+		deliveryStore = store
+	}
+	return runDayRangeResult(ctx, c, log, command, asof, code, persistence, marketDB, deliveryStore)
 }
 
-func runDayRangeResult(ctx context.Context, c config.Config, log *logging.Logger, command, asof, code string, persistence dayrange.Persistence, marketSource dayrange.MarketSource) error {
+func runDayRangeResult(ctx context.Context, c config.Config, log *logging.Logger, command, asof, code string, persistence dayrange.Persistence, marketSource dayrange.MarketSource, deliveryStore dayrange.DeliveryStore) error {
 	service := dayrange.NewService(c, persistence, marketSource, log)
 	service.BuildVersion = version
 	service.Now = func() time.Time { return time.Now().In(time.FixedZone("CST", 8*3600)) }
+	if deliveryStore != nil && c.DayRange.PushEnabled {
+		noticeChannels, closeChannels, err := channels.Build(c)
+		if err != nil {
+			return err
+		}
+		defer closeChannels()
+		if err := service.ConfigureDelivery(deliveryStore, noticeChannels); err != nil {
+			return err
+		}
+	}
 	var result any
 	var err error
 	switch command {

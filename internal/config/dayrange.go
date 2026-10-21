@@ -10,6 +10,7 @@ import (
 // auditable observation, never a recommendation or an executable order.
 type DayRange struct {
 	Enabled           bool   `yaml:"enabled" json:"enabled"`
+	PushEnabled       bool   `yaml:"push_enabled" json:"push_enabled"`
 	TrainAt           string `yaml:"train_at" json:"train_at"`
 	PredictAt         string `yaml:"predict_at" json:"predict_at"`
 	ReconcileAt       string `yaml:"reconcile_at" json:"reconcile_at"`
@@ -26,6 +27,7 @@ type DayRange struct {
 func DefaultDayRange() DayRange {
 	return DayRange{
 		Enabled:           false,
+		PushEnabled:       true,
 		TrainAt:           "15:40",
 		PredictAt:         "08:45",
 		ReconcileAt:       "18:35",

@@ -144,11 +144,12 @@
 
 ## 全天高低价预测
 
-该模块默认关闭，只生成可审计的盘前高低价观察，不进入正式选股分、推荐门槛或飞书主卡。启用后 `run` 会在交易日按内置时间执行训练、盘前预测和收盘核对，结果写入独立的 `<data_dir>/dayrange.db`；`init` 会创建或校验该库。阶段六的盘中剩余时段模型尚未实现，API 和网页会明确返回 `phase_six_not_implemented`，不会把盘前结果冒充盘中更新。
+该模块默认关闭，只生成可审计的盘前高低价观察，不进入正式选股分或推荐门槛。启用后 `run` 会在交易日按内置时间执行训练、盘前预测和收盘核对，结果写入独立的 `<data_dir>/dayrange.db`；`init` 会创建或校验该库。阶段六的盘中剩余时段模型尚未实现，API 和网页会明确返回 `phase_six_not_implemented`，不会把盘前结果冒充盘中更新。
 
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | STOCK_WATCHER_DAYRANGE_ENABLED | false | 是否启用盘前高低价模型、预测档案、收盘核对和网页入口 |
+| STOCK_WATCHER_DAYRANGE_PUSH_ENABLED | true | 是否把盘前结果推送到 `predictor_dayrange` 命名通道；关闭后仍保存预测 |
 | STOCK_WATCHER_DAYRANGE_TRAIN_AT | 15:40 | 收盘后训练时间，允许 15:10～23:00 |
 | STOCK_WATCHER_DAYRANGE_PREDICT_AT | 08:45 | 盘前预测时间，必须早于 09:30 |
 | STOCK_WATCHER_DAYRANGE_RECONCILE_AT | 18:35 | 收盘核对时间，允许 15:10～23:59 |
@@ -162,6 +163,8 @@
 | STOCK_WATCHER_DAYRANGE_SECTOR_FEATURES | true | 启用行业/参考池相对强弱特征层；三个特征层不能同时关闭 |
 
 模型按时间顺序拆分训练、校准和验证，候选模型只有通过覆盖率、区间宽度和样本门槛才会标记为 `validated`；否则保留历史波幅基线作为正式结果，并把候选留在研究档案。模型缺失、过期、checksum 无效、校准不足或共享盘不可用时不会发布旧预测，也不会回退到服务器本地目录。`train-dayrange -offline` 使用临时库训练和评估，不占生产写锁，也不写生产 `dayrange.db`。
+
+盘前预测按目标交易日和页码生成稳定事件 ID，分页卡片只投递到 `route=predictor_dayrange` 的通道，账本位于 `<data_dir>/state/dayrange-delivery.json`。同一目标日、同一页重启或重复执行不会重复发送；临时网络错误按共享投递账本规则退避重试，09:30 后未完成卡片过期。手工执行 `predict-dayrange` 也遵循同一开关和账本。
 
 ## 通知与凭证
 
@@ -180,7 +183,7 @@ STOCK_WATCHER_FEISHU_ENABLED=false
 STOCK_WATCHER_NOTIFY_CHANNELS="first-stage|feishu|true|FEISHU_FIRST_STAGE_WEBHOOK||first_stage;selection|feishu|true|FEISHU_SELECTION_WEBHOOK||selection;predictor-realtime|feishu|true|FEISHU_PREDICTOR_REALTIME_WEBHOOK||predictor_realtime;predictor-dayrange|feishu|true|FEISHU_PREDICTOR_DAYRANGE_WEBHOOK||predictor_dayrange"
 ```
 
-路由含义：`first_stage` 只接收第一层初筛池；`selection` 只接收精筛日报主卡和详情卡；`predictor_realtime` 接收 5 分钟实时预测及偏差卡；`predictor_dayrange` 预留给后续全天高低价预测。不同路由的投递依赖彼此独立，不会因为另一个机器人失败而互相阻塞。
+路由含义：`first_stage` 只接收第一层初筛池；`selection` 只接收精筛日报主卡和详情卡；`predictor_realtime` 接收 5 分钟实时预测及偏差卡；`predictor_dayrange` 只接收全天高低价盘前预测。不同路由的投递依赖彼此独立，不会因为另一个机器人失败而互相阻塞。
 
 凭证只来自环境变量，不写入日志、镜像或仓库。关闭通知时显式设置 `STOCK_WATCHER_FEISHU_ENABLED=false`，并确保没有设置 `STOCK_WATCHER_NOTIFY_CHANNELS` 的启用通道。
 

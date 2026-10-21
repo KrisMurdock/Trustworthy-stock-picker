@@ -67,6 +67,7 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_PREDICTOR_ENABLED":        &c.Predictor.Enabled,
 		"STOCK_WATCHER_PREDICTOR_PUSH_ENABLED":   &c.Predictor.PushEnabled,
 		"STOCK_WATCHER_DAYRANGE_ENABLED":         &c.DayRange.Enabled,
+		"STOCK_WATCHER_DAYRANGE_PUSH_ENABLED":    &c.DayRange.PushEnabled,
 		"STOCK_WATCHER_DAYRANGE_STOCK_FEATURES":  &c.DayRange.UseStockFeatures,
 		"STOCK_WATCHER_DAYRANGE_MARKET_FEATURES": &c.DayRange.UseMarketFeatures,
 		"STOCK_WATCHER_DAYRANGE_SECTOR_FEATURES": &c.DayRange.UseSectorFeatures,

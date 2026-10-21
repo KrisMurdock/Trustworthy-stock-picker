@@ -242,6 +242,9 @@ func New(opts Options) (*Runtime, error) {
 	if r.dayRangeDB != nil && r.dayRangeDB.Available() {
 		r.dayRange = dayrange.NewService(cfg, r.dayRangeDB, marketDB, log)
 		r.dayRange.BuildVersion = version
+		if err := r.dayRange.ConfigureDelivery(store, noticeChannels); err != nil {
+			return nil, err
+		}
 	}
 	var dayRangeReader dashboard.DayRangeReader
 	if r.dayRange != nil {

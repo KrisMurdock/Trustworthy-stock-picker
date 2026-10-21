@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
@@ -15,6 +16,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/modeleval"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
 )
 
 const maxModelAgeDays = 14
@@ -55,6 +57,11 @@ type Service struct {
 	Now          func() time.Time
 	BuildVersion string
 	TrainOptions TrainOptions
+
+	deliveryMu     sync.Mutex
+	deliveryStore  DeliveryStore
+	noticeChannels []notify.Channel
+	ledger         notify.Ledger
 }
 
 func NewService(c config.Config, store Persistence, market MarketSource, log *logging.Logger) *Service {
@@ -364,6 +371,13 @@ func (s *Service) Predict(ctx context.Context, target string, code string) (Pred
 	if len(result.Predictions) > 0 {
 		result.Source = result.Predictions[0].Source
 	}
+	records, err = s.Store.LoadPredictions(ctx, target, "")
+	if err != nil {
+		return result, err
+	}
+	if err := s.publishSavedPremarket(ctx, target, records, result.Skipped, now); err != nil {
+		return result, err
+	}
 	s.Log.Info("Dayrange premarket predictions generated", "target_date", target, "published", len(result.Predictions), "skipped", len(result.Skipped), "source", result.Source)
 	return result, nil
 }
@@ -617,6 +631,9 @@ func (s *Service) Run(ctx context.Context) error {
 		if err := s.step(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			s.Log.Warn("Dayrange monitor step failed", "error", err.Error())
 		}
+		if err := s.Flush(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			s.Log.Warn("Dayrange delivery failed", "error", err.Error())
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -642,10 +659,15 @@ func (s *Service) step(ctx context.Context) error {
 	openTime := time.Date(now.Year(), now.Month(), now.Day(), 9, 30, 0, 0, shanghai)
 	if !now.Before(predictTime) && now.Before(openTime) {
 		records, err := s.Store.LoadPredictions(ctx, today, "")
-		if err == nil && len(records) == 0 {
+		if err != nil {
+			return err
+		}
+		if len(records) == 0 {
 			if _, err := s.Predict(ctx, today, ""); err != nil {
 				return err
 			}
+		} else if err := s.publishSavedPremarket(ctx, today, records, nil, now); err != nil {
+			return err
 		}
 	}
 	trainAt, _ := time.ParseInLocation("15:04", s.Config.DayRange.TrainAt, shanghai)

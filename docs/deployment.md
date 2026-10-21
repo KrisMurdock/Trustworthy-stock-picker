@@ -59,6 +59,8 @@ macOS 可使用 `tmux new-session -d -s stock-public 'STOCK_WATCHER_PUBLIC_TUNNE
 
 启用 `STOCK_WATCHER_DAYRANGE_ENABLED=true` 时，`init` 还会创建或校验独立的 `dayrange.db` schema 1；它与 `market.db` schema 6 分开，不影响行情库迁移。首次启用可先执行 `train-dayrange -offline` 做不写生产库的数据审计与训练检查，再停止 `run` 执行一次 `train-dayrange`、盘前 `predict-dayrange` 和收盘后 `reconcile-dayrange`。模型 checksum 错误会被标记为 `invalid` 并回退已验证基线；阶段六盘中剩余时段模型不在此版本中。
 
+盘前卡片只使用 `predictor_dayrange` 路由，账本保存在 `<data_dir>/state/dayrange-delivery.json`。生产应配置 `STOCK_WATCHER_DAYRANGE_PUSH_ENABLED=true` 和对应命名通道；验证时检查卡片中的目标日、数据截止、生成时点、覆盖数、跳过原因与“不构成投资建议”声明。重复执行 `predict-dayrange` 或重启 `run` 不应重复发送同一目标日、同一页；09:30 后账本中的未发送卡片会过期。关闭推送后预测仍会保存，但不会创建新的投递事件。
+
 AI 配置与行情数据分离：原生部署默认写入工作目录的 `llm.config`，Compose 使用独立命名卷挂载到 `/config/llm.config`。该文件权限应为 `0600`，不属于 CIFS 数据目录，也不能被 Git 跟踪。容器根文件系统保持只读；若网页端需要保存 AI 配置，必须保留 `/config` 可写卷，并按需设置 `STOCK_WATCHER_LLM_WRITE_MODE=all`（远程访问还需认证反向代理）。未配置模型时复盘页仍可查看确定性结果，只禁用流式回答。
 
 `daily_bar` 是可更新视图；新报告的 `input_id` 与 `revision` 引用不可变输入及报告。旧数据只能在原摘要仍匹配时重建，修订后的旧窗口会明确报不可复现，不能据此回填虚构旧价格。精确重放使用报告记录的同一构建制品：
