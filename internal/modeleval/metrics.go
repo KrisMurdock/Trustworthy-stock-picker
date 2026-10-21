@@ -66,37 +66,44 @@ const (
 )
 
 const (
-	MetricPointMAE                  = "point.mae"
-	MetricPointRMSE                 = "point.rmse"
-	MetricPointMedAE                = "point.medae"
-	MetricPointP90AbsError          = "point.p90_abs_error"
-	MetricPointBias                 = "point.bias"
-	MetricPointMAPE                 = "point.mape"
-	MetricPointR2                   = "point.r2"
-	MetricPointSMAPE                = "point.smape"
-	MetricPointEnvelopeHitRate      = "point.envelope_hit_rate"
-	MetricPointEnvelopeWidthMean    = "point.envelope_width_mean"
-	MetricPointContradictionRate    = "point.contradiction_rate"
-	MetricPointSkillMAE             = "point.skill_mae"
-	MetricPointSkillRMSE            = "point.skill_rmse"
-	MetricDirectionAccuracy         = "direction.accuracy"
-	MetricDirectionBalancedAccuracy = "direction.balanced_accuracy"
-	MetricDirectionPrecision        = "direction.precision"
-	MetricDirectionRecall           = "direction.recall"
-	MetricDirectionF1               = "direction.f1"
-	MetricDirectionMCC              = "direction.mcc"
-	MetricDirectionAccuracyDelta    = "direction.accuracy_delta"
-	MetricIntervalEmpiricalCoverage = "interval.empirical_coverage"
-	MetricIntervalWidthMean         = "interval.width_mean"
-	MetricIntervalPinballLoss       = "interval.pinball_loss"
-	MetricIntervalCRPS              = "interval.crps"
-	MetricRankingIC                 = "ranking.ic"
-	MetricRankingRankIC             = "ranking.rank_ic"
-	MetricRankingTopKPrecision      = "ranking.topk_precision"
-	MetricTradingNetReturn          = "trading.net_return"
-	MetricTradingSharpe             = "trading.sharpe"
-	MetricTradingMaxDrawdown        = "trading.max_drawdown"
-	MetricTradingTurnover           = "trading.turnover"
+	MetricPointMAE                    = "point.mae"
+	MetricPointRMSE                   = "point.rmse"
+	MetricPointMedAE                  = "point.medae"
+	MetricPointP90AbsError            = "point.p90_abs_error"
+	MetricPointBias                   = "point.bias"
+	MetricPointMAPE                   = "point.mape"
+	MetricPointR2                     = "point.r2"
+	MetricPointSMAPE                  = "point.smape"
+	MetricPointEnvelopeHitRate        = "point.envelope_hit_rate"
+	MetricPointEnvelopeWidthMean      = "point.envelope_width_mean"
+	MetricPointContradictionRate      = "point.contradiction_rate"
+	MetricPointSkillMAE               = "point.skill_mae"
+	MetricPointSkillRMSE              = "point.skill_rmse"
+	MetricDirectionAccuracy           = "direction.accuracy"
+	MetricDirectionBalancedAccuracy   = "direction.balanced_accuracy"
+	MetricDirectionPrecision          = "direction.precision"
+	MetricDirectionRecall             = "direction.recall"
+	MetricDirectionF1                 = "direction.f1"
+	MetricDirectionMCC                = "direction.mcc"
+	MetricDirectionAccuracyDelta      = "direction.accuracy_delta"
+	MetricIntervalEmpiricalCoverage   = "interval.empirical_coverage"
+	MetricIntervalWidthMean           = "interval.width_mean"
+	MetricIntervalPinballLoss         = "interval.pinball_loss"
+	MetricIntervalCRPS                = "interval.crps"
+	MetricIntervalJointCoverage       = "interval.joint_coverage"
+	MetricIntervalEnvelopeCoverage    = "interval.envelope_coverage"
+	MetricIntervalScore               = "interval.score"
+	MetricIntervalLowerBreachRate     = "interval.lower_breach_rate"
+	MetricIntervalUpperBreachRate     = "interval.upper_breach_rate"
+	MetricIntervalLowerExceedanceMean = "interval.lower_exceedance_mean"
+	MetricIntervalUpperExceedanceMean = "interval.upper_exceedance_mean"
+	MetricRankingIC                   = "ranking.ic"
+	MetricRankingRankIC               = "ranking.rank_ic"
+	MetricRankingTopKPrecision        = "ranking.topk_precision"
+	MetricTradingNetReturn            = "trading.net_return"
+	MetricTradingSharpe               = "trading.sharpe"
+	MetricTradingMaxDrawdown          = "trading.max_drawdown"
+	MetricTradingTurnover             = "trading.turnover"
 )
 
 const (
@@ -114,37 +121,44 @@ const (
 )
 
 var metricFamilies = map[string]Family{
-	MetricPointMAE:                  FamilyPoint,
-	MetricPointRMSE:                 FamilyPoint,
-	MetricPointMedAE:                FamilyPoint,
-	MetricPointP90AbsError:          FamilyPoint,
-	MetricPointBias:                 FamilyPoint,
-	MetricPointMAPE:                 FamilyPoint,
-	MetricPointR2:                   FamilyPoint,
-	MetricPointSMAPE:                FamilyPoint,
-	MetricPointEnvelopeHitRate:      FamilyPoint,
-	MetricPointEnvelopeWidthMean:    FamilyPoint,
-	MetricPointContradictionRate:    FamilyPoint,
-	MetricPointSkillMAE:             FamilyPoint,
-	MetricPointSkillRMSE:            FamilyPoint,
-	MetricDirectionAccuracy:         FamilyDirection,
-	MetricDirectionBalancedAccuracy: FamilyDirection,
-	MetricDirectionPrecision:        FamilyDirection,
-	MetricDirectionRecall:           FamilyDirection,
-	MetricDirectionF1:               FamilyDirection,
-	MetricDirectionMCC:              FamilyDirection,
-	MetricDirectionAccuracyDelta:    FamilyDirection,
-	MetricIntervalEmpiricalCoverage: FamilyInterval,
-	MetricIntervalWidthMean:         FamilyInterval,
-	MetricIntervalPinballLoss:       FamilyInterval,
-	MetricIntervalCRPS:              FamilyInterval,
-	MetricRankingIC:                 FamilyRanking,
-	MetricRankingRankIC:             FamilyRanking,
-	MetricRankingTopKPrecision:      FamilyRanking,
-	MetricTradingNetReturn:          FamilyTrading,
-	MetricTradingSharpe:             FamilyTrading,
-	MetricTradingMaxDrawdown:        FamilyTrading,
-	MetricTradingTurnover:           FamilyTrading,
+	MetricPointMAE:                    FamilyPoint,
+	MetricPointRMSE:                   FamilyPoint,
+	MetricPointMedAE:                  FamilyPoint,
+	MetricPointP90AbsError:            FamilyPoint,
+	MetricPointBias:                   FamilyPoint,
+	MetricPointMAPE:                   FamilyPoint,
+	MetricPointR2:                     FamilyPoint,
+	MetricPointSMAPE:                  FamilyPoint,
+	MetricPointEnvelopeHitRate:        FamilyPoint,
+	MetricPointEnvelopeWidthMean:      FamilyPoint,
+	MetricPointContradictionRate:      FamilyPoint,
+	MetricPointSkillMAE:               FamilyPoint,
+	MetricPointSkillRMSE:              FamilyPoint,
+	MetricDirectionAccuracy:           FamilyDirection,
+	MetricDirectionBalancedAccuracy:   FamilyDirection,
+	MetricDirectionPrecision:          FamilyDirection,
+	MetricDirectionRecall:             FamilyDirection,
+	MetricDirectionF1:                 FamilyDirection,
+	MetricDirectionMCC:                FamilyDirection,
+	MetricDirectionAccuracyDelta:      FamilyDirection,
+	MetricIntervalEmpiricalCoverage:   FamilyInterval,
+	MetricIntervalWidthMean:           FamilyInterval,
+	MetricIntervalPinballLoss:         FamilyInterval,
+	MetricIntervalCRPS:                FamilyInterval,
+	MetricIntervalJointCoverage:       FamilyInterval,
+	MetricIntervalEnvelopeCoverage:    FamilyInterval,
+	MetricIntervalScore:               FamilyInterval,
+	MetricIntervalLowerBreachRate:     FamilyInterval,
+	MetricIntervalUpperBreachRate:     FamilyInterval,
+	MetricIntervalLowerExceedanceMean: FamilyInterval,
+	MetricIntervalUpperExceedanceMean: FamilyInterval,
+	MetricRankingIC:                   FamilyRanking,
+	MetricRankingRankIC:               FamilyRanking,
+	MetricRankingTopKPrecision:        FamilyRanking,
+	MetricTradingNetReturn:            FamilyTrading,
+	MetricTradingSharpe:               FamilyTrading,
+	MetricTradingMaxDrawdown:          FamilyTrading,
+	MetricTradingTurnover:             FamilyTrading,
 }
 
 type SliceDimension struct {
