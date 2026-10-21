@@ -32,10 +32,13 @@
 - 跨股票池 pooled，按目标拆成 high/low/close 三个 GBDT；每个 GBDT 是多棵回归树。
 - 15/30/60 分钟只作为特征尺度，不单独训练四个模型，也不直接平均不同期限的价格。
 - 纯 Go 训练和推理，固定种子、固定特征顺序和稳定 tie-break；模型 artifact 可确定性重放。
-- 特征包括：多尺度收益/振幅/量比/波动率、收盘位置、影线、MA/RSI、时段、股池横截面宽度、上一交易日 qfq 日线上下文和缺失指示。
+- 当前实验分支使用 `FeatureVersion=2`。特征包括：多尺度收益/振幅/量比/波动率、收盘位置、影线、MA/RSI、MACD、布林线、成交量 z-score、时段、股池横截面宽度、上一交易日 qfq 日线上下文和缺失指示。
+- 可选市场上下文使用 `context.db` 中沪深 300 `sh000300` 的日线：1/5/20 日收益、MA20 偏离、20 日波动率、上涨/下跌状态、个股相对指数收益和 60 日滚动 Beta／下行 Beta。市场上下文缺失时对应特征记为缺失并保留 `has_market`、`has_beta60` 等指示，不阻断股票预测。
+- 行业和风格相对强弱尚未接入：`leaders.yaml` 当前没有稳定的板块归属，不能用事后映射回填历史。
 - 标签只取同交易时段、正好 +5 分钟的下一根 bar；11:30 和 15:00 不作为训练输入。
 - 生产模型当前仍使用单一训练区间：读取最近 400 个自然日的 5 分钟线，用截止日全量样本重训；评估输出并展示 walk-forward 指标，卡片只保留主指标与护栏指标。
-- `predictor-eval` 提供离线的多训练窗口 rolling walk-forward 评估；它不改变生产模型权重，也不写入模型、预测库或飞书。
+- `predictor-eval` 提供离线的多训练窗口 rolling walk-forward 评估；它不改变生产模型权重，也不写入模型、预测库或飞书。校准只作为实验后处理，artifact 中记录可选 `calibration`，缺省值仍为三个目标各 `1.0`。
+- `FeatureVersion=2` 与旧的 `FeatureVersion=1` artifact 不兼容。若该实验分支将来进入生产，必须先完成训练和验证并替换模型，不能直接复用旧 artifact。
 
 ## 4. 卡尔曼滤波
 
@@ -200,6 +203,8 @@ go run ./cmd/stock-watcher predictor-eval \
 - 评估不发送通知；离线环境没有飞书凭证时可用 `STOCK_WATCHER_FEISHU_ENABLED=false` 启动，避免无关的配置校验失败。
 - 输出一个确定性 JSON；指标按“评估指标契约”的规范化列表返回，不适用的指标用 `not_applicable`/`insufficient_data` 和 `null` 表达。数据不足时整体返回 `status=insufficient_history`、`skipped` 和 `notes`，不会自动缩短窗口。
 - `B0` 会读取配置日历覆盖的全部交易日，长日历下比固定窗口更慢；这是 expanding 基线的代价。
+- 诊断股池可用 `-universe config-diagnostic` 固定当前配置股池，用 `-max-stocks` 限制股票数，用 `-max-training-days` 限制 expanding 历史长度；这些选项只用于诊断，不代表按当时可见股池进行的正式验收。
+- `-dump-predictions` 会按行输出 B0 的样本级预测，供配对比较；`-calibration-grid` 只增加固定校准变体，不会自动采用最佳变体。
 - 股票池按验证日当时可见的报告恢复：优先 `report_archive` 中目标交易日 09:30 前生成的归档，缺失时才回退可变的 `selection_run`，并在 `universes[].report_source` 标明来源。
 - 默认要求报告在目标交易日 09:30 前生成。历史报告是事后补生成时，可显式加 `-allow-late-reports`；它仍只接受 `as_of < target` 的记录，优先使用归档并标为 `archive-late`，归档不可读时才回退可变的 `selection_run` 并标为 `selection_run-late`，不会使用目标日数据。
 
@@ -226,3 +231,5 @@ go run ./cmd/stock-watcher predictor-eval \
 - 市场状态只用于 walk-forward 结果分组比较；当前不改变生产实时权重。
 
 输出中的 `windows`、`strategies`、`regimes` 和 `universes` 只保留折次、可得性、过滤统计、市场状态和每日股票池元数据；所有数值指标统一放在 `metrics`，通过 `subject`、`slice`、`baseline` 关联到窗口、策略、市场状态和基线。指标状态、`day_equal` 主聚合和 bootstrap 区间以“评估指标契约”为准。
+
+本轮 `FeatureVersion=2` 的负结果和校准诊断见 [实时 5 分钟预测 FeatureVersion 2 评估](predictor-feature-v2-evaluation.md)。结论是 v2 没有改善点误差，校准虽然缩小误差却显著降低 high/low 包络覆盖率，因此不替换生产模型。

@@ -55,7 +55,7 @@ func predFeatureTestData(codes, dates []string) Data {
 }
 
 func predFeatureTestClone(data Data) Data {
-	out := Data{Stocks: append([]config.Stock(nil), data.Stocks...), Minutes: map[string][]market.MinuteBar{}, Daily: map[string][]market.Bar{}}
+	out := Data{Stocks: append([]config.Stock(nil), data.Stocks...), Minutes: map[string][]market.MinuteBar{}, Daily: map[string][]market.Bar{}, Market: append([]market.Bar(nil), data.Market...)}
 	for code, bars := range data.Minutes {
 		out.Minutes[code] = append([]market.MinuteBar(nil), bars...)
 	}
@@ -381,6 +381,94 @@ func TestPoolFeaturesUseOnlySameTimestamp(t *testing.T) {
 	}
 	if !predFeatureTestEqual(withoutExtra.Values[idx], withExtra.Values[idx]) {
 		t.Fatal("code outside the configured stock pool leaked into pool_ret1")
+	}
+}
+
+func TestTechnicalAndMarketContextFeatures(t *testing.T) {
+	data := predFeatureTestData([]string{"sh600000"}, []string{"2026-09-01", "2026-09-02"})
+	data.Market = append([]market.Bar(nil), data.Daily["sh600000"]...)
+	for i := range data.Market {
+		data.Market[i].Close = 100 + float64(i)*0.1
+		data.Market[i].Open = data.Market[i].Close
+		data.Market[i].High = data.Market[i].Close + 0.2
+		data.Market[i].Low = data.Market[i].Close - 0.2
+	}
+	vector, err := BuildInferenceFeature(data, "sh600000", predFeatureTestTime("2026-09-02", 895))
+	if err != nil {
+		t.Fatalf("BuildInferenceFeature: %v", err)
+	}
+	value := func(name string) float64 { return vector.Values[predFeatureTestIndex(t, vector.Names, name)] }
+	for _, name := range []string{"macd_line", "macd_hist", "boll_pctb", "boll_width", "day_macd_hist", "day_boll_pctb", "day_boll_width", "mkt_ret1", "mkt_ret5", "mkt_ret20", "mkt_ma20_dist", "mkt_vol20", "rel_ret5", "rel_ret20", "beta60", "down_beta60"} {
+		if math.IsNaN(value(name)) {
+			t.Fatalf("feature %s is unexpectedly missing", name)
+		}
+	}
+	if value("has_macd") != 1 || value("has_daily_macd") != 1 || value("has_market") != 1 || value("has_beta60") != 1 {
+		t.Fatalf("context availability flags = macd %.0f daily %.0f market %.0f beta %.0f", value("has_macd"), value("has_daily_macd"), value("has_market"), value("has_beta60"))
+	}
+	if beta := value("beta60"); beta < 0.5 || beta > 1.5 {
+		t.Fatalf("aligned market beta = %.6f, want a positive near-one exposure", beta)
+	}
+}
+
+func TestMarketContextFeaturesIgnoreFutureBars(t *testing.T) {
+	data := predFeatureTestData([]string{"sh600000"}, []string{"2026-09-01", "2026-09-02"})
+	data.Market = append([]market.Bar(nil), data.Daily["sh600000"]...)
+	inputEnd := predFeatureTestTime("2026-09-02", 600)
+	baseline, err := BuildInferenceFeature(data, "sh600000", inputEnd)
+	if err != nil {
+		t.Fatalf("BuildInferenceFeature: %v", err)
+	}
+	mutated := predFeatureTestClone(data)
+	for i := range mutated.Market {
+		if mutated.Market[i].Date >= "2026-09-02" {
+			mutated.Market[i].Close *= 3
+			mutated.Market[i].High *= 3
+			mutated.Market[i].Low *= 3
+			mutated.Market[i].Volume *= 5
+		}
+	}
+	after, err := BuildInferenceFeature(mutated, "sh600000", inputEnd)
+	if err != nil {
+		t.Fatalf("BuildInferenceFeature after market mutation: %v", err)
+	}
+	for i := range baseline.Values {
+		if !predFeatureTestEqual(baseline.Values[i], after.Values[i]) {
+			t.Fatalf("future market data leaked into feature %s: %v -> %v", baseline.Names[i], baseline.Values[i], after.Values[i])
+		}
+	}
+}
+
+func TestMarketContextMissingIsExplicit(t *testing.T) {
+	data := predFeatureTestData([]string{"sh600000"}, []string{"2026-09-01"})
+	vector, err := BuildInferenceFeature(data, "sh600000", predFeatureTestTime("2026-09-01", 600))
+	if err != nil {
+		t.Fatalf("BuildInferenceFeature: %v", err)
+	}
+	value := func(name string) float64 { return vector.Values[predFeatureTestIndex(t, vector.Names, name)] }
+	if value("has_market") != 0 || !math.IsNaN(value("mkt_ret1")) || !math.IsNaN(value("beta60")) {
+		t.Fatalf("missing market context was not represented explicitly: has_market=%v mkt_ret1=%v beta60=%v", value("has_market"), value("mkt_ret1"), value("beta60"))
+	}
+}
+
+func TestRollingBetaUsesPrecomputedMarketReturns(t *testing.T) {
+	returns := []float64{0.01, -0.02, 0.015, -0.005, 0.004, -0.01, 0.02, -0.015, 0.003, -0.007,
+		0.012, -0.006, 0.008, -0.011, 0.005, -0.004, 0.009, -0.013, 0.006, -0.002, 0.007, -0.008, 0.011, -0.003}
+	marketBars := make([]market.Bar, 0, len(returns)+1)
+	stockBars := make([]market.Bar, 0, len(returns)+1)
+	marketClose, stockClose := 100.0, 100.0
+	marketBars = append(marketBars, market.Bar{Date: "2026-01-01", Close: marketClose})
+	stockBars = append(stockBars, market.Bar{Date: "2026-01-01", Close: stockClose})
+	for i, r := range returns {
+		date := time.Date(2026, 1, 2+i, 0, 0, 0, 0, market.Shanghai).Format("2006-01-02")
+		marketClose *= 1 + r
+		stockClose *= 1 + 2*r
+		marketBars = append(marketBars, market.Bar{Date: date, Close: marketClose})
+		stockBars = append(stockBars, market.Bar{Date: date, Close: stockClose})
+	}
+	beta, downBeta, ok := rollingBeta(stockBars, len(stockBars)-1, returnMap(marketBars), 60)
+	if !ok || math.Abs(beta-2) > 1e-9 || math.Abs(downBeta-2) > 1e-9 {
+		t.Fatalf("rolling beta = %.9f down %.9f ok=%v, want 2/2", beta, downBeta, ok)
 	}
 }
 

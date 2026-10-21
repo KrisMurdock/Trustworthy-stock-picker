@@ -66,6 +66,8 @@ type Monitor struct {
 	dailyCache       map[string][]market.Bar
 	dailyCacheAt     string
 	dailyCacheCodes  map[string]bool
+	marketBars       []market.Bar
+	marketBarsAt     string
 	reportDate       string
 	reportCache      selection.Report
 	lastTrainAttempt time.Time
@@ -1252,7 +1254,7 @@ func (m *Monitor) loadData(ctx context.Context, stocks []config.Stock, now time.
 	if err != nil {
 		return Data{}, err
 	}
-	return Data{Stocks: stocks, Minutes: minutes, Daily: daily}, nil
+	return Data{Stocks: stocks, Minutes: minutes, Daily: daily, Market: m.loadMarketBars(ctx, calendar.Date(now))}, nil
 }
 
 func (m *Monitor) loadDaily(ctx context.Context, codes []string, through string, force bool) (map[string][]market.Bar, error) {
@@ -1295,6 +1297,39 @@ func (m *Monitor) loadDaily(ctx context.Context, codes []string, through string,
 	}
 	m.mu.Unlock()
 	return daily, nil
+}
+
+// loadMarketBars reads the broad-market reference at most once per session. A
+// missing or stale context database degrades the optional market features to
+// missing values; it must never block stock predictions or model training.
+func (m *Monitor) loadMarketBars(ctx context.Context, asOf string) []market.Bar {
+	m.mu.Lock()
+	if m.marketBarsAt == asOf {
+		cached := append([]market.Bar(nil), m.marketBars...)
+		m.mu.Unlock()
+		return cached
+	}
+	m.mu.Unlock()
+
+	var out []market.Bar
+	if m.Config.MarketContext.Enabled {
+		db, err := storage.OpenContextView(m.Config.DataDir, m.Config.RequireCIFS)
+		if err == nil {
+			bars, loadErr := db.LoadRecentBarsForCode(ctx, MarketIndexCode, asOf, 120)
+			_ = db.Close()
+			if loadErr == nil {
+				out = make([]market.Bar, 0, len(bars))
+				for _, bar := range bars {
+					out = append(out, market.Bar{Date: bar.Date, Open: bar.Open, Close: bar.Close, High: bar.High, Low: bar.Low, Volume: bar.Volume})
+				}
+			}
+		}
+	}
+	m.mu.Lock()
+	m.marketBars = out
+	m.marketBarsAt = asOf
+	m.mu.Unlock()
+	return append([]market.Bar(nil), out...)
 }
 
 func (m *Monitor) kalmanFor(ctx context.Context, code, date string, inputEnd time.Time, bars []market.MinuteBar) (*Kalman, error) {

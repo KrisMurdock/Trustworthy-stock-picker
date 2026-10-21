@@ -19,6 +19,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/monitor"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/predictor"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 	stockruntime "github.com/KrisMurdock/Trustworthy-stock-picker/runtime"
@@ -62,6 +63,21 @@ func run(args []string) error {
 	allowLateReports := f.Bool("allow-late-reports", false, "allow archived reports generated after target open when as_of is before target (predictor-eval only)")
 	baselineOnly := f.Bool("baseline-only", false, "evaluate only the expanding B0 baseline (predictor-eval only)")
 	evalUniverse := f.String("universe", "report", "report or config-diagnostic universe (predictor-eval only)")
+	calibrationGrid := f.Bool("calibration-grid", false, "score fixed B0 calibration variants (predictor-eval only)")
+	maxStocks := f.Int("max-stocks", 0, "deterministically limit diagnostic universe stocks (predictor-eval only; 0 = all)")
+	maxTrainingDays := f.Int("max-training-days", 0, "cap expanding B0 history in trading days (predictor-eval only; 0 = all)")
+	trees := f.Int("trees", predictor.DefaultTrainOptions().Trees, "boosted trees per target (predictor-eval only)")
+	maxDepth := f.Int("max-depth", predictor.DefaultTrainOptions().MaxDepth, "tree depth (predictor-eval only)")
+	minLeaf := f.Int("min-leaf", predictor.DefaultTrainOptions().MinLeaf, "minimum tree leaf samples (predictor-eval only)")
+	learningRate := f.Float64("learning-rate", predictor.DefaultTrainOptions().LearningRate, "boosting learning rate (predictor-eval only)")
+	l2 := f.Float64("l2", predictor.DefaultTrainOptions().L2, "leaf L2 regularization (predictor-eval only)")
+	bins := f.Int("bins", predictor.DefaultTrainOptions().Bins, "feature histogram bins (predictor-eval only)")
+	labelClip := f.Float64("label-clip", predictor.DefaultTrainOptions().LabelClip.High, "symmetric target clip as return (predictor-eval only)")
+	dumpPredictions := f.String("dump-predictions", "", "write B0 out-of-sample predictions as JSON lines (predictor-eval only)")
+	highScale := f.Float64("high-scale", 1, "prediction calibration scale for high (predictor-eval only)")
+	lowScale := f.Float64("low-scale", 1, "prediction calibration scale for low (predictor-eval only)")
+	closeScale := f.Float64("close-scale", 1, "prediction calibration scale for close (predictor-eval only)")
+	marketContext := f.Bool("market-context", true, "load CSI 300 context for predictor features (predictor-eval only)")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -88,7 +104,7 @@ func run(args []string) error {
 	if command != "predictor-eval" && (*windows != "40,60,120" || *validationDays != 20 || *halfLife != 60) {
 		return errors.New("predictor-eval flags require the predictor-eval command")
 	}
-	if command != "predictor-eval" && (*allowLateReports || *baselineOnly || *evalUniverse != "report") {
+	if command != "predictor-eval" && (*allowLateReports || *baselineOnly || *evalUniverse != "report" || *calibrationGrid || *maxStocks != 0 || *maxTrainingDays != 0 || *trees != predictor.DefaultTrainOptions().Trees || *maxDepth != predictor.DefaultTrainOptions().MaxDepth || *minLeaf != predictor.DefaultTrainOptions().MinLeaf || *learningRate != predictor.DefaultTrainOptions().LearningRate || *l2 != predictor.DefaultTrainOptions().L2 || *bins != predictor.DefaultTrainOptions().Bins || *labelClip != predictor.DefaultTrainOptions().LabelClip.High || *dumpPredictions != "" || *highScale != 1 || *lowScale != 1 || *closeScale != 1 || !*marketContext) {
 		return errors.New("predictor-eval flags require the predictor-eval command")
 	}
 	if command != "plan" && (*code != "" || *entry != 0) {
@@ -144,7 +160,12 @@ func run(args []string) error {
 	if command == "predictor-eval" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		return runPredictorEval(ctx, c, *asof, *windows, *validationDays, *halfLife, *allowLateReports, *baselineOnly, *evalUniverse)
+		opts := predictor.DefaultTrainOptions()
+		opts.Trees, opts.MaxDepth, opts.MinLeaf = *trees, *maxDepth, *minLeaf
+		opts.LearningRate, opts.L2, opts.Bins = *learningRate, *l2, *bins
+		opts.LabelClip = predictor.TargetMetrics{High: *labelClip, Low: *labelClip, Close: *labelClip}
+		opts.Calibration = predictor.PredictionCalibration{High: *highScale, Low: *lowScale, Close: *closeScale}
+		return runPredictorEval(ctx, c, *asof, *windows, *validationDays, *halfLife, *allowLateReports, *baselineOnly, *evalUniverse, *calibrationGrid, *maxStocks, *maxTrainingDays, *dumpPredictions, *marketContext, opts)
 	}
 	options, err := logging.EnvOptions()
 	if err != nil {

@@ -12,8 +12,11 @@ import (
 const (
 	ArtifactSchemaVersion   = 2
 	PredictionSchemaVersion = 3
-	FeatureVersion          = 1
-	StatusSchemaVersion     = 1
+	// FeatureVersion 2 adds MACD/Bollinger structure plus broad-market,
+	// relative-strength and rolling-beta context. Models trained with version 1
+	// must not be loaded by this binary.
+	FeatureVersion      = 2
+	StatusSchemaVersion = 1
 )
 
 type Target string

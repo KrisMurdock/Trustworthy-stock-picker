@@ -49,6 +49,10 @@ func TestContextDatabaseRoundTrip(t *testing.T) {
 	if err != nil || len(bars["BK1036"]) != 2 || bars["BK1036"][1].Close != 103 {
 		t.Fatalf("load bars: %v %+v", err, bars)
 	}
+	recent, err := view.LoadRecentBarsForCode(ctx, "BK1036", "2026-10-19", 5)
+	if err != nil || len(recent) != 2 || recent[0].Date != "2026-10-16" || recent[1].Close != 103 {
+		t.Fatalf("load recent bars for code: %v %+v", err, recent)
+	}
 	got, err := view.LoadSyncStatus(ctx)
 	if err != nil || got.Status != "complete" || got.Succeeded != 2 {
 		t.Fatalf("load status: %v %+v", err, got)

@@ -362,6 +362,41 @@ func (c *ContextDB) LoadRecentBars(ctx context.Context, asOf string, limit int) 
 	return out, rows.Err()
 }
 
+// LoadRecentBarsForCode reads a bounded history for one instrument. Unlike
+// LoadRecentBars it does not scan every index and board, so it is suitable for
+// per-cycle predictor inference on the shared CIFS database.
+func (c *ContextDB) LoadRecentBarsForCode(ctx context.Context, code, asOf string, limit int) ([]ContextBar, error) {
+	if c == nil || c.db == nil {
+		return nil, fs.ErrNotExist
+	}
+	if code == "" || asOf == "" || limit < 1 || limit > 120 {
+		return nil, errors.New("invalid context bar query")
+	}
+	rows, err := c.db.QueryContext(ctx, `
+		SELECT code,trade_date,open,close,high,low,volume_raw,amount
+		FROM context_bar WHERE code=? AND trade_date<=?
+		ORDER BY trade_date DESC LIMIT ?`, code, asOf, limit)
+	if err != nil {
+		return nil, errors.New("cannot read context bars")
+	}
+	defer rows.Close()
+	out := make([]ContextBar, 0, limit)
+	for rows.Next() {
+		var bar ContextBar
+		if err := rows.Scan(&bar.Code, &bar.Date, &bar.Open, &bar.Close, &bar.High, &bar.Low, &bar.Volume, &bar.Amount); err != nil {
+			return nil, errors.New("cannot read context bar")
+		}
+		out = append(out, bar)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("cannot read context bars")
+	}
+	for left, right := 0, len(out)-1; left < right; left, right = left+1, right-1 {
+		out[left], out[right] = out[right], out[left]
+	}
+	return out, nil
+}
+
 func (c *ContextDB) SaveSyncStatus(ctx context.Context, status ContextSyncStatus) error {
 	if c == nil || !c.writable {
 		return errors.New("context database is read-only")

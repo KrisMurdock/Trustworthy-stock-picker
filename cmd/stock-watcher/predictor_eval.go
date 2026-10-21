@@ -32,7 +32,7 @@ const (
 	evalUniverseConfigDiagnostic = "config-diagnostic"
 )
 
-func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg string, validationDays, halfLife int, allowLateReports, baselineOnly bool, universe string) error {
+func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg string, validationDays, halfLife int, allowLateReports, baselineOnly bool, universe string, calibrationGrid bool, maxStocks, maxTrainingDays int, dumpPredictions string, marketContext bool, trainOptions predictor.TrainOptions) error {
 	if universe == "" {
 		universe = evalUniverseReport
 	}
@@ -52,6 +52,21 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	}
 	if halfLife < 1 || halfLife > 365 {
 		return errors.New("predictor-eval half-life must be between 1 and 365")
+	}
+	if maxStocks < 0 || maxStocks > 5000 {
+		return errors.New("predictor-eval max-stocks must be between 0 and 5000")
+	}
+	if maxTrainingDays < 0 || maxTrainingDays > 250 {
+		return errors.New("predictor-eval max-training-days must be between 0 and 250")
+	}
+	var predictionFile *os.File
+	if dumpPredictions != "" {
+		file, err := os.OpenFile(dumpPredictions, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+		if err != nil {
+			return fmt.Errorf("open prediction dump: %w", err)
+		}
+		predictionFile = file
+		defer predictionFile.Close()
 	}
 	if !c.Predictor.Enabled {
 		return errors.New("predictor is disabled")
@@ -76,9 +91,9 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	}
 	if len(tradingDays) < requiredDays {
 		report, err := predictor.EvaluateRollingWindows(ctx, nil, emptyEvalProvider, predictor.EvaluationOptions{
-			AsOf: asof, Windows: windows, BaselineOnly: baselineOnly, TradingDays: tradingDays,
-			MinTrainingDays: c.Predictor.MinTrainingDays, HalfLifeDays: halfLife,
-			TrainOptions: predictor.DefaultTrainOptions(),
+			AsOf: asof, Windows: windows, BaselineOnly: baselineOnly, CalibrationGrid: calibrationGrid, TradingDays: tradingDays,
+			MinTrainingDays: c.Predictor.MinTrainingDays, MaxTrainingDays: maxTrainingDays, HalfLifeDays: halfLife,
+			TrainOptions: trainOptions,
 		})
 		if err != nil {
 			return err
@@ -107,7 +122,7 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	metas := map[string]predictorEvalMeta{}
 	codes := map[string]bool{}
 	if universe == evalUniverseConfigDiagnostic {
-		stocks := append([]config.Stock(nil), c.Stocks...)
+		stocks := limitDiagnosticStocks(append([]config.Stock(nil), c.Stocks...), maxStocks)
 		sort.Slice(stocks, func(i, j int) bool { return stocks[i].Code < stocks[j].Code })
 		dayCodes := make([]string, len(stocks))
 		for i, stock := range stocks {
@@ -159,9 +174,9 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	}
 	if len(metas) == 0 {
 		report, err := predictor.EvaluateRollingWindows(ctx, nil, emptyEvalProvider, predictor.EvaluationOptions{
-			AsOf: asof, Windows: windows, BaselineOnly: baselineOnly, TradingDays: tradingDays,
-			MinTrainingDays: c.Predictor.MinTrainingDays, HalfLifeDays: halfLife,
-			TrainOptions: predictor.DefaultTrainOptions(),
+			AsOf: asof, Windows: windows, BaselineOnly: baselineOnly, CalibrationGrid: calibrationGrid, TradingDays: tradingDays,
+			MinTrainingDays: c.Predictor.MinTrainingDays, MaxTrainingDays: maxTrainingDays, HalfLifeDays: halfLife,
+			TrainOptions: trainOptions,
 		})
 		if err != nil {
 			return err
@@ -192,6 +207,15 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	if err != nil {
 		return err
 	}
+	var marketBars []market.Bar
+	if marketContext {
+		marketBars, err = loadPredictorMarketBars(ctx, c, asof)
+		if err != nil {
+			notes = append(notes, "market context unavailable: "+err.Error())
+		}
+	} else {
+		notes = append(notes, "market context disabled for this evaluation")
+	}
 	regimes, contextOK := loadPredictorRegimes(ctx, c, asof, tradingDays)
 	if !contextOK {
 		notes = append(notes, "market context unavailable; all market states are unknown")
@@ -211,6 +235,7 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 				Stocks:  meta.stocks,
 				Minutes: subsetMinuteBars(minutes, meta.codes),
 				Daily:   subsetDailyBars(daily, meta.codes),
+				Market:  marketBars,
 			}
 			built, buildErr := predictor.BuildTrainingSamples(data)
 			if buildErr != nil {
@@ -226,9 +251,15 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 		}, nil
 	}
 	report, err := predictor.EvaluateRollingWindows(ctx, candidateDates, provider, predictor.EvaluationOptions{
-		AsOf: asof, Windows: windows, BaselineOnly: baselineOnly, TradingDays: tradingDays, MarketStates: regimes,
-		MinTrainingDays: c.Predictor.MinTrainingDays, HalfLifeDays: halfLife,
-		TrainOptions: predictor.DefaultTrainOptions(),
+		AsOf: asof, Windows: windows, BaselineOnly: baselineOnly, CalibrationGrid: calibrationGrid, TradingDays: tradingDays, MarketStates: regimes,
+		MinTrainingDays: c.Predictor.MinTrainingDays, MaxTrainingDays: maxTrainingDays, HalfLifeDays: halfLife,
+		TrainOptions: trainOptions,
+		PredictionHook: func(record predictor.PredictionRecord) error {
+			if predictionFile == nil {
+				return nil
+			}
+			return json.NewEncoder(predictionFile).Encode(record)
+		},
 	})
 	if err != nil {
 		return err
@@ -236,6 +267,17 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	report.Universe = universe
 	report.Notes = append(report.Notes, notes...)
 	return json.NewEncoder(os.Stdout).Encode(report)
+}
+
+func limitDiagnosticStocks(stocks []config.Stock, limit int) []config.Stock {
+	if limit <= 0 || len(stocks) <= limit {
+		return stocks
+	}
+	out := make([]config.Stock, 0, limit)
+	for i := 0; i < limit; i++ {
+		out = append(out, stocks[i*len(stocks)/limit])
+	}
+	return out
 }
 
 func emptyEvalProvider(string) (predictor.EvaluationDay, error) {
@@ -310,4 +352,27 @@ func loadPredictorRegimes(ctx context.Context, c config.Config, asof string, tra
 		marketBars = append(marketBars, predictor.MarketBar{Date: bar.Date, Close: bar.Close})
 	}
 	return predictor.BuildMarketRegimes(tradingDays, marketBars), true
+}
+
+func loadPredictorMarketBars(ctx context.Context, c config.Config, asof string) ([]market.Bar, error) {
+	if !c.MarketContext.Enabled {
+		return nil, errors.New("market context synchronization is disabled")
+	}
+	db, err := storage.OpenContextView(c.DataDir, c.RequireCIFS)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	bars, err := db.LoadRecentBarsForCode(ctx, predictor.MarketIndexCode, asof, 120)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]market.Bar, 0, len(bars))
+	for _, bar := range bars {
+		out = append(out, market.Bar{Date: bar.Date, Open: bar.Open, Close: bar.Close, High: bar.High, Low: bar.Low, Volume: bar.Volume})
+	}
+	if len(out) == 0 {
+		return nil, errors.New("CSI 300 context has no bars")
+	}
+	return out, nil
 }

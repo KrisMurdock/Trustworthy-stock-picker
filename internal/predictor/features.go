@@ -11,12 +11,19 @@ import (
 )
 
 // Data is the immutable local snapshot used by training and inference. Minutes
-// contain only native five-minute bars; Daily contains qfq daily bars.
+// contain only native five-minute bars; Daily contains qfq daily bars; Market
+// contains daily bars for the broad-market reference index and may be empty.
 type Data struct {
 	Stocks  []config.Stock
 	Minutes map[string][]market.MinuteBar
 	Daily   map[string][]market.Bar
+	Market  []market.Bar
 }
+
+// MarketIndexCode is the broad-market reference used by the optional market
+// context features. It is CSI 300, which is already collected by the
+// independent market-context feed.
+const MarketIndexCode = "sh000300"
 
 const (
 	barStep          = 5 * time.Minute
@@ -46,6 +53,11 @@ var featureNames = []string{
 	"day_vol20", "day_volume_ratio", "today_gap",
 	"log_price", "stock_day_vol20",
 	"has_24_bars", "has_daily20", "has_volume20",
+	"macd_line", "macd_hist", "boll_pctb", "boll_width",
+	"day_macd_hist", "day_boll_pctb", "day_boll_width", "day_volume_z20",
+	"mkt_ret1", "mkt_ret5", "mkt_ret20", "mkt_ma20_dist", "mkt_vol20", "mkt_up", "mkt_down",
+	"rel_ret5", "rel_ret20", "beta60", "down_beta60",
+	"has_macd", "has_daily_macd", "has_market", "has_beta60",
 }
 
 var featurePositions = func() map[string]int {
@@ -65,6 +77,8 @@ type featureContext struct {
 	universe  []string
 	minutes   map[string][]market.MinuteBar
 	daily     map[string][]market.Bar
+	market    []market.Bar
+	marketRet map[string]float64
 	pools     map[int64]*poolSnapshot
 	firstOpen map[string]map[string]float64
 }
@@ -179,6 +193,9 @@ func newFeatureContext(data Data) (*featureContext, error) {
 		sort.SliceStable(copied, func(i, j int) bool { return copied[i].Date < copied[j].Date })
 		ctx.daily[code] = copied
 	}
+	ctx.market = append([]market.Bar(nil), data.Market...)
+	sort.SliceStable(ctx.market, func(i, j int) bool { return ctx.market[i].Date < ctx.market[j].Date })
+	ctx.marketRet = returnMap(ctx.market)
 	if len(data.Stocks) > 0 {
 		seen := map[string]bool{}
 		for _, stock := range data.Stocks {
@@ -269,6 +286,9 @@ func buildFeatureValues(ctx *featureContext, code string, bars []market.MinuteBa
 	for i := range values {
 		values[i] = math.NaN()
 	}
+	for _, name := range []string{"has_macd", "has_daily_macd", "has_market", "has_beta60"} {
+		values[featurePositions[name]] = 0
+	}
 	bar := bars[idx]
 	end := bar.End
 	start, _ := validInputEnd(end)
@@ -325,6 +345,19 @@ func buildFeatureValues(ctx *featureContext, code string, bars []market.MinuteBa
 	if rsi, ok := rsi14(bars, idx); ok {
 		values[featurePositions["rsi14"]] = rsi
 	}
+	if closes, ok := sameDayCloses(bars, idx, 35); ok {
+		if line, hist, ok := macdFromCloses(closes); ok {
+			values[featurePositions["macd_line"]] = line
+			values[featurePositions["macd_hist"]] = hist
+			values[featurePositions["has_macd"]] = 1
+		}
+	}
+	if closes, ok := sameDayCloses(bars, idx, 20); ok {
+		if pctb, width, ok := bollingerFromCloses(closes); ok {
+			values[featurePositions["boll_pctb"]] = pctb
+			values[featurePositions["boll_width"]] = width
+		}
+	}
 	values[featurePositions["minute_of_session"]] = float64(minute - start)
 	values[featurePositions["bar_index"]] = float64((minute - start) / 5)
 	if start == afternoonOpen {
@@ -365,8 +398,67 @@ func buildFeatureValues(ctx *featureContext, code string, bars []market.MinuteBa
 		if ratio, ok := dailyVolumeRatio(daily, dayIdx, 20); ok {
 			values[featurePositions["day_volume_ratio"]] = ratio
 		}
+		if zscore, ok := dailyVolumeZScore(daily, dayIdx, 20); ok {
+			values[featurePositions["day_volume_z20"]] = zscore
+		}
+		if closes, ok := dailyCloses(daily, dayIdx, 35); ok {
+			if _, hist, ok := macdFromCloses(closes); ok {
+				values[featurePositions["day_macd_hist"]] = hist
+				values[featurePositions["has_daily_macd"]] = 1
+			}
+		}
+		if closes, ok := dailyCloses(daily, dayIdx, 20); ok {
+			if pctb, width, ok := bollingerFromCloses(closes); ok {
+				values[featurePositions["day_boll_pctb"]] = pctb
+				values[featurePositions["day_boll_width"]] = width
+			}
+		}
 		if first := ctx.firstOpen[code][date]; first > 0 && daily[dayIdx].Close > 0 {
 			values[featurePositions["today_gap"]] = first/daily[dayIdx].Close - 1
+		}
+	}
+	marketIdx := dailyIndexBefore(ctx.market, date)
+	if marketIdx >= 0 {
+		if value, ok := dailyReturn(ctx.market, marketIdx, 1); ok {
+			values[featurePositions["mkt_ret1"]] = value
+			values[featurePositions["has_market"]] = 1
+		}
+		if value, ok := dailyReturn(ctx.market, marketIdx, 5); ok {
+			values[featurePositions["mkt_ret5"]] = value
+		}
+		if value, ok := dailyReturn(ctx.market, marketIdx, 20); ok {
+			values[featurePositions["mkt_ret20"]] = value
+		}
+		if mean, ok := dailyMeanClose(ctx.market, marketIdx, 20); ok && mean > 0 {
+			delta := ctx.market[marketIdx].Close/mean - 1
+			values[featurePositions["mkt_ma20_dist"]] = delta
+			switch {
+			case delta > 0.01:
+				values[featurePositions["mkt_up"]] = 1
+				values[featurePositions["mkt_down"]] = 0
+			case delta < -0.01:
+				values[featurePositions["mkt_up"]] = 0
+				values[featurePositions["mkt_down"]] = 1
+			default:
+				values[featurePositions["mkt_up"]] = 0
+				values[featurePositions["mkt_down"]] = 0
+			}
+		}
+		if volatility, ok := dailyVolatility(ctx.market, marketIdx, 20); ok {
+			values[featurePositions["mkt_vol20"]] = volatility
+		}
+		if dayIdx >= 0 {
+			if value, ok := relativeReturn(daily, dayIdx, ctx.market, 5); ok {
+				values[featurePositions["rel_ret5"]] = value
+			}
+			if value, ok := relativeReturn(daily, dayIdx, ctx.market, 20); ok {
+				values[featurePositions["rel_ret20"]] = value
+			}
+			if beta, downBeta, ok := rollingBeta(daily, dayIdx, ctx.marketRet, 60); ok {
+				values[featurePositions["beta60"]] = beta
+				values[featurePositions["down_beta60"]] = downBeta
+				values[featurePositions["has_beta60"]] = 1
+			}
 		}
 	}
 	if volatility, ok := sameDayVolatility(bars, idx, 20); ok {
@@ -583,6 +675,239 @@ func dailyVolumeRatio(bars []market.Bar, idx, window int) (float64, bool) {
 		return 0, false
 	}
 	return bars[idx].Volume / mean, true
+}
+
+func dailyVolumeZScore(bars []market.Bar, idx, window int) (float64, bool) {
+	if idx-window < 0 {
+		return 0, false
+	}
+	volumes := make([]float64, 0, window)
+	for j := idx - window; j < idx; j++ {
+		volumes = append(volumes, bars[j].Volume)
+	}
+	mean := mean(volumes)
+	std := populationStd(volumes)
+	if std <= 0 {
+		return 0, false
+	}
+	return (bars[idx].Volume - mean) / std, true
+}
+
+// sameDayCloses permits the lunch break but never mixes sessions or dates.
+// MACD and Bollinger bands are structural indicators over the intraday price
+// path, so treating the lunch pause as a gap would make them unavailable for
+// the whole afternoon session.
+func sameDayCloses(bars []market.MinuteBar, idx, count int) ([]float64, bool) {
+	if count <= 0 || idx-count+1 < 0 {
+		return nil, false
+	}
+	date := barDate(bars[idx].End)
+	out := make([]float64, count)
+	for i := 0; i < count; i++ {
+		bar := bars[idx-count+1+i]
+		if !bar.Final || barDate(bar.End) != date || bar.Close <= 0 {
+			return nil, false
+		}
+		out[i] = bar.Close
+	}
+	return out, true
+}
+
+func dailyCloses(bars []market.Bar, idx, count int) ([]float64, bool) {
+	if count <= 0 || idx-count+1 < 0 {
+		return nil, false
+	}
+	out := make([]float64, count)
+	for i := 0; i < count; i++ {
+		close := bars[idx-count+1+i].Close
+		if close <= 0 {
+			return nil, false
+		}
+		out[i] = close
+	}
+	return out, true
+}
+
+func emaSeries(values []float64, period int) []float64 {
+	out := make([]float64, len(values))
+	if len(values) == 0 || period <= 0 {
+		return out
+	}
+	alpha := 2 / (float64(period) + 1)
+	out[0] = values[0]
+	for i := 1; i < len(values); i++ {
+		out[i] = alpha*values[i] + (1-alpha)*out[i-1]
+	}
+	return out
+}
+
+// macdFromCloses returns the normalized MACD line and histogram at the last
+// close. It requires enough history for the slow EMA and signal EMA to settle.
+func macdFromCloses(closes []float64) (line, histogram float64, ok bool) {
+	if len(closes) < 35 || closes[len(closes)-1] <= 0 {
+		return 0, 0, false
+	}
+	fast := emaSeries(closes, 12)
+	slow := emaSeries(closes, 26)
+	macd := make([]float64, len(closes))
+	for i := range closes {
+		macd[i] = fast[i] - slow[i]
+	}
+	signal := emaSeries(macd, 9)
+	last := len(closes) - 1
+	line = macd[last] / closes[last]
+	histogram = (macd[last] - signal[last]) / closes[last]
+	if math.IsNaN(line) || math.IsInf(line, 0) || math.IsNaN(histogram) || math.IsInf(histogram, 0) {
+		return 0, 0, false
+	}
+	return line, histogram, true
+}
+
+func bollingerFromCloses(closes []float64) (pctb, width float64, ok bool) {
+	if len(closes) < 20 || closes[len(closes)-1] <= 0 {
+		return 0, 0, false
+	}
+	window := closes[len(closes)-20:]
+	center := mean(window)
+	if center <= 0 {
+		return 0, 0, false
+	}
+	std := populationStd(window)
+	upper := center + 2*std
+	lower := center - 2*std
+	if upper <= lower {
+		pctb = 0.5
+	} else {
+		pctb = (closes[len(closes)-1] - lower) / (upper - lower)
+	}
+	width = (upper - lower) / center
+	if math.IsNaN(pctb) || math.IsInf(pctb, 0) || math.IsNaN(width) || math.IsInf(width, 0) {
+		return 0, 0, false
+	}
+	return pctb, width, true
+}
+
+// relativeReturn compares a stock's trailing return with the broad-market
+// return over exactly the same calendar dates, so holidays and suspensions do
+// not get silently offset.
+func relativeReturn(stock []market.Bar, stockIdx int, marketBars []market.Bar, days int) (float64, bool) {
+	if days <= 0 || stockIdx-days < 0 {
+		return 0, false
+	}
+	stockRet, ok := dailyReturn(stock, stockIdx, days)
+	if !ok {
+		return 0, false
+	}
+	fromDate := stock[stockIdx-days].Date
+	toDate := stock[stockIdx].Date
+	marketRet, ok := returnBetween(marketBars, fromDate, toDate)
+	if !ok {
+		return 0, false
+	}
+	return stockRet - marketRet, true
+}
+
+func returnBetween(bars []market.Bar, from, to string) (float64, bool) {
+	if from == "" || to == "" || from >= to {
+		return 0, false
+	}
+	fromIdx := sort.Search(len(bars), func(i int) bool { return bars[i].Date >= from })
+	toIdx := sort.Search(len(bars), func(i int) bool { return bars[i].Date >= to })
+	if fromIdx >= len(bars) || toIdx >= len(bars) || bars[fromIdx].Date != from || bars[toIdx].Date != to {
+		return 0, false
+	}
+	if bars[fromIdx].Close <= 0 || bars[toIdx].Close <= 0 {
+		return 0, false
+	}
+	return bars[toIdx].Close/bars[fromIdx].Close - 1, true
+}
+
+// rollingBeta estimates the stock's sensitivity to the broad market and its
+// downside sensitivity. It aligns returns by trading date and requires at
+// least twenty common observations.
+func returnMap(bars []market.Bar) map[string]float64 {
+	out := make(map[string]float64, len(bars))
+	for i := 1; i < len(bars); i++ {
+		if bars[i-1].Close <= 0 || bars[i].Close <= 0 {
+			continue
+		}
+		out[bars[i].Date] = bars[i].Close/bars[i-1].Close - 1
+	}
+	return out
+}
+
+func rollingBeta(stock []market.Bar, stockIdx int, marketReturns map[string]float64, window int) (beta, downBeta float64, ok bool) {
+	if stockIdx < 1 || window < 20 {
+		return 0, 0, false
+	}
+	start := stockIdx - window + 1
+	if start < 1 {
+		start = 1
+	}
+	xs := make([]float64, 0, window)
+	ys := make([]float64, 0, window)
+	downX := make([]float64, 0, window)
+	downY := make([]float64, 0, window)
+	for i := start; i <= stockIdx; i++ {
+		if stock[i-1].Close <= 0 || stock[i].Close <= 0 {
+			continue
+		}
+		marketReturn, found := marketReturns[stock[i].Date]
+		if !found {
+			continue
+		}
+		stockReturn := stock[i].Close/stock[i-1].Close - 1
+		xs = append(xs, marketReturn)
+		ys = append(ys, stockReturn)
+		if marketReturn < 0 {
+			downX = append(downX, marketReturn)
+			downY = append(downY, stockReturn)
+		}
+	}
+	if len(xs) < 20 {
+		return 0, 0, false
+	}
+	variance := populationVariance(xs)
+	if variance <= 0 {
+		return 0, 0, false
+	}
+	beta = covariance(xs, ys) / variance
+	downBeta = beta
+	if len(downX) >= 5 {
+		if downVariance := populationVariance(downX); downVariance > 0 {
+			downBeta = covariance(downX, downY) / downVariance
+		}
+	}
+	if math.IsNaN(beta) || math.IsInf(beta, 0) || math.IsNaN(downBeta) || math.IsInf(downBeta, 0) {
+		return 0, 0, false
+	}
+	return clip(beta, 5), clip(downBeta, 5), true
+}
+
+func populationVariance(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	center := mean(values)
+	sum := 0.0
+	for _, value := range values {
+		delta := value - center
+		sum += delta * delta
+	}
+	return sum / float64(len(values))
+}
+
+func covariance(xs, ys []float64) float64 {
+	if len(xs) == 0 || len(xs) != len(ys) {
+		return 0
+	}
+	meanX := mean(xs)
+	meanY := mean(ys)
+	sum := 0.0
+	for i := range xs {
+		sum += (xs[i] - meanX) * (ys[i] - meanY)
+	}
+	return sum / float64(len(xs))
 }
 
 func baselineRange(bars []market.MinuteBar, idx int) float64 {
