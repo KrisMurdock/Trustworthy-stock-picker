@@ -235,6 +235,54 @@ stocks:
   - code: sz300124
     name: 汇川技术
     listed_from: '2010-09-28'
+  - code: sh688836
+    name: 宇树科技-W
+    listed_from: '2026-08-19'
+  - code: sz002747
+    name: 埃斯顿
+    listed_from: '2015-03-20'
+  - code: sz002527
+    name: 新时达
+    listed_from: '2010-12-24'
+  - code: sz300607
+    name: 拓斯达
+    listed_from: '2017-02-09'
+  - code: sh688017
+    name: 绿的谐波
+    listed_from: '2020-08-28'
+  - code: sz002472
+    name: 双环传动
+    listed_from: '2010-09-10'
+  - code: sz002896
+    name: 中大力德
+    listed_from: '2017-08-29'
+  - code: sz002050
+    name: 三花智控
+    listed_from: '2005-06-07'
+  - code: sh601689
+    name: 拓普集团
+    listed_from: '2015-03-19'
+  - code: sh603728
+    name: 鸣志电器
+    listed_from: '2017-05-09'
+  - code: sz003021
+    name: 兆威机电
+    listed_from: '2020-12-04'
+  - code: sh603662
+    name: 柯力传感
+    listed_from: '2019-08-06'
+  - code: sh688322
+    name: 奥比中光-W
+    listed_from: '2022-07-07'
+  - code: sz300580
+    name: 贝斯特
+    listed_from: '2017-01-11'
+  - code: sh603667
+    name: 五洲新春
+    listed_from: '2016-10-25'
+  - code: sh603009
+    name: 北特科技
+    listed_from: '2014-07-18'
   - code: sz300274
     name: 阳光电源
     listed_from: '2011-11-02'

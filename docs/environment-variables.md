@@ -57,7 +57,7 @@
 | STOCK_WATCHER_STRATEGY_MIN_RANK_SCORE | 60 | 最低机会分 |
 | STOCK_WATCHER_FIRST_STAGE_ENABLED | true | 是否计算第一层高召回初筛；要求 `daily_adjust=qfq` |
 | STOCK_WATCHER_FIRST_STAGE_PUSH_ENABLED | true | 是否推送初筛池飞书卡；依赖初筛已启用 |
-| STOCK_WATCHER_FIRST_STAGE_BUDGET | 145 | 初筛候选池上限，允许 1～500；默认按 148 只股池保留 145 只 |
+| STOCK_WATCHER_FIRST_STAGE_BUDGET | 145 | 初筛候选池上限，允许 1～500；默认预算 145 只 |
 | STOCK_WATCHER_STRUCTURE_GUARD_MODE | shadow | shadow 只观察；enforce 才进入可执行推荐 |
 | STOCK_WATCHER_SELECTION_ENABLED | true | 是否启用趋势筛选 |
 | STOCK_WATCHER_SELECTION_MIN_SCORE | 70 | 趋势最低分 |
