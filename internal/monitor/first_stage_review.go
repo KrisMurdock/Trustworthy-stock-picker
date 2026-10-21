@@ -85,7 +85,7 @@ func (m *Monitor) enqueueFirstStageReview(ctx context.Context, state *State, eva
 	if err := m.writeState(*state); err != nil {
 		return false, err
 	}
-	m.Log.Info("First-stage review queued", "signal", signalDate, "window_start", horizonDates[0], "evaluation", evaluationDate, "hits", review.Hits, "evaluated", review.Evaluated, "pool_hits", review.PoolHits, "recall_pct", review.RecallPct)
+	m.Log.Info("First-stage review queued", "signal", signalDate, "window_start", horizonDates[0], "evaluation", evaluationDate, "candidate_hits", review.CandidateHits, "candidate_recall_pct", review.CandidateRecallPct, "top_hits", review.Hits, "top_coverage_pct", review.TopCoveragePct, "pool_hits", review.PoolHits)
 	return true, nil
 }
 

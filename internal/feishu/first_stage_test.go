@@ -64,8 +64,8 @@ func TestFirstStageReviewCardStaysBelowPayloadLimit(t *testing.T) {
 	card, err := reportmessage.FirstStageReviewCard(firststage.ReviewReport{
 		Version: firststage.ReviewSchemaVersion, Status: firststage.ReviewStatusOK,
 		SignalDate: "2026-10-16", WindowStart: "2026-10-19", EvaluationDate: "2026-10-21", HorizonDays: 3, ThresholdPct: 1,
-		Selected: 30, Evaluated: 30, Hits: 18, Misses: 12, PoolHits: 40,
-		SelectionHitRatePct: 60, RecallPct: 45, RecallAvailable: true, Candidates: candidates,
+		Selected: 30, Evaluated: 30, Hits: 18, Misses: 12, CandidateCount: 100, CandidateEvaluated: 100, CandidateHits: 38, PoolHits: 40,
+		TopHitRatePct: 60, CandidateRecallPct: 95, TopCoveragePct: 45, RecallAvailable: true, Candidates: candidates,
 	})
 	if err != nil {
 		t.Fatal(err)

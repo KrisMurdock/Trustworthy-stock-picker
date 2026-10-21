@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	ReviewSchemaVersion = 2
+	ReviewSchemaVersion = 3
 
 	ReviewStatusOK          = "ok"
 	ReviewStatusEmpty       = "empty"
@@ -45,30 +45,35 @@ type ReviewCandidate struct {
 }
 
 type ReviewReport struct {
-	Version             int               `json:"schema_version"`
-	Status              string            `json:"status"`
-	SignalDate          string            `json:"signal_date"`
-	WindowStart         string            `json:"window_start"`
-	EvaluationDate      string            `json:"evaluation_date"`
-	HorizonDays         int               `json:"horizon_days"`
-	GeneratedAt         time.Time         `json:"generated_at"`
-	Criterion           string            `json:"criterion"`
-	ThresholdPct        float64           `json:"threshold_pct"`
-	SelectionLimit      int               `json:"selection_limit"`
-	Selected            int               `json:"selected"`
-	Evaluated           int               `json:"evaluated"`
-	Unavailable         int               `json:"unavailable"`
-	Hits                int               `json:"hits"`
-	Misses              int               `json:"misses"`
-	PoolSize            int               `json:"pool_size"`
-	PoolEvaluated       int               `json:"pool_evaluated"`
-	PoolUnavailable     int               `json:"pool_unavailable"`
-	PoolHits            int               `json:"pool_hits"`
-	SelectionHitRatePct float64           `json:"selection_hit_rate_pct"`
-	RecallPct           float64           `json:"recall_pct"`
-	RecallAvailable     bool              `json:"recall_available"`
-	Candidates          []ReviewCandidate `json:"candidates"`
-	Reason              string            `json:"reason,omitempty"`
+	Version              int               `json:"schema_version"`
+	Status               string            `json:"status"`
+	SignalDate           string            `json:"signal_date"`
+	WindowStart          string            `json:"window_start"`
+	EvaluationDate       string            `json:"evaluation_date"`
+	HorizonDays          int               `json:"horizon_days"`
+	GeneratedAt          time.Time         `json:"generated_at"`
+	Criterion            string            `json:"criterion"`
+	ThresholdPct         float64           `json:"threshold_pct"`
+	SelectionLimit       int               `json:"selection_limit"`
+	Selected             int               `json:"selected"`
+	Evaluated            int               `json:"evaluated"`
+	Unavailable          int               `json:"unavailable"`
+	Hits                 int               `json:"hits"`
+	Misses               int               `json:"misses"`
+	CandidateCount       int               `json:"candidate_count"`
+	CandidateEvaluated   int               `json:"candidate_evaluated"`
+	CandidateUnavailable int               `json:"candidate_unavailable"`
+	CandidateHits        int               `json:"candidate_hits"`
+	PoolSize             int               `json:"pool_size"`
+	PoolEvaluated        int               `json:"pool_evaluated"`
+	PoolUnavailable      int               `json:"pool_unavailable"`
+	PoolHits             int               `json:"pool_hits"`
+	TopHitRatePct        float64           `json:"top_hit_rate_pct"`
+	CandidateRecallPct   float64           `json:"candidate_recall_pct"`
+	TopCoveragePct       float64           `json:"top_coverage_pct"`
+	RecallAvailable      bool              `json:"recall_available"`
+	Candidates           []ReviewCandidate `json:"candidates"`
+	Reason               string            `json:"reason,omitempty"`
 }
 
 type reviewPrices struct {
@@ -141,8 +146,9 @@ func EvaluateHorizon(previous Report, histories []market.History, pool []config.
 
 	limit := min(report.SelectionLimit, len(previous.Candidates))
 	report.Selected = limit
-	report.Candidates = make([]ReviewCandidate, 0, limit)
-	for _, candidate := range previous.Candidates[:limit] {
+	report.CandidateCount = len(previous.Candidates)
+	report.Candidates = make([]ReviewCandidate, 0, len(previous.Candidates))
+	for index, candidate := range previous.Candidates {
 		item := ReviewCandidate{Rank: candidate.Rank, Code: candidate.Code, Name: candidate.Name}
 		value, ok := prices[candidate.Code]
 		if ok && value.status == "" {
@@ -154,30 +160,40 @@ func EvaluateHorizon(previous Report, histories []market.History, pool []config.
 			item.HorizonCloseReturn = pct(value.signalClose, value.horizonClose)
 			item.Correct = item.WindowHighReturnPct >= report.ThresholdPct
 			item.Status = "miss"
+			report.CandidateEvaluated++
 			if item.Correct {
 				item.Status = "hit"
-				report.Hits++
-			} else {
-				report.Misses++
+				report.CandidateHits++
 			}
-			report.Evaluated++
+			if index < limit {
+				if item.Correct {
+					report.Hits++
+				} else {
+					report.Misses++
+				}
+				report.Evaluated++
+			}
 		} else {
 			item.Status = "missing_history"
 			if ok && value.status != "" {
 				item.Status = value.status
 			}
-			report.Unavailable++
+			report.CandidateUnavailable++
+			if index < limit {
+				report.Unavailable++
+			}
 		}
 		report.Candidates = append(report.Candidates, item)
 	}
 	sort.SliceStable(report.Candidates, func(i, j int) bool { return report.Candidates[i].Rank < report.Candidates[j].Rank })
 
 	if report.Evaluated > 0 {
-		report.SelectionHitRatePct = float64(report.Hits) / float64(report.Evaluated) * 100
+		report.TopHitRatePct = float64(report.Hits) / float64(report.Evaluated) * 100
 	}
 	if report.PoolHits > 0 {
 		report.RecallAvailable = true
-		report.RecallPct = float64(report.Hits) / float64(report.PoolHits) * 100
+		report.CandidateRecallPct = float64(report.CandidateHits) / float64(report.PoolHits) * 100
+		report.TopCoveragePct = float64(report.Hits) / float64(report.PoolHits) * 100
 	}
 	if report.Evaluated == 0 {
 		report.Status = ReviewStatusUnavailable

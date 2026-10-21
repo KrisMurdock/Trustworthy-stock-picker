@@ -10,27 +10,33 @@ import (
 
 func TestFirstStageReviewCardShowsThreeDayRecallAndExceptions(t *testing.T) {
 	report := firststage.ReviewReport{
-		Version:             firststage.ReviewSchemaVersion,
-		Status:              firststage.ReviewStatusOK,
-		SignalDate:          "2026-10-16",
-		WindowStart:         "2026-10-19",
-		EvaluationDate:      "2026-10-21",
-		HorizonDays:         3,
-		ThresholdPct:        1,
-		SelectionLimit:      30,
-		Selected:            30,
-		Evaluated:           29,
-		Unavailable:         1,
-		Hits:                18,
-		Misses:              11,
-		PoolHits:            40,
-		SelectionHitRatePct: 62.07,
-		RecallPct:           45,
-		RecallAvailable:     true,
+		Version:              firststage.ReviewSchemaVersion,
+		Status:               firststage.ReviewStatusOK,
+		SignalDate:           "2026-10-16",
+		WindowStart:          "2026-10-19",
+		EvaluationDate:       "2026-10-21",
+		HorizonDays:          3,
+		ThresholdPct:         1,
+		SelectionLimit:       30,
+		Selected:             30,
+		Evaluated:            29,
+		Unavailable:          1,
+		Hits:                 18,
+		Misses:               11,
+		CandidateCount:       35,
+		CandidateEvaluated:   34,
+		CandidateUnavailable: 1,
+		CandidateHits:        36,
+		PoolHits:             40,
+		TopHitRatePct:        62.07,
+		CandidateRecallPct:   90,
+		TopCoveragePct:       45,
+		RecallAvailable:      true,
 		Candidates: []firststage.ReviewCandidate{
 			{Rank: 1, Code: "sz000001", Name: "命中股", Status: "hit", Correct: true, WindowHighReturnPct: 2.1, HorizonCloseReturn: 0.3},
 			{Rank: 2, Code: "sz000002", Name: "未命中股", Status: "miss", WindowHighReturnPct: 0.8, HorizonCloseReturn: 1.5},
 			{Rank: 3, Code: "sz000003", Name: "缺失股", Status: "missing_horizon"},
+			{Rank: 31, Code: "sz000031", Name: "候选内展示外", Status: "miss", WindowHighReturnPct: 0.2, HorizonCloseReturn: 0.5},
 		},
 	}
 	card, err := FirstStageReviewCard(report)
@@ -43,7 +49,10 @@ func TestFirstStageReviewCardShowsThreeDayRecallAndExceptions(t *testing.T) {
 	if !strings.Contains(card.Sections[0].Lines[0], "3日窗口 2026-10-19～2026-10-21") {
 		t.Fatalf("unexpected window line: %+v", card.Sections[0].Lines)
 	}
-	if !strings.Contains(card.Sections[0].Lines[2], "45.00%") || !strings.Contains(card.Sections[0].Lines[3], "62.07%") {
+	if !strings.Contains(card.Sections[0].Lines[0], "候选 35 只 / 展示 Top 30") {
+		t.Fatalf("unexpected candidate line: %+v", card.Sections[0].Lines)
+	}
+	if !strings.Contains(card.Sections[0].Lines[2], "90.00%") || !strings.Contains(card.Sections[0].Lines[3], "45.00%") || !strings.Contains(card.Sections[0].Lines[4], "62.07%") {
 		t.Fatalf("unexpected recall lines: %+v", card.Sections[0].Lines)
 	}
 	if card.Sections[0].Table == nil || len(card.Sections[0].Table.Rows) != 2 {

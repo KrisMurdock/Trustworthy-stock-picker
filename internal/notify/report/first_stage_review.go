@@ -25,10 +25,11 @@ func FirstStageReviewCard(report firststage.ReviewReport) (notify.Message, error
 		windowStart = report.EvaluationDate
 	}
 	lines := []string{
-		fmt.Sprintf("初筛日 %s · %d日窗口 %s～%s · 评估范围 Top %d", report.SignalDate, report.HorizonDays, windowStart, report.EvaluationDate, report.Selected),
+		fmt.Sprintf("初筛日 %s · %d日窗口 %s～%s · 候选 %d 只 / 展示 Top %d", report.SignalDate, report.HorizonDays, windowStart, report.EvaluationDate, report.CandidateCount, report.Selected),
 		fmt.Sprintf("判定口径：窗口内最高价相对初筛日收盘涨幅 ≥ %.2f%%；期末收盘涨幅仅作参考，不决定命中。", report.ThresholdPct),
-		recallLine(report),
-		fmt.Sprintf("Top %d 窗口命中率：%.2f%%（%d/%d）", report.Selected, report.SelectionHitRatePct, report.Hits, report.Evaluated),
+		candidateRecallLine(report),
+		topCoverageLine(report),
+		fmt.Sprintf("Top %d 精确率：%.2f%%（%d/%d）", report.Selected, report.TopHitRatePct, report.Hits, report.Evaluated),
 	}
 	if report.Unavailable > 0 {
 		lines = append(lines, fmt.Sprintf("Top %d 中 %d 只因信号日或窗口行情缺失未计入命中率。", report.Selected, report.Unavailable))
@@ -38,6 +39,9 @@ func FirstStageReviewCard(report firststage.ReviewReport) (notify.Message, error
 	section := notify.Section{Heading: "3日窗口回看", Lines: lines}
 	rows := make([][]notify.TableCell, 0, report.Misses+report.Unavailable)
 	for _, candidate := range report.Candidates {
+		if candidate.Rank > report.Selected {
+			continue
+		}
 		if candidate.Correct && candidate.Status == "hit" {
 			continue
 		}
@@ -86,11 +90,18 @@ func FirstStageReviewCard(report firststage.ReviewReport) (notify.Message, error
 	}, nil
 }
 
-func recallLine(report firststage.ReviewReport) string {
+func candidateRecallLine(report firststage.ReviewReport) string {
 	if !report.RecallAvailable {
-		return fmt.Sprintf("3日触达召回率：不适用（全池 %d 只均未在窗口内达到 +%.2f%%）", report.PoolEvaluated, report.ThresholdPct)
+		return fmt.Sprintf("全候选召回率：不适用（全池 %d 只均未在窗口内达到 +%.2f%%）", report.PoolEvaluated, report.ThresholdPct)
 	}
-	return fmt.Sprintf("3日触达召回率：%.2f%%（Top %d 命中 %d / 全池达标 %d）", report.RecallPct, report.Selected, report.Hits, report.PoolHits)
+	return fmt.Sprintf("全候选召回率：%.2f%%（候选命中 %d / 全池达标 %d）", report.CandidateRecallPct, report.CandidateHits, report.PoolHits)
+}
+
+func topCoverageLine(report firststage.ReviewReport) string {
+	if !report.RecallAvailable {
+		return fmt.Sprintf("Top %d 覆盖率：不适用", report.Selected)
+	}
+	return fmt.Sprintf("Top %d 覆盖率：%.2f%%（Top %d 命中 %d / 全池达标 %d）", report.Selected, report.TopCoveragePct, report.Selected, report.Hits, report.PoolHits)
 }
 
 func reviewStatusText(status string) string {
