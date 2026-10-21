@@ -28,6 +28,7 @@ type Config struct {
 	Analysis       Analysis       `yaml:"analysis"`
 	Intraday       Intraday       `yaml:"intraday"`
 	FirstStage     FirstStage     `yaml:"first_stage"`
+	SecondStage    SecondStage    `yaml:"second_stage"`
 	Predictor      Predictor      `yaml:"predictor"`
 	LLM            LLM            `yaml:"llm"`
 	Market         Market         `yaml:"market"`
@@ -125,6 +126,7 @@ func Defaults() Config {
 	c.MarketContext = DefaultMarketContext()
 	c.Intraday = DefaultIntraday()
 	c.FirstStage = DefaultFirstStage()
+	c.SecondStage = DefaultSecondStage()
 	c.Predictor = DefaultPredictor()
 	c.Web.Enabled = true
 	c.Web.Listen = "127.0.0.1:8080"
@@ -304,6 +306,9 @@ func (c Config) Validate() error {
 	if err := c.FirstStage.Validate(); err != nil {
 		return err
 	}
+	if err := c.SecondStage.Validate(); err != nil {
+		return err
+	}
 	if err := c.Market.Validate(); err != nil {
 		return err
 	}
@@ -336,6 +341,9 @@ func (c Config) Validate() error {
 	}
 	if c.FirstStage.Enabled && c.Daily.Adjust != "qfq" {
 		return errors.New("first_stage requires daily.adjust=qfq")
+	}
+	if c.SecondStage.Enabled && !c.FirstStage.Enabled {
+		return errors.New("second_stage.enabled requires first_stage.enabled")
 	}
 	if strings.TrimSpace(c.DataDir) == "" {
 		return errors.New("data_dir is required")

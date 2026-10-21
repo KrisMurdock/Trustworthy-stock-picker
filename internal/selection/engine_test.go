@@ -6,16 +6,21 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/secondstage"
 	"strings"
 	"testing"
 	"time"
 )
 
 type testEngine struct {
-	mutate  bool
-	invalid bool
-	enable  bool
-	first   bool
+	mutate          bool
+	invalid         bool
+	enable          bool
+	first           bool
+	firstCode       string
+	second          bool
+	secondBad       bool
+	secondDuplicate bool
 }
 
 func (testEngine) Descriptor() EngineDescriptor {
@@ -34,7 +39,22 @@ func (e testEngine) Analyze(ctx context.Context, in Input) (Report, error) {
 		r.Selected = []Candidate{{Code: "sh600519"}}
 	}
 	if e.first {
-		r.FirstStage = &firststage.Report{Version: 1, Status: firststage.StatusOK, AsOf: in.AsOf, Target: in.Target, Budget: 1, Candidates: []firststage.Candidate{{Rank: 1, Code: "sh600519"}}}
+		code := "sh600519"
+		if e.firstCode != "" {
+			code = e.firstCode
+		}
+		r.FirstStage = &firststage.Report{Version: 1, Status: firststage.StatusOK, AsOf: in.AsOf, Target: in.Target, Budget: 1, Candidates: []firststage.Candidate{{Rank: 1, Code: code}}}
+	}
+	if e.second {
+		code := "sz000001"
+		if e.secondBad {
+			code = "sh600519"
+		}
+		candidates := []secondstage.Candidate{{Rank: 1, Code: code}}
+		if e.secondDuplicate {
+			candidates = []secondstage.Candidate{{Rank: 1, Code: code}, {Rank: 2, Code: code}}
+		}
+		r.SecondStage = &secondstage.Report{Version: secondstage.ReportSchemaVersion, Status: secondstage.StatusOK, AsOf: in.AsOf, Target: in.Target, TopN: len(candidates), Candidates: candidates}
 	}
 	return r, nil
 }
@@ -64,6 +84,15 @@ func TestEngineBoundaryCopiesInputsAndRejectsInvalidResults(t *testing.T) {
 	}
 	if _, err := Execute(context.Background(), testEngine{first: true}, in, "test"); err == nil {
 		t.Fatal("outside-pool first-stage result accepted")
+	}
+	if _, err := Execute(context.Background(), testEngine{first: true, firstCode: "sz000001", second: true, secondBad: true}, in, "test"); err == nil {
+		t.Fatal("outside-pool second-stage result accepted")
+	}
+	if _, err := Execute(context.Background(), testEngine{first: true, firstCode: "sz000001", second: true, secondDuplicate: true}, in, "test"); err == nil {
+		t.Fatal("duplicate second-stage result accepted")
+	}
+	if _, err := Execute(context.Background(), testEngine{second: true}, in, "test"); err == nil {
+		t.Fatal("second-stage result without first-stage pool accepted")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

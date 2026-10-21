@@ -12,7 +12,9 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/indicators"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/secondstage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -59,11 +61,23 @@ type Report struct {
 	Ranking          []strategy.Candidate `json:"ranking,omitempty"`
 	Research         *strategy.Research   `json:"research,omitempty"`
 	FirstStage       *firststage.Report   `json:"first_stage,omitempty"`
+	SecondStage      *secondstage.Report  `json:"second_stage,omitempty"`
 }
 
 func Score(bars []market.Bar) (Metrics, error) { return indicators.Score(bars) }
 
 func Build(c config.Config, histories []market.History, asof, target string, now time.Time) (Report, error) {
+	return buildDaily(c, histories, nil, asof, target, now)
+}
+
+// BuildWithJEV lets tests and offline replays supply a frozen JEV snapshot.
+// Production callers obtain it from selection.Execute, which reads the
+// artifact before stripping filesystem paths from the engine input.
+func BuildWithJEV(c config.Config, histories []market.History, jev *secondstage.JEVInput, asof, target string, now time.Time) (Report, error) {
+	return buildDaily(c, histories, jev, asof, target, now)
+}
+
+func buildDaily(c config.Config, histories []market.History, jev *secondstage.JEVInput, asof, target string, now time.Time) (Report, error) {
 	if c.Strategy.Enabled {
 		return Report{}, errors.New("short-horizon strategy requires raw execution histories")
 	}
@@ -147,6 +161,7 @@ func Build(c config.Config, histories []market.History, asof, target string, now
 	r.Passed = len(ranked)
 	r.Selected = append(r.Selected, ranked[:min(len(ranked), c.Selection.TopN)]...)
 	attachFirstStage(&r, c, histories, asof, target, now)
+	attachSecondStage(&r, c, jev, asof, target, now)
 	// ID includes configuration, selected results and data date, not wall-clock generation time.
 	identity := reportIdentity(r)
 	data, _ := json.Marshal(identity)
@@ -165,19 +180,19 @@ func lastDate(h market.History) string {
 // BuildWithExecution keeps legacy configuration and persisted v1 reports readable.
 // Short-horizon reports have their own v2 contract; histories remain v1.
 func BuildWithExecution(ctx context.Context, c config.Config, histories, raw []market.History, asof, target string, now time.Time) (Report, error) {
-	return buildWithExecution(ctx, c, histories, raw, nil, asof, target, now)
+	return buildWithExecution(ctx, c, histories, raw, nil, nil, asof, target, now)
 }
 
 // BuildWithExecutionMinutes adds the Chan gate when saved 5-minute histories
 // are available. A nil or empty slice preserves the daily-only behavior used
 // by callers without an intraday store.
 func BuildWithExecutionMinutes(ctx context.Context, c config.Config, histories, raw []market.History, minutes []market.MinuteHistory, asof, target string, now time.Time) (Report, error) {
-	return buildWithExecution(ctx, c, histories, raw, minutes, asof, target, now)
+	return buildWithExecution(ctx, c, histories, raw, minutes, nil, asof, target, now)
 }
 
-func buildWithExecution(ctx context.Context, c config.Config, histories, raw []market.History, minutes []market.MinuteHistory, asof, target string, now time.Time) (Report, error) {
+func buildWithExecution(ctx context.Context, c config.Config, histories, raw []market.History, minutes []market.MinuteHistory, jev *secondstage.JEVInput, asof, target string, now time.Time) (Report, error) {
 	if !c.Strategy.Enabled {
-		return Build(c, histories, asof, target, now)
+		return buildDaily(c, histories, jev, asof, target, now)
 	}
 	var result strategy.Result
 	var err error
@@ -237,6 +252,7 @@ func buildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 		}
 	}
 	attachFirstStage(&r, c, histories, asof, target, now)
+	attachSecondStage(&r, c, jev, asof, target, now)
 	identity := reportIdentity(r)
 	data, err := json.Marshal(identity)
 	if err != nil {
@@ -254,6 +270,11 @@ func reportIdentity(report Report) Report {
 		firstStage := *report.FirstStage
 		firstStage.GeneratedAt = time.Time{}
 		report.FirstStage = &firstStage
+	}
+	if report.SecondStage != nil {
+		secondStage := *report.SecondStage
+		secondStage.GeneratedAt = time.Time{}
+		report.SecondStage = &secondStage
 	}
 	return report
 }
@@ -275,6 +296,24 @@ func attachFirstStage(report *Report, c config.Config, histories []market.Histor
 		return
 	}
 	report.FirstStage = &result
+}
+
+func attachSecondStage(report *Report, c config.Config, jev *secondstage.JEVInput, asof, target string, now time.Time) {
+	if !c.SecondStage.Enabled || report.FirstStage == nil {
+		return
+	}
+	opts := secondstage.Options{
+		AsOf:   asof,
+		Target: target,
+		TopN:   c.SecondStage.TopN,
+		JEV:    jev,
+		Now:    now,
+	}
+	if jev == nil {
+		opts.JEVPath = filepath.Join(c.DataDir, "state", "jev", asof+".json")
+	}
+	result, _ := secondstage.Analyze(*report.FirstStage, opts)
+	report.SecondStage = &result
 }
 
 func recommendationFilterReason(risks []string) string {

@@ -7,6 +7,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
 	reportmessage "github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify/report"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/secondstage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 )
 
@@ -60,6 +61,13 @@ func (m *Monitor) enqueueReport(state *State, report selection.Report) (int, err
 			m.Log.Warn("First-stage screening failed", "as_of", report.AsOf, "reason", first.Reason)
 		} else {
 			m.Log.Info("First-stage screening completed", "as_of", report.AsOf, "status", first.Status, "eligible", first.Eligible, "candidates", len(first.Candidates))
+		}
+	}
+	if second := report.SecondStage; second != nil {
+		if second.Status == secondstage.StatusFailed {
+			m.Log.Warn("Second-stage ranking failed", "as_of", report.AsOf, "reason", second.Reason)
+		} else {
+			m.Log.Info("Second-stage ranking completed", "as_of", report.AsOf, "status", second.Status, "jev_status", second.JEVStatus, "degraded", second.Degraded, "candidates", len(second.Candidates))
 		}
 	}
 	reason := ""

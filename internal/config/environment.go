@@ -60,6 +60,7 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_CONTEXT_ENABLED":          &c.MarketContext.Enabled,
 		"STOCK_WATCHER_FIRST_STAGE_ENABLED":      &c.FirstStage.Enabled,
 		"STOCK_WATCHER_FIRST_STAGE_PUSH_ENABLED": &c.FirstStage.PushEnabled,
+		"STOCK_WATCHER_SECOND_STAGE_ENABLED":     &c.SecondStage.Enabled,
 		"STOCK_WATCHER_PREDICTOR_ENABLED":        &c.Predictor.Enabled,
 		"STOCK_WATCHER_PREDICTOR_PUSH_ENABLED":   &c.Predictor.PushEnabled,
 	} {
@@ -74,6 +75,7 @@ func applyEnvironment(c *Config) error {
 	for name, target := range map[string]*int{
 		"STOCK_WATCHER_DAILY_HISTORY_DAYS":          &c.Daily.HistoryDays,
 		"STOCK_WATCHER_FIRST_STAGE_BUDGET":          &c.FirstStage.Budget,
+		"STOCK_WATCHER_SECOND_STAGE_TOP_N":          &c.SecondStage.TopN,
 		"STOCK_WATCHER_SELECTION_MIN_SCORE":         &c.Selection.MinScore,
 		"STOCK_WATCHER_SELECTION_TOP_N":             &c.Selection.TopN,
 		"STOCK_WATCHER_SYNC_INCREMENTAL_BARS":       &c.Sync.IncrementalBars,

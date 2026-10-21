@@ -58,6 +58,8 @@
 | STOCK_WATCHER_FIRST_STAGE_ENABLED | true | 是否计算第一层高召回初筛；要求 `daily_adjust=qfq` |
 | STOCK_WATCHER_FIRST_STAGE_PUSH_ENABLED | true | 是否推送初筛池飞书卡；依赖初筛已启用 |
 | STOCK_WATCHER_FIRST_STAGE_BUDGET | 145 | 初筛候选池上限，允许 1～500；默认预算 145 只 |
+| STOCK_WATCHER_SECOND_STAGE_ENABLED | true | 是否在第一层候选池上运行 JEV+树模型 Top10 精排；要求第一层已启用 |
+| STOCK_WATCHER_SECOND_STAGE_TOP_N | 10 | 第二层输出候选数，允许 1～100 |
 | STOCK_WATCHER_STRUCTURE_GUARD_MODE | shadow | shadow 只观察；enforce 才进入可执行推荐 |
 | STOCK_WATCHER_SELECTION_ENABLED | true | 是否启用趋势筛选 |
 | STOCK_WATCHER_SELECTION_MIN_SCORE | 70 | 趋势最低分 |
@@ -71,6 +73,8 @@
 第一层初筛只生成第二层精排候选，不改变 `selected`、正式推荐或风险门槛。结果写入日报的 `first_stage` 字段；`push_enabled=true` 时与日报同一数据日期投递，只展示综合分前 30 名并合并为一张卡片，卡片明确标注“仅供第二层精排，不构成交易建议”。初筛计算失败会记录在日报中，但不阻断主报告。
 
 次一交易日日报生成后，初筛机器人还会收到前一交易日 Top 30 的收盘回看卡：以评估日收盘价相对初筛日收盘价涨幅 `≥ +1%` 判定命中，展示 Top 30 命中率、全池收盘召回率，并附带最高价触达口径参考。回看按信号日和评估日生成稳定事件 ID，同一日期组合只入队一次；评估行情不完整时暂不推送并等待后续轮询。
+
+第二层精排读取 `<$STOCK_WATCHER_DATA_DIR>/state/jev/<as_of>.json` 的离线 JEV 分数，并在 Go 进程内运行树模型；结果写入日报的 `second_stage` 字段。JEV artifact 缺失或过期时仍输出树模型 Top10，但 `second_stage.degraded=true`，不会阻断日报。
 
 ## 同步、日历与行情源
 

@@ -1,9 +1,16 @@
 package selection
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/secondstage"
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -107,5 +114,141 @@ func TestFirstStageFailureDoesNotBlockTrendDecision(t *testing.T) {
 	same, err := Build(c, []market.History{h}, h.AsOf, "2026-10-14", time.Now().Add(time.Hour))
 	if err != nil || same.ID != report.ID {
 		t.Fatal("first-stage generation time changed the report id")
+	}
+}
+
+func secondStageDailyFixture(t *testing.T) (config.Config, market.History) {
+	t.Helper()
+	bars := make([]market.Bar, 70)
+	for i := range bars {
+		close := 50 + 0.1*float64(i) + 0.4*math.Sin(float64(i)*1.5)
+		bars[i] = market.Bar{Open: close + 0.2, High: 100, Low: 1, Close: close, Volume: 100}
+	}
+	bars[len(bars)-1].Volume = 150
+	d, _ := time.Parse("2006-01-02", "2026-10-13")
+	for i := len(bars) - 1; i >= 0; i-- {
+		for d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
+			d = d.AddDate(0, 0, -1)
+		}
+		bars[i].Date = d.Format("2006-01-02")
+		d = d.AddDate(0, 0, -1)
+	}
+	c := config.Defaults()
+	c.DataDir = t.TempDir()
+	c.Stocks = []config.Stock{{Code: "sz000001", Name: "测试股票"}}
+	c.Selection.Enabled = true
+	c.FirstStage.Enabled = true
+	c.FirstStage.Budget = 1
+	c.SecondStage.Enabled = true
+	c.SecondStage.TopN = 10
+	h := market.History{Version: 1, Code: "sz000001", Name: "测试股票", Source: "tencent", DataField: "qfqday", VolumeUnit: "provider_raw", FetchedAt: time.Now(), AsOf: bars[len(bars)-1].Date, Adjust: "qfq", Bars: bars}
+	return c, h
+}
+
+func TestBuildAttachesDegradedSecondStageWithoutJEV(t *testing.T) {
+	c, h := secondStageDailyFixture(t)
+	report, err := Build(c, []market.History{h}, h.AsOf, "2026-10-14", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.FirstStage == nil || report.FirstStage.Status != firststage.StatusOK || len(report.FirstStage.Candidates) != 1 {
+		t.Fatalf("unexpected first-stage result: %+v", report.FirstStage)
+	}
+	if report.SecondStage == nil || report.SecondStage.Status != secondstage.StatusOK || !report.SecondStage.Degraded || report.SecondStage.JEVStatus != secondstage.JEVStatusNone {
+		t.Fatalf("second-stage did not degrade cleanly: %+v", report.SecondStage)
+	}
+	if len(report.SecondStage.Candidates) != 1 || report.SecondStage.Candidates[0].Code != "sz000001" {
+		t.Fatalf("unexpected second-stage candidates: %+v", report.SecondStage)
+	}
+	sameMissing, err := Build(c, []market.History{h}, h.AsOf, "2026-10-14", time.Now().Add(time.Hour))
+	if err != nil || sameMissing.ID != report.ID {
+		t.Fatal("second-stage generation time changed the report id without JEV")
+	}
+	jevDir := filepath.Join(c.DataDir, "state", "jev")
+	if err := os.MkdirAll(jevDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	jev, err := json.Marshal(secondstage.JEVDocument{SchemaVersion: 1, AsOf: h.AsOf, Scores: map[string]secondstage.JEVScore{"sz000001": {Adjacent15: 0.7, Full15Top12: 0.5}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(jevDir, h.AsOf+".json"), jev, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withJEV, err := Build(c, []market.History{h}, h.AsOf, "2026-10-14", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withJEV.SecondStage == nil || withJEV.SecondStage.JEVStatus != secondstage.JEVStatusOK || withJEV.SecondStage.Degraded {
+		t.Fatalf("valid JEV artifact was not consumed: %+v", withJEV.SecondStage)
+	}
+	sameJEV, err := Build(c, []market.History{h}, h.AsOf, "2026-10-14", time.Now().Add(2*time.Hour))
+	if err != nil || sameJEV.ID != withJEV.ID {
+		t.Fatal("second-stage generation time changed the report id with JEV")
+	}
+}
+
+func TestExecuteLoadsJEVBeforeStrippingDataDir(t *testing.T) {
+	c, h := secondStageDailyFixture(t)
+	jevDir := filepath.Join(c.DataDir, "state", "jev")
+	if err := os.MkdirAll(jevDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := json.Marshal(secondstage.JEVDocument{SchemaVersion: 1, AsOf: h.AsOf, Scores: map[string]secondstage.JEVScore{"sz000001": {Adjacent15: 0.7, Full15Top12: 0.5}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(jevDir, h.AsOf+".json"), doc, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	engine, err := DefaultEngine(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := Execute(context.Background(), engine, Input{Config: c, Histories: []market.History{h}, AsOf: h.AsOf, Target: "2026-10-14", Now: time.Now()}, "test-build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.SecondStage == nil || report.SecondStage.JEVStatus != secondstage.JEVStatusOK || report.SecondStage.Degraded {
+		t.Fatalf("framework did not freeze JEV before stripping paths: %+v", report.SecondStage)
+	}
+}
+
+func TestReportIdentityIgnoresNestedGenerationTimes(t *testing.T) {
+	report := Report{
+		Version:     1,
+		AsOf:        "2026-10-20",
+		Target:      "2026-10-21",
+		GeneratedAt: time.Unix(1, 0),
+		FirstStage: &firststage.Report{
+			Version:     firststage.ReportSchemaVersion,
+			Status:      firststage.StatusOK,
+			AsOf:        "2026-10-20",
+			Target:      "2026-10-21",
+			GeneratedAt: time.Unix(2, 0),
+			Candidates:  []firststage.Candidate{{Rank: 1, Code: "sh600001"}},
+		},
+		SecondStage: &secondstage.Report{
+			Version:     secondstage.ReportSchemaVersion,
+			Status:      secondstage.StatusOK,
+			AsOf:        "2026-10-20",
+			Target:      "2026-10-21",
+			GeneratedAt: time.Unix(3, 0),
+			Candidates:  []secondstage.Candidate{{Rank: 1, Code: "sh600001"}},
+		},
+	}
+	first, err := json.Marshal(reportIdentity(report))
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.GeneratedAt = time.Unix(10, 0)
+	report.FirstStage.GeneratedAt = time.Unix(20, 0)
+	report.SecondStage.GeneratedAt = time.Unix(30, 0)
+	second, err := json.Marshal(reportIdentity(report))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatal("nested generation time changed the report identity")
 	}
 }

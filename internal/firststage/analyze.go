@@ -48,17 +48,38 @@ type Options struct {
 }
 
 type Candidate struct {
-	Rank       int     `json:"rank"`
-	Code       string  `json:"code"`
-	Name       string  `json:"name"`
-	Sector     string  `json:"sector,omitempty"`
-	Close      float64 `json:"close"`
-	ChangePct  float64 `json:"change_pct"`
-	BaseScore  float64 `json:"base_score"`
-	ModelScore float64 `json:"model_score"`
-	BaseRank   float64 `json:"base_rank"`
-	ModelRank  float64 `json:"model_rank"`
-	BlendScore float64 `json:"blend_score"`
+	Rank       int             `json:"rank"`
+	Code       string          `json:"code"`
+	Name       string          `json:"name"`
+	Sector     string          `json:"sector,omitempty"`
+	Close      float64         `json:"close"`
+	ChangePct  float64         `json:"change_pct"`
+	BaseScore  float64         `json:"base_score"`
+	ModelScore float64         `json:"model_score"`
+	BaseRank   float64         `json:"base_rank"`
+	ModelRank  float64         `json:"model_rank"`
+	BlendScore float64         `json:"blend_score"`
+	Features   FeatureSnapshot `json:"features"`
+}
+
+// FeatureSnapshot contains only information available through the signal-day
+// close. Downstream rankers use the same facts instead of recomputing them.
+type FeatureSnapshot struct {
+	Return1         float64 `json:"return1"`
+	Return5         float64 `json:"return5"`
+	Return10        float64 `json:"return10"`
+	RelativeReturn5 float64 `json:"relative_return5"`
+	MA20Slope       float64 `json:"ma20_slope"`
+	MA20Distance    float64 `json:"ma20_distance"`
+	ATR14Pct        float64 `json:"atr14_pct"`
+	RSI14           float64 `json:"rsi14"`
+	VolumeRatio     float64 `json:"volume_ratio"`
+	ClosePosition   float64 `json:"close_position"`
+	UpperWick       float64 `json:"upper_wick"`
+	High20Distance  float64 `json:"high20_distance"`
+	Low20Distance   float64 `json:"low20_distance"`
+	TouchRate20     float64 `json:"touch_rate20"`
+	TrendScore      int     `json:"trend_score"`
 }
 
 type Excluded struct {
@@ -101,6 +122,7 @@ type row struct {
 	ma20Distance  float64
 	closePosition float64
 	upperWick     float64
+	snapshot      FeatureSnapshot
 	features      [featureCount]float64
 	z             [featureCount]float64
 	baseScore     float64
@@ -207,6 +229,22 @@ func analyzeWithModel(report Report, histories []market.History, pool []config.S
 			ma20Distance:  features.MA20Distance,
 			closePosition: features.ClosePosition,
 			upperWick:     features.UpperWick,
+			snapshot: FeatureSnapshot{
+				Return1:        features.Return1,
+				Return5:        features.Return5,
+				Return10:       features.Return10,
+				MA20Slope:      features.MA20Slope,
+				MA20Distance:   features.MA20Distance,
+				ATR14Pct:       features.ATR14Pct,
+				RSI14:          features.Metrics.RSI14,
+				VolumeRatio:    features.VolumeRatio,
+				ClosePosition:  features.ClosePosition,
+				UpperWick:      features.UpperWick,
+				High20Distance: features.High20Distance,
+				Low20Distance:  lowDistance,
+				TouchRate20:    touchRate,
+				TrendScore:     features.Metrics.Score,
+			},
 			features: [featureCount]float64{
 				features.ATR14Pct,
 				lowDistance,
@@ -276,6 +314,8 @@ func analyzeWithModel(report Report, histories []market.History, pool []config.S
 	candidates := make([]Candidate, 0, budget)
 	for i := 0; i < budget; i++ {
 		item := rows[i]
+		snapshot := item.snapshot
+		snapshot.RelativeReturn5 = item.snapshot.Return5 - poolReturn5
 		candidates = append(candidates, Candidate{
 			Rank:       i + 1,
 			Code:       item.code,
@@ -288,6 +328,7 @@ func analyzeWithModel(report Report, histories []market.History, pool []config.S
 			BaseRank:   item.baseRank,
 			ModelRank:  item.modelRank,
 			BlendScore: item.blend,
+			Features:   snapshot,
 		})
 	}
 	for _, item := range rows[budget:] {

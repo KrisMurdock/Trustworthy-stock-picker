@@ -48,6 +48,17 @@ func TestGoldenParityWithExperimentModel(t *testing.T) {
 				t.Fatalf("candidate %d score %v != %v: %+v", i, pair[0], pair[1], got)
 			}
 		}
+		if got.Features.Return1 == 0 || got.Features.Return5 == 0 || got.Features.MA20Slope == 0 || got.Features.ATR14Pct == 0 || got.Features.RSI14 == 0 || got.Features.VolumeRatio == 0 || got.Features.TrendScore == 0 {
+			t.Fatalf("candidate %d lost its causal feature snapshot: %+v", i, got.Features)
+		}
+	}
+	meanReturn5 := 0.0
+	for _, candidate := range report.Candidates {
+		meanReturn5 += candidate.Features.Return5
+	}
+	meanReturn5 /= float64(len(report.Candidates))
+	if math.Abs(report.Candidates[0].Features.RelativeReturn5-(report.Candidates[0].Features.Return5-meanReturn5)) > 1e-9 {
+		t.Fatalf("relative return is not pool-relative: %+v", report.Candidates[0].Features)
 	}
 	if report.ModelID != ModelID || report.ModelVersion != ModelSchemaVersion || report.ModelSHA256 != modelArtifactSHA256 || report.TrainedThrough != "2026-10-15" {
 		t.Fatalf("missing model provenance: %+v", report)
