@@ -391,3 +391,87 @@ stocks:
   - code: sh600941
     name: 中国移动
     listed_from: '2022-01-05'
+  - code: sh600426
+    name: 华鲁恒升
+    listed_from: '2002-06-20'
+  - code: sz002648
+    name: 卫星化学
+    listed_from: '2011-12-28'
+  - code: sz002601
+    name: 龙佰集团
+    listed_from: '2011-07-15'
+  - code: sh601233
+    name: 桐昆股份
+    listed_from: '2011-05-18'
+  - code: sh603225
+    name: 新凤鸣
+    listed_from: '2017-04-18'
+  - code: sh600486
+    name: 扬农化工
+    listed_from: '2002-04-25'
+  - code: sh600409
+    name: 三友化工
+    listed_from: '2003-06-18'
+  - code: sh603993
+    name: 洛阳钼业
+    listed_from: '2012-10-09'
+  - code: sh600362
+    name: 江西铜业
+    listed_from: '2002-01-11'
+  - code: sh601600
+    name: 中国铝业
+    listed_from: '2007-04-30'
+  - code: sz000807
+    name: 云铝股份
+    listed_from: '1998-04-08'
+  - code: sz000960
+    name: 锡业股份
+    listed_from: '2000-02-21'
+  - code: sh600188
+    name: 兖矿能源
+    listed_from: '1998-07-01'
+  - code: sh601225
+    name: 陕西煤业
+    listed_from: '2014-01-28'
+  - code: sz000932
+    name: 华菱钢铁
+    listed_from: '1999-08-03'
+  - code: sh601872
+    name: 招商轮船
+    listed_from: '2006-12-01'
+  - code: sh600026
+    name: 中远海能
+    listed_from: '2002-05-23'
+  - code: sh601975
+    name: 招商南油
+    listed_from: '1997-06-12'
+  - code: sh601111
+    name: 中国国航
+    listed_from: '2006-08-18'
+  - code: sh601021
+    name: 春秋航空
+    listed_from: '2015-01-21'
+  - code: sz300498
+    name: 温氏股份
+    listed_from: '2015-11-02'
+  - code: sh603477
+    name: 巨星农牧
+    listed_from: '2017-12-18'
+  - code: sh601100
+    name: 恒立液压
+    listed_from: '2011-10-28'
+  - code: sh601636
+    name: 旗滨集团
+    listed_from: '2011-08-12'
+  - code: sz000683
+    name: 远兴能源
+    listed_from: '1997-01-31'
+  - code: sz002092
+    name: 中泰化学
+    listed_from: '2006-12-08'
+  - code: sh600075
+    name: 新疆天业
+    listed_from: '1997-06-17'
+  - code: sz002078
+    name: 太阳纸业
+    listed_from: '2006-11-16'
