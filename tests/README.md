@@ -6,6 +6,8 @@
 
 `bash tests/public_tunnel_test.sh` 用 mock `make`、CLI、`curl` 和 `cloudflared` 验证临时公网入口默认关闭、非法开关拒绝、显式开启后的启动顺序、健康检查、URL 写入、强制匿名只读与 Predictor/飞书关闭，以及任一子进程退出后的清理。它不创建真实隧道、不访问公网，也不读取私有凭证；该检查已接入 `make smoke` / `make ci`。
 
+`python3 tests/secondstage_laya_test.py` 离线校验 Laya 第二层打分器：5/15 人分组、三种选项排列、批量前向与逐组结果一致、上下文截断拒绝、artifact schema 和 `--skip-existing`；不加载模型、不访问网络。
+
 `python3 tests/strategy_model_test.py` 使用 Node.js 20+ 运行网页计算模型，与原脚本对照 55 组有效情景，并验证 22 组无效输入。金额取整、风险/现金/费用限制、多个持仓批次与固定止盈金额都必须一致。该检查已接入 `make smoke` / `make ci`，因此本地 CI 需要 Python 3 和 Node；生产 Go 镜像不需要这些运行时。
 
 看板使用真实 Chromium 验证，先安装 Python Playwright 及其 Chromium，再执行：

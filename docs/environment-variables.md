@@ -75,7 +75,7 @@
 
 信号日后第 3 个交易日日报生成后，初筛机器人还会收到窗口回看卡：以 3 个交易日内最高价相对初筛日收盘价涨幅 `≥ +1%` 判定命中，展示全候选召回率、Top 30 覆盖率和 Top 30 精确率；飞书仍只展示 Top 30，第二层精排使用全部候选，期末收盘涨幅只作参考。回看按信号日和窗口结束日生成稳定事件 ID，同一日期组合只入队一次；窗口行情不完整时暂不推送并等待后续轮询。
 
-第二层精排读取 `<$STOCK_WATCHER_DATA_DIR>/state/jev/<as_of>.json` 的离线 JEV 分数，并在 Go 进程内运行树模型；结果写入日报的 `second_stage` 字段。JEV artifact 缺失或过期时仍输出树模型 Top10，但 `second_stage.degraded=true`，不会阻断日报。
+第二层精排读取 `<$STOCK_WATCHER_DATA_DIR>/state/jev/<as_of>.json` 的离线分数，并在 Go 进程内运行树模型；结果写入日报的 `second_stage` 字段。JEV 与 Laya（`official` / `multilingual`）共用同一 artifact schema，Laya 产物可直接写入该路径作为替换输入；树模型仍按 JEV 特征训练，切换前需重新做留出验证。artifact 缺失或过期时仍输出树模型 Top10，但 `second_stage.degraded=true`，不会阻断日报。
 
 `second_stage.push_enabled=true` 时，同一数据日期会生成一份可直接复制的公众号纯文本稿，包含公众号标题、正文、精排名单、逐只数据解读、行业分布、使用边界和风险提示。稿件以纯文本飞书消息投递到独立的 `second_stage` 路由，不会混入 `selection` 的日报卡片或 `first_stage` 的初筛卡。精排降级时标题和正文都会明确标注，未通过第一层或没有候选时不生成文章。文章与精排报告共享稳定事件 ID 和 T+1 09:30 过期时间，重启不会重复发送。
 

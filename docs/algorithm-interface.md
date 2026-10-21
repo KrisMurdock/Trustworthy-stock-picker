@@ -36,6 +36,14 @@ JEV 的 softmax 分数只在同一组内可比，因此树模型同时接收原�
 
 JEV artifact 放在 `<data_dir>/state/jev/<as_of>.json`，schema 为 `schema_version: 1`，必须精确匹配信号日并且包含每只候选的 `adjacent15` 与 `full15_top12` 分数。artifact 缺失、过期、覆盖不全或路径为空时，第二层使用中性 JEV 特征继续输出 Top10，并标记 `degraded=true` 与 `jev_missing`；不会阻断主报告。artifact 存在但 JSON/schema/日期/数值非法时标记 `jev_status=invalid`，同样降级而不是静默通过。
 
+### Laya 离线打分
+
+`scripts/secondstage/laya_scores.py` 提供与 JEV 相同的离线 listwise 协议：按候选分组、对三种选项排列取平均，并输出相同 schema 的 `adjacent15` / `full15_top12` artifact。它支持两个 checkpoint：`official` 对应 `convaiinnovations/laya`（ModernBERT-large，英文官方版），`multilingual` 对应 `convaiinnovations/laya-multilingual`（mmBERT 多语言版）。两者使用完全相同的 prompt、分组和评分代码，便于在同一历史样本上比较。
+
+脚本默认按相邻 15 只分组；研究评估可在三个模型上统一使用 `--group-size 5`，以控制上下文长度和 CPU 开销，此时 artifact 的 `model.group_size` 与 `prompt_version` 会记录实际口径，但字段名仍保持 `adjacent15` / `full15_top12` 以兼容 Go 读取契约。Laya 概率未经校准，跨组不可直接比较；消费方必须先做组内百分位或等价归一化，不能把概率解释为成功概率、收益承诺或投资建议。
+
+Go 生产进程仍只读取离线 artifact，不导入 Laya、不启动 Python 子进程；将 Laya artifact 写到 JEV 读取路径即可作为同 schema 的替换输入。树模型本身仍按 JEV 特征训练，替换为 Laya 后是分布迁移，不应在未重新训练/验证前宣称等价收益。
+
 离线验收以交易日等权的“Top10 平均未来三日最大高点涨幅”为主指标，`NDCG@10` 为辅助指标；同时记录 Top10 第三日收盘收益和 `+1%` 命中率作为风险护栏，并按交易日做 block bootstrap。历史结果只描述样本内/样本外排序表现，不是成功概率、收益承诺或投资建议。
 
 ### 当前模型与留出验证
