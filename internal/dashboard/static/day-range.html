@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#07090B">
+    <meta name="description" content="查看盘前全天最高价与最低价预测、区间校准、实际核对和冻结评估。">
+    <title>全天区间 · 盘前高低价预测 · Stock Watcher</title>
+    <link rel="icon" href="data:,">
+    <link rel="preload" href="/assets/fonts/plex-serif-600.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/assets/style.css">
+    <link rel="stylesheet" href="/assets/day-range.css">
+    <script src="/assets/common.js" defer></script>
+    <script src="/assets/day-range.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳转至全天区间</a>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="/" aria-label="Stock Watcher 股池观察首页">
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M6 24V15m10 9V8m10 16V4"/><path d="m5 12 10-7 8 5 5-7"/></svg></span>
+          <span><strong>STOCK WATCHER</strong><span class="brand-caption">把每日变化，看得更清楚</span></span>
+        </a>
+        <nav class="header-nav" aria-label="主导航"><a href="/">摘要快照</a><a href="/stocks">全部股票</a><a href="/chart">个股 K 线</a><a href="/rankings">日推排名</a><a href="/day-range" aria-current="page">全天区间</a><a href="/review">复盘回看</a><a href="/experiments">策略实验室</a><a href="/calculator">仓位计算</a></nav>
+        <span class="market-label">A 股 · 盘前研究</span>
+      </div>
+    </header>
+    <main id="main-content" class="page">
+      <section class="page-heading" aria-labelledby="day-range-title">
+        <div><p class="eyebrow">PREMARKET DAILY RANGE</p><h1 id="day-range-title" data-testid="day-range-title">全天区间<span class="heading-dot">.</span></h1><p class="intro">冻结盘前预测，收盘后核对真实最高价与最低价。研究记录，不构成推荐或交易指令。</p></div>
+        <div class="refresh-area"><button id="refresh-button" class="button button-primary" type="button" data-testid="refresh-button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.3 7a6.5 6.5 0 1 0 .1 5M16.3 3v4h-4"/></svg><span>刷新预测</span></button><p id="auto-refresh-label">每 60 秒自动刷新</p></div>
+      </section>
+
+      <div id="error-state" class="notice notice-error" role="alert" data-testid="error-state" hidden><div><strong id="error-title">全天区间加载失败</strong><p id="error-message"></p></div><button id="retry-button" class="button button-secondary" type="button" data-testid="retry-button">重新加载</button></div>
+      <div id="loading-state" class="loading-state" role="status" data-testid="loading-state"><span class="spinner" aria-hidden="true"></span><div><strong>正在读取盘前预测</strong><p>核对冻结快照、实际结果与校准状态…</p></div></div>
+      <noscript><p class="notice notice-error">请启用 JavaScript，以加载盘前全天预测。</p></noscript>
+
+      <div id="day-range-content" hidden>
+        <section class="panel day-range-overview" aria-labelledby="overview-title">
+          <div class="panel-heading"><div><p class="eyebrow">FROZEN PREMARKET SNAPSHOT</p><h2 id="overview-title">预测快照 <span id="snapshot-date" class="count-tag">—</span></h2><p class="section-description">参考价为上一已完成交易日的不复权收盘价；标签为目标日不复权日线真实高低价。</p></div><span id="page-status-tag" class="tag tag-neutral">等待读取</span></div>
+          <div class="summary-grid day-range-cards" data-testid="day-range-summary">
+            <article class="summary-card"><div class="card-label"><span>目标交易日</span><span class="card-symbol" aria-hidden="true">◷</span></div><p class="card-value"><span id="target-date">—</span></p><p class="card-note">09:30 前冻结盘前快照</p></article>
+            <article class="summary-card"><div class="card-label"><span>已保存预测</span><span class="card-symbol" aria-hidden="true">⌁</span></div><p class="card-value"><span id="prediction-count">—</span><small>支</small></p><p class="card-note">实际已核对 <strong id="resolved-count">—</strong> · 未核对 <strong id="unresolved-count">—</strong></p></article>
+            <article class="summary-card"><div class="card-label"><span>生效来源</span><span class="card-symbol" aria-hidden="true">◇</span></div><p class="card-value card-text"><span id="forecast-source">—</span></p><p class="card-note">通过门禁的模型可替换基线；否则保留基线</p></article>
+            <article class="summary-card"><div class="card-label"><span>生效模型</span><span class="card-symbol" aria-hidden="true">▤</span></div><p class="card-value card-text"><span id="active-model">—</span></p><p class="card-note">特征版本 <strong id="feature-version">—</strong> · 数据截至 <strong id="input-through">—</strong></p></article>
+          </div>
+          <div class="notice notice-info day-range-note"><div><strong>阶段边界</strong><p>当前仅发布盘前全天预测。盘中剩余时段模型尚未启用，页面不会用盘前结果冒充盘中更新，也不接入选股、飞书或自动交易。</p></div><span id="remaining-model-tag" class="tag tag-neutral" data-testid="remaining-model-status">盘中模型 unsupported</span></div>
+          <div id="status-issues" class="notice notice-warning" role="status" hidden><div><strong>需要留意</strong><ul id="status-issue-list"></ul></div></div>
+        </section>
+
+        <section class="panel" aria-labelledby="predictions-title">
+          <div class="panel-heading"><div><p class="eyebrow">PREMARKET FORECASTS</p><h2 id="predictions-title">盘前预测明细</h2><p class="section-description">分别展示最高价与最低价的 10/50/90 分位及 80% 边际区间。</p></div><span id="data-cutoff-tag" class="tag tag-neutral">数据截至 —</span></div>
+          <div class="table-scroll">
+            <table class="day-range-table" data-testid="day-range-table">
+              <thead><tr><th>股票</th><th>参考价</th><th>最高价预测</th><th>最低价预测</th><th>80% 区间</th><th>实际高低价</th><th>覆盖状态</th><th>来源与时点</th></tr></thead>
+              <tbody id="prediction-body"></tbody>
+            </table>
+          </div>
+          <div id="prediction-empty" class="empty-state" data-testid="prediction-empty" hidden><strong>暂无盘前预测</strong><p id="prediction-empty-reason">启用 dayrange 并执行 train-dayrange / predict-dayrange 后，这里会展示冻结快照。</p></div>
+        </section>
+
+        <section class="panel" aria-labelledby="evaluation-title">
+          <div class="panel-heading"><div><p class="eyebrow">ROLLING EVALUATION</p><h2 id="evaluation-title">冻结评估与门禁</h2><p class="section-description">区间覆盖率、区间宽度和点估计误差来自保存的评估报告，不在页面重算。</p></div><span id="gate-tag" class="tag tag-neutral">暂无评估</span></div>
+          <div id="evaluation-empty" class="empty-state"><strong>暂无通过保存的候选评估</strong><p>模型训练后会保存开发、校准和验证区间；未通过门禁时正式预测继续使用历史波幅基线。</p></div>
+          <div id="evaluation-content" hidden>
+            <div class="evaluation-grid" id="evaluation-grid"></div>
+            <div class="evaluation-reasons"><strong>门禁说明</strong><ul id="gate-reasons"></ul></div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

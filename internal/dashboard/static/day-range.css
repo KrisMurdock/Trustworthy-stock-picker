@@ -1,0 +1,35 @@
+.day-range-overview .summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.day-range-cards .card-value { min-height: 40px; }
+.card-value.card-text { font-size: clamp(16px, 1.8vw, 24px); line-height: 1.2; overflow-wrap: anywhere; }
+.day-range-note { margin: 0 24px 24px; }
+.day-range-note .tag { flex: 0 0 auto; }
+#status-issues { margin: 0 24px 24px; }
+#status-issues ul, .evaluation-reasons ul { margin: 6px 0 0; padding-left: 18px; }
+.day-range-table { min-width: 1320px; }
+.day-range-table th { white-space: nowrap; }
+.day-range-table td { vertical-align: top; }
+.day-range-table .stock-name { font-weight: 600; }
+.day-range-table .stock-code { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+.estimate-stack { display: grid; gap: 3px; }
+.estimate-stack strong { font-family: var(--serif); font-size: 14px; }
+.estimate-stack span, .coverage-stack span, .source-stack span { color: var(--muted); font-size: 11px; }
+.interval-stack { display: grid; gap: 4px; }
+.interval-stack strong { font-family: var(--serif); font-size: 13px; }
+.coverage-stack { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.tag-coverage-ok { color: var(--jade); border-color: color-mix(in srgb, var(--jade) 38%, transparent); }
+.tag-coverage-miss { color: var(--copper); border-color: color-mix(in srgb, var(--copper) 38%, transparent); }
+.source-stack { display: grid; gap: 3px; }
+.evaluation-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.evaluation-grid article { background: var(--panel); padding: 18px 20px; min-height: 104px; }
+.evaluation-grid span { display: block; color: var(--muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.evaluation-grid strong { display: block; margin-top: 8px; font-family: var(--serif); font-size: 21px; font-variant-numeric: tabular-nums; }
+.evaluation-grid small { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
+.evaluation-reasons { padding: 20px 24px 24px; color: var(--muted); font-size: 12px; }
+.evaluation-reasons strong { color: var(--ink); }
+@media (max-width: 900px) {
+  .day-range-overview .summary-grid, .evaluation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .day-range-overview .summary-grid, .evaluation-grid { grid-template-columns: 1fr; }
+  .day-range-note, #status-issues { margin-left: 16px; margin-right: 16px; }
+}

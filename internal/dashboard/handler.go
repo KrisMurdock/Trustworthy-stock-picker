@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/dayrange"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/experiment"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/health"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
@@ -48,11 +49,20 @@ type reviewReader interface {
 	Event(context.Context, string, string, string) (review.Event, error)
 }
 
+// DayRangeReader exposes saved premarket forecasts and evaluation records. It
+// must be read-only: dashboard requests cannot train, download or reconcile.
+type DayRangeReader interface {
+	Status(context.Context, string) (dayrange.Status, error)
+	Predictions(context.Context, string, string) ([]dayrange.PredictionRecord, error)
+	Evaluation(context.Context, string) (dayrange.Evaluation, error)
+}
+
 type handler struct {
 	health         func(context.Context) (health.Status, error)
 	experiments    experimentReader
 	review         reviewReader
 	predictor      PredictorController
+	dayRange       DayRangeReader
 	config         config.Config
 	llm            *config.LLMRuntime
 	publicReadOnly bool
@@ -74,15 +84,25 @@ func NewHandlerWithPredictor(c config.Config, db *storage.MarketDB, log *logging
 	return newHandlerWithPredictor(c, db, log, predictor)
 }
 
+// NewHandlerWithDayRange attaches the optional premarket day-range surface while
+// keeping the existing constructors source-compatible.
+func NewHandlerWithDayRange(c config.Config, db *storage.MarketDB, log *logging.Logger, predictor PredictorController, reader DayRangeReader) http.Handler {
+	return newHandlerWithDayRange(c, db, log, predictor, reader)
+}
+
 func newHandler(c config.Config, db snapshotReader, log *logging.Logger) http.Handler {
 	return newHandlerWithPredictor(c, db, log, nil)
 }
 
 func newHandlerWithPredictor(c config.Config, db snapshotReader, log *logging.Logger, predictorController PredictorController) http.Handler {
+	return newHandlerWithDayRange(c, db, log, predictorController, nil)
+}
+
+func newHandlerWithDayRange(c config.Config, db snapshotReader, log *logging.Logger, predictorController PredictorController, dayRangeReader DayRangeReader) http.Handler {
 	if log == nil {
 		log = logging.Nop()
 	}
-	h := &handler{experiments: storage.ExperimentView{Root: c.DataDir, RequireCIFS: c.RequireCIFS}, predictor: predictorController, config: c, llm: config.NewLLMRuntime(c.LLM), publicReadOnly: c.Web.PublicReadOnly, stocks: append([]config.Stock(nil), c.Stocks...), adjust: c.Daily.Adjust, db: db, log: log}
+	h := &handler{experiments: storage.ExperimentView{Root: c.DataDir, RequireCIFS: c.RequireCIFS}, predictor: predictorController, dayRange: dayRangeReader, config: c, llm: config.NewLLMRuntime(c.LLM), publicReadOnly: c.Web.PublicReadOnly, stocks: append([]config.Stock(nil), c.Stocks...), adjust: c.Daily.Adjust, db: db, log: log}
 	if marketDB, ok := db.(*storage.MarketDB); ok {
 		h.health = func(ctx context.Context) (health.Status, error) { return health.Read(ctx, c, marketDB, time.Now()) }
 		h.review = review.New(newReviewLoader(c, marketDB))
@@ -149,6 +169,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, r, http.StatusOK, explainSnapshot(snapshot))
 	case "/api/experiments", "/api/experiment-history":
 		h.serveExperiments(w, r)
+	case "/api/day-range":
+		h.serveDayRange(w, r)
+	case "/api/day-range/status":
+		h.serveDayRangeStatus(w, r)
+	case "/api/day-range/evaluation":
+		h.serveDayRangeEvaluation(w, r)
 	case "/api/predictions":
 		h.servePredictions(w, r)
 	case "/api/predictor":
@@ -275,6 +301,14 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.asset(w, r, "experiments.html", "text/html; charset=utf-8")
 	case "/review":
 		h.reviewAsset(w, r)
+	case "/day-range":
+		h.asset(w, r, "day-range.html", "text/html; charset=utf-8")
+	case "/assets/day-range.js":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "day-range.js", "text/javascript; charset=utf-8")
+	case "/assets/day-range.css":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "day-range.css", "text/css; charset=utf-8")
 	case "/assets/experiments.js":
 		w.Header().Set("Cache-Control", "no-cache")
 		h.asset(w, r, "experiments.js", "text/javascript; charset=utf-8")

@@ -79,6 +79,8 @@ def fixture(directory, empty, partial=False, gates=False):
         args.append("-partial")
     if gates:
         args.append("-gates")
+    if not empty:
+        args.append("-dayrange")
     run(args, cwd=ROOT, capture_output=True, text=True)
 
 
@@ -112,6 +114,7 @@ def service(args, empty=False, partial=False, gates=False):
             "STOCK_WATCHER_STRATEGY_ENABLED": "false",
             "STOCK_WATCHER_PREDICTOR_ENABLED": "true",
             "STOCK_WATCHER_PREDICTOR_PUSH_ENABLED": "true",
+            "STOCK_WATCHER_DAYRANGE_ENABLED": "true",
             "STOCK_WATCHER_REQUEST_TIMEOUT": "1s",
             "STOCK_WATCHER_MARKET_PROVIDERS": "tencent",
             "STOCK_WATCHER_POLL_INTERVAL": "1h",
@@ -151,6 +154,7 @@ def service(args, empty=False, partial=False, gates=False):
                     "STOCK_WATCHER_PREDICTOR_ENABLED": "true",
                     "STOCK_WATCHER_PREDICTOR_PUSH_ENABLED": "true",
                     "STOCK_WATCHER_PREDICTOR_WRITE_MODE": "all",
+                    "STOCK_WATCHER_DAYRANGE_ENABLED": "true",
                     "STOCK_WATCHER_REQUEST_TIMEOUT": "1s",
                     "STOCK_WATCHER_MARKET_PROVIDERS": "tencent",
                     "STOCK_WATCHER_POLL_INTERVAL": "1h",
@@ -222,6 +226,72 @@ def wait_ready(context, url):
             pass
         time.sleep(0.15)
     raise AssertionError("dashboard did not become ready in 20s")
+
+
+def dayrange_checks(page, url, state, args):
+    page.goto(url + "/day-range", wait_until="networkidle")
+    expect(page).to_have_title("全天区间 · 盘前高低价预测 · Stock Watcher")
+    assert page.locator('nav.header-nav [aria-current="page"]').inner_text() == "全天区间"
+    check_page_assets(page.context, page, url)
+    expect(page.get_by_test_id("day-range-title")).to_have_text("全天区间.")
+    expect(page.locator("#page-status-tag")).to_contain_text("已启用 · 只读研究")
+    expect(page.locator("#target-date")).to_have_text("2026-10-20")
+    expect(page.locator("#prediction-count")).to_have_text("2")
+    expect(page.locator("#resolved-count")).to_have_text("1")
+    expect(page.locator("#unresolved-count")).to_have_text("1")
+    expect(page.get_by_test_id("remaining-model-status")).to_contain_text("unsupported")
+    expect(page.locator("#status-issue-list")).to_contain_text("数据审计仍包含未核对样本")
+    rows = page.get_by_test_id("day-range-table").locator("tbody tr")
+    expect(rows).to_have_count(2)
+    first = rows.filter(has_text="测试银行")
+    expect(first).to_contain_text("10.25")
+    expect(first).to_contain_text("10.76")
+    expect(first).to_contain_text("9.53")
+    expect(first).to_contain_text("高 10.56 – 11.07")
+    expect(first).to_contain_text("联合覆盖")
+    expect(first).to_contain_text("高覆盖")
+    second = rows.filter(has_text="测试消费")
+    expect(second).to_contain_text("目标日交易状态未知")
+    expect(second).to_contain_text("待核对")
+    expect(page.locator("#gate-tag")).to_contain_text("未通过 · 仅研究")
+    expect(page.locator("#evaluation-grid")).to_contain_text("72.0%")
+    expect(page.locator("#gate-reasons")).to_contain_text("边际覆盖率不在 75%–85%")
+
+    response = page.context.request.get(url + "/api/day-range?date=2026-10-20")
+    payload = response.json()
+    assert response.status == 200 and payload["available"] and len(payload["predictions"]) == 2
+    assert payload["remaining_model"] == "unsupported" and payload["remaining_reason"] == "phase_six_not_implemented"
+    assert "no-store" in response.headers.get("cache-control", "")
+    status = page.context.request.get(url + "/api/day-range/status").json()
+    assert status["enabled"] and status["available"] and status["prediction_count"] == 2
+    assert status["resolved_actuals"] == 1 and status["unresolved_actuals"] == 1
+    evaluation = page.context.request.get(url + "/api/day-range/evaluation?date=2026-10-20").json()
+    assert evaluation["gate"]["passed"] is False and evaluation["gate"]["joint_coverage"] == .72
+    for path in ("/api/day-range?date=2026-10-20&code=sz999999", "/api/day-range/evaluation"):
+        assert page.context.request.get(url + path).status == 400
+    assert page.context.request.post(url + "/api/day-range?date=2026-10-20").status == 405
+
+    state["injecting"] = True
+    page.route("**/api/day-range?date=*", lambda route: route.abort())
+    page.get_by_test_id("refresh-button").click()
+    expect(page.get_by_test_id("error-state")).to_be_visible()
+    expect(page.get_by_test_id("error-state")).to_contain_text("保留上次结果")
+    expect(rows).to_have_count(2)
+    page.unroute("**/api/day-range?date=*")
+    state["injecting"] = False
+    page.get_by_test_id("retry-button").click()
+    expect(page.get_by_test_id("error-state")).to_be_hidden()
+    expect(rows).to_have_count(2)
+
+    page.set_viewport_size({"width": 390, "height": 844})
+    expect(page.get_by_test_id("day-range-summary")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), "day-range overflows mobile viewport"
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    screenshots = ROOT / ".scratch" / "dashboard-verification"
+    screenshots.mkdir(parents=True, exist_ok=True)
+    kind = "container" if args.image else "native"
+    page.screenshot(path=str(screenshots / f"{kind}-dayrange.png"), full_page=True)
+    page.goto("about:blank")
 
 
 def stock_codes(page):
@@ -930,6 +1000,7 @@ def main():
             with service(args) as (url, directory, env):
                 populated_checks(context, page, url, args, directory, env)
                 ambient_checks(browser, context, page, url)
+                dayrange_checks(page, url, state, args)
                 chart_checks(page, url, state, args)
                 minute_checks(page, url, state, args)
                 experiment_checks(context, page, url, ROOT, args, state, stalled_endpoint)
@@ -1017,7 +1088,7 @@ def main():
         artifact = hashlib.sha256(Path(args.binary).read_bytes()).hexdigest()
     print(json.dumps({"result": "passed", "mode": "container" if args.image else "native", "artifact": artifact,
                       "identity": "anonymous (no application authentication)",
-                      "checks": "rule-gate-diagnostics/measured-thresholds/zero-sample-unavailable/legacy-history/mobile/minute-5-15-30-60/forming/calibrated/status/independent-daily/volume-MA/experiments/lineage/comparison/snapshot-evidence/empty/errors/cancel/raw-2700-bars/price-basis-switch/cancel/mismatched-basis/raw-missing/synced-filter/candles/volume/MA/stock-switch/isolation/partial-coverage/snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/ambient-scene/reduced-motion/webgl-fallback/asset-budget/contrast/read-only API/gateway-403/503/timeout/recovery/empty/calculator/initial/add/holdings/net-target/validation/offline/no-account-upload/model-load-failure/SIGTERM"}, ensure_ascii=False))
+                      "checks": "dayrange/coverage/gate/mobile/error-recovery/rule-gate-diagnostics/measured-thresholds/zero-sample-unavailable/legacy-history/mobile/minute-5-15-30-60/forming/calibrated/status/independent-daily/volume-MA/experiments/lineage/comparison/snapshot-evidence/empty/errors/cancel/raw-2700-bars/price-basis-switch/cancel/mismatched-basis/raw-missing/synced-filter/candles/volume/MA/stock-switch/isolation/partial-coverage/snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/ambient-scene/reduced-motion/webgl-fallback/asset-budget/contrast/read-only API/gateway-403/503/timeout/recovery/empty/calculator/initial/add/holdings/net-target/validation/offline/no-account-upload/model-load-failure/SIGTERM"}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

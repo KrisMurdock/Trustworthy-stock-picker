@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/bottomstudy"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/dayrange"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/experiment"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/modeleval"
@@ -27,6 +28,7 @@ func main() {
 	partial := flag.Bool("partial", false, "save market data without a report after coverage failure")
 	gates := flag.Bool("gates", false, "seed rejected strategy rules and an empty recommendation holdout")
 	predictorFixture := flag.Bool("predictor", false, "seed an experimental minute predictor model, status and predictions")
+	dayRangeFixture := flag.Bool("dayrange", false, "seed frozen premarket day-range predictions, actuals and evaluation")
 	flag.Parse()
 	if err := seed(*root, *empty, *partial, *gates); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -43,7 +45,118 @@ func main() {
 				os.Exit(1)
 			}
 		}
+		if *dayRangeFixture {
+			if err := seedDayRange(*root); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		}
 	}
+}
+
+func seedDayRange(root string) error {
+	db, err := storage.InitDayRange(root, false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 10, 20, 8, 45, 0, 0, market.Shanghai)
+	target, ref := "2026-10-20", "2026-10-19"
+	if err := db.SaveModelRun(ctx, dayrange.ModelRun{ModelID: dayrange.BaselineModelID, Kind: "baseline", Status: dayrange.ModelStatusValidated,
+		FeatureVersion: dayrange.FeatureVersion, CodeVersion: "fixture", CreatedAt: now, TrainFrom: "2025-10-20", TrainTo: ref, ValidFor: target}); err != nil {
+		return err
+	}
+	stocks := []config.Stock{{Code: "sz000001", Name: "测试银行", Sector: "银行"}, {Code: "sh600519", Name: "测试消费", Sector: "消费"}}
+	var firstSnapshotID string
+	for index, stock := range stocks {
+		base := 10.25 + float64(index)*187.75
+		high := dayrange.Estimate{Point: base * 1.05, Quantiles: []dayrange.Quantile{{Level: .1, Price: base * 1.03}, {Level: .5, Price: base * 1.05}, {Level: .9, Price: base * 1.08}},
+			Interval: &dayrange.Interval{Lower: base * 1.03, Upper: base * 1.08, NominalCoverage: .8, Method: "trailing_quantile_60"}}
+		low := dayrange.Estimate{Point: base * .93, Quantiles: []dayrange.Quantile{{Level: .1, Price: base * .91}, {Level: .5, Price: base * .93}, {Level: .9, Price: base * .96}},
+			Interval: &dayrange.Interval{Lower: base * .91, Upper: base * .96, NominalCoverage: .8, Method: "trailing_quantile_60"}}
+		baseline := dayrange.Forecast{High: high, Low: low}
+		features := make([]dayrange.Feature, len(dayrange.FeatureNames()))
+		for featureIndex, name := range dayrange.FeatureNames() {
+			value := float64(featureIndex%5) / 100
+			features[featureIndex] = dayrange.Feature{Name: name, Value: &value}
+		}
+		snapshot := dayrange.Snapshot{SchemaVersion: dayrange.SnapshotSchemaVersion, Code: stock.Code, Name: stock.Name, Sector: stock.Sector,
+			TargetDate: target, Mode: dayrange.ModePremarket, AsOf: now, InputThrough: ref, ReferencePrice: base, ScalePrice: base * .015,
+			FeatureVersion: dayrange.FeatureVersion, Features: features,
+			Availability: dayrange.Availability{Stock: "available", Market: "available", Sector: "available"}, MarketState: "up", VolatilityBucket: "medium",
+			Baseline: &baseline, Slices: []modeleval.SliceDimension{{Name: "code", Value: stock.Code}, {Name: "market_state", Value: "up"}, {Name: "volatility", Value: "medium"}}, CreatedAt: now}
+		snapshotID, err := db.PutSnapshot(ctx, "prediction", stock.Code, target, dayrange.ModePremarket, now, snapshot)
+		if err != nil {
+			return err
+		}
+		if firstSnapshotID == "" {
+			firstSnapshotID = snapshotID
+		}
+		prediction := dayrange.Prediction{Code: stock.Code, TargetDate: target, Mode: dayrange.ModePremarket, AsOf: now, InputThrough: ref,
+			ModelID: dayrange.BaselineModelID, Source: "baseline", FeatureVersion: dayrange.FeatureVersion, ReferencePrice: base,
+			PointHigh: high.Point, PointLow: low.Point, QuantilesHigh: high.Quantiles, QuantilesLow: low.Quantiles,
+			IntervalHigh: high.Interval, IntervalLow: low.Interval, InputSnapshotID: snapshotID, BaselineModelID: dayrange.BaselineModelID,
+			Status: "published", CreatedAt: now}
+		if _, err := db.SavePrediction(ctx, prediction); err != nil {
+			return err
+		}
+		actual := dayrange.ActualRecord{Code: stock.Code, TargetDate: target, ObservedThrough: target, ResolvedAt: now.Add(10 * time.Hour), Status: "resolved",
+			Source: "tencent", Actual: &dayrange.Extremes{High: base * 1.06, Low: base * .94}}
+		if index == 1 {
+			actual.Actual, actual.Source, actual.Status, actual.Reason = nil, "", "unresolved", "target_status_unknown"
+		}
+		if err := db.SaveActual(ctx, actual); err != nil {
+			return err
+		}
+	}
+	audit := dayrange.Audit{SchemaVersion: dayrange.SnapshotSchemaVersion, AsOf: target, From: "2025-10-20", To: target, PoolSize: 2,
+		TradingDays: 250, Candidates: 2, Resolved: 1, Unresolved: 1, Trainable: 1, UnresolvedReasons: map[string]int{"target_status_unknown": 1},
+		TrainingReasons: map[string]int{}, FeatureAvailability: map[string]int{"stock:available": 2, "market:available": 2, "sector:available": 2},
+		RawSources: map[string]int{"tencent": 1}, AdjustedSources: map[string]int{"tencent": 1}, LabelSources: map[string]int{"daily_bar:tencent": 1},
+		Days: []dayrange.AuditDay{{Date: target, Resolved: 1, Unresolved: 1, Trainable: 1, Reasons: map[string]int{"target_status_unknown": 1}}}}
+	if _, err := db.SaveAudit(ctx, firstSnapshotID, target, now, audit); err != nil {
+		return err
+	}
+	candidateMetrics := []modeleval.MetricRecord{
+		dayrangeFixtureMetric(modeleval.MetricPointMAE, modeleval.TargetHigh, modeleval.SpacePrice, .12, nil),
+		dayrangeFixtureMetric(modeleval.MetricPointMAE, modeleval.TargetLow, modeleval.SpacePrice, .15, nil),
+		dayrangeFixtureMetric(modeleval.MetricIntervalEmpiricalCoverage, modeleval.TargetHigh, modeleval.SpaceNone, .8, dayrangeCoverageSlice("model")),
+		dayrangeFixtureMetric(modeleval.MetricIntervalEmpiricalCoverage, modeleval.TargetLow, modeleval.SpaceNone, .6, dayrangeCoverageSlice("model")),
+		dayrangeFixtureMetric(modeleval.MetricIntervalWidthMean, modeleval.TargetHigh, modeleval.SpacePrice, .5, dayrangeCoverageSlice("model")),
+		dayrangeFixtureMetric(modeleval.MetricIntervalWidthMean, modeleval.TargetLow, modeleval.SpacePrice, .6, dayrangeCoverageSlice("model")),
+	}
+	baselineMetrics := []modeleval.MetricRecord{
+		dayrangeFixtureMetric(modeleval.MetricPointMAE, modeleval.TargetHigh, modeleval.SpacePrice, .2, nil),
+		dayrangeFixtureMetric(modeleval.MetricPointMAE, modeleval.TargetLow, modeleval.SpacePrice, .22, nil),
+		dayrangeFixtureMetric(modeleval.MetricIntervalWidthMean, modeleval.TargetHigh, modeleval.SpacePrice, .52, dayrangeCoverageSlice("baseline")),
+		dayrangeFixtureMetric(modeleval.MetricIntervalWidthMean, modeleval.TargetLow, modeleval.SpacePrice, .55, dayrangeCoverageSlice("baseline")),
+	}
+	evaluation := dayrange.Evaluation{ModelID: "fixture-candidate", BaselineID: dayrange.BaselineModelID, Mode: dayrange.ModePremarket, AsOf: target,
+		ValidationFrom: "2026-09-01", ValidationTo: "2026-10-19", MetricsVersion: dayrange.EvaluationSchemaVersion,
+		Candidate: dayrange.Report{SchemaVersion: dayrange.EvaluationSchemaVersion, Subject: "fixture-candidate", Status: "ok", Resolved: 260, Metrics: candidateMetrics},
+		Baseline:  dayrange.Report{SchemaVersion: dayrange.EvaluationSchemaVersion, Subject: dayrange.BaselineModelID, Status: "ok", Resolved: 260, Metrics: baselineMetrics},
+		Gate: dayrange.Gate{Passed: false, Reasons: []string{"marginal_coverage_outside_75_85"}, HighMAE: .12, LowMAE: .15,
+			HighCoverage: .8, LowCoverage: .6, HighWidthRatio: .96, LowWidthRatio: 1.09, JointCoverage: .72,
+			ValidationDays: 20, ValidationSamples: 260}, CreatedAt: now}
+	_, err = db.SaveEvaluation(ctx, evaluation)
+	return err
+}
+
+func dayrangeFixtureMetric(id, target string, space modeleval.Space, value float64, extra []modeleval.SliceDimension) modeleval.MetricRecord {
+	slice := []modeleval.SliceDimension{{Name: "as_of", Value: "08:45"}, {Name: "mode", Value: "premarket"}}
+	slice = append(slice, extra...)
+	unit := modeleval.UnitCNY
+	if space == modeleval.SpaceNone {
+		unit = modeleval.UnitRatio
+	}
+	return modeleval.MetricRecord{MetricID: id, Family: modeleval.FamilyInterval, Role: modeleval.RoleGuardrail, Subject: "fixture",
+		Target: target, Space: space, Unit: unit, Aggregation: modeleval.AggregationDayEqual, Value: modeleval.Float(value),
+		Applicability: modeleval.ApplicabilityOK, Samples: 260, Days: 20, Stocks: 2, Slice: slice}
+}
+
+func dayrangeCoverageSlice(method string) []modeleval.SliceDimension {
+	return []modeleval.SliceDimension{{Name: "coverage", Value: "0.8"}, {Name: "interval_method", Value: method}}
 }
 
 func seedPredictor(root string) error {
