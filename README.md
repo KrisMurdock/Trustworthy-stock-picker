@@ -51,7 +51,8 @@ Stock Watcher 是一个用纯 Go 构建的 A 股研究型行情引擎。它从�
 - **多源行情回退**：默认按 `腾讯 → 新浪 → BaoStock → Tushare → 东方财富` 尝试完整数据窗口。
 - **十年原始日线 + 复权分析窗口**：长期留存不复权价格，分析使用独立刷新的前复权窗口，不跨来源或跨轮拼接。
 - **严格的数据完整性**：校验交易日历、上市日期、分页、复权口径、成交量单位和历史覆盖；覆盖率不足时不发布推荐。
-- **SQLite 事务存储**：行情、同步状态、报告和投递账本保存在 `<data_dir>/market.db`，同一数据目录只允许一个写入进程。
+- **SQLite 事务存储**：行情、同步状态、报告和投递账本保存在 `<data_dir>/market.db`；盘前高低价模型、预测与核对档案保存在独立 `<data_dir>/dayrange.db`。同一数据目录只允许一个写入进程。
+- **可审计的全天高低价观察**：盘前生成当日最高/最低价点估计、分位数与区间，收盘后核对实际极值；未通过验证门禁时保留历史波幅基线，不进入正式推荐或飞书主卡。
 - **可复核的短线研究**：前复权特征、真实费用与滑点、T+1 成交模拟、滚动验证和独立留出样本。
 - **两层选股**：正式 `short_horizon_v1` 精排之外，另有独立的高召回第一层初筛；初筛结果作为精排候选参考，当前不改变正式推荐。
 - **可维护的龙头股池**：`leaders.yaml` 当前包含 165 只沪深龙头，宇树科技、星网锐捷、亿联网络等已纳入，股池与运行参数分开维护。
@@ -166,10 +167,10 @@ func main() {
 
 ## 常用命令
 
-| 命令 | 作用 | 写入行情 | 发送通知 |
+| 命令 | 作用 | 写入数据 | 发送通知 |
 | --- | --- | --- | --- |
 | `check-config` | 校验内置配置、股池、凭证与日志参数 | 否 | 否 |
-| `init` | 显式创建 `market.db` | 是 | 否 |
+| `init` | 显式创建或迁移 `market.db`；启用时含 `dayrange.db` | 是 | 否 |
 | `check` | 检查存储、日历、任务和投递状态 | 否 | 否 |
 | `status-backfill` | 补齐股池十年停牌状态与交易所日历 | 是 | 否 |
 | `status-refresh` | 刷新最近一段时间的证券状态 | 是 | 否 |
@@ -181,6 +182,11 @@ func main() {
 | `train-predictor` | 在停止 `run` 后手动训练下一有效期模型 | 是 | 否 |
 | `predictor-status` | 只读查看预测模型、开关和最近状态 | 否 | 否 |
 | `predictor-eval` | 只读运行多训练窗口滚动评估，输出确定性 JSON | 否 | 否 |
+| `train-dayrange [-as-of D] [-offline]` | 审计冻结数据、训练与校准盘前高低价模型；离线模式只写临时库 | 是 | 否 |
+| `predict-dayrange [-as-of D] [-code C]` | 生成并保存下一交易日盘前高低价预测 | 是 | 否 |
+| `reconcile-dayrange [-as-of D]` | 用完整日线核对预测目标日的实际高低价 | 是 | 否 |
+| `status-dayrange [-as-of D]` | 只读查看模型、预测核对和评估状态 | 否 | 否 |
+| `replay-dayrange [-as-of D] [-code C]` | 从已保存快照和模型重放预测，不重新训练 | 否 | 否 |
 | `preview` | 输出全池观察排名和研究结果 | 否 | 否 |
 | `research` | 输出研究统计 | 否 | 否 |
 | `experiment` | 运行或派生策略实验 | 是 | 否 |
@@ -264,11 +270,12 @@ func main() {
 | `/stocks` | 全股池搜索、行业/数据状态筛选与排序 |
 | `/chart` | 日 K、成交量、MA5/10/20、前复权/不复权切换和分钟周期 |
 | `/rankings` | 当前及历史日推排名、5 分钟实验预测与本地推送开关 |
+| `/day-range` | 盘前全天高低价预测、区间、模型与核对状态；阶段六盘中更新明确标注未实现 |
 | `/experiments` | 策略实验室、父子实验、样本对比和固定数据快照 |
 | `/review` | 冻结推荐回看、T+1/T+3/T+5 检查点、证据详情和手动 AI 归因 |
 | `/calculator` | 浏览器内仓位、持仓、剩余风险与净止盈价计算 |
 
-行情、报告、复盘和预测的读取接口只读，包括 `/healthz`、`/api/dashboard`、`/api/reports?as_of=YYYY-MM-DD`、`/api/history?code=sz000001`、`/api/intraday?code=sz000001&period=5`、`/api/predictions?date=YYYY-MM-DD` 和 `/api/predictor`。写入口仅有受保护的 `PUT /api/predictor/config`（飞书预测推送开关）以及 loopback/同源约束下的 LLM 配置与对话/归因接口；公网匿名模式会拒绝全部非 GET/HEAD 请求。摘要页和股票页每分钟刷新，刷新不会触发行情下载或消息推送。
+行情、报告、复盘、分钟预测和全天高低价预测的读取接口只读，包括 `/healthz`、`/api/dashboard`、`/api/reports?as_of=YYYY-MM-DD`、`/api/history?code=sz000001`、`/api/intraday?code=sz000001&period=5`、`/api/predictions?date=YYYY-MM-DD`、`/api/predictor`、`/api/day-range?date=YYYY-MM-DD`、`/api/day-range/status` 和 `/api/day-range/evaluation?date=YYYY-MM-DD`。写入口仅有受保护的 `PUT /api/predictor/config`（飞书预测推送开关）以及 loopback/同源约束下的 LLM 配置与对话/归因接口；公网匿名模式会拒绝全部非 GET/HEAD 请求。摘要页和股票页每分钟刷新，刷新不会触发行情下载或消息推送。
 
 网页没有内置账号或权限系统，默认仅监听 `127.0.0.1:8080`。远程访问必须使用受控网络或已有认证反向代理；代理应保留根路径、`/api/` 和 `/assets/`。
 
@@ -305,6 +312,7 @@ Quick Tunnel 的地址在进程重启、机器休眠或隧道重连后可能变�
 | `STOCK_WATCHER_PREDICTOR_ENABLED` | 是否启用 5 分钟实验预测 |
 | `STOCK_WATCHER_PREDICTOR_PUSH_ENABLED` | 是否推送聚合预测卡；关闭后仍保存预测 |
 | `STOCK_WATCHER_PREDICTOR_TRAIN_AT` | 收盘后训练时间，默认 `15:30` |
+| `STOCK_WATCHER_DAYRANGE_ENABLED` | 是否启用盘前全天高低价模型与 `/day-range` 页面；默认 `false` |
 | `STOCK_WATCHER_MARKET_PROVIDERS` | 逗号分隔的行情源顺序 |
 | `TUSHARE_TOKEN` | 可选 Tushare Token；缺失时跳过 Tushare |
 
@@ -377,9 +385,9 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | `internal/firststage` | 高召回第一层初筛、版本化 logistic 模型和初筛报告 |
 | `internal/strategy` | 前复权特征、成交模拟、排名、滚动验证和留出样本 |
 | `internal/predictor` | 5 分钟 pooled GBDT、特征、卡尔曼趋势、预测库与投递 |
-| `internal/dayrange` | 全天高低价预测的冻结观测评估；当前不训练模型、不接生产调度 |
 | `internal/marketcontext` | 指数与行业/概念板块上下文同步和独立 `context.db` |
 | `internal/review` / `internal/advisor` | 冻结推荐复盘投影与基于证据的只读 AI 分析 |
+| `internal/dayrange` | 盘前高低价数据审计、确定性树模型、区间校准、预测/核对与评估 |
 | `internal/dashboard` | 内嵌 HTML/CSS/JavaScript、SVG K 线和只读 API |
 | `internal/notify` | 版本化消息、通道接口和投递账本 |
 | `internal/feishu` | 卡片、签名、HTTP/业务码确认和错误分类 |
@@ -399,7 +407,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | 策略研究 | [推荐门槛诊断](docs/strategy-diagnostics.md) · [策略实验室](docs/experiments.md) · [实验快照](docs/experiment-result-snapshots.md) |
 | 选股算法 | [算法接入契约](docs/algorithm-interface.md) |
 | 5 分钟预测 | [5 分钟价格预测](docs/minute-predictor.md) |
-| 全天高低价 | [评估指标](docs/dayrange-evaluation.md) · [后续路线](docs/dayrange-roadmap.md) |
+| 全天高低价预测 | [开发路线与当前边界](docs/dayrange-roadmap.md) · [评估指标契约](docs/dayrange-evaluation.md) |
 | 研究与工具 | [单股价格策略](docs/单股价格策略.md) · [底部形态](docs/bottom-signals.md) |
 | 容器 | [Compose 部署与升级](docker/README.md) |
 
@@ -408,7 +416,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 - 仅覆盖沪深 A 股，不提供逐笔行情、盘口深度或自动交易。
 - 日线来自多个上游，分钟线当前只采集腾讯 5 分钟原始线并派生 15/30/60 分钟；上游窗口和修订规则可能变化。
 - 高召回初筛只用于第二层候选，历史召回率和模型分都不代表未来收益；它不改变正式推荐，初筛失败也不会阻断主报告。
-- 全天最高/最低价预测当前只有离线评估契约，尚未接入模型、CLI、网页、调度或生产推送。
+- 全天最高/最低价预测已接入盘前模型、区间校准、CLI、网页、调度和 `predictor_dayrange` 飞书推送；阶段六盘中剩余时段模型尚未实现，网页不会把盘前结果当作盘中更新。
 - 内置交易日历当前覆盖 2026 年，过期后必须升级；测试覆盖变量不得用于生产。
 - 网页没有账号或角色体系；本地默认只允许受保护的预测推送开关、LLM 配置和同源/回环 AI 请求写入，公网匿名模式会拒绝全部写请求。远程暴露必须依赖受控网络或已有认证代理。
 - 飞书投递为至少一次语义，请求成功后、确认落盘前崩溃可能产生重复消息。

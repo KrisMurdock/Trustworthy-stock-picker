@@ -142,6 +142,27 @@
 
 模型缺失、过期或 `valid_for` 不是今天时不会预测，也不会推送旧结果。预测结果实时落库并推送预测卡；上一根实际 K 线确认后，再单独推送偏差对比卡。网页开关只控制飞书投递，不停止预测和落库。
 
+## 全天高低价预测
+
+该模块默认关闭，只生成可审计的盘前高低价观察，不进入正式选股分、推荐门槛或飞书主卡。启用后 `run` 会在交易日按内置时间执行训练、盘前预测和收盘核对，结果写入独立的 `<data_dir>/dayrange.db`；`init` 会创建或校验该库。阶段六的盘中剩余时段模型尚未实现，API 和网页会明确返回 `phase_six_not_implemented`，不会把盘前结果冒充盘中更新。
+
+| 变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| STOCK_WATCHER_DAYRANGE_ENABLED | false | 是否启用盘前高低价模型、预测档案、收盘核对和网页入口 |
+| STOCK_WATCHER_DAYRANGE_TRAIN_AT | 15:40 | 收盘后训练时间，允许 15:10～23:00 |
+| STOCK_WATCHER_DAYRANGE_PREDICT_AT | 08:45 | 盘前预测时间，必须早于 09:30 |
+| STOCK_WATCHER_DAYRANGE_RECONCILE_AT | 18:35 | 收盘核对时间，允许 15:10～23:59 |
+| STOCK_WATCHER_DAYRANGE_HISTORY_DAYS | 365 | 训练数据历史窗口，允许 180～7300 个自然日 |
+| STOCK_WATCHER_DAYRANGE_MIN_TRAIN_DAYS | 120 | 最少训练交易日，允许 60～`HISTORY_DAYS` |
+| STOCK_WATCHER_DAYRANGE_CALIBRATION_DAYS | 60 | 时间顺序校准窗口，允许 10～250 个交易日 |
+| STOCK_WATCHER_DAYRANGE_VALIDATION_DAYS | 20 | 独立验证窗口，允许 10～120 个交易日 |
+| STOCK_WATCHER_DAYRANGE_KEEP_MODELS | 10 | 保留的候选模型代数；仍被预测引用的模型和基线不会被清理 |
+| STOCK_WATCHER_DAYRANGE_STOCK_FEATURES | true | 启用个股日线特征层 |
+| STOCK_WATCHER_DAYRANGE_MARKET_FEATURES | true | 启用指数与市场广度特征层 |
+| STOCK_WATCHER_DAYRANGE_SECTOR_FEATURES | true | 启用行业/参考池相对强弱特征层；三个特征层不能同时关闭 |
+
+模型按时间顺序拆分训练、校准和验证，候选模型只有通过覆盖率、区间宽度和样本门槛才会标记为 `validated`；否则保留历史波幅基线作为正式结果，并把候选留在研究档案。模型缺失、过期、checksum 无效、校准不足或共享盘不可用时不会发布旧预测，也不会回退到服务器本地目录。`train-dayrange -offline` 使用临时库训练和评估，不占生产写锁，也不写生产 `dayrange.db`。
+
 ## 通知与凭证
 
 | 变量 | 默认值 | 用途 |
