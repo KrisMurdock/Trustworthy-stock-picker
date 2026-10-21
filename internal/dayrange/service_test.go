@@ -251,7 +251,7 @@ func newDayRangeServiceForTest(t *testing.T, now time.Time, data MarketData) (*S
 
 func TestPredictUsesBaselineAndIsIdempotent(t *testing.T) {
 	c := serviceConfig()
-	days := serviceDays(c, "2025-09-01", "2026-10-20")
+	days := serviceDays(c, "2025-09-01", "2026-10-19")
 	data := premarketData(days, "sz000001")
 	now := time.Date(2026, 10, 20, 8, 45, 0, 0, shanghai)
 	service, store := newDayRangeServiceForTest(t, now, data)

@@ -277,17 +277,23 @@ func (s *Service) Predict(ctx context.Context, target string, code string) (Pred
 		return result, errors.New("dayrange is disabled")
 	}
 	now := s.now()
-	var err error
+	cal := calendar.New(s.Config)
+	completed, err := cal.Completed(now)
+	if err != nil {
+		return result, err
+	}
+	expectedTarget, err := cal.Next(completed)
+	if err != nil {
+		return result, err
+	}
 	if target == "" {
-		target, err = s.nextPredictionTarget(now)
-		if err != nil {
-			return result, err
-		}
+		target = expectedTarget
+	} else if target != expectedTarget {
+		return result, errors.New("dayrange target must be the next trading day after the completed session")
 	}
 	if !config.ValidCode(code) && code != "" {
 		return result, errors.New("invalid dayrange stock code")
 	}
-	cal := calendar.New(s.Config)
 	if ok, err := cal.Trading(target); err != nil || !ok {
 		return result, errors.New("dayrange target must be a covered trading day")
 	}
@@ -295,10 +301,11 @@ func (s *Service) Predict(ctx context.Context, target string, code string) (Pred
 	if !now.Before(open) {
 		return result, errors.New("dayrange target open has passed; premarket forecasts cannot be backfilled")
 	}
-	data, err := s.loadData(ctx, target)
+	data, err := s.loadData(ctx, completed)
 	if err != nil {
 		return result, err
 	}
+	data.TradingDays = append(data.TradingDays, target)
 	snapshots, err := BuildPredictionSnapshots(ctx, s.Config.DayRange, s.Config.Stocks, data, target, now)
 	if err != nil {
 		return result, err
@@ -737,15 +744,6 @@ func (s *Service) completedAndNext(asof string, now time.Time) (string, string, 
 		return "", "", err
 	}
 	return completed, next, nil
-}
-
-func (s *Service) nextPredictionTarget(now time.Time) (string, error) {
-	cal := calendar.New(s.Config)
-	completed, err := cal.Completed(now)
-	if err != nil {
-		return "", err
-	}
-	return cal.Next(completed)
 }
 
 func (s *Service) now() time.Time {
