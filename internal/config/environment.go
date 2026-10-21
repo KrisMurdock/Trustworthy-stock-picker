@@ -195,7 +195,7 @@ func parseEnvironmentChannels(value string) ([]NotifyChannel, error) {
 			continue
 		}
 		fields := strings.Split(entry, "|")
-		if len(fields) < 2 || len(fields) > 5 {
+		if len(fields) < 2 || len(fields) > 6 {
 			return nil, errors.New("invalid STOCK_WATCHER_NOTIFY_CHANNELS")
 		}
 		channel := NotifyChannel{Name: strings.TrimSpace(fields[0]), Type: strings.TrimSpace(fields[1]), Enabled: true}
@@ -211,6 +211,9 @@ func parseEnvironmentChannels(value string) ([]NotifyChannel, error) {
 		}
 		if len(fields) > 4 {
 			channel.SecretEnv = strings.TrimSpace(fields[4])
+		}
+		if len(fields) > 5 {
+			channel.Route = strings.TrimSpace(fields[5])
 		}
 		channels = append(channels, channel)
 	}

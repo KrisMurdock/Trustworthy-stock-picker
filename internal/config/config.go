@@ -95,12 +95,21 @@ type NotifyChannel struct {
 	Name            string `yaml:"name"`
 	Type            string `yaml:"type"`
 	Enabled         bool   `yaml:"enabled"`
+	Route           string `yaml:"route,omitempty"`
 	CredentialsFile string `yaml:"credentials_file,omitempty"`
 	WebhookEnv      string `yaml:"webhook_env,omitempty"`
 	SecretEnv       string `yaml:"secret_env,omitempty"`
 	Webhook         string `yaml:"-"`
 	Secret          string `yaml:"-"`
 }
+
+const (
+	NotifyRouteAll               = "all"
+	NotifyRouteSelection         = "selection"
+	NotifyRouteFirstStage        = "first_stage"
+	NotifyRoutePredictorRealtime = "predictor_realtime"
+	NotifyRoutePredictorDayrange = "predictor_dayrange"
+)
 
 var stockCode = regexp.MustCompile(`^(sh(60|68)[0-9]{4}|sz(00|30)[0-9]{4})$`)
 
@@ -354,6 +363,9 @@ func (c Config) Validate() error {
 		if !regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`).MatchString(channel.Name) || strings.TrimSpace(channel.Type) == "" || channelNames[channel.Name] {
 			return errors.New("notify channels contain an invalid or duplicate name")
 		}
+		if route := strings.TrimSpace(channel.Route); route != "" && route != NotifyRouteAll && route != NotifyRouteSelection && route != NotifyRouteFirstStage && route != NotifyRoutePredictorRealtime && route != NotifyRoutePredictorDayrange {
+			return errors.New("notify channel route is invalid")
+		}
 		if channel.WebhookEnv != "" && !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(channel.WebhookEnv) {
 			return errors.New("notify channel webhook_env is invalid")
 		}
@@ -448,4 +460,19 @@ func (c Config) NotificationChannels() []NotifyChannel {
 	}
 	return nil
 }
+
+// ChannelNamesForRoute returns enabled channel names for a delivery stage.
+// Channels without a route remain backward-compatible fan-out channels.
+func (c Config) ChannelNamesForRoute(route string) []string {
+	configured := len(c.Notify.Channels) > 0
+	names := []string{}
+	for _, channel := range c.NotificationChannels() {
+		channelRoute := strings.TrimSpace(channel.Route)
+		if !configured || channelRoute == "" || channelRoute == NotifyRouteAll || channelRoute == route {
+			names = append(names, channel.Name)
+		}
+	}
+	return names
+}
+
 func Duration(s string) time.Duration { d, _ := time.ParseDuration(s); return d }

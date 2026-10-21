@@ -205,7 +205,7 @@ func TestDetailFailureStopsLaterPagesAndRetriesOnlyFailedPage(t *testing.T) {
 		},
 	}
 	state := notify.NewLedger()
-	if err := enqueueCards(&state, "2026-10-13", cards, []string{channel.name}); err != nil {
+	if err := enqueueCards(&state, "2026-10-13", cards, []string{channel.name}, []string{channel.name}); err != nil {
 		t.Fatal(err)
 	}
 	channel.failOnPart = "详情 1/2"

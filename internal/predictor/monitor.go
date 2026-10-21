@@ -960,9 +960,20 @@ func (m *Monitor) setError(err error) {
 }
 
 func (m *Monitor) channelNames() []string {
+	configured := len(m.Config.NotificationChannels()) > 0
+	routes := map[string]string{}
+	if configured {
+		for _, channel := range m.Config.NotificationChannels() {
+			routes[channel.Name] = channel.Route
+		}
+	}
 	out := make([]string, 0, len(m.Channels))
 	for _, channel := range m.Channels {
-		if channel != nil && channel.Name() != "" {
+		if channel == nil || channel.Name() == "" {
+			continue
+		}
+		route, known := routes[channel.Name()]
+		if !configured || !known || route == "" || route == config.NotifyRouteAll || route == config.NotifyRoutePredictorRealtime {
 			out = append(out, channel.Name())
 		}
 	}

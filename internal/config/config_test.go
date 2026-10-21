@@ -372,14 +372,74 @@ func TestEnvironmentNotifyChannels(t *testing.T) {
 	t.Setenv("STOCK_WATCHER_CALENDAR_HOLIDAYS", "")
 	t.Setenv("TEST_FEISHU_WEBHOOK", "https://open.feishu.cn/open-apis/bot/v2/hook/env-only")
 	t.Setenv("TEST_FEISHU_SECRET", "env-secret")
-	t.Setenv("STOCK_WATCHER_NOTIFY_CHANNELS", "feishu-main|feishu|true|TEST_FEISHU_WEBHOOK|TEST_FEISHU_SECRET")
+	t.Setenv("STOCK_WATCHER_NOTIFY_CHANNELS", "feishu-main|feishu|true|TEST_FEISHU_WEBHOOK|TEST_FEISHU_SECRET|selection")
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	channels := c.NotificationChannels()
-	if len(channels) != 1 || channels[0].Name != "feishu-main" || channels[0].Webhook != os.Getenv("TEST_FEISHU_WEBHOOK") || channels[0].Secret != "env-secret" {
+	if len(channels) != 1 || channels[0].Name != "feishu-main" || channels[0].Route != NotifyRouteSelection || channels[0].Webhook != os.Getenv("TEST_FEISHU_WEBHOOK") || channels[0].Secret != "env-secret" {
 		t.Fatalf("channel environment not applied: %+v", channels)
+	}
+}
+
+func TestNotificationChannelRoutes(t *testing.T) {
+	for _, route := range []string{NotifyRouteFirstStage, NotifyRouteSelection, NotifyRoutePredictorRealtime, NotifyRoutePredictorDayrange} {
+		t.Setenv("TEST_"+strings.ToUpper(route)+"_WEBHOOK", "https://open.feishu.cn/open-apis/bot/v2/hook/"+strings.ReplaceAll(route, "_", "-")+"-test")
+	}
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	text := valid + `notify:
+  channels:
+    - name: first-stage
+      type: feishu
+      enabled: true
+      route: first_stage
+      webhook_env: TEST_FIRST_STAGE_WEBHOOK
+    - name: selection
+      type: feishu
+      enabled: true
+      route: selection
+      webhook_env: TEST_SELECTION_WEBHOOK
+    - name: predictor-realtime
+      type: feishu
+      enabled: true
+      route: predictor_realtime
+      webhook_env: TEST_PREDICTOR_REALTIME_WEBHOOK
+    - name: predictor-dayrange
+      type: feishu
+      enabled: true
+      route: predictor_dayrange
+      webhook_env: TEST_PREDICTOR_DAYRANGE_WEBHOOK
+`
+	if err := os.WriteFile(p, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for route, want := range map[string]string{
+		NotifyRouteFirstStage:        "first-stage",
+		NotifyRouteSelection:         "selection",
+		NotifyRoutePredictorRealtime: "predictor-realtime",
+		NotifyRoutePredictorDayrange: "predictor-dayrange",
+	} {
+		names := c.ChannelNamesForRoute(route)
+		if len(names) != 1 || names[0] != want {
+			t.Fatalf("route %s = %v, want %s", route, names, want)
+		}
+	}
+	if err := os.WriteFile(p, []byte(valid+`notify:
+  channels:
+    - name: invalid
+      type: feishu
+      enabled: false
+      route: unsupported
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "route") {
+		t.Fatalf("invalid route accepted: %v", err)
 	}
 }
 

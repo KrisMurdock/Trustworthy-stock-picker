@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
 	reportmessage "github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify/report"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
@@ -56,29 +57,10 @@ func (m *Monitor) enqueueReport(state *State, report selection.Report) (int, err
 		}
 	}
 	reason := ""
-	switch {
-	case len(m.channelNames()) == 0:
+	if len(m.channelNames()) == 0 {
 		reason = "no_enabled_channels"
-	case calendar.Expired(report.Target, m.Now()):
+	} else if calendar.Expired(report.Target, m.Now()) {
 		reason = "buying_session_already_open"
-	}
-	channels := []string{}
-	if reason == "" {
-		for _, name := range m.channelNames() {
-			exists := false
-			for _, event := range state.Events {
-				if _, ok := event.Channels[name]; ok && event.AsOf == report.AsOf {
-					exists = true
-					break
-				}
-			}
-			if !exists {
-				channels = append(channels, name)
-			}
-		}
-		if len(channels) == 0 {
-			reason = "delivery_already_recorded"
-		}
 	}
 	if reason != "" {
 		m.Log.Info("Report enqueue skipped", "as_of", report.AsOf, "target", report.Target, "reason", reason)
@@ -88,11 +70,41 @@ func (m *Monitor) enqueueReport(state *State, report selection.Report) (int, err
 	if err != nil {
 		return 0, err
 	}
-	if err := enqueueCards(state, report.AsOf, cards, channels); err != nil {
+	selectionChannels := pendingChannelNames(state, report.AsOf, m.channelNamesForRoute(config.NotifyRouteSelection))
+	firstStageChannels := []string{}
+	if len(cards.FirstStage) > 0 {
+		firstStageChannels = pendingChannelNames(state, report.AsOf, m.channelNamesForRoute(config.NotifyRouteFirstStage))
+	}
+	queued := len(selectionChannels) + len(firstStageChannels)
+	if queued == 0 {
+		m.Log.Info("Report enqueue skipped", "as_of", report.AsOf, "target", report.Target, "reason", "delivery_already_recorded")
+		return 0, nil
+	}
+	if err := enqueueCards(state, report.AsOf, cards, selectionChannels, firstStageChannels); err != nil {
 		return 0, err
 	}
 	if err := m.writeState(*state); err != nil {
 		return 0, err
 	}
-	return len(channels), nil
+	return queued, nil
+}
+
+func pendingChannelNames(state *State, asof string, names []string) []string {
+	pending := make([]string, 0, len(names))
+	for _, name := range names {
+		recorded := false
+		for _, event := range state.Events {
+			if event.AsOf != asof {
+				continue
+			}
+			if _, ok := event.Channels[name]; ok {
+				recorded = true
+				break
+			}
+		}
+		if !recorded {
+			pending = append(pending, name)
+		}
+	}
+	return pending
 }

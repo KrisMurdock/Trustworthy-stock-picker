@@ -146,12 +146,14 @@
 | STOCK_WATCHER_FEISHU_CREDENTIALS_FILE | 空 | 显式启用旧版 `feishu.config` 兼容；新部署应改用环境变量 |
 | STOCK_WATCHER_NOTIFY_CHANNELS | 空 | 可选多通道；格式见下 |
 | TUSHARE_TOKEN | 空 | Tushare Token；缺失时跳过 Tushare |
-命名通道使用 `name|type|enabled|webhook_env|secret_env`，条目之间用 `;` 分隔；`type` 当前只支持 `feishu`。例如：
+命名通道使用 `name|type|enabled|webhook_env|secret_env|route`，条目之间用 `;` 分隔；`type` 当前只支持 `feishu`。`route` 可选 `all`、`selection`、`first_stage`、`predictor_realtime`、`predictor_dayrange`，留空表示兼容旧配置并向所有阶段广播：
 
 ```dotenv
 STOCK_WATCHER_FEISHU_ENABLED=false
-STOCK_WATCHER_NOTIFY_CHANNELS="feishu-main|feishu|true|FEISHU_WEBHOOK|FEISHU_SECRET"
+STOCK_WATCHER_NOTIFY_CHANNELS="first-stage|feishu|true|FEISHU_FIRST_STAGE_WEBHOOK||first_stage;selection|feishu|true|FEISHU_SELECTION_WEBHOOK||selection;predictor-realtime|feishu|true|FEISHU_PREDICTOR_REALTIME_WEBHOOK||predictor_realtime;predictor-dayrange|feishu|true|FEISHU_PREDICTOR_DAYRANGE_WEBHOOK||predictor_dayrange"
 ```
+
+路由含义：`first_stage` 只接收第一层初筛池；`selection` 只接收精筛日报主卡和详情卡；`predictor_realtime` 接收 5 分钟实时预测及偏差卡；`predictor_dayrange` 预留给后续全天高低价预测。不同路由的投递依赖彼此独立，不会因为另一个机器人失败而互相阻塞。
 
 凭证只来自环境变量，不写入日志、镜像或仓库。关闭通知时显式设置 `STOCK_WATCHER_FEISHU_ENABLED=false`，并确保没有设置 `STOCK_WATCHER_NOTIFY_CHANNELS` 的启用通道。
 

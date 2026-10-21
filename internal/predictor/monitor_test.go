@@ -64,6 +64,24 @@ type monitorFakeChannel struct {
 	sent []notify.Message
 }
 
+func TestMonitorChannelNamesUseRealtimeRoute(t *testing.T) {
+	c := monitorTestConfig(t.TempDir())
+	c.Notify.Channels = []config.NotifyChannel{
+		{Name: "first-stage-bot", Type: "feishu", Enabled: true, Route: config.NotifyRouteFirstStage},
+		{Name: "predictor-realtime", Type: "feishu", Enabled: true, Route: config.NotifyRoutePredictorRealtime},
+		{Name: "predictor-dayrange", Type: "feishu", Enabled: true, Route: config.NotifyRoutePredictorDayrange},
+	}
+	m := &Monitor{Config: c, Channels: []notify.Channel{
+		&monitorFakeChannel{name: "first-stage-bot"},
+		&monitorFakeChannel{name: "predictor-realtime"},
+		&monitorFakeChannel{name: "predictor-dayrange"},
+	}}
+	got := m.channelNames()
+	if len(got) != 1 || got[0] != "predictor-realtime" {
+		t.Fatalf("predictor channel route = %v", got)
+	}
+}
+
 func (f *monitorFakeChannel) Name() string { return f.name }
 
 func (f *monitorFakeChannel) Send(_ context.Context, message notify.Message) error {

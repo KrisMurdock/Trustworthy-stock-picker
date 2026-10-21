@@ -102,6 +102,29 @@ func (m *Monitor) channelNames() []string {
 	return names
 }
 
+func (m *Monitor) channelNamesForRoute(route string) []string {
+	configured := m.Config.NotificationChannels()
+	if len(configured) == 0 {
+		return m.channelNames()
+	}
+	routes := make(map[string]string, len(configured))
+	for _, channel := range configured {
+		routes[channel.Name] = channel.Route
+	}
+	names := make([]string, 0, len(m.Channels))
+	for _, channel := range m.Channels {
+		if channel == nil || channel.Name() == "" {
+			continue
+		}
+		channelRoute, known := routes[channel.Name()]
+		if !known || channelRoute == "" || channelRoute == config.NotifyRouteAll || channelRoute == route {
+			names = append(names, channel.Name())
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
 func (m *Monitor) readState() (State, error) { return m.loadState(true) }
 
 // loadState only recovers interrupted sends when the caller owns the writer lock.
@@ -159,7 +182,7 @@ func (m *Monitor) migrateLegacy(raw persistedState) (State, error) {
 				return state, err
 			}
 			channels := m.legacyChannels()
-			if err := enqueueCards(&state, report.AsOf, cards, channels); err != nil {
+			if err := enqueueCards(&state, report.AsOf, cards, channels, channels); err != nil {
 				return state, err
 			}
 			for _, name := range channels {
@@ -183,7 +206,7 @@ func (m *Monitor) migrateLegacy(raw persistedState) (State, error) {
 			return state, errors.New("pending report has an invalid T+1 date")
 		}
 		channels := m.legacyChannels()
-		if err := enqueueCards(&state, pending.Report.AsOf, cards, channels); err != nil {
+		if err := enqueueCards(&state, pending.Report.AsOf, cards, channels, channels); err != nil {
 			return state, err
 		}
 		event := state.Events[cards.Main.EventID]
@@ -205,37 +228,48 @@ func (m *Monitor) migrateLegacy(raw persistedState) (State, error) {
 	return state, nil
 }
 
-func enqueueCards(state *State, asof string, cards reportmessage.Cards, channels []string) error {
-	if err := state.EnqueuePart(asof, cards.Main, channels, "main", 0, ""); err != nil {
-		return err
-	}
-	previous := cards.Main.EventID
-	for i, detail := range cards.Details {
-		if err := state.EnqueuePart(asof, detail, channels, "detail", i+1, previous); err != nil {
+func enqueueCards(state *State, asof string, cards reportmessage.Cards, selectionChannels, firstStageChannels []string) error {
+	if len(selectionChannels) > 0 {
+		if err := state.EnqueuePart(asof, cards.Main, selectionChannels, "main", 0, ""); err != nil {
 			return err
 		}
-		previous = detail.EventID
-	}
-	for i, firstStage := range cards.FirstStage {
-		if err := state.EnqueuePart(asof, firstStage, channels, "first_stage", len(cards.Details)+i+1, previous); err != nil {
-			return err
+		previous := cards.Main.EventID
+		for i, detail := range cards.Details {
+			if err := state.EnqueuePart(asof, detail, selectionChannels, "detail", i+1, previous); err != nil {
+				return err
+			}
+			previous = detail.EventID
 		}
-		previous = firstStage.EventID
+	}
+	if len(firstStageChannels) > 0 {
+		previous := ""
+		for i, firstStage := range cards.FirstStage {
+			if err := state.EnqueuePart(asof, firstStage, firstStageChannels, "first_stage", len(cards.Details)+i+1, previous); err != nil {
+				return err
+			}
+			previous = firstStage.EventID
+		}
 	}
 	return nil
 }
 
 func markCardsDelivered(state *State, cards reportmessage.Cards, channel string) error {
-	if err := state.MarkDelivered(cards.Main.EventID, channel); err != nil {
-		return err
-	}
+	eventIDs := []string{cards.Main.EventID}
 	for _, detail := range cards.Details {
-		if err := state.MarkDelivered(detail.EventID, channel); err != nil {
-			return err
-		}
+		eventIDs = append(eventIDs, detail.EventID)
 	}
 	for _, firstStage := range cards.FirstStage {
-		if err := state.MarkDelivered(firstStage.EventID, channel); err != nil {
+		eventIDs = append(eventIDs, firstStage.EventID)
+	}
+	for _, eventID := range eventIDs {
+		event, ok := state.Events[eventID]
+		if !ok {
+			continue
+		}
+		if _, ok := event.Channels[channel]; !ok {
+			continue
+		}
+		if err := state.MarkDelivered(eventID, channel); err != nil {
 			return err
 		}
 	}
