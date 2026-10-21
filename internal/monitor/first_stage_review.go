@@ -18,7 +18,7 @@ func (m *Monitor) enqueueFirstStageReview(ctx context.Context, state *State, eva
 	if !m.Config.FirstStage.Enabled || !m.Config.FirstStage.PushEnabled {
 		return false, nil
 	}
-	signalDate, err := previousTradingDay(m.Calendar, evaluationDate)
+	signalDate, horizonDates, err := firstStageReviewWindow(m.Calendar, evaluationDate)
 	if err != nil {
 		return false, err
 	}
@@ -30,7 +30,7 @@ func (m *Monitor) enqueueFirstStageReview(ctx context.Context, state *State, eva
 	if err != nil {
 		return false, err
 	}
-	if previous.Target != evaluationDate {
+	if previous.Target != horizonDates[0] {
 		m.Log.Info("First-stage review skipped", "signal", signalDate, "evaluation", evaluationDate, "reason", "target_date_mismatch")
 		return false, nil
 	}
@@ -51,13 +51,18 @@ func (m *Monitor) enqueueFirstStageReview(ctx context.Context, state *State, eva
 	if m.Market == nil || !m.Market.HasDatabase() {
 		return false, errors.New("market database is unavailable for first-stage review")
 	}
-	histories, err := m.Market.LoadHistories(ctx, m.Config.Stocks, evaluationDate, m.Config.Daily.Adjust)
+	pool, err := firstStageReviewPool(result)
 	if err != nil {
 		return false, err
 	}
-	review, err := firststage.EvaluateNextDay(*result, histories, m.Config.Stocks, firststage.ReviewOptions{
+	histories, err := m.Market.LoadHistories(ctx, pool, evaluationDate, m.Config.Daily.Adjust)
+	if err != nil {
+		return false, err
+	}
+	review, err := firststage.EvaluateHorizon(*result, histories, pool, firststage.ReviewOptions{
 		SignalDate:     signalDate,
 		EvaluationDate: evaluationDate,
+		HorizonDates:   horizonDates,
 		Adjust:         m.Config.Daily.Adjust,
 		SelectedLimit:  firststage.PushLimit,
 		ThresholdPct:   firststage.TouchThresholdPct,
@@ -80,8 +85,60 @@ func (m *Monitor) enqueueFirstStageReview(ctx context.Context, state *State, eva
 	if err := m.writeState(*state); err != nil {
 		return false, err
 	}
-	m.Log.Info("First-stage review queued", "signal", signalDate, "evaluation", evaluationDate, "hits", review.Hits, "evaluated", review.Evaluated, "pool_hits", review.PoolHits, "recall_pct", review.RecallPct)
+	m.Log.Info("First-stage review queued", "signal", signalDate, "window_start", horizonDates[0], "evaluation", evaluationDate, "hits", review.Hits, "evaluated", review.Evaluated, "pool_hits", review.PoolHits, "recall_pct", review.RecallPct)
 	return true, nil
+}
+
+func firstStageReviewWindow(cal *calendar.Calendar, evaluationDate string) (string, []string, error) {
+	t, err := time.ParseInLocation("2006-01-02", evaluationDate, market.Shanghai)
+	if err != nil || t.Format("2006-01-02") != evaluationDate {
+		return "", nil, errors.New("invalid first-stage evaluation date")
+	}
+	dates := make([]string, 0, firststage.HorizonDays)
+	for i := 0; len(dates) < firststage.HorizonDays; i++ {
+		if i > 31 {
+			return "", nil, errors.New("cannot build first-stage review window")
+		}
+		candidate := calendar.Date(t)
+		trading, err := cal.Trading(candidate)
+		if err != nil {
+			return "", nil, err
+		}
+		if trading {
+			dates = append([]string{candidate}, dates...)
+		}
+		t = t.AddDate(0, 0, -1)
+	}
+	if dates[len(dates)-1] != evaluationDate {
+		return "", nil, errors.New("first-stage evaluation date is not a trading day")
+	}
+	signalDate, err := previousTradingDay(cal, dates[0])
+	if err != nil {
+		return "", nil, err
+	}
+	return signalDate, dates, nil
+}
+
+func firstStageReviewPool(report *firststage.Report) ([]config.Stock, error) {
+	pool := make([]config.Stock, 0, report.PoolSize)
+	seen := make(map[string]bool, report.PoolSize)
+	add := func(stock config.Stock) {
+		if seen[stock.Code] {
+			return
+		}
+		seen[stock.Code] = true
+		pool = append(pool, stock)
+	}
+	for _, candidate := range report.Candidates {
+		add(config.Stock{Code: candidate.Code, Name: candidate.Name, Sector: candidate.Sector})
+	}
+	for _, excluded := range report.Excluded {
+		add(config.Stock{Code: excluded.Code})
+	}
+	if len(pool) != report.PoolSize {
+		return nil, fmt.Errorf("first-stage report pool mismatch: reconstructed=%d reported=%d", len(pool), report.PoolSize)
+	}
+	return pool, nil
 }
 
 func previousTradingDay(cal *calendar.Calendar, day string) (string, error) {

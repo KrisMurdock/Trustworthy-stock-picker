@@ -53,21 +53,19 @@ func TestFirstStageReviewCardStaysBelowPayloadLimit(t *testing.T) {
 	candidates := make([]firststage.ReviewCandidate, 30)
 	for i := range candidates {
 		candidates[i] = firststage.ReviewCandidate{
-			Rank:           i + 1,
-			Code:           fmt.Sprintf("sz%06d", i+1),
-			Name:           strings.Repeat("测试股票", 8),
-			CloseReturnPct: -1.25,
-			HighReturnPct:  1.5,
-			Status:         "miss",
+			Rank:                i + 1,
+			Code:                fmt.Sprintf("sz%06d", i+1),
+			Name:                strings.Repeat("测试股票", 8),
+			WindowHighReturnPct: 1.5,
+			HorizonCloseReturn:  -1.25,
+			Status:              "miss",
 		}
 	}
 	card, err := reportmessage.FirstStageReviewCard(firststage.ReviewReport{
 		Version: firststage.ReviewSchemaVersion, Status: firststage.ReviewStatusOK,
-		SignalDate: "2026-10-21", EvaluationDate: "2026-10-22", ThresholdPct: 1,
-		Selected: 30, Evaluated: 30, Hits: 18, Misses: 12, TouchHits: 22,
-		PoolHits: 40, PoolTouchHits: 52, SelectionHitRatePct: 60, RecallPct: 45,
-		RecallAvailable: true, TouchRecallPct: 42.31, TouchRecallAvailable: true,
-		Candidates: candidates,
+		SignalDate: "2026-10-16", WindowStart: "2026-10-19", EvaluationDate: "2026-10-21", HorizonDays: 3, ThresholdPct: 1,
+		Selected: 30, Evaluated: 30, Hits: 18, Misses: 12, PoolHits: 40,
+		SelectionHitRatePct: 60, RecallPct: 45, RecallAvailable: true, Candidates: candidates,
 	})
 	if err != nil {
 		t.Fatal(err)
