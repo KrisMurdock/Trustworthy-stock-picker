@@ -11,12 +11,22 @@ import (
 )
 
 // Data is the immutable local snapshot used by training and inference. Minutes
-// contain only native five-minute bars; Daily contains qfq daily bars.
+// contain only native five-minute bars; Daily contains qfq daily bars. Reference
+// is a fixed broad pool used for market-breadth context, independent from the
+// candidate Stocks ranked by the model. MarketDaily contains the completed
+// index bars strictly before each sample date.
 type Data struct {
-	Stocks  []config.Stock
-	Minutes map[string][]market.MinuteBar
-	Daily   map[string][]market.Bar
+	Stocks        []config.Stock
+	Reference     []string
+	FeatureGroups []string
+	Minutes       map[string][]market.MinuteBar
+	Daily         map[string][]market.Bar
+	MarketDaily   []market.Bar
 }
+
+// DefaultMarketIndexCode is the broad-market reference used by the first
+// market-context feature set.
+const DefaultMarketIndexCode = "sh000300"
 
 const (
 	barStep          = 5 * time.Minute
@@ -46,6 +56,12 @@ var featureNames = []string{
 	"day_vol20", "day_volume_ratio", "today_gap",
 	"log_price", "stock_day_vol20",
 	"has_24_bars", "has_daily20", "has_volume20",
+	"mkt_ret1", "mkt_ret5", "mkt_ret20", "mkt_ma20_dist", "mkt_vol20", "mkt_drawdown20",
+	"rel_mkt_ret1", "rel_mkt_ret5", "rel_mkt_ret20",
+	"beta60", "corr60", "downside_beta60", "mkt_ret5_x_beta60",
+	"ref_ret", "ref_breadth", "ref_dispersion", "ref_ma20_breadth", "ref_coverage",
+	"rel_ref_ret1",
+	"has_market_context", "has_beta60", "has_ref_breadth",
 }
 
 var featurePositions = func() map[string]int {
@@ -56,17 +72,31 @@ var featurePositions = func() map[string]int {
 	return out
 }()
 
+var featureGroupByName = map[string]string{
+	"mkt_ret1": "market", "mkt_ret5": "market", "mkt_ret20": "market", "mkt_ma20_dist": "market",
+	"mkt_vol20": "market", "mkt_drawdown20": "market", "has_market_context": "market",
+	"rel_mkt_ret1": "relative", "rel_mkt_ret5": "relative", "rel_mkt_ret20": "relative",
+	"beta60": "beta", "corr60": "beta", "downside_beta60": "beta", "mkt_ret5_x_beta60": "beta", "has_beta60": "beta",
+	"ref_ret": "reference", "ref_breadth": "reference", "ref_dispersion": "reference", "ref_ma20_breadth": "reference",
+	"ref_coverage": "reference", "rel_ref_ret1": "reference", "has_ref_breadth": "reference",
+}
+
 type poolSnapshot struct {
 	bars  map[string]market.MinuteBar
 	codes []string
 }
 
 type featureContext struct {
-	universe  []string
-	minutes   map[string][]market.MinuteBar
-	daily     map[string][]market.Bar
-	pools     map[int64]*poolSnapshot
-	firstOpen map[string]map[string]float64
+	universe         []string
+	reference        []string
+	minutes          map[string][]market.MinuteBar
+	daily            map[string][]market.Bar
+	marketDaily      []market.Bar
+	pools            map[int64]*poolSnapshot
+	referencePools   map[int64]*poolSnapshot
+	referenceMA20Pct map[string]float64
+	firstOpen        map[string]map[string]float64
+	featureGroups    map[string]bool
 }
 
 // BuildTrainingSamples creates one sample per finalized input bar that has a
@@ -162,18 +192,47 @@ func BuildInference(data Data, code string, inputEnd time.Time) (FeatureVector, 
 
 func newFeatureContext(data Data) (*featureContext, error) {
 	ctx := &featureContext{
-		minutes:   make(map[string][]market.MinuteBar, len(data.Minutes)),
-		daily:     make(map[string][]market.Bar, len(data.Daily)),
-		pools:     map[int64]*poolSnapshot{},
-		firstOpen: map[string]map[string]float64{},
+		minutes:          make(map[string][]market.MinuteBar, len(data.Minutes)),
+		daily:            make(map[string][]market.Bar, len(data.Daily)),
+		marketDaily:      append([]market.Bar(nil), data.MarketDaily...),
+		pools:            map[int64]*poolSnapshot{},
+		referencePools:   map[int64]*poolSnapshot{},
+		referenceMA20Pct: map[string]float64{},
+		firstOpen:        map[string]map[string]float64{},
+	}
+	if len(data.FeatureGroups) > 0 {
+		ctx.featureGroups = map[string]bool{}
+		allGroups := false
+	groupLoop:
+		for _, group := range data.FeatureGroups {
+			switch group {
+			case "all":
+				allGroups = true
+				break groupLoop
+			case "market", "relative", "beta", "reference":
+				ctx.featureGroups[group] = true
+			default:
+				return nil, fmt.Errorf("unknown predictor feature group %q", group)
+			}
+		}
+		if allGroups {
+			ctx.featureGroups = nil
+		}
 	}
 	codes := make([]string, 0, len(data.Minutes))
+	dates := map[string]bool{}
 	for code, bars := range data.Minutes {
 		copied := append([]market.MinuteBar(nil), bars...)
 		sort.SliceStable(copied, func(i, j int) bool { return copied[i].End.Before(copied[j].End) })
 		ctx.minutes[code] = copied
 		codes = append(codes, code)
+		for _, bar := range copied {
+			if bar.Final {
+				dates[barDate(bar.End)] = true
+			}
+		}
 	}
+	sort.SliceStable(ctx.marketDaily, func(i, j int) bool { return ctx.marketDaily[i].Date < ctx.marketDaily[j].Date })
 	for code, bars := range data.Daily {
 		copied := append([]market.Bar(nil), bars...)
 		sort.SliceStable(copied, func(i, j int) bool { return copied[i].Date < copied[j].Date })
@@ -193,11 +252,33 @@ func newFeatureContext(data Data) (*featureContext, error) {
 		sort.Strings(codes)
 		ctx.universe = codes
 	}
+	seenReference := map[string]bool{}
+	for _, code := range data.Reference {
+		if code == "" || seenReference[code] {
+			continue
+		}
+		seenReference[code] = true
+		ctx.reference = append(ctx.reference, code)
+	}
+	if len(ctx.reference) == 0 {
+		ctx.reference = append([]string(nil), ctx.universe...)
+	}
+	sort.Strings(ctx.reference)
+	for date := range dates {
+		if breadth, ok := referenceMA20Breadth(ctx.reference, ctx.daily, date); ok {
+			ctx.referenceMA20Pct[date] = breadth
+		}
+	}
 	rawPools := map[int64]map[string]market.MinuteBar{}
 	universeCodes := make(map[string]bool, len(ctx.universe))
 	for _, code := range ctx.universe {
 		universeCodes[code] = true
 	}
+	referenceCodes := make(map[string]bool, len(ctx.reference))
+	for _, code := range ctx.reference {
+		referenceCodes[code] = true
+	}
+	rawReferencePools := map[int64]map[string]market.MinuteBar{}
 	for code, bars := range ctx.minutes {
 		opens := map[string]float64{}
 		for _, bar := range bars {
@@ -217,18 +298,61 @@ func newFeatureContext(data Data) (*featureContext, error) {
 				}
 				pool[code] = bar
 			}
+			if referenceCodes[code] {
+				key := bar.End.Unix()
+				pool := rawReferencePools[key]
+				if pool == nil {
+					pool = map[string]market.MinuteBar{}
+					rawReferencePools[key] = pool
+				}
+				pool[code] = bar
+			}
 		}
 		ctx.firstOpen[code] = opens
 	}
-	for key, pool := range rawPools {
+	ctx.pools = snapshotsByTimestamp(rawPools)
+	ctx.referencePools = snapshotsByTimestamp(rawReferencePools)
+	return ctx, nil
+}
+
+func snapshotsByTimestamp(raw map[int64]map[string]market.MinuteBar) map[int64]*poolSnapshot {
+	out := make(map[int64]*poolSnapshot, len(raw))
+	for key, pool := range raw {
 		snapshot := &poolSnapshot{bars: pool, codes: make([]string, 0, len(pool))}
 		for code := range pool {
 			snapshot.codes = append(snapshot.codes, code)
 		}
 		sort.Strings(snapshot.codes)
-		ctx.pools[key] = snapshot
+		out[key] = snapshot
 	}
-	return ctx, nil
+	return out
+}
+
+func referenceMA20Breadth(reference []string, daily map[string][]market.Bar, date string) (float64, bool) {
+	if len(reference) == 0 {
+		return 0, false
+	}
+	valid := 0
+	above := 0
+	for _, code := range reference {
+		bars := daily[code]
+		idx := dailyIndexBefore(bars, date)
+		if idx < 0 {
+			continue
+		}
+		mean, ok := dailyMeanClose(bars, idx, 20)
+		if !ok || mean <= 0 {
+			continue
+		}
+		valid++
+		if bars[idx].Close > mean {
+			above++
+		}
+	}
+	if valid*5 < len(reference)*4 {
+		return 0, false
+	}
+	return float64(above) / float64(valid), true
 }
 
 func validInputEnd(t time.Time) (int, bool) {
@@ -268,6 +392,9 @@ func buildFeatureValues(ctx *featureContext, code string, bars []market.MinuteBa
 	values := make([]float64, len(featureNames))
 	for i := range values {
 		values[i] = math.NaN()
+	}
+	for _, name := range []string{"has_24_bars", "has_daily20", "has_volume20", "has_market_context", "has_beta60", "has_ref_breadth"} {
+		values[featurePositions[name]] = 0
 	}
 	bar := bars[idx]
 	end := bar.End
@@ -369,6 +496,62 @@ func buildFeatureValues(ctx *featureContext, code string, bars []market.MinuteBa
 			values[featurePositions["today_gap"]] = first/daily[dayIdx].Close - 1
 		}
 	}
+	marketIdx := dailyIndexBefore(ctx.marketDaily, date)
+	marketReady := false
+	for _, horizon := range []int{1, 5, 20} {
+		if value, ok := dailyReturn(ctx.marketDaily, marketIdx, horizon); ok {
+			values[featurePositions[fmt.Sprintf("mkt_ret%d", horizon)]] = value
+			if horizon == 20 {
+				marketReady = true
+			}
+		}
+	}
+	if mean, ok := dailyMeanClose(ctx.marketDaily, marketIdx, 20); ok && mean > 0 {
+		values[featurePositions["mkt_ma20_dist"]] = ctx.marketDaily[marketIdx].Close/mean - 1
+	}
+	if volatility, ok := dailyVolatility(ctx.marketDaily, marketIdx, 20); ok {
+		values[featurePositions["mkt_vol20"]] = volatility
+	}
+	if drawdown, ok := dailyDrawdown(ctx.marketDaily, marketIdx, 20); ok {
+		values[featurePositions["mkt_drawdown20"]] = drawdown
+	}
+	if marketReady {
+		values[featurePositions["has_market_context"]] = 1
+	}
+	if dayIdx >= 0 && marketIdx >= 0 {
+		for _, horizon := range []int{1, 5, 20} {
+			if stockReturn, stockOK := dailyReturn(daily, dayIdx, horizon); stockOK {
+				if marketReturn, marketOK := dailyReturn(ctx.marketDaily, marketIdx, horizon); marketOK {
+					values[featurePositions[fmt.Sprintf("rel_mkt_ret%d", horizon)]] = stockReturn - marketReturn
+				}
+			}
+		}
+		if beta, correlation, downside, ok := marketSensitivity(daily, dayIdx, ctx.marketDaily, marketIdx, 60); ok {
+			values[featurePositions["beta60"]] = beta
+			values[featurePositions["corr60"]] = correlation
+			values[featurePositions["downside_beta60"]] = downside
+			values[featurePositions["has_beta60"]] = 1
+			if market5, marketOK := dailyReturn(ctx.marketDaily, marketIdx, 5); marketOK {
+				values[featurePositions["mkt_ret5_x_beta60"]] = market5 * beta
+			}
+		}
+	}
+	if pool := ctx.referencePools[end.Unix()]; pool != nil {
+		ret, breadth, dispersion, coverage, ok := referenceFeatures(pool, len(ctx.reference))
+		if ok {
+			values[featurePositions["ref_ret"]] = ret
+			values[featurePositions["ref_breadth"]] = breadth
+			values[featurePositions["ref_dispersion"]] = dispersion
+			values[featurePositions["ref_coverage"]] = coverage
+			values[featurePositions["has_ref_breadth"]] = 1
+			if bar.Open > 0 {
+				values[featurePositions["rel_ref_ret1"]] = bar.Close/bar.Open - 1 - ret
+			}
+		}
+	}
+	if breadth, ok := ctx.referenceMA20Pct[date]; ok {
+		values[featurePositions["ref_ma20_breadth"]] = breadth
+	}
 	if volatility, ok := sameDayVolatility(bars, idx, 20); ok {
 		values[featurePositions["stock_day_vol20"]] = volatility
 	}
@@ -386,6 +569,13 @@ func buildFeatureValues(ctx *featureContext, code string, bars []market.MinuteBa
 		values[featurePositions["has_volume20"]] = 1
 	} else {
 		values[featurePositions["has_volume20"]] = 0
+	}
+	if ctx.featureGroups != nil {
+		for name, group := range featureGroupByName {
+			if !ctx.featureGroups[group] {
+				values[featurePositions[name]] = math.NaN()
+			}
+		}
 	}
 	return values
 }
@@ -533,6 +723,35 @@ func poolFeatures(pool *poolSnapshot) (float64, float64, float64, bool) {
 	return sumRet / n, float64(up) / n, sumRange / n, true
 }
 
+func referenceFeatures(pool *poolSnapshot, referenceSize int) (float64, float64, float64, float64, bool) {
+	if pool == nil || len(pool.codes) == 0 || referenceSize <= 0 {
+		return 0, 0, 0, 0, false
+	}
+	returns := make([]float64, 0, len(pool.codes))
+	up := 0
+	for _, code := range pool.codes {
+		bar := pool.bars[code]
+		if bar.Open <= 0 || bar.Close <= 0 {
+			continue
+		}
+		ret := bar.Close/bar.Open - 1
+		returns = append(returns, ret)
+		if ret > 0 {
+			up++
+		}
+	}
+	if len(returns) == 0 {
+		return 0, 0, 0, 0, false
+	}
+	mean := 0.0
+	for _, ret := range returns {
+		mean += ret
+	}
+	n := float64(len(returns))
+	mean /= n
+	return mean, float64(up) / n, populationStd(returns), n / float64(referenceSize), true
+}
+
 func dailyIndexBefore(bars []market.Bar, date string) int {
 	return sort.Search(len(bars), func(i int) bool { return bars[i].Date >= date }) - 1
 }
@@ -568,6 +787,89 @@ func dailyVolatility(bars []market.Bar, idx, window int) (float64, bool) {
 		returns = append(returns, bars[j].Close/bars[j-1].Close-1)
 	}
 	return populationStd(returns), true
+}
+
+func dailyDrawdown(bars []market.Bar, idx, window int) (float64, bool) {
+	if idx < 0 || idx-window+1 < 0 || bars[idx].Close <= 0 {
+		return 0, false
+	}
+	peak := 0.0
+	for j := idx - window + 1; j <= idx; j++ {
+		if bars[j].Close > peak {
+			peak = bars[j].Close
+		}
+	}
+	if peak <= 0 {
+		return 0, false
+	}
+	return bars[idx].Close/peak - 1, true
+}
+
+func marketSensitivity(stock []market.Bar, stockIdx int, market []market.Bar, marketIdx, window int) (float64, float64, float64, bool) {
+	if stockIdx < 2 || marketIdx < 2 || window < 2 {
+		return 0, 0, 0, false
+	}
+	marketClose := make(map[string]float64, marketIdx+1)
+	for j := 0; j <= marketIdx; j++ {
+		if market[j].Close > 0 {
+			marketClose[market[j].Date] = market[j].Close
+		}
+	}
+	type pair struct{ stock, market float64 }
+	pairs := make([]pair, 0, window)
+	for j := stockIdx; j >= 1 && len(pairs) < window; j-- {
+		if stock[j].Close <= 0 || stock[j-1].Close <= 0 {
+			continue
+		}
+		current, currentOK := marketClose[stock[j].Date]
+		previous, previousOK := marketClose[stock[j-1].Date]
+		if !currentOK || !previousOK || previous <= 0 || current <= 0 {
+			continue
+		}
+		pairs = append(pairs, pair{stock: stock[j].Close/stock[j-1].Close - 1, market: current/previous - 1})
+	}
+	if len(pairs) < window*2/3 {
+		return 0, 0, 0, false
+	}
+	stockMean, marketMean := 0.0, 0.0
+	for _, item := range pairs {
+		stockMean += item.stock
+		marketMean += item.market
+	}
+	n := float64(len(pairs))
+	stockMean /= n
+	marketMean /= n
+	covariance, stockVariance, marketVariance := 0.0, 0.0, 0.0
+	for _, item := range pairs {
+		stockDelta := item.stock - stockMean
+		marketDelta := item.market - marketMean
+		covariance += stockDelta * marketDelta
+		stockVariance += stockDelta * stockDelta
+		marketVariance += marketDelta * marketDelta
+	}
+	covariance /= n
+	stockVariance /= n
+	marketVariance /= n
+	if marketVariance <= 0 || stockVariance <= 0 {
+		return 0, 0, 0, false
+	}
+	beta := covariance / marketVariance
+	correlation := covariance / math.Sqrt(stockVariance*marketVariance)
+	downsideCovariance, downsideVariance := 0.0, 0.0
+	downsideCount := 0
+	for _, item := range pairs {
+		if item.market >= 0 {
+			continue
+		}
+		downsideCovariance += (item.stock - stockMean) * (item.market - marketMean)
+		downsideVariance += (item.market - marketMean) * (item.market - marketMean)
+		downsideCount++
+	}
+	downsideBeta := math.NaN()
+	if downsideCount >= 10 && downsideVariance > 0 {
+		downsideBeta = (downsideCovariance / float64(downsideCount)) / (downsideVariance / float64(downsideCount))
+	}
+	return beta, correlation, downsideBeta, true
 }
 
 func dailyVolumeRatio(bars []market.Bar, idx, window int) (float64, bool) {

@@ -32,15 +32,18 @@ const (
 	evalUniverseConfigDiagnostic = "config-diagnostic"
 )
 
-func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg string, validationDays, halfLife int, allowLateReports, baselineOnly bool, universe string) error {
+func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg string, validationDays, halfLife int, allowLateReports, baselineOnly bool, universe, featureGroupsArg string) error {
 	if universe == "" {
 		universe = evalUniverseReport
 	}
 	if universe != evalUniverseReport && universe != evalUniverseConfigDiagnostic {
 		return errors.New("predictor-eval universe must be report or config-diagnostic")
 	}
+	featureGroups, err := parsePredictorFeatureGroups(featureGroupsArg)
+	if err != nil {
+		return err
+	}
 	windows := []predictor.WindowSpec{}
-	var err error
 	if !baselineOnly {
 		windows, err = parsePredictorWindows(windowsArg)
 		if err != nil {
@@ -104,6 +107,9 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	}
 
 	notes := []string{}
+	if len(featureGroups) > 0 {
+		notes = append(notes, "predictor feature groups: "+strings.Join(featureGroups, ","))
+	}
 	metas := map[string]predictorEvalMeta{}
 	codes := map[string]bool{}
 	if universe == evalUniverseConfigDiagnostic {
@@ -176,6 +182,26 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 		codeList = append(codeList, code)
 	}
 	sort.Strings(codeList)
+	referenceCodes := make([]string, 0, len(c.Stocks))
+	allCodes := append([]string(nil), codeList...)
+	seenCodes := make(map[string]bool, len(codeList)+len(c.Stocks))
+	seenReference := make(map[string]bool, len(c.Stocks))
+	for _, code := range codeList {
+		seenCodes[code] = true
+	}
+	for _, stock := range c.Stocks {
+		if stock.Code == "" || seenReference[stock.Code] {
+			continue
+		}
+		seenReference[stock.Code] = true
+		referenceCodes = append(referenceCodes, stock.Code)
+		if !seenCodes[stock.Code] {
+			seenCodes[stock.Code] = true
+			allCodes = append(allCodes, stock.Code)
+		}
+	}
+	sort.Strings(referenceCodes)
+	sort.Strings(allCodes)
 	start, err := time.ParseInLocation("2006-01-02", historyStart, market.Shanghai)
 	if err != nil {
 		return err
@@ -184,17 +210,21 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	if err != nil {
 		return err
 	}
-	minutes, err := marketDB.LoadMinuteTrainingBars(ctx, codeList, start, through.AddDate(0, 0, 1))
+	minutes, err := marketDB.LoadMinuteTrainingBars(ctx, allCodes, start, through.AddDate(0, 0, 1))
 	if err != nil {
 		return err
 	}
-	daily, err := marketDB.LoadDailyTrainingBars(ctx, codeList, start.AddDate(-2, 0, 0).Format("2006-01-02"), asof, c.Daily.Adjust)
+	daily, err := marketDB.LoadDailyTrainingBars(ctx, allCodes, start.AddDate(-2, 0, 0).Format("2006-01-02"), asof, c.Daily.Adjust)
 	if err != nil {
 		return err
 	}
 	regimes, contextOK := loadPredictorRegimes(ctx, c, asof, tradingDays)
 	if !contextOK {
 		notes = append(notes, "market context unavailable; all market states are unknown")
+	}
+	marketDaily, marketOK := loadPredictorMarketDaily(ctx, c, asof)
+	if !marketOK {
+		notes = append(notes, "market context unavailable; market, relative-strength and beta features are unknown")
 	}
 
 	lastUniverse := ""
@@ -207,10 +237,15 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 		universe := strings.Join(meta.codes, ",")
 		samples := lastSamples
 		if universe != lastUniverse || samples == nil {
+			dayCodes := append([]string(nil), meta.codes...)
+			dayCodes = append(dayCodes, referenceCodes...)
 			data := predictor.Data{
-				Stocks:  meta.stocks,
-				Minutes: subsetMinuteBars(minutes, meta.codes),
-				Daily:   subsetDailyBars(daily, meta.codes),
+				Stocks:        meta.stocks,
+				Reference:     referenceCodes,
+				FeatureGroups: featureGroups,
+				Minutes:       subsetMinuteBars(minutes, dayCodes),
+				Daily:         subsetDailyBars(daily, dayCodes),
+				MarketDaily:   marketDaily,
 			}
 			built, buildErr := predictor.BuildTrainingSamples(data)
 			if buildErr != nil {
@@ -291,6 +326,31 @@ func parsePredictorWindows(value string) ([]predictor.WindowSpec, error) {
 	return out, nil
 }
 
+func parsePredictorFeatureGroups(value string) ([]string, error) {
+	if strings.TrimSpace(value) == "" || strings.TrimSpace(value) == "all" {
+		return []string{"all"}, nil
+	}
+	allowed := map[string]bool{"market": true, "relative": true, "beta": true, "reference": true}
+	seen := map[string]bool{}
+	out := make([]string, 0, 4)
+	for _, part := range strings.Split(value, ",") {
+		group := strings.TrimSpace(part)
+		if !allowed[group] {
+			return nil, fmt.Errorf("unknown predictor feature group %q", part)
+		}
+		if seen[group] {
+			continue
+		}
+		seen[group] = true
+		out = append(out, group)
+	}
+	sort.Strings(out)
+	if len(out) == 0 {
+		return nil, errors.New("predictor feature groups must not be empty")
+	}
+	return out, nil
+}
+
 func loadPredictorRegimes(ctx context.Context, c config.Config, asof string, tradingDays []string) (map[string]string, bool) {
 	db, err := storage.OpenContextView(c.DataDir, c.RequireCIFS)
 	if err != nil {
@@ -310,4 +370,25 @@ func loadPredictorRegimes(ctx context.Context, c config.Config, asof string, tra
 		marketBars = append(marketBars, predictor.MarketBar{Date: bar.Date, Close: bar.Close})
 	}
 	return predictor.BuildMarketRegimes(tradingDays, marketBars), true
+}
+
+func loadPredictorMarketDaily(ctx context.Context, c config.Config, asof string) ([]market.Bar, bool) {
+	db, err := storage.OpenContextView(c.DataDir, c.RequireCIFS)
+	if err != nil {
+		return nil, false
+	}
+	defer db.Close()
+	bars, err := db.LoadRecentBarsForCodes(ctx, asof, []string{predictor.DefaultMarketIndexCode}, 600)
+	if err != nil {
+		return nil, false
+	}
+	index := bars[predictor.DefaultMarketIndexCode]
+	if len(index) == 0 {
+		return nil, false
+	}
+	out := make([]market.Bar, 0, len(index))
+	for _, bar := range index {
+		out = append(out, market.Bar{Date: bar.Date, Open: bar.Open, High: bar.High, Low: bar.Low, Close: bar.Close, Volume: bar.Volume})
+	}
+	return out, true
 }

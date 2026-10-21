@@ -32,7 +32,11 @@
 - 跨股票池 pooled，按目标拆成 high/low/close 三个 GBDT；每个 GBDT 是多棵回归树。
 - 15/30/60 分钟只作为特征尺度，不单独训练四个模型，也不直接平均不同期限的价格。
 - 纯 Go 训练和推理，固定种子、固定特征顺序和稳定 tie-break；模型 artifact 可确定性重放。
-- 特征包括：多尺度收益/振幅/量比/波动率、收盘位置、影线、MA/RSI、时段、股池横截面宽度、上一交易日 qfq 日线上下文和缺失指示。
+- 特征包括：多尺度收益/振幅/量比/波动率、收盘位置、影线、MA/RSI、时段、股池横截面宽度、上一交易日 qfq 日线上下文、市场环境、相对强弱、滚动市场敏感度、固定参考池广度和缺失指示。
+- 市场环境只使用输入日之前已经完成的 `sh000300` 日线：1/5/20 日收益、MA20 偏离、20 日波动率和 20 日回撤。相对强弱用个股日收益减去指数同期收益；Beta/相关性/下行 Beta 使用最近 60 个共同收益样本滚动估计。
+- 广度使用 `leaders.yaml` 固定参考池，而不是当天推荐或观察名单。`ref_ret`、`ref_breadth`、`ref_dispersion` 只统计与输入 bar 同一结束时间、已完成的 bar；`ref_ma20_breadth` 使用输入日之前的日线；`ref_coverage` 记录参考池有效覆盖比例。
+- 市场日线特征对同一天所有股票相同，不能单独改善横截面排序。它们通过 `mkt_ret5_x_beta60`、相对指数收益等交互特征，以及缺失状态进入模型；数据缺失时保留 `NaN` 并置对应 `has_*` 为 0，不把缺失填成“市场平稳”。
+- 特征顺序或含义变化必须提升 `FeatureVersion`；当前市场上下文候选为 version 2，需要重新训练模型，不能复用 version 1 artifact。
 - 标签只取同交易时段、正好 +5 分钟的下一根 bar；11:30 和 15:00 不作为训练输入。
 - 生产模型当前仍使用单一训练区间：读取最近 400 个自然日的 5 分钟线，用截止日全量样本重训；评估输出并展示 walk-forward 指标，卡片只保留主指标与护栏指标。
 - `predictor-eval` 提供离线的多训练窗口 rolling walk-forward 评估；它不改变生产模型权重，也不写入模型、预测库或飞书。
@@ -197,6 +201,8 @@ go run ./cmd/stock-watcher predictor-eval \
 - 只读打开 `market.db` 和 `context.db`，不初始化 logger，不启动行情源、监控、通知或网页。
 - 不创建 `predictions.db`，不写 `models/intraday/`、`state/` 或生产报告。
 - 评估不发送通知；离线环境没有飞书凭证时可用 `STOCK_WATCHER_FEISHU_ENABLED=false` 启动，避免无关的配置校验失败。
+- 可用 `-feature-groups all,market,relative,beta,reference` 选择上下文特征组，默认 `all`；该开关只用于特征消融，生产推理始终使用完整特征集。
+- 市场上下文候选结论只对 `config-diagnostic` 诊断口径成立，不等同于正式 point-in-time 验收；`context.db` 缺失或指数/参考池覆盖不足时，相关特征按未知处理并在评估 `notes` 中说明。
 - 输出一个确定性 JSON；指标按“评估指标契约”的规范化列表返回，不适用的指标用 `not_applicable`/`insufficient_data` 和 `null` 表达。数据不足时整体返回 `status=insufficient_history`、`skipped` 和 `notes`，不会自动缩短窗口。
 - `B0` 会读取配置日历覆盖的全部交易日，长日历下比固定窗口更慢；这是 expanding 基线的代价。
 - 股票池按验证日当时可见的报告恢复：优先 `report_archive` 中目标交易日 09:30 前生成的归档，缺失时才回退可变的 `selection_run`，并在 `universes[].report_source` 标明来源。

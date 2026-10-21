@@ -55,12 +55,33 @@ func predFeatureTestData(codes, dates []string) Data {
 }
 
 func predFeatureTestClone(data Data) Data {
-	out := Data{Stocks: append([]config.Stock(nil), data.Stocks...), Minutes: map[string][]market.MinuteBar{}, Daily: map[string][]market.Bar{}}
+	out := Data{
+		Stocks:      append([]config.Stock(nil), data.Stocks...),
+		Reference:   append([]string(nil), data.Reference...),
+		Minutes:     map[string][]market.MinuteBar{},
+		Daily:       map[string][]market.Bar{},
+		MarketDaily: append([]market.Bar(nil), data.MarketDaily...),
+	}
 	for code, bars := range data.Minutes {
 		out.Minutes[code] = append([]market.MinuteBar(nil), bars...)
 	}
 	for code, bars := range data.Daily {
 		out.Daily[code] = append([]market.Bar(nil), bars...)
+	}
+	return out
+}
+
+func predFeatureTestDaily(days int, startClose, dailyReturn float64, end string) []market.Bar {
+	endTime, err := time.ParseInLocation("2006-01-02", end, market.Shanghai)
+	if err != nil {
+		panic(err)
+	}
+	out := make([]market.Bar, 0, days)
+	close := startClose
+	for i := days - 1; i >= 0; i-- {
+		date := endTime.AddDate(0, 0, -i).Format("2006-01-02")
+		out = append(out, market.Bar{Date: date, Open: close, High: close * 1.01, Low: close * 0.99, Close: close, Volume: 1000})
+		close *= 1 + dailyReturn*(1+0.2*math.Sin(float64(i)*0.7))
 	}
 	return out
 }
@@ -381,6 +402,144 @@ func TestPoolFeaturesUseOnlySameTimestamp(t *testing.T) {
 	}
 	if !predFeatureTestEqual(withoutExtra.Values[idx], withExtra.Values[idx]) {
 		t.Fatal("code outside the configured stock pool leaked into pool_ret1")
+	}
+}
+
+func TestMarketContextFeaturesUseCompletedHistoryAndFixedReference(t *testing.T) {
+	data := predFeatureTestData([]string{"sh600000", "sz000001", "sz000002"}, []string{"2026-09-02"})
+	data.Stocks = data.Stocks[:1]
+	data.Reference = []string{"sh600000", "sz000001"}
+	data.Daily["sh600000"] = predFeatureTestDaily(100, 10, 0.002, "2026-09-01")
+	data.Daily["sz000001"] = predFeatureTestDaily(100, 20, 0.001, "2026-09-01")
+	data.MarketDaily = predFeatureTestDaily(100, 100, 0.001, "2026-09-01")
+	inputEnd := predFeatureTestTime("2026-09-02", 600)
+	baseline, err := BuildInferenceFeature(data, "sh600000", inputEnd)
+	if err != nil {
+		t.Fatalf("BuildInferenceFeature: %v", err)
+	}
+	value := func(name string) float64 { return baseline.Values[predFeatureTestIndex(t, baseline.Names, name)] }
+	if math.Abs(value("beta60")-2) > 1e-9 || math.Abs(value("corr60")-1) > 1e-9 {
+		t.Fatalf("unexpected beta/correlation: beta=%v corr=%v", value("beta60"), value("corr60"))
+	}
+	if value("has_market_context") != 1 || value("has_beta60") != 1 || value("has_ref_breadth") != 1 {
+		t.Fatalf("missing context flags: %v %v %v beta=%v corr=%v", value("has_market_context"), value("has_beta60"), value("has_ref_breadth"), value("beta60"), value("corr60"))
+	}
+	if value("ref_coverage") != 1 || value("ref_ma20_breadth") < 0 || value("ref_ma20_breadth") > 1 {
+		t.Fatalf("unexpected reference breadth: coverage=%v ma20=%v", value("ref_coverage"), value("ref_ma20_breadth"))
+	}
+
+	refIndex := predFeatureTestIndex(t, baseline.Names, "ref_ret")
+	changed := predFeatureTestClone(data)
+	refBars := changed.Minutes["sz000001"]
+	for i := range refBars {
+		if refBars[i].End.Equal(inputEnd) {
+			refBars[i].Open = refBars[i].Close * 0.9
+		}
+	}
+	changed.Minutes["sz000001"] = refBars
+	after, err := BuildInferenceFeature(changed, "sh600000", inputEnd)
+	if err != nil {
+		t.Fatalf("BuildInferenceFeature after reference change: %v", err)
+	}
+	if predFeatureTestEqual(baseline.Values[refIndex], after.Values[refIndex]) {
+		t.Fatal("fixed reference change did not affect ref_ret")
+	}
+
+	nonReference := predFeatureTestClone(data)
+	extraBars := nonReference.Minutes["sz000002"]
+	for i := range extraBars {
+		if extraBars[i].End.Equal(inputEnd) {
+			extraBars[i].Open = extraBars[i].Close * 0.5
+		}
+	}
+	nonReference.Minutes["sz000002"] = extraBars
+	unchanged, err := BuildInferenceFeature(nonReference, "sh600000", inputEnd)
+	if err != nil {
+		t.Fatalf("BuildInferenceFeature after non-reference change: %v", err)
+	}
+	if !predFeatureTestEqual(baseline.Values[refIndex], unchanged.Values[refIndex]) {
+		t.Fatal("non-reference stock leaked into fixed reference breadth")
+	}
+}
+
+func TestMarketContextFeaturesDoNotUseFutureDailyOrMinuteBars(t *testing.T) {
+	data := predFeatureTestData([]string{"sh600000", "sz000001"}, []string{"2026-09-02", "2026-09-03"})
+	data.Stocks = data.Stocks[:1]
+	data.Reference = []string{"sh600000", "sz000001"}
+	data.Daily["sh600000"] = predFeatureTestDaily(100, 10, 0.002, "2026-09-03")
+	data.Daily["sz000001"] = predFeatureTestDaily(100, 20, 0.001, "2026-09-03")
+	data.MarketDaily = predFeatureTestDaily(100, 100, 0.001, "2026-09-03")
+	inputEnd := predFeatureTestTime("2026-09-02", 600)
+	baseline, err := BuildInferenceFeature(data, "sh600000", inputEnd)
+	if err != nil {
+		t.Fatalf("BuildInferenceFeature: %v", err)
+	}
+	mutated := predFeatureTestClone(data)
+	for i := range mutated.MarketDaily {
+		if mutated.MarketDaily[i].Date >= "2026-09-02" {
+			mutated.MarketDaily[i].Open *= 3
+			mutated.MarketDaily[i].High *= 3
+			mutated.MarketDaily[i].Low *= 3
+			mutated.MarketDaily[i].Close *= 3
+		}
+	}
+	for code, bars := range mutated.Minutes {
+		for i := range bars {
+			if bars[i].End.After(inputEnd) {
+				bars[i].Open *= 2
+				bars[i].Close *= 2
+				bars[i].High *= 2
+				bars[i].Low *= 2
+			}
+		}
+		mutated.Minutes[code] = bars
+	}
+	for code, bars := range mutated.Daily {
+		for i := range bars {
+			if bars[i].Date >= "2026-09-02" {
+				bars[i].Open *= 2
+				bars[i].High *= 2
+				bars[i].Low *= 2
+				bars[i].Close *= 2
+			}
+		}
+		mutated.Daily[code] = bars
+	}
+	after, err := BuildInferenceFeature(mutated, "sh600000", inputEnd)
+	if err != nil {
+		t.Fatalf("BuildInferenceFeature after future mutation: %v", err)
+	}
+	for i := range baseline.Values {
+		if !predFeatureTestEqual(baseline.Values[i], after.Values[i]) {
+			t.Fatalf("feature %s changed after future mutation: %v -> %v", baseline.Names[i], baseline.Values[i], after.Values[i])
+		}
+	}
+}
+
+func TestFeatureGroupsMaskOnlyRequestedContext(t *testing.T) {
+	data := predFeatureTestData([]string{"sh600000", "sz000001"}, []string{"2026-09-02"})
+	data.Stocks = data.Stocks[:1]
+	data.Reference = []string{"sh600000", "sz000001"}
+	data.Daily["sh600000"] = predFeatureTestDaily(100, 10, 0.002, "2026-09-01")
+	data.Daily["sz000001"] = predFeatureTestDaily(100, 20, 0.001, "2026-09-01")
+	data.MarketDaily = predFeatureTestDaily(100, 100, 0.001, "2026-09-01")
+	data.FeatureGroups = []string{"market"}
+	vector, err := BuildInferenceFeature(data, "sh600000", predFeatureTestTime("2026-09-02", 600))
+	if err != nil {
+		t.Fatalf("BuildInferenceFeature: %v", err)
+	}
+	value := func(name string) float64 { return vector.Values[predFeatureTestIndex(t, vector.Names, name)] }
+	if math.IsNaN(value("mkt_ret20")) || value("has_market_context") != 1 {
+		t.Fatal("requested market group was masked")
+	}
+	for _, name := range []string{"rel_mkt_ret20", "beta60", "ref_ret", "ref_ma20_breadth"} {
+		if !math.IsNaN(value(name)) {
+			t.Fatalf("feature %s should be masked", name)
+		}
+	}
+	data.FeatureGroups = []string{"unknown"}
+	if _, err := BuildTrainingSamples(data); err == nil {
+		t.Fatal("unknown feature group was accepted")
 	}
 }
 

@@ -24,6 +24,7 @@ func TestPredictorEvalRejectsInvalidFlags(t *testing.T) {
 		{"predictor-eval", "-windows", "bad"},
 		{"predictor-eval", "-validation-days", "0"},
 		{"predictor-eval", "-half-life", "0"},
+		{"predictor-eval", "-feature-groups", "unknown"},
 		{"predictor-eval", "-universe", "bad"},
 		{"predictor-eval", "-as-of", "2026-10-18"},
 		{"run", "-windows", "5"},
@@ -36,6 +37,20 @@ func TestPredictorEvalRejectsInvalidFlags(t *testing.T) {
 		if err := run(args); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
+	}
+}
+
+func TestParsePredictorFeatureGroups(t *testing.T) {
+	groups, err := parsePredictorFeatureGroups("reference,market,reference")
+	if err != nil || len(groups) != 2 || groups[0] != "market" || groups[1] != "reference" {
+		t.Fatalf("unexpected groups: %v %v", groups, err)
+	}
+	groups, err = parsePredictorFeatureGroups("all")
+	if err != nil || len(groups) != 1 || groups[0] != "all" {
+		t.Fatalf("unexpected all groups: %v %v", groups, err)
+	}
+	if _, err := parsePredictorFeatureGroups("market,unknown"); err == nil {
+		t.Fatal("unknown feature group was accepted")
 	}
 }
 

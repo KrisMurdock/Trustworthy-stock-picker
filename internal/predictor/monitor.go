@@ -66,6 +66,8 @@ type Monitor struct {
 	dailyCache       map[string][]market.Bar
 	dailyCacheAt     string
 	dailyCacheCodes  map[string]bool
+	contextDaily     []market.Bar
+	contextDailyAt   string
 	reportDate       string
 	reportCache      selection.Report
 	lastTrainAttempt time.Time
@@ -1229,19 +1231,74 @@ func (m *Monitor) loadData(ctx context.Context, stocks []config.Stock, now time.
 	if len(codes) == 0 {
 		return Data{}, errors.New("predictor requires at least one stock")
 	}
+	reference := make([]string, 0, len(m.Config.Stocks))
+	seen := map[string]bool{}
+	for _, stock := range m.Config.Stocks {
+		if stock.Code == "" || seen[stock.Code] {
+			continue
+		}
+		seen[stock.Code] = true
+		reference = append(reference, stock.Code)
+	}
+	allCodes := append([]string(nil), codes...)
+	for _, code := range reference {
+		if !seen[code] {
+			seen[code] = true
+			allCodes = append(allCodes, code)
+		}
+	}
 	days := 3
 	if training {
 		days = 400
 	}
-	minutes, err := m.reader.LoadMinuteTrainingBars(ctx, codes, now.AddDate(0, 0, -days), now)
+	minutes, err := m.reader.LoadMinuteTrainingBars(ctx, allCodes, now.AddDate(0, 0, -days), now)
 	if err != nil {
 		return Data{}, err
 	}
-	daily, err := m.loadDaily(ctx, codes, calendar.Date(now), training)
+	daily, err := m.loadDaily(ctx, allCodes, calendar.Date(now), training)
 	if err != nil {
 		return Data{}, err
 	}
-	return Data{Stocks: stocks, Minutes: minutes, Daily: daily}, nil
+	marketDaily, err := m.loadMarketDaily(ctx, calendar.Date(now))
+	if err != nil {
+		return Data{}, err
+	}
+	return Data{Stocks: stocks, Reference: reference, Minutes: minutes, Daily: daily, MarketDaily: marketDaily}, nil
+}
+
+func (m *Monitor) loadMarketDaily(ctx context.Context, through string) ([]market.Bar, error) {
+	m.mu.Lock()
+	if m.contextDailyAt == through {
+		cached := append([]market.Bar(nil), m.contextDaily...)
+		m.mu.Unlock()
+		return cached, nil
+	}
+	m.mu.Unlock()
+	db, err := storage.OpenContextView(m.Config.DataDir, m.Config.RequireCIFS)
+	if errors.Is(err, fs.ErrNotExist) {
+		m.mu.Lock()
+		m.contextDaily = nil
+		m.contextDailyAt = through
+		m.mu.Unlock()
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	bars, err := db.LoadRecentBarsForCodes(ctx, through, []string{DefaultMarketIndexCode}, 600)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]market.Bar, 0, len(bars[DefaultMarketIndexCode]))
+	for _, bar := range bars[DefaultMarketIndexCode] {
+		out = append(out, market.Bar{Date: bar.Date, Open: bar.Open, High: bar.High, Low: bar.Low, Close: bar.Close, Volume: bar.Volume})
+	}
+	m.mu.Lock()
+	m.contextDaily = append([]market.Bar(nil), out...)
+	m.contextDailyAt = through
+	m.mu.Unlock()
+	return out, nil
 }
 
 func (m *Monitor) loadDaily(ctx context.Context, codes []string, through string, force bool) (map[string][]market.Bar, error) {

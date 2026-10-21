@@ -12,7 +12,7 @@ import (
 const (
 	ArtifactSchemaVersion   = 2
 	PredictionSchemaVersion = 3
-	FeatureVersion          = 1
+	FeatureVersion          = 2
 	StatusSchemaVersion     = 1
 )
 

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	_ "modernc.org/sqlite"
 )
 
@@ -347,6 +348,54 @@ func (c *ContextDB) LoadRecentBars(ctx context.Context, asOf string, limit int) 
 				ROW_NUMBER() OVER (PARTITION BY code ORDER BY trade_date DESC) AS row_number
 			FROM context_bar WHERE trade_date <= ?
 		) WHERE row_number <= ? ORDER BY code,trade_date`, asOf, limit)
+	if err != nil {
+		return nil, errors.New("cannot read context bars")
+	}
+	defer rows.Close()
+	out := map[string][]ContextBar{}
+	for rows.Next() {
+		var bar ContextBar
+		if err := rows.Scan(&bar.Code, &bar.Date, &bar.Open, &bar.Close, &bar.High, &bar.Low, &bar.Volume, &bar.Amount); err != nil {
+			return nil, errors.New("cannot read context bar")
+		}
+		out[bar.Code] = append(out[bar.Code], bar)
+	}
+	return out, rows.Err()
+}
+
+// LoadRecentBarsForCodes returns the most recent bars at or before asOf for a
+// small set of instruments. Predictor context only needs a market index, so it
+// must not scan every board stored in the database on each inference cycle.
+func (c *ContextDB) LoadRecentBarsForCodes(ctx context.Context, asOf string, codes []string, limit int) (map[string][]ContextBar, error) {
+	if c == nil || c.db == nil {
+		return nil, fs.ErrNotExist
+	}
+	if limit < 1 || limit > market.MaxHistoryBars {
+		return nil, errors.New("invalid context bar limit")
+	}
+	seen := make(map[string]bool, len(codes))
+	unique := make([]string, 0, len(codes))
+	for _, code := range codes {
+		if code == "" || seen[code] {
+			continue
+		}
+		seen[code] = true
+		unique = append(unique, code)
+	}
+	if len(unique) == 0 {
+		return map[string][]ContextBar{}, nil
+	}
+	args := make([]any, 0, len(unique)+2)
+	for _, code := range unique {
+		args = append(args, code)
+	}
+	args = append(args, asOf, limit)
+	rows, err := c.db.QueryContext(ctx, `
+		SELECT code,trade_date,open,close,high,low,volume_raw,amount FROM (
+			SELECT code,trade_date,open,close,high,low,volume_raw,amount,
+				ROW_NUMBER() OVER (PARTITION BY code ORDER BY trade_date DESC) AS row_number
+			FROM context_bar WHERE code IN (`+placeholders(len(unique))+`) AND trade_date <= ?
+		) WHERE row_number <= ? ORDER BY code,trade_date`, args...)
 	if err != nil {
 		return nil, errors.New("cannot read context bars")
 	}
