@@ -163,8 +163,11 @@ func (c *Client) Fetch(ctx context.Context, stock config.Stock, start, end, adju
 	// A preceding session proves coverage when start falls on a market holiday.
 	// Retain that one bar in the stored history instead of guessing holidays or
 	// interpreting the provider's truncated history as a stock's listing date.
-	probeStart := first.AddDate(0, 0, -31).Format("2006-01-02")
-	history, err := c.FetchWindow(ctx, stock, probeStart, end, adjust, 640)
+	probeStart := first.AddDate(0, 0, -31)
+	if listed, err := time.Parse("2006-01-02", stock.ListedFrom); err == nil && !listed.After(first) && listed.After(probeStart) {
+		probeStart = listed
+	}
+	history, err := c.FetchWindow(ctx, stock, probeStart.Format("2006-01-02"), end, adjust, 640)
 	if err != nil {
 		return History{}, err
 	}
@@ -177,7 +180,7 @@ func (c *Client) Fetch(ctx context.Context, stock config.Stock, start, end, adju
 		case <-timer.C:
 		}
 		boundary := history.Bars[0]
-		page, err := c.FetchWindow(ctx, stock, probeStart, boundary.Date, adjust, 640)
+		page, err := c.FetchWindow(ctx, stock, probeStart.Format("2006-01-02"), boundary.Date, adjust, 640)
 		if err != nil {
 			return History{}, fmt.Errorf("historical page ending %s: %w", boundary.Date, err)
 		}

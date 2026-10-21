@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -161,5 +162,29 @@ func TestFetchWindowUsesRequestedIncrementalCount(t *testing.T) {
 	_, err := c.FetchWindow(context.Background(), config.Stock{Code: "sz000001"}, "2026-10-01", "2026-10-13", "none", 5)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFetchStopsAtKnownListingDateWhenProbeWindowStartsEarlier(t *testing.T) {
+	const code = "sh601975"
+	const listed = "2019-01-08"
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		parts := strings.Split(r.URL.Query().Get("param"), ",")
+		if len(parts) != 6 || parts[2] != listed {
+			t.Fatalf("probe start was not clamped to listing date: %q", r.URL.Query().Get("param"))
+		}
+		body := fmt.Sprintf(`{"code":0,"data":{%q:{"qfqday":[[%q,"10","10","11","9","100"]]}}}`, code, listed)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c := NewClient(time.Second)
+	c.Endpoint = srv.URL
+	defer c.Close()
+	h, err := c.Fetch(context.Background(), config.Stock{Code: code, ListedFrom: listed}, listed, "2026-10-13", "qfq")
+	if err != nil || len(h.Bars) != 1 || h.Bars[0].Date != listed || calls.Load() != 1 {
+		t.Fatalf("listing boundary was treated as truncation: %+v %v", h.Bars, err)
 	}
 }
