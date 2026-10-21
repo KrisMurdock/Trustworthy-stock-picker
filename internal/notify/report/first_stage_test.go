@@ -10,8 +10,8 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 )
 
-func TestFirstStageCardsPaginateAndCarryDisclaimer(t *testing.T) {
-	candidates := make([]firststage.Candidate, 52)
+func TestFirstStageCardsShowTop30InOneCardAndCarryDisclaimer(t *testing.T) {
+	candidates := make([]firststage.Candidate, 145)
 	for i := range candidates {
 		candidates[i] = firststage.Candidate{
 			Rank:       i + 1,
@@ -51,21 +51,22 @@ func TestFirstStageCardsPaginateAndCarryDisclaimer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cards.FirstStage) != 3 {
-		t.Fatalf("first-stage pages = %d, want 3", len(cards.FirstStage))
+	if len(cards.FirstStage) != 1 {
+		t.Fatalf("first-stage pages = %d, want 1", len(cards.FirstStage))
 	}
 	first := cards.FirstStage[0]
-	if !strings.Contains(first.Title, "52 只") || !strings.Contains(first.Title, "1/3") {
+	if !strings.Contains(first.Title, "30 只") || strings.Contains(first.Title, "1/1") {
 		t.Fatalf("unexpected first title: %s", first.Title)
 	}
 	if !strings.Contains(first.Sections[0].Lines[0], "不构成交易建议") || !strings.Contains(first.Sections[0].Lines[2], "0.5") {
 		t.Fatalf("missing disclaimer or formula: %+v", first.Sections[0].Lines)
 	}
-	if cards.FirstStage[1].Sections[0].Table == nil || len(cards.FirstStage[1].Sections[0].Table.Rows) != 25 {
-		t.Fatalf("second page rows = %+v", cards.FirstStage[1].Sections[0].Table)
+	table := first.Sections[0].Table
+	if table == nil || len(table.Rows) != 30 {
+		t.Fatalf("first-stage rows = %+v", table)
 	}
-	if len(cards.FirstStage[2].Sections[0].Table.Rows) != 2 {
-		t.Fatalf("last page rows = %d", len(cards.FirstStage[2].Sections[0].Table.Rows))
+	if table.Rows[0][0].Text != "1" || table.Rows[29][0].Text != "30" {
+		t.Fatalf("unexpected first-stage rank range: first=%s last=%s", table.Rows[0][0].Text, table.Rows[29][0].Text)
 	}
 	seen := map[string]bool{}
 	expires := time.Date(2026, 10, 22, 9, 30, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))

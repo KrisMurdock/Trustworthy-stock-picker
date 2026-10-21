@@ -16,7 +16,8 @@ import (
 const (
 	detailStocksPerPage = 8
 	mainTableRows       = 10
-	firstStagePerPage   = 25
+	firstStagePushLimit = 30
+	firstStagePerPage   = 30
 )
 
 var riskPriority = []string{
@@ -93,12 +94,13 @@ func firstStageCards(r selection.Report, expires time.Time) []notify.Message {
 	if len(monthDay) > 5 {
 		monthDay = monthDay[len(monthDay)-5:]
 	}
-	baseTitle := fmt.Sprintf("A股龙头池 · %s 初筛池 · %d 只", monthDay, len(report.Candidates))
-	pages := (len(report.Candidates) + firstStagePerPage - 1) / firstStagePerPage
+	shown := min(len(report.Candidates), firstStagePushLimit)
+	baseTitle := fmt.Sprintf("A股龙头池 · %s 初筛池 · %d 只", monthDay, shown)
+	pages := (shown + firstStagePerPage - 1) / firstStagePerPage
 	cards := make([]notify.Message, 0, pages)
 	for page := 0; page < pages; page++ {
 		start := page * firstStagePerPage
-		end := min(start+firstStagePerPage, len(report.Candidates))
+		end := min(start+firstStagePerPage, shown)
 		table := &notify.Table{
 			PageSize:          firstStagePerPage,
 			RowHeight:         "middle",

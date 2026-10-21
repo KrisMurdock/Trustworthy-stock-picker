@@ -12,7 +12,7 @@ import (
 )
 
 func TestFirstStageCardPagesStayBelowPayloadLimit(t *testing.T) {
-	candidates := make([]firststage.Candidate, 25)
+	candidates := make([]firststage.Candidate, 30)
 	for i := range candidates {
 		candidates[i] = firststage.Candidate{
 			Rank:       i + 1,
