@@ -144,7 +144,7 @@ func Defaults() Config {
 	c.Predictor = DefaultPredictor()
 	c.Web.Enabled = true
 	c.Web.Listen = "127.0.0.1:8080"
-	c.Daily.RunAt = "18:05"
+	c.Daily.RunAt = "15:00"
 	c.Daily.HistoryDays = 365
 	c.Daily.Adjust = "qfq"
 	c.Selection.MinScore = 70
@@ -438,8 +438,8 @@ func (c Config) Validate() error {
 		stocks[s.Code] = true
 	}
 	clock, err := time.Parse("15:04", c.Daily.RunAt)
-	if err != nil || clock.Hour() < 16 {
-		return errors.New("daily.run_at must be HH:MM at or after 16:00")
+	if err != nil || clock.Hour() < 15 {
+		return errors.New("daily.run_at must be HH:MM at or after 15:00")
 	}
 	if c.Daily.HistoryDays < 90 || c.Daily.HistoryDays > 7300 {
 		return errors.New("daily.history_days must be 90 to 7300 calendar days (effective window is capped at ten calendar years and the listing date)")

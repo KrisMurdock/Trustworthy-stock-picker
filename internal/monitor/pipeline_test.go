@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"testing"
 )
@@ -58,6 +59,32 @@ func TestInterruptedCollectionResumesSuccessfulStocks(t *testing.T) {
 	}
 	if source.calls-calls != 1 {
 		t.Fatalf("downloaded %d stocks after resume", source.calls-calls)
+	}
+}
+
+func TestStrategySkipsStockWithoutAlignedRawHistory(t *testing.T) {
+	m, source, _ := fixture(t)
+	listingDatabase(t, m)
+	m.Config.Stocks = append(m.Config.Stocks, config.Stock{Code: "sz000002", Name: "two", ListedFrom: "2026-07-15"})
+	m.Config.Strategy.Enabled = true
+	m.Config.Daily.Adjust = "qfq"
+	m.Config.FirstStage.Enabled = true
+	m.Config.Sync.MinCoveragePct = 50
+	m.Config.Sync.MinAnalyzablePct = 50
+	source.err = &market.Failure{Kind: "network"}
+	source.failCode = "sz000002"
+	source.failAdjust = "none"
+	report, err := m.Sync(context.Background(), "2026-10-13")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.FirstStage == nil || report.FirstStage.Eligible == 0 {
+		t.Fatalf("aligned stock was not analyzed: %+v", report.FirstStage)
+	}
+	for _, candidate := range report.FirstStage.Candidates {
+		if candidate.Code == "sz000002" {
+			t.Fatal("stock without raw execution history leaked into the algorithm")
+		}
 	}
 }
 

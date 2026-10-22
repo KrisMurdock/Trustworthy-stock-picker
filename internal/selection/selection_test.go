@@ -245,6 +245,74 @@ func TestBuildLoadsMultipleSecondStageModels(t *testing.T) {
 	}
 }
 
+func TestRecomputeSecondStageConsumesArtifactsWithoutChangingFrozenInput(t *testing.T) {
+	c, h := secondStageDailyFixture(t)
+	report, err := Build(c, []market.History{h}, h.AsOf, "2026-10-14", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.SecondStage == nil || !report.SecondStage.Degraded {
+		t.Fatalf("fixture should start degraded: %+v", report.SecondStage)
+	}
+	firstID := report.FirstStage.ModelID
+	previousID := report.ID
+	dir := filepath.Join(c.DataDir, "state", "secondstage", "jev")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := json.Marshal(secondstage.JEVDocument{SchemaVersion: 1, AsOf: h.AsOf, Scores: map[string]secondstage.JEVScore{"sz000001": {Adjacent15: 0.7, Full15Top12: 0.5}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, h.AsOf+".json"), doc, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := RecomputeSecondStage(report, c, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.SecondStage == nil || refreshed.SecondStage.Degraded || refreshed.SecondStage.Models[0].Status != secondstage.ModelStatusOK {
+		t.Fatalf("artifact was not consumed: %+v", refreshed.SecondStage)
+	}
+	if refreshed.FirstStage == nil || refreshed.FirstStage.ModelID != firstID || refreshed.InputID != report.InputID {
+		t.Fatal("reranking changed the frozen first-stage input")
+	}
+	if refreshed.ID == previousID {
+		t.Fatal("reranked report kept the degraded report id")
+	}
+	if _, err := RecomputeSecondStage(refreshed, c, time.Now().Add(2*time.Minute)); err != nil {
+		t.Fatalf("healthy rerank should be stable: %v", err)
+	}
+}
+
+func TestRecomputeSecondStageRejectsDegradingHealthyReport(t *testing.T) {
+	c, h := secondStageDailyFixture(t)
+	dir := filepath.Join(c.DataDir, "state", "secondstage", "jev")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := json.Marshal(secondstage.JEVDocument{SchemaVersion: 1, AsOf: h.AsOf, Scores: map[string]secondstage.JEVScore{"sz000001": {Adjacent15: 0.7}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, h.AsOf+".json"), doc, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	healthy, err := Build(c, []market.History{h}, h.AsOf, "2026-10-14", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if healthy.SecondStage == nil || healthy.SecondStage.Degraded {
+		t.Fatal("fixture did not build a healthy rerank")
+	}
+	if err := os.Remove(filepath.Join(dir, h.AsOf+".json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RecomputeSecondStage(healthy, c, time.Now()); err == nil {
+		t.Fatal("healthy report was replaced by a degraded recomputation")
+	}
+}
+
 func TestReportIdentityIgnoresNestedGenerationTimes(t *testing.T) {
 	report := Report{
 		Version:     1,

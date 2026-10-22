@@ -28,7 +28,7 @@ Dockerfile               唯一多阶段镜像构建定义
 Makefile                 开发、验证、构建与打包入口
 docker/                  Compose 部署及宿主机路径示例
 deploy/                  systemd 服务模板
-scripts/                 构建、打包、开发启动辅助脚本
+scripts/                 构建、打包、开发启动辅助与收盘后离线 artifact 生成脚本
 tests/                   CLI/容器冒烟与验收说明
 docs/                    工程、配置与运维说明
 .github/                 GitHub Actions、PR 模板
@@ -38,7 +38,7 @@ logs/                    有限滚动日志（忽略）
 data/                    本地数据目录或 Windows 共享盘链接/挂载（忽略）
 ```
 
-scripts/ 只组织构建或 exec Go 二进制，生产容器和 systemd 直接运行 Go；没有恢复旧 Python 启动链路。业务配置和凭证通过环境变量加载；观测股池保持独立 `leaders.yaml`，避免 `.env` 随股池规模膨胀。
+`scripts/` 中的 Go 启动、构建和打包脚本仍只组织原生二进制；`scripts/secondstage/` 是独立的收盘后离线 artifact 生成链，由 systemd timer 调用，生产 Go 进程不会 exec Python。业务配置和凭证通过环境变量加载；观测股池保持独立 `leaders.yaml`，避免 `.env` 随股池规模膨胀。
 
 support-agent 的 LLM 提示词、内部镜像仓库与 GitLab 私有流水线依赖不适用于本项目，因此不创建 db/、conf/prompts 或空占位目录。本项目已提供 Go 内嵌只读网页及 HTTP API，同一监听端口承载 `/healthz`、`/readyz` 和 `/api/status`，无需独立前端容器。SQLite 迁移由 `internal/storage` 的版本化代码管理，不创建空的 db/ 目录。
 

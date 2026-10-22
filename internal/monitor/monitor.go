@@ -54,11 +54,12 @@ type Monitor struct {
 	// MarketContextSync synchronizes index and sector-board snapshots together
 	// with the stock pool. A failure is logged but never blocks stock data or
 	// report publication; the context database records its own partial status.
-	MarketContextSync func(context.Context, string) (marketcontext.SyncResult, error)
-	Channels          []notify.Channel
-	Log               *logging.Logger
-	Calendar          *calendar.Calendar
-	Now               func() time.Time
+	MarketContextSync  func(context.Context, string) (marketcontext.SyncResult, error)
+	Channels           []notify.Channel
+	Log                *logging.Logger
+	Calendar           *calendar.Calendar
+	Now                func() time.Time
+	secondStagePending bool
 }
 
 func New(c config.Config, s *storage.Store, source Source, channels []notify.Channel, log *logging.Logger) *Monitor {
@@ -458,11 +459,16 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (report selection.Repor
 			item = m.recalibrateItem(item, targetStock, end, analysisStart, asof, evidence)
 		}
 		items = append(items, item)
-		if item.Adjusted != nil {
+		// The execution engine consumes adjusted and raw histories as one
+		// aligned snapshot. If either side is unavailable for a strategy run,
+		// keep the collected side archived but exclude the stock from the
+		// algorithm input so one partial stock cannot fail the whole report.
+		requireRaw := m.Config.Strategy.Enabled && m.Config.Daily.Adjust != "none"
+		if item.Adjusted != nil && (!requireRaw || item.Raw != nil) {
 			histories = append(histories, *item.Adjusted)
-		}
-		if item.Raw != nil {
-			raw = append(raw, *item.Raw)
+			if item.Raw != nil {
+				raw = append(raw, *item.Raw)
+			}
 		}
 		task.Completed = i + 1
 		task.UpdatedAt = m.Now()
@@ -1081,7 +1087,11 @@ func (m *Monitor) Cycle(ctx context.Context) error {
 	if err != nil {
 		return errors.Join(deliveryErr, err)
 	}
-	if _, err := m.enqueueReport(&state, report); err != nil {
+	report, deferSecondStage, err := m.prepareSecondStage(ctx, &state, report)
+	if err != nil {
+		return errors.Join(deliveryErr, err)
+	}
+	if _, err := m.enqueueReportDeferred(&state, report, deferSecondStage); err != nil {
 		return errors.Join(deliveryErr, err)
 	}
 	if _, reviewErr := m.enqueueFirstStageReview(ctx, &state, report.AsOf); reviewErr != nil {
@@ -1257,6 +1267,9 @@ func (m *Monitor) Run(ctx context.Context) error {
 			return ctx.Err()
 		}
 		delay := config.Duration(m.Config.PollInterval)
+		if m.secondStagePending && delay > time.Minute {
+			delay = time.Minute
+		}
 		if err != nil {
 			delay = max(delay, time.Minute)
 			m.Log.Warn("Monitor cycle failed", "startup_ready", startupReady, "retry_after", delay.String(), "error", err)

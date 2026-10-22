@@ -324,6 +324,31 @@ func attachSecondStage(report *Report, c config.Config, models []secondstage.Mod
 	report.SecondStage = &result
 }
 
+// RecomputeSecondStage refreshes only the reranker from the current offline
+// artifacts. The market data and first-stage candidate pool stay frozen.
+func RecomputeSecondStage(report Report, c config.Config, now time.Time) (Report, error) {
+	if report.FirstStage == nil {
+		return report, errors.New("first-stage report is unavailable")
+	}
+	before := report.SecondStage
+	attachSecondStage(&report, c, nil, report.AsOf, report.Target, now)
+	if report.SecondStage == nil {
+		return report, errors.New("second-stage report is unavailable")
+	}
+	if before != nil && report.SecondStage.Degraded && !before.Degraded {
+		return report, errors.New("second-stage recomputation degraded a healthy report")
+	}
+	identity := reportIdentity(report)
+	data, err := json.Marshal(identity)
+	if err != nil {
+		return report, err
+	}
+	sum := sha256.Sum256(data)
+	report.ID = hex.EncodeToString(sum[:12])
+	report.Revision = ""
+	return report, nil
+}
+
 func recommendationFilterReason(risks []string) string {
 	if hasRisk(risks, "chan_filtered") {
 		return "chan_filtered"

@@ -106,7 +106,7 @@ make run
 
 将 `YYYY-MM-DD` 替换为最近已完成的交易日。`check-config` 只校验配置、股池、凭证和日志设置，`check` 才检查数据库、交易日历和投递状态。首次部署或升级数据库 schema 后，必须先完成 `status-backfill`；未完成时 `sync` 和 `run` 会拒绝发布。
 
-`make run` 启动后会先绑定网页端口，再执行启动同步。网页默认地址为 `http://127.0.0.1:8080/`；常驻进程按内置的 `daily.run_at`（默认北京时间 18:05）处理后续交易日。
+`make run` 启动后会先绑定网页端口，再执行启动同步。网页默认地址为 `http://127.0.0.1:8080/`；常驻进程按内置的 `daily.run_at`（默认北京时间 15:00）在收盘后处理当日行情。初筛和主报告可先发布，四模型离线 artifact 由独立 systemd timer 生成，精排最晚在 `15:28` 消费；artifact 未齐或超时则按中性分降级发布，不阻塞主报告。
 
 ## 嵌入 Go 项目
 
@@ -215,7 +215,7 @@ func main() {
 3. 校验上市日期、交易日缺口、复权口径、分页边界和成交量单位；可隔离错误逐股记录，临时性错误阻止本轮发布。
 4. 整池遍历结束后事务化写入行情与同步状态；达到完整性覆盖率与当日可分析比例门槛后，才与报告同事务发布。
 5. 生成观察排名、历史证据和结构门控结果；通过全部门槛的候选才成为可执行推荐，其余保留为观察候选或过滤原因。
-6. 在正式排名之外计算 `first_stage` 高召回初筛：按“未来 3 个交易日最高价相对信号日收盘触及 +1%”的历史标签，将机会分与版本化 logistic 模型分等权融合；默认预算 145 只，只作为第二层精排的候选参考。
+6. 在正式排名之外计算 `first_stage` 高召回初筛：按“未来 3 个交易日最高价相对信号日收盘触及 +1%”的历史标签，将机会分与版本化 logistic 模型分按中位秩和 Rank-Gauss 融合；默认预算 95 只，只作为第二层精排的候选参考。
 7. 报告归档后供只读看板、复盘与按需 AI 归因使用；投递账本按数据日期和通道去重，超过 T+1 窗口不再发送。
 8. 指数与板块并行写入 `context.db`；失败不影响股票报告，也不参与选股排名。
 9. 可选的 5 分钟预测优先读取当日 `Selected`，严格推荐为空时回退到同一报告的 Top N 观察排名；默认 15:30 训练下一交易日模型，训练与预测使用同一标的集合。预测结果实时推送；上一根实际值确认后，再单独推送一张偏差对比卡。没有可用结果、模型缺失或模型过期时不预测、不推送，推送开关只控制飞书投递，不停止预测落库。
@@ -226,7 +226,7 @@ func main() {
 - 每只有效股票保存至少最近十个自然年的不复权日线；上市不足十年的股票从上市日开始，不虚构上市前数据。
 - 分析窗口由 `daily.history_days` 控制，默认 365 天，允许 90–7300 天；原始窗口取十年与分析窗口中更长者。
 - 推荐要求十年完整性覆盖率默认不低于 95%，当日可分析覆盖率默认不低于 90%。
-- 交易日 15:00 前使用上一已收盘交易日；目标买入日 09:30 后不再推送旧推荐。
+- 交易日 15:00 收盘后同步当日行情；初筛和主报告完成后先投递，精排读取离线 artifact，最晚 15:28 发布，目标在 15:30 前完成整条收盘后链路。目标买入日 09:30 后不再推送旧推荐。
 - 内置交易日历当前覆盖 2026 年，必须在到期前按交易所新年度通知升级二进制。
 - 默认使用本地 `data/` 目录；使用 Windows/CIFS 共享盘时设置 `STOCK_WATCHER_REQUIRE_CIFS=true`。挂载盘不可用时停止本轮写入，不回退到服务器本地目录。
 
@@ -246,9 +246,9 @@ func main() {
 
 未通过推荐门槛时仍会生成观察排名，并明确展示缺失样本、未决交易、收益不足或风险超限的原因。统计门槛不是对未来收益的承诺，详见[推荐门槛诊断](docs/strategy-diagnostics.md)。
 
-日报还包含独立的 `first_stage` 高召回初筛：以“未来 3 个交易日最高价相对信号日收盘触及 +1%”为历史标签，将机会分日内排名与版本化 logistic 模型分等权融合，默认预算 145 只，推送开启时只展示综合分前 30 名并合并为一张飞书卡片，但第二层精排使用全部候选。3 个交易日窗口结束后，初筛机器人会追加窗口回看卡，分别展示全部候选召回率、Top 30 覆盖率与 Top 30 精确率，并按信号日与窗口结束日稳定去重。回看会从初筛报告还原当时股池，避免后续股池调整污染召回率。初筛只生成第二层精排的候选参考，不改变 `Selected`、`Ranking`、结构门控或风险门槛；初筛失败只写入 `first_stage.status=failed`，不阻断主报告。
+日报还包含独立的 `first_stage` 高召回初筛：以“未来 3 个交易日最高价相对信号日收盘触及 +1%”为历史标签，将机会分日内中位秩与版本化 logistic 模型分按 Rank-Gauss 融合，默认预算 95 只，推送开启时只展示综合分前 30 名并合并为一张飞书卡片，但第二层精排使用全部候选。3 个交易日窗口结束后，初筛机器人会追加窗口回看卡，分别展示全部候选召回率、Top 30 覆盖率与 Top 30 精确率，并按信号日与窗口结束日稳定去重。回看会从初筛报告还原当时股池，避免后续股池调整污染召回率。初筛只生成第二层精排的候选参考，不改变 `Selected`、`Ranking`、结构门控或风险门槛；初筛失败只写入 `first_stage.status=failed`，不阻断主报告。
 
-第二层精排默认使用 `risk_all20_local035_eta1`：第一层 20%，JEV、Laya official、Laya multilingual、Chinese Decision 各 20%；模型组内百分位按 5 人组计算，经 `0.35` 局部先验校准后融合，再扣除 ATR14 百分位风险惩罚。其他同 schema 模型可通过模型权重表加入；参数字段和环境变量见 [算法接入契约](docs/algorithm-interface.md) 与 [环境变量](docs/environment-variables.md)。模型分数只做排序研究，不改变正式推荐、风险门槛或交易建议。
+第二层精排默认使用 `risk_all20_local035_eta1`：第一层 20%，JEV、Laya official、Laya multilingual、Chinese Decision 各 20%；模型组内百分位按 5 人组计算，经 `0.35` 局部先验校准后融合，再扣除 ATR14 百分位风险惩罚。收盘后由 `scripts/secondstage/generate_daily.py` 并行生成四路 artifact；Go 进程只读取 artifact，不调用 Python。其他同 schema 模型可通过模型权重表加入；参数字段和环境变量见 [算法接入契约](docs/algorithm-interface.md) 与 [环境变量](docs/environment-variables.md)。模型分数只做排序研究，不改变正式推荐、风险门槛或交易建议。
 精排完成后，若 `STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED=true`，系统会把同一份冻结精排结果转写为可直接复制的公众号纯文本稿，包含标题、正文、Top N 名单、逐只技术特征、行业分布、数据口径、降级状态和风险提示。稿件通过命名为 `second_stage` 的飞书路由投递，与初筛卡、正式日报卡使用各自独立的重试账本。启用 `STOCK_WATCHER_WECHAT_ENABLED=true` 时，同一份结构化文章还会通过 `wechat-draft` 写入公众号草稿箱；该通道只创建草稿，不会发布文章或群发粉丝。精排名单仍只是研究观察，不是正式推荐或交易建议。
 
 盘前 `08:45` 预测保存后，系统还会生成一张独立“盘前执行确认卡”，只取同一信号日的精排 Top N，并关联已生成的盘前高低价预测、参考计划和正式推荐状态，标记为“可执行／观察／放弃”。卡片只投递到 `premarket_execution` 路由，账本为 `<data_dir>/state/premarket-execution-delivery.json`；不会推迟精排公众号稿，也不阻塞 `predictor_dayrange` 或正式日报。卡片在 `09:30` 前有效，重复预测或重启不会重复发送；结构影子期、精排降级和预测缺失都会明确降级说明，最终仍需在 `09:25` 后用实际开盘价复核。
@@ -319,9 +319,10 @@ Quick Tunnel 的地址在进程重启、机器休眠或隧道重连后可能变�
 | `STOCK_WATCHER_FIRST_STAGE_ENABLED` | 是否计算高召回第一层初筛；要求 `daily_adjust=qfq` |
 | `STOCK_WATCHER_FIRST_STAGE_PUSH_ENABLED` | 是否推送初筛池飞书卡；关闭后仍计算 |
 | `STOCK_WATCHER_FIRST_STAGE_BUDGET` | 初筛候选上限，默认 `145` |
-| `STOCK_WATCHER_SECOND_STAGE_ENABLED` | 是否运行 JEV + 树模型 Top10 精排 |
+| `STOCK_WATCHER_SECOND_STAGE_ENABLED` | 是否运行离线多模型 artifact Top10 精排 |
 | `STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED` | 是否生成公众号纯文本稿并投递到 `second_stage` 路由 |
 | `STOCK_WATCHER_SECOND_STAGE_TOP_N` | 精排输出数量，默认 `10` |
+| `STOCK_WATCHER_SECOND_STAGE_PUBLISH_BY` | 精排等待 artifact 的最晚时刻，默认 `15:28`；到点未齐则降级发布 |
 | `STOCK_WATCHER_INTRADAY_ENABLED` | 是否启用 5 分钟采集 |
 | `STOCK_WATCHER_PREDICTOR_ENABLED` | 是否启用 5 分钟实验预测 |
 | `STOCK_WATCHER_PREDICTOR_PUSH_ENABLED` | 是否推送聚合预测卡；关闭后仍保存预测 |

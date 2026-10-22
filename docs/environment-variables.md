@@ -23,7 +23,7 @@
 | STOCK_WATCHER_WEB_ADDR | 127.0.0.1:8080 | 网页监听地址；容器内由 Compose 覆盖为 0.0.0.0:8080 |
 | STOCK_WATCHER_WEB_PUBLIC_READ_ONLY | false | 公网匿名模式；只允许 GET/HEAD，并隐藏 AI 与预测写入口 |
 | STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED | false | 临时 Cloudflare 公网隧道启动开关；仅 `scripts/run.sh` 读取，默认不开放公网 |
-| STOCK_WATCHER_DAILY_RUN_AT | 18:05 | 每日调度时间，必须为 16:00 之后 |
+| STOCK_WATCHER_DAILY_RUN_AT | 15:00 | 每日收盘后调度时间，必须为 15:00 或之后 |
 | STOCK_WATCHER_DAILY_HISTORY_DAYS | 365 | 分析窗口，允许 90～7300 天 |
 | STOCK_WATCHER_DAILY_ADJUST | qfq | 分析复权口径：none/qfq/hfq |
 
@@ -68,6 +68,7 @@
 | STOCK_WATCHER_SECOND_STAGE_CALIBRATION | local | 模型百分位校准方式；`none` 不校准，`local` 用组内第一层先验做局部收缩 |
 | STOCK_WATCHER_SECOND_STAGE_CALIBRATION_PARAM | 0.35 | `local` 校准的收缩系数，范围 0～1 |
 | STOCK_WATCHER_SECOND_STAGE_RISK_ETA | 1 | ATR14 百分位风险惩罚系数，范围 0～1；0 表示不调整 |
+| STOCK_WATCHER_SECOND_STAGE_PUBLISH_BY | 15:28 | 精排等待离线 artifact 的最晚时刻；到点仍未齐则发送带 `degraded=true` 的中性降级结果 |
 | STOCK_WATCHER_STRUCTURE_GUARD_MODE | shadow | shadow 只观察；enforce 才进入可执行推荐 |
 | STOCK_WATCHER_SELECTION_ENABLED | true | 是否启用趋势筛选 |
 | STOCK_WATCHER_SELECTION_MIN_SCORE | 70 | 趋势最低分 |
@@ -82,7 +83,7 @@
 
 信号日后第 3 个交易日日报生成后，初筛机器人还会收到窗口回看卡：以 3 个交易日内最高价相对初筛日收盘价涨幅 `≥ +1%` 判定命中，展示全候选召回率、Top 30 覆盖率和 Top 30 精确率；飞书仍只展示 Top 30，第二层精排使用全部候选，期末收盘涨幅只作参考。回看按信号日和窗口结束日生成稳定事件 ID，同一日期组合只入队一次；窗口行情不完整时暂不推送并等待后续轮询。
 
-第二层精排读取 `<$STOCK_WATCHER_DATA_DIR>/state/secondstage/<model>/<as_of>.json` 的离线分数；`jev` 兼容回退到 `state/jev/<as_of>.json`。Go 进程先计算模型组内百分位与组内第一层先验，再按 `local = clamp(prior + calibration_param × (within - 0.5), 0, 1)` 校准，最后按 `blend_score = first_stage_weight × first_stage_percentile + Σ(model_weight × local) - risk_eta × atr14_percentile` 输出 Top10，结果写入日报的 `second_stage` 字段。默认 `risk_all20_local035_eta1` 为第一层 20% + JEV/Laya official/Laya multilingual/Chinese Decision 各 20%，`group_size=5`、`calibration_param=0.35`、`risk_eta=1`；所有模型共用同一 artifact schema。新增模型需要增加 artifact，并重分配第一层与全部模型权重使总和仍为 1。某个模型缺失或过期时按中性 0.5 百分位参与并标记 `second_stage.degraded=true`，不会阻断日报；树模型只保留辅助预测字段。
+第二层精排读取 `<$STOCK_WATCHER_DATA_DIR>/state/secondstage/<model>/<as_of>.json` 的离线分数；`jev` 兼容回退到 `state/jev/<as_of>.json`。Go 进程先计算模型组内百分位与组内第一层先验，再按 `local = clamp(prior + calibration_param × (within - 0.5), 0, 1)` 校准，最后按 `blend_score = first_stage_weight × first_stage_percentile + Σ(model_weight × local) - risk_eta × atr14_percentile` 输出 Top10，结果写入日报的 `second_stage` 字段。默认 `risk_all20_local035_eta1` 为第一层 20% + JEV/Laya official/Laya multilingual/Chinese Decision 各 20%，`group_size=5`、`calibration_param=0.35`、`risk_eta=1`；所有模型共用同一 artifact schema。新增模型需要增加 artifact，并重分配第一层与全部模型权重使总和仍为 1。收盘后 `scripts/secondstage/generate_daily.py` 从冻结初筛报告生成候选与特征，并行运行四路模型，只有全部成功才原子发布到通用 artifact 路径；Go 生产进程不调用 Python。某个模型缺失或过期时按中性 0.5 百分位参与并标记 `second_stage.degraded=true`，不会阻断日报；树模型只保留辅助预测字段。初筛和主报告先发布，精排等待至 `publish_by`（默认 `15:28`）；到点仍缺失则按中性分降级发布，避免阻塞 15:30 前的收盘后链路。
 
 `second_stage.push_enabled=true` 时，同一数据日期会生成一份可直接复制的公众号纯文本稿，包含公众号标题、正文、精排名单、逐只数据解读、行业分布、使用边界和风险提示。稿件以纯文本飞书消息投递到独立的 `second_stage` 路由，不会混入 `selection` 的日报卡片或 `first_stage` 的初筛卡。启用微信公众号草稿后，同一份结构化文章还会写入公众号草稿箱，但仍不会自动发布或群发。精排降级时标题和正文都会明确标注，未通过第一层或没有候选时不生成文章。文章与精排报告共享稳定事件 ID 和 T+1 09:30 过期时间，重启不会重复发送。
 

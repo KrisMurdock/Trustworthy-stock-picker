@@ -36,7 +36,7 @@ func TestBusinessFreshnessAndReadinessAreSeparate(t *testing.T) {
 	if err := db.CommitSnapshot(context.Background(), storage.SyncRun{ID: "friday", AsOf: h.AsOf, StartedAt: now, FinishedAt: now, CoveragePct: 100}, []storage.SyncItem{{Stock: c.Stocks[0], Adjusted: &h, Status: "ok"}}, report); err != nil {
 		t.Fatal(err)
 	}
-	for _, at := range []time.Time{now.Add(24 * time.Hour), now.Add(48 * time.Hour), time.Date(2026, 10, 19, 16, 0, 0, 0, market.Shanghai)} {
+	for _, at := range []time.Time{now.Add(24 * time.Hour), now.Add(48 * time.Hour), time.Date(2026, 10, 19, 14, 59, 0, 0, market.Shanghai)} {
 		got, err := Read(context.Background(), c, db, at)
 		if err != nil || got.Business != "healthy" || got.ExpectedDate != "2026-10-16" {
 			t.Fatalf("normal closure false alarm: %+v %v", got, err)

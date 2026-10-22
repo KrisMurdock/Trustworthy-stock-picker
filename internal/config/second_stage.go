@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // SecondStage configures the Top-N reranker over the first-stage candidate
@@ -21,6 +22,7 @@ type SecondStage struct {
 	Calibration      string        `yaml:"calibration" json:"calibration"`
 	CalibrationParam float64       `yaml:"calibration_param" json:"calibration_param"`
 	RiskEta          float64       `yaml:"risk_eta" json:"risk_eta"`
+	PublishBy        string        `yaml:"publish_by" json:"publish_by"`
 }
 
 type ModelWeight struct {
@@ -38,6 +40,7 @@ func DefaultSecondStage() SecondStage {
 		Models:           []ModelWeight{{Name: "jev", Weight: 0.5}},
 		GroupSize:        15,
 		Calibration:      "none",
+		PublishBy:        "15:28",
 	}
 }
 
@@ -68,6 +71,10 @@ func (s SecondStage) Validate() error {
 	}
 	if !finiteWeight(s.RiskEta) || s.RiskEta < 0 || s.RiskEta > 1 {
 		return errors.New("second_stage.risk_eta must be between 0 and 1")
+	}
+	clock, err := time.Parse("15:04", s.PublishBy)
+	if err != nil || clock.Hour() < 15 {
+		return errors.New("second_stage.publish_by must be HH:MM at or after 15:00")
 	}
 	if len(s.Models) == 0 {
 		return errors.New("second_stage.models must not be empty")

@@ -1,0 +1,15 @@
+[Unit]
+Description=Trigger post-close second-stage artifact generation
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 15:00:00
+OnCalendar=Mon..Fri *-*-* 15:05:00
+OnCalendar=Mon..Fri *-*-* 15:10:00
+OnCalendar=Mon..Fri *-*-* 15:15:00
+OnCalendar=Mon..Fri *-*-* 15:20:00
+Persistent=false
+AccuracySec=15s
+Unit=stock-watcher-secondstage.service
+
+[Install]
+WantedBy=timers.target

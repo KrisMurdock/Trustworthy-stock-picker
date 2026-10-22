@@ -39,7 +39,11 @@ func (m *Monitor) prepareStartup(ctx context.Context) error {
 	if latest != asof {
 		return errors.New("completed trading date changed during startup; synchronization will retry")
 	}
-	queued, err := m.enqueueReport(&state, report)
+	report, deferSecondStage, err := m.prepareSecondStage(ctx, &state, report)
+	if err != nil {
+		return err
+	}
+	queued, err := m.enqueueReportDeferred(&state, report, deferSecondStage)
 	if err != nil {
 		return err
 	}
@@ -56,6 +60,10 @@ func (m *Monitor) prepareStartup(ctx context.Context) error {
 // Keep the first durable message per data date and channel, including pending
 // or blocked attempts. Report contents (and therefore IDs) can change on refresh.
 func (m *Monitor) enqueueReport(state *State, report selection.Report) (int, error) {
+	return m.enqueueReportDeferred(state, report, false)
+}
+
+func (m *Monitor) enqueueReportDeferred(state *State, report selection.Report, deferSecondStage bool) (int, error) {
 	if first := report.FirstStage; first != nil {
 		if first.Status == firststage.StatusFailed {
 			m.Log.Warn("First-stage screening failed", "as_of", report.AsOf, "reason", first.Reason)
@@ -90,7 +98,7 @@ func (m *Monitor) enqueueReport(state *State, report selection.Report) (int, err
 		firstStageChannels = pendingChannelNames(state, report.AsOf, m.channelNamesForRoute(config.NotifyRouteFirstStage))
 	}
 	secondStageChannels := []string{}
-	if len(cards.SecondStage) > 0 {
+	if !deferSecondStage && len(cards.SecondStage) > 0 {
 		secondStageChannels = pendingChannelNames(state, report.AsOf, m.channelNamesForRoute(config.NotifyRouteSecondStage))
 	}
 	queued := len(selectionChannels) + len(firstStageChannels) + len(secondStageChannels)

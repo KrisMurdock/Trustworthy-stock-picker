@@ -47,9 +47,15 @@ blend_score = weighted - risk_eta × percentile(atr14_pct)
 
 通用 artifact 路径为 `<data_dir>/state/secondstage/<model>/<as_of>.json`，schema 为 `schema_version: 1`，必须精确匹配信号日并且包含候选的 `adjacent15` 与 `full15_top12` 分数。`jev` 在通用路径不存在时兼容读取 `<data_dir>/state/jev/<as_of>.json`。某个模型缺失、过期或路径为空时，该模型对所有候选贡献中性 0.5 百分位，`degraded=true`，并在候选 `reasons` 标记 `model_missing:<model>`（`jev` 继续使用兼容原因 `jev_missing`）；部分候选缺失时只对缺失行使用中性 0.5 百分位。artifact 存在但 JSON/schema/日期/数值非法时标记对应模型状态为 `invalid`，同样降级而不是静默通过。
 
+### 收盘后 artifact 生成与延迟发布
+
+交易日 15:00 收盘后，Go 进程按 `daily.run_at` 同步当日行情，完成第一层初筛和主报告后即可先投递；精排不阻塞主报告。`deploy/stock-watcher-secondstage.timer` 在 15:00、15:05、15:10、15:15、15:20 触发离线生成服务，`scripts/secondstage/generate_daily.py` 等待当日冻结初筛报告，生成 `candidates_stage2_top95.json`、`dataset.json`，再并行运行 JEV、Laya official、Laya multilingual 和 Chinese Decision。四路全部成功后才把四份 artifact 原子发布到通用路径；任一失败不会留下部分发布。
+
+Go 进程在 `second_stage.publish_by`（默认 15:28）之前每分钟重试读取 artifact：到齐后只基于冻结初筛重算精排、替换同日派生报告并投递精排稿，不重新下载行情或改变 `report_input`。到点时先做最后一次读取；仍未齐则释放中性降级结果并标记 `degraded=true`。Python 只存在于离线 artifact 生成链，生产 Go 二进制仍不启动 Python、子进程或外部推理服务。安装与排障命令见 [部署、升级与排障](deployment.md)。
+
 ### Laya 离线打分
 
-`scripts/secondstage/laya_scores.py` 提供与 JEV 相同的离线 listwise 协议：按候选分组、对三种选项排列取平均，并输出相同 schema 的 `adjacent15` / `full15_top12` artifact。它支持两个 checkpoint：`official` 对应 `convaiinnovations/laya`（ModernBERT-large，英文官方版），`multilingual` 对应 `convaiinnovations/laya-multilingual`（mmBERT 多语言版）。两者使用完全相同的 prompt、分组和评分代码，便于在同一历史样本上比较。
+`scripts/secondstage/laya_scores.py` 提供与 JEV 相同的离线 listwise 协议：按候选分组、对三种选项排列取平均，并输出相同 schema 的 `adjacent15` / `full15_top12` artifact。它支持两个 checkpoint：`official` 对应 `convaiinnovations/laya`（ModernBERT-large，英文官方版），`multilingual` 对应 `convaiinnovations/laya-multilingual`（mmBERT 多语言版）。两者使用完全相同的 prompt、分组和评分代码，便于在同一历史样本上比较。official checkpoint 自带 `max_len=512`，日报管线显式传入 `--max-len 4096 --head-max-len 256`，避免 5 人组状态被静默截断；截断响应会直接让该路生成失败，不会写入 artifact。
 
 脚本默认按相邻 15 只分组；研究评估可在四个模型上统一使用 `--group-size 5`，以控制上下文长度和 CPU 开销，此时 artifact 的 `model.group_size` 与 `prompt_version` 会记录实际口径，但字段名仍保持 `adjacent15` / `full15_top12` 以兼容 Go 读取契约。Laya 概率未经校准，跨组不可直接比较；消费方必须先做组内百分位或等价归一化，不能把概率解释为成功概率、收益承诺或投资建议。
 

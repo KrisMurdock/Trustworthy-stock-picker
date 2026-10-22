@@ -1,0 +1,20 @@
+[Unit]
+Description=Generate post-close second-stage model artifacts
+Wants=network-online.target mnt-windows_database.automount
+After=network-online.target mnt-windows_database.automount stock-watcher.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/data/codebase/toys_project/stock_watcher
+EnvironmentFile=-/etc/stock-watcher.env
+Environment=PYTHONPATH=/root/python_env/blend-eval
+Environment=HF_HUB_OFFLINE=1
+Environment=TRANSFORMERS_OFFLINE=1
+ExecStart=/usr/bin/python3.11 scripts/secondstage/generate_daily.py --deadline 15:28 --skip-existing
+TimeoutStartSec=2100
+Nice=10
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

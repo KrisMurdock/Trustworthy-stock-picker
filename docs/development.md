@@ -25,6 +25,16 @@ make run
 
 Go `run` 启动后立即同步最近已收盘交易日的完整股池，并并发同步核心 A 股指数与全量行业/概念板块，生成分析并投递尚未过期的 T+1 消息，之后进入定时轮询；已送达的同日同通道消息不重复发送。盘中不会推送已过买入时点的旧推荐。同步失败会自动重试，原始行情和报告保持在数据目录。`once` 仍仅执行一次受内置 `daily.run_at` 限制的定时流程；手动 `sync` 和 `once` 触发同步时也使用同一套股票与市场环境同步路径。
 
+默认 `daily.run_at=15:00`。收盘后 Go 进程先完成行情同步、第一层初筛和主报告，精排稿可以延后到 `second_stage.publish_by=15:28`。四模型 artifact 由 `deploy/stock-watcher-secondstage.timer` 调用 `scripts/secondstage/generate_daily.py` 离线生成；开发验证可用独立目录运行：
+
+```bash
+PYTHONPATH=/root/python_env/blend-eval python3.11 scripts/secondstage/generate_daily.py \
+  --as-of 2026-10-21 --deadline '' \
+  --features-root /tmp/secondstage-smoke --state-root /tmp/secondstage-smoke/state
+```
+
+该脚本不属于生产 Go 进程；它只读取冻结报告并把四路 artifact 原子写入 `state/secondstage/<model>/<as_of>.json`。网络不可用时先确认本地模型目录和 `HF_HUB_OFFLINE=1`，不要在生产同步中调用在线 Hugging Face。
+
 没有匹配服务时直接 exec Go；其他仓库或不同 `CONFIG` 不会触发服务停止，仍由数据目录写锁判断是否冲突。每次 systemd 查询限时 3 秒，停止服务限时 30 秒。查询不可用时继续原生启动，由 CLI 返回真实结果。容器和 systemd 均直接启动 Go。`make -n run` 只预演命令，不启动或停止进程。
 
 前台进程通过 Ctrl+C 退出，之后可执行 `systemctl start stock-watcher.service` 恢复后台运行；SELinux 环境先按部署文档恢复二进制标签。前台使用当前 shell 和开发 `.env`，后台使用服务 EnvironmentFile，凭证须按对应方式配置。`check-config` 只校验配置，不代表数据目录或外部服务健康；完整健康检查仍使用 `check`。不要删除 `.stock-watcher.lock` 文件绕过正在运行的实例。
@@ -39,7 +49,7 @@ sha256sum -c SHA256SUMS
 ./bin/stock-watcher version
 ```
 
-发布目录含二进制、环境变量示例、已确认/待确认股池、systemd 模板、README 与 docs、`VERSION`、`COMMIT`、`SHA256SUMS`。这是原生运行包；Docker/CI/开发脚本从源码仓库使用。arm64 可以交叉构建，但需在对应机器验收运行。
+发布目录含二进制、环境变量示例、已确认/待确认股池、收盘后精排脚本、systemd 模板、README 与 docs、`VERSION`、`COMMIT`、`SHA256SUMS`。这是原生运行包；Docker/CI/开发脚本从源码仓库使用。arm64 可以交叉构建，但需在对应机器验收运行。
 
 默认 VERSION 为完整 Git HEAD，镜像 OCI revision 与 `stock-watcher version` 同值。正式发布应在干净提交上构建；本地未提交修改不会自动改变版本字符串。覆盖 VERSION 仅用于开发标记。发布包按白名单复制文件，既不包含私有配置和凭证，也不包含行情和日志。
 

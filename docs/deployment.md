@@ -17,13 +17,19 @@
 ./bin/stock-watcher version
 ./bin/stock-watcher check
 sudo install -m 644 deploy/stock-watcher.service /etc/systemd/system/stock-watcher.service
+sudo install -m 644 deploy/stock-watcher-secondstage.service /etc/systemd/system/stock-watcher-secondstage.service
+sudo install -m 644 deploy/stock-watcher-secondstage.timer /etc/systemd/system/stock-watcher-secondstage.timer
 sudo systemctl daemon-reload
 sudo systemctl enable --now stock-watcher.service
+sudo systemctl enable --now stock-watcher-secondstage.timer
 sudo systemctl status stock-watcher.service
+sudo systemctl status stock-watcher-secondstage.timer
 journalctl -u stock-watcher.service -n 50 --no-pager
 ```
 
-模板默认目录 `/root/data/codebase/toys_project/stock_watcher`，读取 `/etc/stock-watcher.env`，等待网络与已有 `mnt-windows_database.automount`。SELinux Enforcing 环境需配置适当的程序路径策略；本服务器原生路径已有 `bin_t` 策略，替换二进制后运行 `sudo restorecon -v /root/data/codebase/toys_project/stock_watcher/bin/stock-watcher` 再重启。
+模板默认目录 `/root/data/codebase/toys_project/stock_watcher`，读取 `/etc/stock-watcher.env`，等待网络与已有 `mnt-windows_database.automount`。主服务在 15:00 收盘后同步行情；精排服务由 timer 在 15:00、15:05、15:10、15:15、15:20 触发，等待当日冻结初筛报告并生成四模型 artifact。到 `15:28` 仍未齐时 Go 进程会按中性分降级发布，不阻塞主报告。SELinux Enforcing 环境需配置适当的程序路径策略；本服务器原生路径已有 `bin_t` 策略，替换二进制后运行 `sudo restorecon -v /root/data/codebase/toys_project/stock_watcher/bin/stock-watcher` 再重启。
+
+精排线上验收至少检查：`systemctl list-timers stock-watcher-secondstage.timer`、当日 `state/secondstage/<model>/<as_of>.json` 四份文件均存在、`/api/reports?as_of=<date>` 中 `second_stage.degraded=false`、精排稿只在初筛/主报告之后发送。若 `journalctl -u stock-watcher-secondstage.service` 显示模型目录、Python 依赖或 CIFS 挂载错误，先修复离线生成链；不要把缺失 artifact 误判为 Go 精排算法失败。
 
 原生发布包没有开发启动脚本，服务直接运行 Go。升级先停止服务，再校验新包、替换二进制和公开材料，保留环境文件、`leaders.yaml` 股池修改和数据，恢复文件标签，执行 check 后启动。回滚使用保存的旧制品及兼容环境；如果另一次功能升级改变持久数据版本，须先检查其兼容说明，不能直接降级覆盖账本。
 

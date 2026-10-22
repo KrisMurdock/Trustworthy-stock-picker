@@ -14,7 +14,9 @@ trap 'rm -rf -- "$PACKAGE_STAGE"' EXIT
 mkdir -p "$PACKAGE_STAGE/bin" "$PACKAGE_STAGE/deploy" "$PACKAGE_STAGE/docs/assets"
 CGO_ENABLED=0 GOOS=linux GOARCH="$BUILD_GOARCH" "${GO:-go}" build -trimpath -ldflags "-s -w -X main.version=$BUILD_VERSION" -o "$PACKAGE_STAGE/bin/stock-watcher" ./cmd/stock-watcher
 cp leaders.yaml leaders.pending.yaml .env.example README.md "$PACKAGE_STAGE/"
-cp deploy/stock-watcher.service "$PACKAGE_STAGE/deploy/"
+cp deploy/stock-watcher.service deploy/stock-watcher-secondstage.service deploy/stock-watcher-secondstage.timer "$PACKAGE_STAGE/deploy/"
+mkdir -p "$PACKAGE_STAGE/scripts/secondstage"
+cp scripts/secondstage/generate_daily.py scripts/secondstage/jev_scores.py scripts/secondstage/laya_scores.py scripts/secondstage/chinese_decision_scores.py "$PACKAGE_STAGE/scripts/secondstage/"
 cp docs/*.md "$PACKAGE_STAGE/docs/"
 cp docs/assets/*.svg "$PACKAGE_STAGE/docs/assets/"
 printf '%s\n' "$BUILD_VERSION" > "$PACKAGE_STAGE/VERSION"

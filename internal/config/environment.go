@@ -12,6 +12,7 @@ func applyEnvironment(c *Config) error {
 	for name, target := range map[string]*string{
 		"STOCK_WATCHER_SECOND_STAGE_BLEND_ID":            &c.SecondStage.BlendID,
 		"STOCK_WATCHER_SECOND_STAGE_CALIBRATION":         &c.SecondStage.Calibration,
+		"STOCK_WATCHER_SECOND_STAGE_PUBLISH_BY":          &c.SecondStage.PublishBy,
 		"STOCK_WATCHER_DATA_DIR":                         &c.DataDir,
 		"STOCK_WATCHER_WEB_ADDR":                         &c.Web.Listen,
 		"STOCK_WATCHER_POOL_FILE":                        &c.PoolFile,
