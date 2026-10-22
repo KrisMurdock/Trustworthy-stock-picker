@@ -121,6 +121,20 @@ func TestArticlePriceAnnotationsUseOutwardCentRoundingAndShowMissingFallback(t *
 	}
 }
 
+func TestArticleWaveDistinguishesMissingFieldFromInsufficientData(t *testing.T) {
+	missing := strings.Join(articleWaveLines(nil), "\n")
+	if !strings.Contains(missing, "本次报告未保存波浪字段") || strings.Contains(missing, "数据不足") {
+		t.Fatalf("missing wave field was described as insufficient data: %s", missing)
+	}
+	unknown := strings.Join(articleWaveLines(&strategy.Candidate{Wave: &strategy.WaveEvidence{Stage: "unknown"}}), "\n")
+	if !strings.Contains(unknown, "数据不足") {
+		t.Fatalf("unknown wave stage was not described as insufficient data: %s", unknown)
+	}
+	if got := articleBriefWave(nil); !strings.Contains(got, "需重新生成") {
+		t.Fatalf("brief missing wave = %q", got)
+	}
+}
+
 func TestSecondStageArticleRequiresExplicitPush(t *testing.T) {
 	r := selection.Report{
 		Version: 1, ID: "report-id", AsOf: "2026-10-21", Target: "2026-10-22",

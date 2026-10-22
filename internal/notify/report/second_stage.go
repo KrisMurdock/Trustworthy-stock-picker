@@ -353,7 +353,10 @@ func articleZoneText(zone *strategy.ChanZoneEvidence) string {
 }
 
 func articleWaveLines(candidate *strategy.Candidate) []string {
-	if candidate == nil || candidate.Wave == nil || candidate.Wave.Stage == "unknown" {
+	if candidate == nil || candidate.Wave == nil {
+		return []string{"**阶段**：本次报告未保存波浪字段", "**边界**：旧报告或未重算的报告不会用临时数据补造；重新生成报告后展示完成笔与回撤结构"}
+	}
+	if candidate.Wave.Stage == "unknown" {
 		return []string{"**阶段**：数据不足，暂不做波浪式确认", "**边界**：只有完成笔和有效区间足够时才描述摆动结构，不用未知证据补造浪级"}
 	}
 	wave := candidate.Wave
@@ -392,7 +395,10 @@ func articleWaveLines(candidate *strategy.Candidate) []string {
 }
 
 func articleBriefWave(candidate *strategy.Candidate) string {
-	if candidate == nil || candidate.Wave == nil || candidate.Wave.Stage == "unknown" {
+	if candidate == nil || candidate.Wave == nil {
+		return "本次报告未保存，需重新生成"
+	}
+	if candidate.Wave.Stage == "unknown" {
 		return "数据不足，暂不确认"
 	}
 	wave := candidate.Wave
