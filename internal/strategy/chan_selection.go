@@ -83,6 +83,9 @@ func applyStructureGuard(result *Result, c config.Config, histories, raw []marke
 			features := base.Features
 			features.Relative5 = features.Return5 - mean
 			reranked := rank(base.Code, base.Name, features, result.Research.Rules, c.Strategy)
+			reranked.Close = base.Close
+			reranked.DayHigh = base.DayHigh
+			reranked.DayLow = base.DayLow
 			reranked.Plan = base.Plan
 			reranked.Chan = base.Chan
 			reranked.StructureGuard = base.StructureGuard

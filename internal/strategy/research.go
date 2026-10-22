@@ -137,6 +137,9 @@ type Candidate struct {
 	Code                      string                  `json:"code"`
 	Name                      string                  `json:"name"`
 	Features                  Features                `json:"features"`
+	Close                     float64                 `json:"close,omitempty"`
+	DayHigh                   float64                 `json:"day_high,omitempty"`
+	DayLow                    float64                 `json:"day_low,omitempty"`
 	Score                     float64                 `json:"opportunity_score"`
 	ScoreBreakdown            *ScoreBreakdown         `json:"score_breakdown,omitempty"`
 	Rank                      int                     `json:"rank"`
@@ -830,7 +833,14 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 		candidate := rank(x.Code, x.Name, x.Features, stats, s)
 		for _, d := range data {
 			if d.Raw.Code == x.Code {
-				p, err := NewPlan(s, x.Code, d.Raw.Bars[len(d.Raw.Bars)-1].Close*(1+s.SlippageRate))
+				if len(d.Raw.Bars) == 0 {
+					break
+				}
+				signal := d.Raw.Bars[len(d.Raw.Bars)-1]
+				candidate.Close = signal.Close
+				candidate.DayHigh = signal.High
+				candidate.DayLow = signal.Low
+				p, err := NewPlan(s, x.Code, signal.Close*(1+s.SlippageRate))
 				if err != nil {
 					candidate.Recommended = false
 					candidate.Risks = append(candidate.Risks, "cash_insufficient")

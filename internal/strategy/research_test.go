@@ -43,6 +43,10 @@ func TestPurgingFrozenHoldoutAndNoFutureFeatureInput(t *testing.T) {
 	if len(x.Ranking) != 1 || x.Ranking[0].Rank != 1 || x.Research.Holdout.Method != "frozen_holdout" || x.Research.Holdout.SignalDates != 40 {
 		t.Fatalf("missing whole-pool rank or untouched holdout %+v", x.Research.Holdout)
 	}
+	signal := raw[0].Bars[len(raw[0].Bars)-1]
+	if x.Ranking[0].Close != signal.Close || x.Ranking[0].DayHigh != signal.High || x.Ranking[0].DayLow != signal.Low {
+		t.Fatalf("signal-day prices were not preserved: candidate=%+v bar=%+v", x.Ranking[0], signal)
+	}
 	if x.Research.TrainingThrough >= h[0].AsOf {
 		t.Fatal("unfinished label used as evidence")
 	}

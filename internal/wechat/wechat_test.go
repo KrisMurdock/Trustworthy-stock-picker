@@ -64,7 +64,7 @@ func TestSendCreatesDraftWithDefaultCoverAndCachesCredentials(t *testing.T) {
 				article.Digest != "观察摘要" || article.NeedOpenComment != 0 || article.OnlyFansCanComment != 0 {
 				t.Fatalf("unexpected article: %+v", article)
 			}
-			if !strings.Contains(article.Content, "<p><strong>先说结论</strong></p>") || !strings.Contains(article.Content, "&lt;不是标签&gt;") {
+			if !strings.Contains(article.Content, "<h2>先说结论</h2>") || !strings.Contains(article.Content, "&lt;不是标签&gt;") {
 				t.Fatalf("unexpected content: %s", article.Content)
 			}
 			fmt.Fprint(w, `{"media_id":"draft-1"}`)
