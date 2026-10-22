@@ -123,6 +123,12 @@ func LoadModel(data []byte) (*Model, error) {
 	if a.Info.FeatureVersion != FeatureVersion || len(a.Info.FeatureNames) == 0 || a.Info.ModelID == "" {
 		return nil, errors.New("invalid predictor model metadata")
 	}
+	if a.Info.Loss != "" && a.Info.Loss != string(LossL1) && a.Info.Loss != string(LossL2) {
+		return nil, errors.New("invalid predictor loss function")
+	}
+	if a.Info.CloseLoss != "" && a.Info.CloseLoss != string(LossL1) && a.Info.CloseLoss != string(LossL2) {
+		return nil, errors.New("invalid predictor close loss function")
+	}
 	if len(a.Base) != len(Targets) || len(a.Trees) != len(Targets) || len(a.LabelClip) != len(Targets) {
 		return nil, errors.New("predictor model does not cover every target")
 	}

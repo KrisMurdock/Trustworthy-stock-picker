@@ -27,7 +27,7 @@ type predictorEvalMeta struct {
 	codes  []string
 }
 
-func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg string, validationDays, halfLife int, allowLateReports bool) error {
+func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg string, validationDays, halfLife int, allowLateReports bool, loss, closeLoss predictor.LossFunction) error {
 	windows, err := parsePredictorWindows(windowsArg)
 	if err != nil {
 		return err
@@ -41,6 +41,9 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	if !c.Predictor.Enabled {
 		return errors.New("predictor is disabled")
 	}
+	trainOptions := predictor.DefaultTrainOptions()
+	trainOptions.Loss = loss
+	trainOptions.CloseLoss = closeLoss
 	cal := calendar.New(c)
 	if asof == "" {
 		asof, err = cal.Completed(time.Now())
@@ -61,7 +64,7 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 		report, err := predictor.EvaluateRollingWindows(ctx, nil, emptyEvalProvider, predictor.EvaluationOptions{
 			AsOf: asof, Windows: windows, TradingDays: tradingDays,
 			MinTrainingDays: c.Predictor.MinTrainingDays, HalfLifeDays: halfLife,
-			TrainOptions: predictor.DefaultTrainOptions(),
+			TrainOptions: trainOptions,
 		})
 		if err != nil {
 			return err
@@ -129,7 +132,7 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 		report, err := predictor.EvaluateRollingWindows(ctx, nil, emptyEvalProvider, predictor.EvaluationOptions{
 			AsOf: asof, Windows: windows, TradingDays: tradingDays,
 			MinTrainingDays: c.Predictor.MinTrainingDays, HalfLifeDays: halfLife,
-			TrainOptions: predictor.DefaultTrainOptions(),
+			TrainOptions: trainOptions,
 		})
 		if err != nil {
 			return err
@@ -195,7 +198,7 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	report, err := predictor.EvaluateRollingWindows(ctx, candidateDates, provider, predictor.EvaluationOptions{
 		AsOf: asof, Windows: windows, TradingDays: tradingDays, MarketStates: regimes,
 		MinTrainingDays: c.Predictor.MinTrainingDays, HalfLifeDays: halfLife,
-		TrainOptions: predictor.DefaultTrainOptions(),
+		TrainOptions: trainOptions,
 	})
 	if err != nil {
 		return err

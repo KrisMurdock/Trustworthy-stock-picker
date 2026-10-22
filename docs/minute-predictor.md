@@ -37,6 +37,13 @@
 - 生产模型当前仍使用单一训练区间：读取最近 400 个自然日的 5 分钟线，用截止日全量样本重训；评估输出并展示 walk-forward 指标，卡片只保留主指标与护栏指标。
 - `predictor-eval` 提供离线的多训练窗口 rolling walk-forward 评估；它不改变生产模型权重，也不写入模型、预测库或飞书。
 
+### 3.1 close 使用 L1 损失
+
+- 主指标是 MAE，因此生产训练对 close 使用 L1 损失，对 high/low 继续使用 L2。L1 的初始值和叶值取残差中位数；high/low 保持均值和平方误差分裂，避免压缩包络。
+- 2026-10-22 的 16 日 `config-diagnostic` 诊断中，仅 close 使用 L1 使 close MAE 从 `25.9211` 降到 `25.7643` bps（-0.1568 bps，95% CI `[-0.2990, -0.0319]`，12/16 天改善），方向准确率从 `52.34%` 升到 `54.26%`；high/low MAE、包络覆盖率和区间宽度不变。
+- 全目标 L1 虽然进一步降低三目标 MAE，但把 high/low 包络覆盖率从 `22.67%` 压到 `12.19%`，并产生 200 条内部矛盾，因此不采用。详见 [close L1 损失评估](predictor-l1-loss-evaluation.md)。
+- `ProductionTrainOptions` 固定 `close_loss=l1`；离线评估默认仍是 `l2`，可用 `-close-loss l1` 复现生产候选，用 `-loss l1` 复现全目标对照。把 `CloseLoss` 设为空可回退到原行为。
+
 ## 4. 卡尔曼滤波
 
 - 每只股票、每个交易日维护一个局部线性趋势状态，观测为已完成 bar 的收盘价。
@@ -52,6 +59,7 @@
 - 模型文件、预测库、状态和开关全部位于 `<data_dir>`（生产为 CIFS），不回退到本地目录。
 - 模型 artifact 使用 JSON，受 `storage.Store` 的 8 MiB 文档上限约束；当前模型预计远小于该上限。
 - 模型 artifact 与 `predictor-eval` 输出使用 schema 2；schema 1 不再兼容，升级前需保留完整备份。
+- `loss`/`close_loss` 是 artifact 的可选元数据；缺失时按 L2 处理。新 artifact 会记录生产实际使用的目标损失，便于审计。artifact 使用严格解码，回滚到旧二进制时需同时恢复旧 artifact 或完整数据备份。
 
 目录布局：
 
@@ -190,7 +198,9 @@ go run ./cmd/stock-watcher predictor-eval \
   -as-of 2026-10-19 \
   -windows 40,60,120 \
   -validation-days 20 \
-  -half-life 60
+  -half-life 60 \
+  -loss l2 \
+  -close-loss l1
 ```
 
 边界：
@@ -202,6 +212,7 @@ go run ./cmd/stock-watcher predictor-eval \
 - `B0` 会读取配置日历覆盖的全部交易日，长日历下比固定窗口更慢；这是 expanding 基线的代价。
 - 股票池按验证日当时可见的报告恢复：优先 `report_archive` 中目标交易日 09:30 前生成的归档，缺失时才回退可变的 `selection_run`，并在 `universes[].report_source` 标明来源。
 - 默认要求报告在目标交易日 09:30 前生成。历史报告是事后补生成时，可显式加 `-allow-late-reports`；它仍只接受 `as_of < target` 的记录，优先使用归档并标为 `archive-late`，归档不可读时才回退可变的 `selection_run` 并标为 `selection_run-late`，不会使用目标日数据。
+- `-loss` 选择全部目标的训练损失（`l2` 或 `l1`），`-close-loss` 只覆盖 close 目标；生产候选是 `-loss l2 -close-loss l1`。两个参数都只属于 `predictor-eval`。
 
 窗口与策略：
 

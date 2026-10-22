@@ -24,11 +24,15 @@ func TestPredictorEvalRejectsInvalidFlags(t *testing.T) {
 		{"predictor-eval", "-windows", "bad"},
 		{"predictor-eval", "-validation-days", "0"},
 		{"predictor-eval", "-half-life", "0"},
+		{"predictor-eval", "-loss", "huber"},
+		{"predictor-eval", "-close-loss", "huber"},
 		{"predictor-eval", "-as-of", "2026-10-18"},
 		{"run", "-windows", "5"},
 		{"run", "-validation-days", "5"},
 		{"run", "-half-life", "30"},
 		{"run", "-allow-late-reports"},
+		{"run", "-loss", "l1"},
+		{"run", "-close-loss", "l1"},
 	} {
 		if err := run(args); err == nil {
 			t.Fatalf("accepted %v", args)

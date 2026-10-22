@@ -13,6 +13,25 @@ import (
 type TrainOptions struct {
 	Hyperparameters
 	LabelClip TargetMetrics
+	Loss      LossFunction
+	CloseLoss LossFunction
+}
+
+// LossFunction selects the training objective. L2 optimizes squared error and
+// is the historical default; L1 optimizes absolute error and matches the
+// primary point-forecast metric (MAE).
+type LossFunction string
+
+const (
+	LossL2 LossFunction = "l2"
+	LossL1 LossFunction = "l1"
+)
+
+func normalizeLoss(loss LossFunction) LossFunction {
+	if loss == LossL1 {
+		return LossL1
+	}
+	return LossL2
 }
 
 var errNoPredictionSamples = errors.New("predictor has no training samples")
@@ -21,7 +40,18 @@ func DefaultTrainOptions() TrainOptions {
 	return TrainOptions{
 		Hyperparameters: Hyperparameters{Trees: 120, MaxDepth: 4, MinLeaf: 40, LearningRate: 0.05, L2: 1, Seed: 1949, Bins: 32},
 		LabelClip:       TargetMetrics{High: 0.05, Low: 0.05, Close: 0.05},
+		Loss:            LossL2,
 	}
+}
+
+// ProductionTrainOptions uses an L1 objective for the close point estimate.
+// The 2026-10-22 walk-forward diagnostic showed a small but repeatable close
+// MAE and direction improvement with no change to high/low or envelope
+// coverage. High/low keep the L2 objective because L1 narrowed their envelope.
+func ProductionTrainOptions() TrainOptions {
+	opts := DefaultTrainOptions()
+	opts.CloseLoss = LossL1
+	return opts
 }
 
 // Train fits one deterministic boosted-tree ensemble per target. The caller
@@ -55,6 +85,8 @@ func Train(samples []Sample, info ModelInfo, opts TrainOptions) (*Artifact, erro
 	info.SchemaVersion = ArtifactSchemaVersion
 	info.FeatureVersion = FeatureVersion
 	info.FeatureNames = append([]string(nil), names...)
+	info.Loss = string(opts.Loss)
+	info.CloseLoss = string(opts.CloseLoss)
 	if info.DataFrom == "" {
 		info.DataFrom = ordered[0].Date
 	}
@@ -82,7 +114,14 @@ func Train(samples []Sample, info ModelInfo, opts TrainOptions) (*Artifact, erro
 			}
 			labels[i] = clip(label, opts.LabelClip.value(target))
 		}
+		loss := opts.Loss
+		if target == TargetClose && opts.CloseLoss != "" {
+			loss = opts.CloseLoss
+		}
 		base := mean(labels)
+		if loss == LossL1 {
+			base = median(labels)
+		}
 		artifact.Base[target] = base
 		residual := make([]float64, len(labels))
 		for i, label := range labels {
@@ -90,6 +129,8 @@ func Train(samples []Sample, info ModelInfo, opts TrainOptions) (*Artifact, erro
 		}
 		trainer := &treeTrainer{
 			residual:   residual,
+			gradient:   make([]float64, len(labels)),
+			loss:       loss,
 			features:   ordered,
 			binned:     binner.data,
 			nFeatures:  nFeatures,
@@ -280,6 +321,10 @@ func normalizeTrainOptions(opts TrainOptions) TrainOptions {
 	if opts.LabelClip.Close <= 0 {
 		opts.LabelClip.Close = defaults.LabelClip.Close
 	}
+	opts.Loss = normalizeLoss(opts.Loss)
+	if opts.CloseLoss != "" {
+		opts.CloseLoss = normalizeLoss(opts.CloseLoss)
+	}
 	return opts
 }
 
@@ -408,6 +453,8 @@ func featureThresholds(values []float64, maxBins int) []float64 {
 
 type treeTrainer struct {
 	residual   []float64
+	gradient   []float64
+	loss       LossFunction
 	features   []Sample
 	binned     []uint8
 	nFeatures  int
@@ -421,6 +468,13 @@ type treeTrainer struct {
 
 func (t *treeTrainer) fit() Tree {
 	t.tree = Tree{Nodes: make([]Node, 0, 64)}
+	for i, value := range t.residual {
+		if t.loss == LossL1 {
+			t.gradient[i] = sign(value)
+		} else {
+			t.gradient[i] = value
+		}
+	}
 	indices := make([]int32, len(t.features))
 	for i := range indices {
 		indices[i] = int32(i)
@@ -432,13 +486,12 @@ func (t *treeTrainer) fit() Tree {
 func (t *treeTrainer) build(indices []int32, depth int) int {
 	nodeIndex := len(t.tree.Nodes)
 	t.tree.Nodes = append(t.tree.Nodes, Node{})
-	totalCount := float64(len(indices))
 	totalSum := 0.0
 	for _, row := range indices {
-		totalSum += t.residual[row]
+		totalSum += t.gradient[row]
 	}
 	if depth >= t.opts.MaxDepth || len(indices) < 2*t.opts.MinLeaf {
-		t.tree.Nodes[nodeIndex] = Node{Leaf: true, Value: leafValue(totalSum, totalCount, t.opts.L2)}
+		t.tree.Nodes[nodeIndex] = Node{Leaf: true, Value: t.leafValue(indices, totalSum)}
 		return nodeIndex
 	}
 	for f := 0; f < t.nFeatures; f++ {
@@ -448,7 +501,7 @@ func (t *treeTrainer) build(indices []int32, depth int) int {
 		}
 	}
 	for _, row := range indices {
-		value := t.residual[row]
+		value := t.gradient[row]
 		base := int(row) * t.nFeatures
 		for f := 0; f < t.nFeatures; f++ {
 			bin := int(t.binned[base+f])
@@ -501,7 +554,7 @@ func (t *treeTrainer) build(indices []int32, depth int) int {
 		}
 	}
 	if bestFeature < 0 {
-		t.tree.Nodes[nodeIndex] = Node{Leaf: true, Value: leafValue(totalSum, totalCount, t.opts.L2)}
+		t.tree.Nodes[nodeIndex] = Node{Leaf: true, Value: t.leafValue(indices, totalSum)}
 		return nodeIndex
 	}
 	left := make([]int32, 0, len(indices))
@@ -522,7 +575,7 @@ func (t *treeTrainer) build(indices []int32, depth int) int {
 		}
 	}
 	if len(left) == 0 || len(right) == 0 {
-		t.tree.Nodes[nodeIndex] = Node{Leaf: true, Value: leafValue(totalSum, totalCount, t.opts.L2)}
+		t.tree.Nodes[nodeIndex] = Node{Leaf: true, Value: t.leafValue(indices, totalSum)}
 		return nodeIndex
 	}
 	leftNode := t.build(left, depth+1)
@@ -535,6 +588,20 @@ func (t *treeTrainer) build(indices []int32, depth int) int {
 		MissingLeft: bestMissingLeft,
 	}
 	return nodeIndex
+}
+
+func (t *treeTrainer) leafValue(indices []int32, gradientSum float64) float64 {
+	if len(indices) == 0 {
+		return 0
+	}
+	if t.loss == LossL1 {
+		values := make([]float64, len(indices))
+		for i, row := range indices {
+			values[i] = t.residual[row]
+		}
+		return median(values)
+	}
+	return leafValue(gradientSum, float64(len(indices)), t.opts.L2)
 }
 
 func leafValue(sum, count, l2 float64) float64 {
@@ -554,6 +621,17 @@ func splitScore(leftSum, leftCount, rightSum, rightCount, l2 float64) float64 {
 		right = rightSum * rightSum / (rightCount + l2)
 	}
 	return left + right
+}
+
+func sign(value float64) float64 {
+	switch {
+	case value > 0:
+		return 1
+	case value < 0:
+		return -1
+	default:
+		return 0
+	}
 }
 
 func percentile90(values []float64) float64 {

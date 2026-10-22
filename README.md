@@ -417,7 +417,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | 策略研究 | [推荐门槛诊断](docs/strategy-diagnostics.md) · [策略实验室](docs/experiments.md) · [实验快照](docs/experiment-result-snapshots.md) |
 | 选股算法 | [算法接入契约](docs/algorithm-interface.md) |
 | 模型与实验存储 | [模型、特征与评估产物存储](docs/model-storage.md) |
-| 5 分钟预测 | [5 分钟价格预测](docs/minute-predictor.md) |
+| 5 分钟预测 | [5 分钟价格预测](docs/minute-predictor.md) · [close L1 损失评估](docs/predictor-l1-loss-evaluation.md) |
 | 全天高低价预测 | [开发路线与当前边界](docs/dayrange-roadmap.md) · [评估指标契约](docs/dayrange-evaluation.md) |
 | 研究与工具 | [单股价格策略](docs/单股价格策略.md) · [底部形态](docs/bottom-signals.md) |
 | 容器 | [Compose 部署与升级](docker/README.md) |

@@ -641,7 +641,7 @@ func (m *Monitor) Train(ctx context.Context, now time.Time) (ModelInfo, error) {
 		FeatureNames:   FeatureNames(),
 		CodeVersion:    m.BuildVersion,
 	}
-	opts := DefaultTrainOptions()
+	opts := ProductionTrainOptions()
 	metrics, residuals, walkErr := m.walker(samples, info, m.Config.Predictor.ValidationDays, opts)
 	if walkErr != nil {
 		m.Log.Warn("Predictor walk-forward failed", "error", walkErr.Error())

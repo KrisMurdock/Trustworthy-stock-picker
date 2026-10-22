@@ -19,6 +19,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/monitor"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/predictor"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 	stockruntime "github.com/KrisMurdock/Trustworthy-stock-picker/runtime"
@@ -60,6 +61,8 @@ func run(args []string) error {
 	validationDays := f.Int("validation-days", 20, "number of common out-of-sample trading days (predictor-eval only)")
 	halfLife := f.Int("half-life", 60, "E1 exponential window half-life in trading days (predictor-eval only)")
 	allowLateReports := f.Bool("allow-late-reports", false, "allow archived reports generated after target open when as_of is before target (predictor-eval only)")
+	lossFunction := f.String("loss", string(predictor.LossL2), "training loss: l2 or l1 (predictor-eval only)")
+	closeLossFunction := f.String("close-loss", "", "optional close-target loss override: l1 or l2 (predictor-eval only)")
 	dayRangeOffline := f.Bool("offline", false, "train and evaluate dayrange in a temporary store without writing production data (train-dayrange only)")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
@@ -89,6 +92,15 @@ func run(args []string) error {
 	}
 	if command != "predictor-eval" && *allowLateReports {
 		return errors.New("predictor-eval flags require the predictor-eval command")
+	}
+	if command != "predictor-eval" && (*lossFunction != string(predictor.LossL2) || *closeLossFunction != "") {
+		return errors.New("predictor-eval flags require the predictor-eval command")
+	}
+	if *lossFunction != string(predictor.LossL1) && *lossFunction != string(predictor.LossL2) {
+		return errors.New("predictor-eval loss must be l1 or l2")
+	}
+	if *closeLossFunction != "" && *closeLossFunction != string(predictor.LossL1) && *closeLossFunction != string(predictor.LossL2) {
+		return errors.New("predictor-eval close-loss must be l1 or l2")
 	}
 	if command != "train-dayrange" && *dayRangeOffline {
 		return errors.New("offline requires the train-dayrange command")
@@ -149,7 +161,7 @@ func run(args []string) error {
 	if command == "predictor-eval" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		return runPredictorEval(ctx, c, *asof, *windows, *validationDays, *halfLife, *allowLateReports)
+		return runPredictorEval(ctx, c, *asof, *windows, *validationDays, *halfLife, *allowLateReports, predictor.LossFunction(*lossFunction), predictor.LossFunction(*closeLossFunction))
 	}
 	options, err := logging.EnvOptions()
 	if err != nil {
