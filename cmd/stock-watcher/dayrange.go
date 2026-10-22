@@ -81,13 +81,18 @@ func runDayRangeResult(ctx context.Context, c config.Config, log *logging.Logger
 	service := dayrange.NewService(c, persistence, marketSource, log)
 	service.BuildVersion = version
 	service.Now = func() time.Time { return time.Now().In(time.FixedZone("CST", 8*3600)) }
-	if deliveryStore != nil && c.DayRange.PushEnabled {
+	if deliveryStore != nil {
 		noticeChannels, closeChannels, err := channels.Build(c)
 		if err != nil {
 			return err
 		}
 		defer closeChannels()
-		if err := service.ConfigureDelivery(deliveryStore, noticeChannels); err != nil {
+		if c.DayRange.PushEnabled {
+			if err := service.ConfigureDelivery(deliveryStore, noticeChannels); err != nil {
+				return err
+			}
+		}
+		if err := service.ConfigureExecutionDelivery(deliveryStore, noticeChannels); err != nil {
 			return err
 		}
 	}

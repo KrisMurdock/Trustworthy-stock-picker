@@ -44,4 +44,4 @@ support-agent 的 LLM 提示词、内部镜像仓库与 GitLab 私有流水线�
 
 `runtime/` 只暴露配置、初始化、运行、看板和日志入口，内部存储与行情实现仍由 `internal/` 持有。`internal/marketcontext` 负责指数与行业/概念板块的发现、增量下载和独立 `context.db`，由默认股票同步流程并发调用；`internal/selection/engine.go` 定义日常算法计算边界，`internal/firststage` 生成高召回候选池，`internal/secondstage` 在候选池上执行第一层百分位与可配置离线模型百分位的加权 blend Top10 精排；`internal/predictor` 持有 5 分钟实验预测的特征、树模型、卡尔曼状态、预测库和投递逻辑；`internal/dayrange` 持有盘前全天高低价的数据审计、确定性树模型、区间校准、预测/核对、飞书投递和评估，持久化落在独立 `dayrange.db`；`internal/health` 汇总只读业务健康；任务和快照仍由 `internal/storage` 管理。实验代码保持独立，实验结果不会自动进入生产推送。
 
-5 分钟预测把模型、预测和开关写入 `<data_dir>` 下的 `models/intraday/`、`predictions.db` 和 `state/`，不另建本地缓存目录。网页在 `/rankings` 增加预测区块。盘前全天高低价预测使用独立 `<data_dir>/dayrange.db`、`state/dayrange-delivery.json` 投递账本和顶层 `/day-range` 页面；第一版不提供盘中剩余时段更新。
+5 分钟预测把模型、预测和开关写入 `<data_dir>` 下的 `models/intraday/`、`predictions.db` 和 `state/`，不另建本地缓存目录。网页在 `/rankings` 增加预测区块。盘前全天高低价预测使用独立 `<data_dir>/dayrange.db`、`state/dayrange-delivery.json` 分页投递账本、`state/premarket-execution-delivery.json` 执行确认账本和顶层 `/day-range` 页面；第一版不提供盘中剩余时段更新。

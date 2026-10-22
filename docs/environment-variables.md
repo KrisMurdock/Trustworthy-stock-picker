@@ -172,24 +172,27 @@
 
 盘前预测按目标交易日和页码生成稳定事件 ID，分页卡片只投递到 `route=predictor_dayrange` 的通道，账本位于 `<data_dir>/state/dayrange-delivery.json`。同一目标日、同一页重启或重复执行不会重复发送；临时网络错误按共享投递账本规则退避重试，09:30 后未完成卡片过期。手工执行 `predict-dayrange` 也遵循同一开关和账本。
 
+盘前预测保存后还会按同一目标日生成独立执行确认卡：只读取对应信号日的精排 Top N，关联预测高/低、参考买入价、净目标价、止损价和正式推荐状态，输出“可执行／观察／放弃”。卡片只投递到 `route=premarket_execution`，账本为 `<data_dir>/state/premarket-execution-delivery.json`，稳定事件 ID 为 `premarket-execution:<目标日>`，09:30 后过期。它与 `predictor_dayrange` 分页卡、`second_stage` 公众号稿和 `selection` 正式日报相互独立；`STOCK_WATCHER_DAYRANGE_PUSH_ENABLED=false` 只关闭盘前分页卡，不关闭执行确认卡。结构影子期或筛选未启用时不会产生“可执行”，精排降级、预测缺失和低于目标价等情形会在卡片中说明，不对应交易指令。
+
 ## 通知与凭证
 
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | STOCK_WATCHER_FEISHU_ENABLED | false（示例） | 是否启用 legacy 飞书通道 |
-| FEISHU_WEBHOOK | 空 | 飞书自定义机器人 webhook；只从环境读取 |
+| FEISHU_WEBHOOK | 空 | legacy 飞书自定义机器人 webhook；只从环境读取 |
 | FEISHU_SECRET | 空 | 飞书签名密钥；未启用签名可省略 |
+| FEISHU_*_WEBHOOK | 空 | 命名通道路由引用的独立 webhook 环境变量，例如 `FEISHU_PREMARKET_EXECUTION_WEBHOOK` |
 | STOCK_WATCHER_FEISHU_CREDENTIALS_FILE | 空 | 显式启用旧版 `feishu.config` 兼容；新部署应改用环境变量 |
 | STOCK_WATCHER_NOTIFY_CHANNELS | 空 | 可选多通道；格式见下 |
 | TUSHARE_TOKEN | 空 | Tushare Token；缺失时跳过 Tushare |
-命名通道使用 `name|type|enabled|webhook_env|secret_env|route`，条目之间用 `;` 分隔；`type` 当前只支持 `feishu`。`route` 可选 `all`、`selection`、`first_stage`、`second_stage`、`predictor_realtime`、`predictor_dayrange`，留空表示兼容旧配置并向所有阶段广播：
+命名通道使用 `name|type|enabled|webhook_env|secret_env|route`，条目之间用 `;` 分隔；`type` 当前只支持 `feishu`。`route` 可选 `all`、`selection`、`first_stage`、`second_stage`、`premarket_execution`、`predictor_realtime`、`predictor_dayrange`，留空表示兼容旧配置并向所有阶段广播：
 
 ```dotenv
 STOCK_WATCHER_FEISHU_ENABLED=false
-STOCK_WATCHER_NOTIFY_CHANNELS="first-stage|feishu|true|FEISHU_FIRST_STAGE_WEBHOOK||first_stage;second-stage|feishu|true|FEISHU_SECOND_STAGE_WEBHOOK||second_stage;selection|feishu|true|FEISHU_SELECTION_WEBHOOK||selection;predictor-realtime|feishu|true|FEISHU_PREDICTOR_REALTIME_WEBHOOK||predictor_realtime;predictor-dayrange|feishu|true|FEISHU_PREDICTOR_DAYRANGE_WEBHOOK||predictor_dayrange"
+STOCK_WATCHER_NOTIFY_CHANNELS="first-stage|feishu|true|FEISHU_FIRST_STAGE_WEBHOOK||first_stage;second-stage|feishu|true|FEISHU_SECOND_STAGE_WEBHOOK||second_stage;selection|feishu|true|FEISHU_SELECTION_WEBHOOK||selection;premarket-execution|feishu|true|FEISHU_PREMARKET_EXECUTION_WEBHOOK||premarket_execution;predictor-realtime|feishu|true|FEISHU_PREDICTOR_REALTIME_WEBHOOK||predictor_realtime;predictor-dayrange|feishu|true|FEISHU_PREDICTOR_DAYRANGE_WEBHOOK||predictor_dayrange"
 ```
 
-路由含义：`first_stage` 只接收第一层初筛池及回看卡；`second_stage` 只接收第二层精排公众号纯文本稿；`selection` 只接收正式日报主卡和详情卡；`predictor_realtime` 接收 5 分钟实时预测及偏差卡；`predictor_dayrange` 只接收全天高低价盘前预测。不同路由的投递依赖彼此独立，不会因为另一个机器人失败而互相阻塞。
+路由含义：`first_stage` 只接收第一层初筛池及回看卡；`second_stage` 只接收第二层精排公众号纯文本稿；`selection` 只接收正式日报主卡和详情卡；`premarket_execution` 只接收盘前执行确认卡；`predictor_realtime` 接收 5 分钟实时预测及偏差卡；`predictor_dayrange` 只接收全天高低价盘前预测。不同路由的投递依赖彼此独立，不会因为另一个机器人失败而互相阻塞。
 
 凭证只来自环境变量，不写入日志、镜像或仓库。关闭通知时显式设置 `STOCK_WATCHER_FEISHU_ENABLED=false`，并确保没有设置 `STOCK_WATCHER_NOTIFY_CHANNELS` 的启用通道。
 

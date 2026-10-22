@@ -70,6 +70,8 @@
 
 `state/dayrange-delivery.json` 使用共享 `notify.Ledger` schema 2。事件 ID 固定为 `dayrange:premarket:<目标日>:<页码>`，分页按依赖顺序发送；同一目标日、同一页在重启、重复训练或重复预测后不会再次入队，临时网络错误退避重试，09:30 后未发送事件过期。`STOCK_WATCHER_DAYRANGE_PUSH_ENABLED=false` 时仍保存预测，但不创建投递事件。
 
+同日另生成一张 `premarket_execution` 执行确认卡，账本独立为 `state/premarket-execution-delivery.json`。卡片只关联精排 Top N 与已保存的盘前预测，按参考计划、预测高低和正式推荐状态标记“可执行／观察／放弃”，事件 ID 为 `premarket-execution:<目标日>`，09:30 后过期；该卡不延迟精排文章，也不与分页盘前卡共享重试或开关。
+
 **退出条件：** 重启、重复执行、训练取消、写入失败、实际值缺失、数据库升级和模型 checksum 错误都有明确状态；预测和实际档案可按模型ID重放。
 
 ### 阶段五：CLI、只读 API 与网页（已实现）

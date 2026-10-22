@@ -62,6 +62,11 @@ type Service struct {
 	deliveryStore  DeliveryStore
 	noticeChannels []notify.Channel
 	ledger         notify.Ledger
+
+	executionMu       sync.Mutex
+	executionStore    DeliveryStore
+	executionChannels []notify.Channel
+	executionLedger   notify.Ledger
 }
 
 func NewService(c config.Config, store Persistence, market MarketSource, log *logging.Logger) *Service {

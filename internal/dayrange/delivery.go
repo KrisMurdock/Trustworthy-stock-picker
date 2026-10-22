@@ -134,6 +134,9 @@ func (s *Service) publishSavedPremarket(ctx context.Context, target string, reco
 			skipped = append(skipped, stock.Code+":not_published")
 		}
 	}
+	if err := s.publishExecutionCard(ctx, target, predictions, now); err != nil {
+		s.Log.Warn("Premarket execution card failed", "target_date", target, "error", err.Error())
+	}
 	return s.publishPremarket(ctx, target, predictions, skipped, generatedAt)
 }
 

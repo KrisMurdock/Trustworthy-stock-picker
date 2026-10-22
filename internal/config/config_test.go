@@ -372,19 +372,23 @@ func TestEnvironmentNotifyChannels(t *testing.T) {
 	t.Setenv("STOCK_WATCHER_CALENDAR_HOLIDAYS", "")
 	t.Setenv("TEST_FEISHU_WEBHOOK", "https://open.feishu.cn/open-apis/bot/v2/hook/env-only")
 	t.Setenv("TEST_FEISHU_SECRET", "env-secret")
-	t.Setenv("STOCK_WATCHER_NOTIFY_CHANNELS", "feishu-main|feishu|true|TEST_FEISHU_WEBHOOK|TEST_FEISHU_SECRET|selection")
+	t.Setenv("TEST_PREMARKET_EXECUTION_WEBHOOK", "https://open.feishu.cn/open-apis/bot/v2/hook/execution-env-only")
+	t.Setenv("STOCK_WATCHER_NOTIFY_CHANNELS", "feishu-main|feishu|true|TEST_FEISHU_WEBHOOK|TEST_FEISHU_SECRET|selection;premarket-execution|feishu|true|TEST_PREMARKET_EXECUTION_WEBHOOK||premarket_execution")
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	channels := c.NotificationChannels()
-	if len(channels) != 1 || channels[0].Name != "feishu-main" || channels[0].Route != NotifyRouteSelection || channels[0].Webhook != os.Getenv("TEST_FEISHU_WEBHOOK") || channels[0].Secret != "env-secret" {
+	if len(channels) != 2 || channels[0].Name != "feishu-main" || channels[0].Route != NotifyRouteSelection || channels[0].Webhook != os.Getenv("TEST_FEISHU_WEBHOOK") || channels[0].Secret != "env-secret" {
 		t.Fatalf("channel environment not applied: %+v", channels)
+	}
+	if channels[1].Name != "premarket-execution" || channels[1].Route != NotifyRoutePremarketExecution || channels[1].Webhook != os.Getenv("TEST_PREMARKET_EXECUTION_WEBHOOK") {
+		t.Fatalf("premarket execution route environment not applied: %+v", channels[1])
 	}
 }
 
 func TestNotificationChannelRoutes(t *testing.T) {
-	for _, route := range []string{NotifyRouteFirstStage, NotifyRouteSecondStage, NotifyRouteSelection, NotifyRoutePredictorRealtime, NotifyRoutePredictorDayrange} {
+	for _, route := range []string{NotifyRouteFirstStage, NotifyRouteSecondStage, NotifyRoutePremarketExecution, NotifyRouteSelection, NotifyRoutePredictorRealtime, NotifyRoutePredictorDayrange} {
 		t.Setenv("TEST_"+strings.ToUpper(route)+"_WEBHOOK", "https://open.feishu.cn/open-apis/bot/v2/hook/"+strings.ReplaceAll(route, "_", "-")+"-test")
 	}
 	p := filepath.Join(t.TempDir(), "config.yaml")
@@ -405,6 +409,11 @@ func TestNotificationChannelRoutes(t *testing.T) {
       enabled: true
       route: second_stage
       webhook_env: TEST_SECOND_STAGE_WEBHOOK
+    - name: premarket-execution
+      type: feishu
+      enabled: true
+      route: premarket_execution
+      webhook_env: TEST_PREMARKET_EXECUTION_WEBHOOK
     - name: predictor-realtime
       type: feishu
       enabled: true
@@ -424,11 +433,12 @@ func TestNotificationChannelRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for route, want := range map[string]string{
-		NotifyRouteFirstStage:        "first-stage",
-		NotifyRouteSecondStage:       "second-stage",
-		NotifyRouteSelection:         "selection",
-		NotifyRoutePredictorRealtime: "predictor-realtime",
-		NotifyRoutePredictorDayrange: "predictor-dayrange",
+		NotifyRouteFirstStage:         "first-stage",
+		NotifyRouteSecondStage:        "second-stage",
+		NotifyRoutePremarketExecution: "premarket-execution",
+		NotifyRouteSelection:          "selection",
+		NotifyRoutePredictorRealtime:  "predictor-realtime",
+		NotifyRoutePredictorDayrange:  "predictor-dayrange",
 	} {
 		names := c.ChannelNamesForRoute(route)
 		if len(names) != 1 || names[0] != want {

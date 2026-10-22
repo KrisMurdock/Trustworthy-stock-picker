@@ -245,6 +245,9 @@ func New(opts Options) (*Runtime, error) {
 		if err := r.dayRange.ConfigureDelivery(store, noticeChannels); err != nil {
 			return nil, err
 		}
+		if err := r.dayRange.ConfigureExecutionDelivery(store, noticeChannels); err != nil {
+			return nil, err
+		}
 	}
 	var dayRangeReader dashboard.DayRangeReader
 	if r.dayRange != nil {
