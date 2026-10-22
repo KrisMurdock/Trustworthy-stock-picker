@@ -220,6 +220,7 @@ func New(opts Options) (*Runtime, error) {
 		log.RegisterSecret(channel.Webhook)
 		log.RegisterSecret(channel.Secret)
 	}
+	log.RegisterSecret(cfg.Wechat.AppSecret)
 	r.monitor = monitor.NewWithMarketDB(cfg, store, marketDB, sources, noticeChannels, log)
 	r.monitor.BuildVersion = version
 	if r.contextSyncer != nil {

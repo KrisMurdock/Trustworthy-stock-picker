@@ -16,14 +16,20 @@ func secondStageArticles(r selection.Report, expires time.Time) []notify.Message
 	if result == nil || !result.PushEnabled || result.Status != secondstage.StatusOK || len(result.Candidates) == 0 {
 		return nil
 	}
+	title := secondStageArticleTitle(*result)
 	return []notify.Message{{
 		Version:        2,
 		EventID:        r.ID + ":second-stage:article",
 		DisplayEventID: r.ID,
 		PartLabel:      "精排文章",
-		Title:          secondStageArticleTitle(*result),
+		Title:          title,
 		PlainText:      secondStageArticleText(r, *result),
-		ExpiresAt:      expires,
+		Article: &notify.Article{
+			Title:  title,
+			Digest: secondStageArticleDigest(*result),
+			Body:   secondStageArticleBody(r, *result),
+		},
+		ExpiresAt: expires,
 	}}
 }
 
@@ -41,10 +47,23 @@ func secondStageArticleTitle(result secondstage.Report) string {
 
 func secondStageArticleText(r selection.Report, result secondstage.Report) string {
 	var out strings.Builder
-	title := secondStageArticleTitle(result)
 	out.WriteString("【公众号标题】\n")
-	out.WriteString(title)
+	out.WriteString(secondStageArticleTitle(result))
 	out.WriteString("\n\n【公众号正文】\n")
+	out.WriteString(secondStageArticleBody(r, result))
+	return out.String()
+}
+
+func secondStageArticleDigest(result secondstage.Report) string {
+	digest := fmt.Sprintf("基于 %s 收盘数据，整理面向 %s 的 %d 只精排观察标的。", result.AsOf, result.Target, len(result.Candidates))
+	if result.Degraded {
+		digest += "本次 JEV 特征降级。"
+	}
+	return digest
+}
+
+func secondStageArticleBody(r selection.Report, result secondstage.Report) string {
+	var out strings.Builder
 	out.WriteString(fmt.Sprintf("基于 %s 收盘数据，本文整理面向 %s 的精排观察名单。模型从 %d 只初筛候选中输出 %d 只，排序标签是未来 3 个交易日最高价相对信号日收盘的最大涨幅。\n\n",
 		result.AsOf, result.Target, result.InputCount, len(result.Candidates)))
 

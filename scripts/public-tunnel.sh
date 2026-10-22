@@ -70,6 +70,7 @@ export STOCK_WATCHER_LLM_WRITE_MODE=off
 export STOCK_WATCHER_PREDICTOR_WRITE_MODE=off
 export STOCK_WATCHER_PREDICTOR_PUSH_ENABLED=false
 export STOCK_WATCHER_FEISHU_ENABLED=false
+export STOCK_WATCHER_WECHAT_ENABLED=false
 
 make build
 ./bin/stock-watcher check-config

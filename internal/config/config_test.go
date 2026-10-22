@@ -484,6 +484,47 @@ func TestLoadBuiltinUsesEnvironmentAndPool(t *testing.T) {
 	}
 }
 
+func TestWechatDraftChannelRequiresCredentialsAndRoutesSecondStage(t *testing.T) {
+	t.Setenv("STOCK_WATCHER_WECHAT_ENABLED", "true")
+	t.Setenv("WECHAT_APP_ID", "wx-test-app")
+	t.Setenv("WECHAT_APP_SECRET", "test-app-secret")
+	t.Setenv("STOCK_WATCHER_WECHAT_AUTHOR", "Stock Watcher")
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	text := valid + `first_stage:
+  enabled: true
+  push_enabled: true
+  budget: 10
+second_stage:
+  enabled: true
+  push_enabled: true
+`
+	if err := os.WriteFile(p, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Wechat.Enabled || c.Wechat.AppID != "wx-test-app" || c.Wechat.AppSecret != "test-app-secret" {
+		t.Fatalf("wechat environment not applied: %+v", c.Wechat)
+	}
+	channels := c.NotificationChannels()
+	if len(channels) != 1 || channels[0].Name != WechatDraftChannelName || channels[0].Type != "wechat" || channels[0].Route != NotifyRouteSecondStage {
+		t.Fatalf("unexpected wechat channel: %+v", channels)
+	}
+	if got := c.ChannelNamesForRoute(NotifyRouteSecondStage); len(got) != 1 || got[0] != WechatDraftChannelName {
+		t.Fatalf("second-stage route = %v", got)
+	}
+	if got := c.ChannelNamesForRoute(NotifyRouteSelection); len(got) != 0 {
+		t.Fatalf("selection route unexpectedly contains %v", got)
+	}
+
+	t.Setenv("WECHAT_APP_SECRET", "")
+	if _, err := Load(p); err == nil || strings.Contains(err.Error(), "test-app-secret") {
+		t.Fatalf("missing secret error leaked or was accepted: %v", err)
+	}
+}
+
 func TestBuiltinCIFSModeCanBeEnabled(t *testing.T) {
 	root := t.TempDir()
 	pool := filepath.Join(root, "leaders.yaml")

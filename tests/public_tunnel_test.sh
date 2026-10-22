@@ -51,7 +51,7 @@ cat > "$FIXTURE/bin/stock-watcher" <<'SH'
 printf 'stock-watcher %s\n' "$*" >> "$TRACE"
 if [[ "$1" == run ]]; then
   printf '%s\n' "$$" > "$FIXTURE/app.pid"
-  printf '%s\n' "$STOCK_WATCHER_WEB_ADDR" "$STOCK_WATCHER_WEB_PUBLIC_READ_ONLY" "$STOCK_WATCHER_LLM_WRITE_MODE" "$STOCK_WATCHER_PREDICTOR_WRITE_MODE" "$STOCK_WATCHER_PREDICTOR_PUSH_ENABLED" "$STOCK_WATCHER_FEISHU_ENABLED" > "$FIXTURE/runtime-env"
+  printf '%s\n' "$STOCK_WATCHER_WEB_ADDR" "$STOCK_WATCHER_WEB_PUBLIC_READ_ONLY" "$STOCK_WATCHER_LLM_WRITE_MODE" "$STOCK_WATCHER_PREDICTOR_WRITE_MODE" "$STOCK_WATCHER_PREDICTOR_PUSH_ENABLED" "$STOCK_WATCHER_FEISHU_ENABLED" "$STOCK_WATCHER_WECHAT_ENABLED" > "$FIXTURE/runtime-env"
   exec sleep 60
 fi
 SH
@@ -78,7 +78,8 @@ printf '%s\n' \
   'STOCK_WATCHER_WEB_PUBLIC_READ_ONLY=false' \
   'STOCK_WATCHER_PREDICTOR_WRITE_MODE=all' \
   'STOCK_WATCHER_PREDICTOR_PUSH_ENABLED=true' \
-  'STOCK_WATCHER_FEISHU_ENABLED=true' > "$FIXTURE/.env"
+  'STOCK_WATCHER_FEISHU_ENABLED=true' \
+  'STOCK_WATCHER_WECHAT_ENABLED=true' > "$FIXTURE/.env"
 if bash "$FIXTURE/scripts/public-tunnel.sh" > "$FIXTURE/invalid-output" 2>&1; then
   echo 'Invalid public tunnel switch accepted' >&2
   exit 1
@@ -112,7 +113,7 @@ done
 [[ -s "$URL_FILE" ]] || { cat "$FIXTURE/output" >&2; exit 1; }
 
 [[ "$(cat "$URL_FILE")" == 'https://public-test.trycloudflare.com' ]]
-expected_env=$'127.0.0.1:18080\ntrue\noff\noff\nfalse\nfalse'
+expected_env=$'127.0.0.1:18080\ntrue\noff\noff\nfalse\nfalse\nfalse'
 [[ "$(cat "$FIXTURE/runtime-env")" == "$expected_env" ]]
 grep -q '^make build$' "$TRACE"
 grep -q '^stock-watcher check-config$' "$TRACE"

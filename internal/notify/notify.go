@@ -18,10 +18,19 @@ type Message struct {
 	HeaderIcon     string    `json:"header_icon,omitempty"`
 	WidthMode      string    `json:"width_mode,omitempty"`
 	PlainText      string    `json:"plain_text,omitempty"`
+	Article        *Article  `json:"article,omitempty"`
 	Sections       []Section `json:"sections"`
 	Template       string    `json:"template,omitempty"`
 	TrimPolicy     string    `json:"trim_policy,omitempty"`
 	ExpiresAt      time.Time `json:"expires_at"`
+}
+
+// Article is the structured form used by article-only channels. PlainText
+// remains the human-readable rendering for chat channels.
+type Article struct {
+	Title  string `json:"title"`
+	Digest string `json:"digest,omitempty"`
+	Body   string `json:"body"`
 }
 
 type Field struct {

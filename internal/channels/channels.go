@@ -7,6 +7,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/feishu"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/wechat"
 )
 
 // Build creates all enabled channels and returns a cleanup function that closes
@@ -25,6 +26,13 @@ func Build(c config.Config) ([]notify.Channel, func(), error) {
 				return nil, func() {}, errors.New("enabled Feishu channel has an invalid webhook")
 			}
 			client := feishu.NewNamedClient(spec.Name, spec.Webhook, spec.Secret, config.Duration(c.Timeout))
+			out = append(out, client)
+			closers = append(closers, client.Close)
+		case "wechat":
+			if spec.Name != config.WechatDraftChannelName || c.Wechat.AppID == "" || c.Wechat.AppSecret == "" {
+				return nil, func() {}, errors.New("enabled WeChat draft channel is not configured")
+			}
+			client := wechat.NewDraftClient(spec.Name, c.Wechat.AppID, c.Wechat.AppSecret, c.Wechat.ThumbMediaID, c.Wechat.Author, config.Duration(c.Timeout))
 			out = append(out, client)
 			closers = append(closers, client.Close)
 		default:

@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,6 +73,41 @@ func TestNewOpensResourcesAndServesDashboardHandler(t *testing.T) {
 	}
 	if err := rt.Run(context.Background()); !errors.Is(err, ErrClosed) {
 		t.Fatalf("run after close returned %v", err)
+	}
+}
+
+func TestNewRegistersWechatSecretWithLogger(t *testing.T) {
+	cfg := runtimeTestConfig(t)
+	cfg.FirstStage.Enabled = true
+	cfg.SecondStage.Enabled = true
+	cfg.SecondStage.PushEnabled = true
+	cfg.Wechat.Enabled = true
+	cfg.Wechat.AppID = "wx-runtime-app"
+	cfg.Wechat.AppSecret = "runtime-wechat-secret-sentinel"
+
+	var stdout bytes.Buffer
+	log, err := NewLogger(LoggerOptions{
+		Dir:      t.TempDir(),
+		MaxBytes: 1 << 20,
+		MaxDays:  1,
+		Backups:  1,
+		Stdout:   &stdout,
+		Color:    "off",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+
+	rt, err := New(Options{Config: &cfg, Logger: log})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+
+	log.Info("secret registration probe", "value", cfg.Wechat.AppSecret)
+	if strings.Contains(stdout.String(), cfg.Wechat.AppSecret) {
+		t.Fatal("runtime logger did not redact the WeChat AppSecret")
 	}
 }
 

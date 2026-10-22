@@ -293,6 +293,7 @@ func run(args []string) error {
 		log.RegisterSecret(channel.Webhook)
 		log.RegisterSecret(channel.Secret)
 	}
+	log.RegisterSecret(c.Wechat.AppSecret)
 	m := monitor.NewWithMarketDB(c, store, marketDB, source, noticeChannels, log)
 	m.BuildVersion = version
 	if (command == "sync" || command == "once") && c.MarketContext.Enabled {

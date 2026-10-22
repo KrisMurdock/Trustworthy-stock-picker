@@ -75,6 +75,12 @@ func TestSecondStageArticleIsCopyReadyAndCarriesResearchBoundary(t *testing.T) {
 	if article.EventID != "report-id:second-stage:article" || article.PlainText == "" || article.Title == "" {
 		t.Fatalf("invalid second-stage article: %+v", article)
 	}
+	if article.Article == nil || article.Article.Title != article.Title || article.Article.Body == "" || article.Article.Digest == "" {
+		t.Fatalf("missing structured article: %+v", article.Article)
+	}
+	if strings.Contains(article.Article.Body, "【公众号") {
+		t.Fatalf("structured body contains copy-only markers: %s", article.Article.Body)
+	}
 	expires := time.Date(2026, 10, 22, 9, 30, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
 	if !article.ExpiresAt.Equal(expires) {
 		t.Fatalf("expiry = %s, want %s", article.ExpiresAt, expires)

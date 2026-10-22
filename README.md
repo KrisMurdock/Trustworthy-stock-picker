@@ -249,7 +249,7 @@ func main() {
 日报还包含独立的 `first_stage` 高召回初筛：以“未来 3 个交易日最高价相对信号日收盘触及 +1%”为历史标签，将机会分日内排名与版本化 logistic 模型分等权融合，默认预算 145 只，推送开启时只展示综合分前 30 名并合并为一张飞书卡片，但第二层精排使用全部候选。3 个交易日窗口结束后，初筛机器人会追加窗口回看卡，分别展示全部候选召回率、Top 30 覆盖率与 Top 30 精确率，并按信号日与窗口结束日稳定去重。回看会从初筛报告还原当时股池，避免后续股池调整污染召回率。初筛只生成第二层精排的候选参考，不改变 `Selected`、`Ranking`、结构门控或风险门槛；初筛失败只写入 `first_stage.status=failed`，不阻断主报告。
 
 第二层精排默认使用 `risk_all20_local035_eta1`：第一层 20%，JEV、Laya official、Laya multilingual、Chinese Decision 各 20%；模型组内百分位按 5 人组计算，经 `0.35` 局部先验校准后融合，再扣除 ATR14 百分位风险惩罚。其他同 schema 模型可通过模型权重表加入；参数字段和环境变量见 [算法接入契约](docs/algorithm-interface.md) 与 [环境变量](docs/environment-variables.md)。模型分数只做排序研究，不改变正式推荐、风险门槛或交易建议。
-精排完成后，若 `STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED=true`，系统会把同一份冻结精排结果转写为可直接复制的公众号纯文本稿，包含标题、正文、Top N 名单、逐只技术特征、行业分布、数据口径、降级状态和风险提示。稿件通过命名为 `second_stage` 的飞书路由投递，与初筛卡、正式日报卡使用各自独立的重试账本；精排名单仍只是研究观察，不是正式推荐或交易建议。
+精排完成后，若 `STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED=true`，系统会把同一份冻结精排结果转写为可直接复制的公众号纯文本稿，包含标题、正文、Top N 名单、逐只技术特征、行业分布、数据口径、降级状态和风险提示。稿件通过命名为 `second_stage` 的飞书路由投递，与初筛卡、正式日报卡使用各自独立的重试账本。启用 `STOCK_WATCHER_WECHAT_ENABLED=true` 时，同一份结构化文章还会通过 `wechat-draft` 写入公众号草稿箱；该通道只创建草稿，不会发布文章或群发粉丝。精排名单仍只是研究观察，不是正式推荐或交易建议。
 
 盘前 `08:45` 预测保存后，系统还会生成一张独立“盘前执行确认卡”，只取同一信号日的精排 Top N，并关联已生成的盘前高低价预测、参考计划和正式推荐状态，标记为“可执行／观察／放弃”。卡片只投递到 `premarket_execution` 路由，账本为 `<data_dir>/state/premarket-execution-delivery.json`；不会推迟精排公众号稿，也不阻塞 `predictor_dayrange` 或正式日报。卡片在 `09:30` 前有效，重复预测或重启不会重复发送；结构影子期、精排降级和预测缺失都会明确降级说明，最终仍需在 `09:25` 后用实际开盘价复核。
 
@@ -286,7 +286,7 @@ func main() {
 
 ### 家用机器临时公网入口
 
-没有公网 IP、域名或云服务器时，可显式设置 `STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=true` 后运行 `make run`。该开关默认 `false`，不会自动开放公网；开启后要求本机已安装 `cloudflared`，启动匿名只读网页和 Cloudflare Quick Tunnel，并打印临时 HTTPS 地址，不需要路由器端口转发。脚本强制只允许 GET/HEAD，关闭 AI、Predictor 推送和飞书配置入口，地址也会写入 `.scratch/public-tunnel/url`。
+没有公网 IP、域名或云服务器时，可显式设置 `STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=true` 后运行 `make run`。该开关默认 `false`，不会自动开放公网；开启后要求本机已安装 `cloudflared`，启动匿名只读网页和 Cloudflare Quick Tunnel，并打印临时 HTTPS 地址，不需要路由器端口转发。脚本强制只允许 GET/HEAD，关闭 AI、Predictor 推送、飞书投递和微信草稿，地址也会写入 `.scratch/public-tunnel/url`。
 
 Quick Tunnel 的地址在进程重启、机器休眠或隧道重连后可能变化，且没有可用性承诺。公网只读模式不是账号认证；不要把它当作长期生产部署。长期稳定入口需要自有域名和命名隧道，或认证反向代理。
 
@@ -310,6 +310,11 @@ Quick Tunnel 的地址在进程重启、机器休眠或隧道重连后可能变�
 | `FEISHU_PREMARKET_EXECUTION_WEBHOOK` | 盘前执行确认命名通道引用的独立 webhook；只从环境读取 |
 | `STOCK_WATCHER_NOTIFY_CHANNELS` | 命名飞书通道及阶段路由；可按初筛、精排文章、正式日报、盘前执行确认、实时预测和当日预测分流 |
 | `STOCK_WATCHER_FEISHU_CREDENTIALS_FILE` | 显式设置时才启用旧 `feishu.config` 兼容 |
+| `STOCK_WATCHER_WECHAT_ENABLED` | 是否把第二层精排文章写入公众号草稿箱；只创建草稿，不发布、不群发 |
+| `STOCK_WATCHER_WECHAT_CREDENTIALS_FILE` | 可选私有凭证文件路径；支持 Label/Value 或 key=value 格式，环境变量优先 |
+| `WECHAT_APP_ID` / `WECHAT_APP_SECRET` | 公众号草稿接口凭证，可从环境或私有文件读取；需要配置 IP 白名单 |
+| `WECHAT_THUMB_MEDIA_ID` | 可选永久封面素材 media_id；留空时首次发送自动上传内置封面 |
+| `STOCK_WATCHER_WECHAT_AUTHOR` | 可选草稿作者名，最多 16 个字符 |
 | `STOCK_WATCHER_STRATEGY_ENABLED` | 是否启用全池短周期排名 |
 | `STOCK_WATCHER_FIRST_STAGE_ENABLED` | 是否计算高召回第一层初筛；要求 `daily_adjust=qfq` |
 | `STOCK_WATCHER_FIRST_STAGE_PUSH_ENABLED` | 是否推送初筛池飞书卡；关闭后仍计算 |
@@ -326,7 +331,7 @@ Quick Tunnel 的地址在进程重启、机器休眠或隧道重连后可能变�
 | `STOCK_WATCHER_MARKET_PROVIDERS` | 逗号分隔的行情源顺序 |
 | `TUSHARE_TOKEN` | 可选 Tushare Token；缺失时跳过 Tushare |
 
-完整变量、默认值、股池格式和 systemd/Compose 加载差异见[环境变量](docs/environment-variables.md)。凭证只来自环境变量，日志不会输出 webhook、secret 或 Token。
+完整变量、默认值、股池格式和 systemd/Compose 加载差异见[环境变量](docs/environment-variables.md)。凭证只来自环境变量或权限受控的私有文件，日志不会输出 webhook、secret 或 Token。
 
 ## 部署
 
@@ -401,6 +406,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | `internal/dashboard` | 内嵌 HTML/CSS/JavaScript、SVG K 线和只读 API |
 | `internal/notify` | 版本化消息、通道接口和投递账本 |
 | `internal/feishu` | 卡片、签名、HTTP/业务码确认和错误分类 |
+| `internal/wechat` | 公众号稳定 Token、封面素材、安全 HTML 和 `draft/add` 草稿投递 |
 | `internal/logging` | 调用位置、脱敏、stdout/滚动文件和文本/JSON 输出 |
 | `tests/` | CLI、容器、行情源、分钟和浏览器冒烟 |
 | `docs/` | 部署、配置、算法契约和用户功能文档 |
@@ -430,6 +436,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 - 全天最高/最低价预测已接入盘前模型、区间校准、CLI、网页、调度、`predictor_dayrange` 飞书推送和独立 `premarket_execution` 盘前执行确认卡；阶段六盘中剩余时段模型尚未实现，网页不会把盘前结果当作盘中更新。
 - 内置交易日历当前覆盖 2026 年，过期后必须升级；测试覆盖变量不得用于生产。
 - 网页没有账号或角色体系；本地默认只允许受保护的预测推送开关、LLM 配置和同源/回环 AI 请求写入，公网匿名模式会拒绝全部写请求。远程暴露必须依赖受控网络或已有认证代理。
+- 微信公众号通道只调用 `draft/add`；未认证账号可创建草稿，但 `freepublish/submit` 和群发要求认证，自动发布或群发粉丝仍需在认证后另行实现并在公众号后台确认。投递账本中的 `delivered` 只表示草稿已创建。
 - 飞书投递为至少一次语义，请求成功后、确认落盘前崩溃可能产生重复消息。
 - 共享盘故障、临时网络错误或数据覆盖不足时，本轮不会发布缓存推荐；已有数据保留等待重试。
 - 研究结果受样本、费用假设、流动性和成交边界影响，历史统计不代表未来收益。

@@ -8,6 +8,7 @@ import (
 )
 
 func applyEnvironment(c *Config) error {
+	applyWechatEnvironment(c)
 	for name, target := range map[string]*string{
 		"STOCK_WATCHER_SECOND_STAGE_BLEND_ID":            &c.SecondStage.BlendID,
 		"STOCK_WATCHER_SECOND_STAGE_CALIBRATION":         &c.SecondStage.Calibration,
@@ -15,6 +16,7 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_WEB_ADDR":                         &c.Web.Listen,
 		"STOCK_WATCHER_POOL_FILE":                        &c.PoolFile,
 		"STOCK_WATCHER_FEISHU_CREDENTIALS_FILE":          &c.Feishu.CredentialsFile,
+		"STOCK_WATCHER_WECHAT_CREDENTIALS_FILE":          &c.Wechat.CredentialsFile,
 		"STOCK_WATCHER_POLL_INTERVAL":                    &c.PollInterval,
 		"STOCK_WATCHER_REQUEST_TIMEOUT":                  &c.Timeout,
 		"STOCK_WATCHER_ANALYSIS_ENGINE":                  &c.Analysis.Engine,
@@ -59,6 +61,7 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_WEB_ENABLED":               &c.Web.Enabled,
 		"STOCK_WATCHER_WEB_PUBLIC_READ_ONLY":      &c.Web.PublicReadOnly,
 		"STOCK_WATCHER_FEISHU_ENABLED":            &c.Feishu.Enabled,
+		"STOCK_WATCHER_WECHAT_ENABLED":            &c.Wechat.Enabled,
 		"STOCK_WATCHER_INTRADAY_ENABLED":          &c.Intraday.Enabled,
 		"STOCK_WATCHER_STRATEGY_ENABLED":          &c.Strategy.Enabled,
 		"STOCK_WATCHER_SELECTION_ENABLED":         &c.Selection.Enabled,
@@ -209,6 +212,19 @@ func applyEnvironment(c *Config) error {
 		c.Notify.Channels = channels
 	}
 	return nil
+}
+
+func applyWechatEnvironment(c *Config) {
+	for name, target := range map[string]*string{
+		"WECHAT_APP_ID":               &c.Wechat.AppID,
+		"WECHAT_APP_SECRET":           &c.Wechat.AppSecret,
+		"WECHAT_THUMB_MEDIA_ID":       &c.Wechat.ThumbMediaID,
+		"STOCK_WATCHER_WECHAT_AUTHOR": &c.Wechat.Author,
+	} {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			*target = value
+		}
+	}
 }
 
 func parseEnvironmentChannels(value string) ([]NotifyChannel, error) {

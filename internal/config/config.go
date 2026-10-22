@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -78,6 +79,14 @@ type Config struct {
 		Webhook         string `yaml:"webhook,omitempty"`
 		Secret          string `yaml:"secret,omitempty"`
 	} `yaml:"feishu"`
+	Wechat struct {
+		Enabled         bool   `yaml:"enabled"`
+		CredentialsFile string `yaml:"credentials_file,omitempty"`
+		AppID           string `yaml:"app_id,omitempty"`
+		AppSecret       string `yaml:"-" json:"-"`
+		ThumbMediaID    string `yaml:"thumb_media_id,omitempty"`
+		Author          string `yaml:"author,omitempty"`
+	} `yaml:"wechat"`
 	Calendar struct {
 		ValidFrom    string   `yaml:"valid_from"`
 		ValidThrough string   `yaml:"valid_through"`
@@ -113,6 +122,7 @@ const (
 	NotifyRoutePremarketExecution = "premarket_execution"
 	NotifyRoutePredictorRealtime  = "predictor_realtime"
 	NotifyRoutePredictorDayrange  = "predictor_dayrange"
+	WechatDraftChannelName        = "wechat-draft"
 )
 
 var stockCode = regexp.MustCompile(`^(sh(60|68)[0-9]{4}|sz(00|30)[0-9]{4})$`)
@@ -243,6 +253,15 @@ func resolve(c Config, baseDir string) (Config, error) {
 	}
 	if v, ok := os.LookupEnv("FEISHU_SECRET"); ok {
 		c.Feishu.Secret = v
+	}
+	if c.Wechat.Enabled && c.Wechat.CredentialsFile != "" {
+		credentials, err := loadWechatCredentials(baseDir, c.Wechat.CredentialsFile)
+		if err != nil {
+			return Config{}, err
+		}
+		c.Wechat.AppID, c.Wechat.AppSecret = credentials.AppID, credentials.AppSecret
+		c.Wechat.ThumbMediaID, c.Wechat.Author = credentials.ThumbMediaID, credentials.Author
+		applyWechatEnvironment(&c)
 	}
 	for i := range c.Notify.Channels {
 		channel := &c.Notify.Channels[i]
@@ -389,6 +408,20 @@ func (c Config) Validate() error {
 		}
 		channelNames[channel.Name] = true
 	}
+	if c.Wechat.Enabled {
+		if strings.TrimSpace(c.Wechat.AppID) == "" || strings.TrimSpace(c.Wechat.AppSecret) == "" {
+			return errors.New("wechat draft requires WECHAT_APP_ID and WECHAT_APP_SECRET")
+		}
+		if utf8.RuneCountInString(strings.TrimSpace(c.Wechat.Author)) > 16 {
+			return errors.New("wechat author must be at most 16 characters")
+		}
+		if !c.SecondStage.Enabled || !c.SecondStage.PushEnabled {
+			return errors.New("wechat draft requires second_stage.enabled and second_stage.push_enabled")
+		}
+		if channelNames[WechatDraftChannelName] {
+			return errors.New("notify channel name wechat-draft is reserved")
+		}
+	}
 	stocks := map[string]bool{}
 	for _, s := range c.Stocks {
 		if !ValidCode(s.Code) || stocks[s.Code] {
@@ -436,12 +469,18 @@ func (c Config) Validate() error {
 		return errors.New("invalid sync coverage, incremental bars or status refresh days")
 	}
 	for _, channel := range c.NotificationChannels() {
-		if channel.Type != "feishu" {
+		switch channel.Type {
+		case "feishu":
+			u, err := url.Parse(channel.Webhook)
+			if err != nil || u.Scheme != "https" || u.Host != "open.feishu.cn" || !strings.HasPrefix(u.Path, "/open-apis/bot/v2/hook/") || len(strings.TrimPrefix(u.Path, "/open-apis/bot/v2/hook/")) < 8 || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+				return errors.New("enabled Feishu requires a valid HTTPS custom bot webhook")
+			}
+		case "wechat":
+			if !c.Wechat.Enabled || channel.Name != WechatDraftChannelName || channel.Route != NotifyRouteSecondStage {
+				return errors.New("enabled WeChat draft channel is invalid")
+			}
+		default:
 			return errors.New("unsupported notification channel type")
-		}
-		u, err := url.Parse(channel.Webhook)
-		if err != nil || u.Scheme != "https" || u.Host != "open.feishu.cn" || !strings.HasPrefix(u.Path, "/open-apis/bot/v2/hook/") || len(strings.TrimPrefix(u.Path, "/open-apis/bot/v2/hook/")) < 8 || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			return errors.New("enabled Feishu requires a valid HTTPS custom bot webhook")
 		}
 	}
 	start, e1 := time.Parse("2006-01-02", c.Calendar.ValidFrom)
@@ -461,25 +500,27 @@ func (c Config) Validate() error {
 }
 
 func (c Config) NotificationChannels() []NotifyChannel {
+	out := []NotifyChannel{}
 	if len(c.Notify.Channels) > 0 {
-		out := make([]NotifyChannel, 0, len(c.Notify.Channels))
+		out = make([]NotifyChannel, 0, len(c.Notify.Channels)+1)
 		for _, channel := range c.Notify.Channels {
 			if channel.Enabled {
 				out = append(out, channel)
 			}
 		}
-		return out
+	} else if c.Feishu.Enabled {
+		out = append(out, NotifyChannel{Name: "feishu-main", Type: "feishu", Enabled: true, Webhook: c.Feishu.Webhook, Secret: c.Feishu.Secret})
 	}
-	if c.Feishu.Enabled {
-		return []NotifyChannel{{Name: "feishu-main", Type: "feishu", Enabled: true, Webhook: c.Feishu.Webhook, Secret: c.Feishu.Secret}}
+	if c.Wechat.Enabled {
+		out = append(out, NotifyChannel{Name: WechatDraftChannelName, Type: "wechat", Enabled: true, Route: NotifyRouteSecondStage})
 	}
-	return nil
+	return out
 }
 
 // ChannelNamesForRoute returns enabled channel names for a delivery stage.
 // Channels without a route remain backward-compatible fan-out channels.
 func (c Config) ChannelNamesForRoute(route string) []string {
-	configured := len(c.Notify.Channels) > 0
+	configured := len(c.Notify.Channels) > 0 || c.Wechat.Enabled
 	names := []string{}
 	for _, channel := range c.NotificationChannels() {
 		channelRoute := strings.TrimSpace(channel.Route)

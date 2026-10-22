@@ -59,7 +59,7 @@
 | STOCK_WATCHER_FIRST_STAGE_PUSH_ENABLED | true | 是否推送初筛池飞书卡；依赖初筛已启用 |
 | STOCK_WATCHER_FIRST_STAGE_BUDGET | 95 | 初筛候选池上限，允许 1～500；默认预算 95 只 |
 | STOCK_WATCHER_SECOND_STAGE_ENABLED | true | 是否在第一层候选池上运行加权模型 blend Top10 精排；要求第一层已启用 |
-| STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED | true | 是否把精排结果生成公众号纯文本稿并投递到 `second_stage` 路由；依赖精排已启用 |
+| STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED | true | 是否把精排结果生成公众号纯文本稿并投递到 `second_stage` 路由；启用微信公众号草稿时，同一稿件还会写入草稿箱；依赖精排已启用 |
 | STOCK_WATCHER_SECOND_STAGE_TOP_N | 10 | 第二层输出候选数，允许 1～100 |
 | STOCK_WATCHER_SECOND_STAGE_BLEND_ID | risk_all20_local035_eta1 | 写入报告的 blend 计划标识，便于冻结和比较实验口径 |
 | STOCK_WATCHER_SECOND_STAGE_FIRST_STAGE_WEIGHT | 0.2 | 第一层池内百分位权重，范围 0～1；与所有模型权重之和必须为 1 |
@@ -84,7 +84,7 @@
 
 第二层精排读取 `<$STOCK_WATCHER_DATA_DIR>/state/secondstage/<model>/<as_of>.json` 的离线分数；`jev` 兼容回退到 `state/jev/<as_of>.json`。Go 进程先计算模型组内百分位与组内第一层先验，再按 `local = clamp(prior + calibration_param × (within - 0.5), 0, 1)` 校准，最后按 `blend_score = first_stage_weight × first_stage_percentile + Σ(model_weight × local) - risk_eta × atr14_percentile` 输出 Top10，结果写入日报的 `second_stage` 字段。默认 `risk_all20_local035_eta1` 为第一层 20% + JEV/Laya official/Laya multilingual/Chinese Decision 各 20%，`group_size=5`、`calibration_param=0.35`、`risk_eta=1`；所有模型共用同一 artifact schema。新增模型需要增加 artifact，并重分配第一层与全部模型权重使总和仍为 1。某个模型缺失或过期时按中性 0.5 百分位参与并标记 `second_stage.degraded=true`，不会阻断日报；树模型只保留辅助预测字段。
 
-`second_stage.push_enabled=true` 时，同一数据日期会生成一份可直接复制的公众号纯文本稿，包含公众号标题、正文、精排名单、逐只数据解读、行业分布、使用边界和风险提示。稿件以纯文本飞书消息投递到独立的 `second_stage` 路由，不会混入 `selection` 的日报卡片或 `first_stage` 的初筛卡。精排降级时标题和正文都会明确标注，未通过第一层或没有候选时不生成文章。文章与精排报告共享稳定事件 ID 和 T+1 09:30 过期时间，重启不会重复发送。
+`second_stage.push_enabled=true` 时，同一数据日期会生成一份可直接复制的公众号纯文本稿，包含公众号标题、正文、精排名单、逐只数据解读、行业分布、使用边界和风险提示。稿件以纯文本飞书消息投递到独立的 `second_stage` 路由，不会混入 `selection` 的日报卡片或 `first_stage` 的初筛卡。启用微信公众号草稿后，同一份结构化文章还会写入公众号草稿箱，但仍不会自动发布或群发。精排降级时标题和正文都会明确标注，未通过第一层或没有候选时不生成文章。文章与精排报告共享稳定事件 ID 和 T+1 09:30 过期时间，重启不会重复发送。
 
 ## 同步、日历与行情源
 
@@ -188,17 +188,37 @@
 | FEISHU_*_WEBHOOK | 空 | 命名通道路由引用的独立 webhook 环境变量，例如 `FEISHU_PREMARKET_EXECUTION_WEBHOOK` |
 | STOCK_WATCHER_FEISHU_CREDENTIALS_FILE | 空 | 显式启用旧版 `feishu.config` 兼容；新部署应改用环境变量 |
 | STOCK_WATCHER_NOTIFY_CHANNELS | 空 | 可选多通道；格式见下 |
+| STOCK_WATCHER_WECHAT_ENABLED | false | 是否把第二层精排文章写入微信公众号草稿箱；只创建草稿，不发布、不群发 |
+| STOCK_WATCHER_WECHAT_CREDENTIALS_FILE | 空 | 可选的私有凭证文件；支持 `AppID`/`AppSecret` 成对格式或 `app_id=...` 形式，相对路径按配置基准目录解析 |
+| WECHAT_APP_ID | 空 | 公众号 AppID；优先从环境读取，也可由凭证文件提供 |
+| WECHAT_APP_SECRET | 空 | 公众号 AppSecret；优先从环境读取，也可由凭证文件提供，必须保持私密 |
+| WECHAT_THUMB_MEDIA_ID | 空 | 可选封面永久素材 media_id；留空时首次发送自动上传内置封面 |
+| STOCK_WATCHER_WECHAT_AUTHOR | 空 | 可选草稿作者名，最多 16 个字符 |
 | TUSHARE_TOKEN | 空 | Tushare Token；缺失时跳过 Tushare |
-命名通道使用 `name|type|enabled|webhook_env|secret_env|route`，条目之间用 `;` 分隔；`type` 当前只支持 `feishu`。`route` 可选 `all`、`selection`、`first_stage`、`second_stage`、`premarket_execution`、`predictor_realtime`、`predictor_dayrange`，留空表示兼容旧配置并向所有阶段广播：
+命名通道使用 `name|type|enabled|webhook_env|secret_env|route`，条目之间用 `;` 分隔；命名通道的 `type` 当前只支持 `feishu`，微信公众号草稿由 `STOCK_WATCHER_WECHAT_ENABLED` 自动创建为内置 `wechat-draft` 渠道。`route` 可选 `all`、`selection`、`first_stage`、`second_stage`、`premarket_execution`、`predictor_realtime`、`predictor_dayrange`，留空表示兼容旧配置并向所有阶段广播：
 
 ```dotenv
 STOCK_WATCHER_FEISHU_ENABLED=false
 STOCK_WATCHER_NOTIFY_CHANNELS="first-stage|feishu|true|FEISHU_FIRST_STAGE_WEBHOOK||first_stage;second-stage|feishu|true|FEISHU_SECOND_STAGE_WEBHOOK||second_stage;selection|feishu|true|FEISHU_SELECTION_WEBHOOK||selection;premarket-execution|feishu|true|FEISHU_PREMARKET_EXECUTION_WEBHOOK||premarket_execution;predictor-realtime|feishu|true|FEISHU_PREDICTOR_REALTIME_WEBHOOK||predictor_realtime;predictor-dayrange|feishu|true|FEISHU_PREDICTOR_DAYRANGE_WEBHOOK||predictor_dayrange"
 ```
 
-路由含义：`first_stage` 只接收第一层初筛池及回看卡；`second_stage` 只接收第二层精排公众号纯文本稿；`selection` 只接收正式日报主卡和详情卡；`premarket_execution` 只接收盘前执行确认卡；`predictor_realtime` 接收 5 分钟实时预测及偏差卡；`predictor_dayrange` 只接收全天高低价盘前预测。不同路由的投递依赖彼此独立，不会因为另一个机器人失败而互相阻塞。
+路由含义：`first_stage` 只接收第一层初筛池及回看卡；`second_stage` 只接收第二层精排公众号稿；`selection` 只接收正式日报主卡和详情卡；`premarket_execution` 只接收盘前执行确认卡；`predictor_realtime` 接收 5 分钟实时预测及偏差卡；`predictor_dayrange` 只接收全天高低价盘前预测。不同路由的投递依赖彼此独立，不会因为另一个机器人失败而互相阻塞。微信公众号草稿使用内置的 `wechat-draft` 渠道，固定绑定 `second_stage`，不会接收其他阶段。
 
-凭证只来自环境变量，不写入日志、镜像或仓库。关闭通知时显式设置 `STOCK_WATCHER_FEISHU_ENABLED=false`，并确保没有设置 `STOCK_WATCHER_NOTIFY_CHANNELS` 的启用通道。
+凭证只来自环境变量或权限受控的私有文件，不写入日志、镜像或仓库。关闭通知时显式设置 `STOCK_WATCHER_FEISHU_ENABLED=false` 和 `STOCK_WATCHER_WECHAT_ENABLED=false`，并确保没有设置 `STOCK_WATCHER_NOTIFY_CHANNELS` 的启用通道。
+
+### 微信公众号草稿
+
+`STOCK_WATCHER_WECHAT_ENABLED=true` 时，系统会把 `second_stage.push_enabled=true` 生成的精排文章通过 `draft/add` 写入公众号草稿箱。该通道固定只接收第二层精排文章；`first_stage`、正式日报、预测和执行确认卡不会进入草稿箱。启用该通道还要求 `STOCK_WATCHER_SECOND_STAGE_ENABLED=true` 与 `STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED=true`，否则 `check-config` 会拒绝启动。
+
+公众号后台需要提供 AppID 和 AppSecret，可放入 `WECHAT_APP_ID`/`WECHAT_APP_SECRET` 环境变量，或设置 `STOCK_WATCHER_WECHAT_CREDENTIALS_FILE` 指向权限为 `0600` 的私有文件；环境变量优先于文件。凭证文件支持 `AppID` 下一行 `AppSecret` 两段式，也支持 `app_id=...` 配 `app_secret=...` 的形式，单个文件最多读取 64 KiB。`wechat.config` 已被 Git 忽略，不得提交。
+
+还需要把实际发起请求主机的公网出口 IP 加入 IP 白名单。容器、systemd 和本地运行可能使用不同出口 IP，以实际请求为准；如果出口 IP 变化，微信会返回 `40164`，修正白名单后执行 `retry wechat-draft` 解锁账本中的永久错误。`check-config` 只校验配置格式，不访问微信接口。
+
+该实现只调用草稿接口，不包含 `freepublish/submit` 或 `message/mass/sendall`。官方文档中新增草稿不要求“仅认证”，但发布草稿和群发要求认证；因此未认证公众号可以把文章整理到草稿箱，仍需在公众号后台人工检查并发布或群发。账本中的 `delivered` 只表示草稿已创建，不表示文章已发布、群发或送达粉丝。
+
+未设置 `WECHAT_THUMB_MEDIA_ID` 时，首次发送会自动上传内置 900×506 PNG 封面并缓存 media_id；进程重启后会重新上传。长期运行建议先在公众号后台取得永久图片素材的 media_id，再设置 `WECHAT_THUMB_MEDIA_ID`，避免重复上传。草稿正文由确定性纯文本转换为安全 HTML，不包含外部图片、外链或脚本。
+
+草稿事件与精排文章共享 T+1 09:30 过期时间；文章未生成、精排降级到没有候选或事件已过期时不会创建草稿。投递账本采用至少一次语义；若微信已创建草稿但本地在记录成功前崩溃，重启后可能重复创建草稿，需要在草稿箱人工清理重复项。
 
 ## AI 与大师复盘配置
 

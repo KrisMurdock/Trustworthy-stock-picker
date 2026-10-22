@@ -33,9 +33,21 @@ journalctl -u stock-watcher.service -n 50 --no-pager
 
 默认 CPU 1 核、内存 256 MiB、PID 64，根文件系统只读，删除全部 Linux capabilities；仅 /data 和 /logs 可写。当前共享使用 root UID 权限，所以容器默认 root，不能随意切换用户；改变用户前需要同步调整共享及配置权限并验证。生产额外需要允许访问行情和飞书的出站网络。
 
+## 微信公众号草稿（可选）
+
+该能力只创建公众号草稿，不调用发布或群发接口。未认证公众号可以使用 `draft/add`，但 `freepublish/submit` 和 `message/mass/sendall` 要求认证；自动发布和“给所有粉丝群发”不在当前实现范围内。
+
+1. 在公众号后台取得 AppID/AppSecret，设置 `STOCK_WATCHER_WECHAT_ENABLED=true`，并设置 `WECHAT_APP_ID` 和 `WECHAT_APP_SECRET`，或用 `STOCK_WATCHER_WECHAT_CREDENTIALS_FILE` 指向权限为 `600` 的私有 `wechat.config`。环境变量优先于文件；文件不提交、不回显。可选设置 `WECHAT_THUMB_MEDIA_ID` 复用永久封面素材，或设置 `STOCK_WATCHER_WECHAT_AUTHOR`。
+2. 把运行主机的公网出口 IP 加入公众号后台的 IP 白名单。容器、systemd 或本地进程的出口 IP 可能不同，必须以实际发起 `api.weixin.qq.com` 请求的主机为准。确认出站网络允许访问该域名。
+3. 保持 `STOCK_WATCHER_SECOND_STAGE_ENABLED=true` 和 `STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED=true`。执行 `./bin/stock-watcher check-config`，再启动 `run`；公开接口或 mock 不能替代真实账号验证。
+4. 下一份精排报告生成后，检查公众号草稿箱是否出现标题、摘要、正文和封面完整的草稿。`status` 中 `wechat-draft` 的 `delivered` 仅表示草稿已创建；还要人工确认草稿内容和排版，再从公众号后台决定是否发布或群发。
+5. 若日志出现 `wechat_api_40164_ip_not_whitelisted`，更新白名单后执行 `./bin/stock-watcher retry wechat-draft`。若出现 `40164` 以外的权限错误，先核对 AppID/AppSecret、账号接口权限和 `second_stage` 开关；不要用重复启动进程绕过投递账本。
+
+当前仓库的自动化验证覆盖模拟微信接口的成功、鉴权刷新、限流、IP 白名单和输入校验；没有真实 AppID/AppSecret 与实际公众号草稿箱，不能宣称真实部署已验证。首次上线应按上述步骤在真实账号完成一次受控草稿验收。
+
 ## 家用机器临时公网入口
 
-家用机器没有公网 IP 或域名时，可使用 Cloudflare Quick Tunnel 临时发布匿名只读网页。该入口默认关闭；先安装 `cloudflared`，确认 `.env` 中的股池和数据目录有效，再显式设置 `STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=true` 并运行 `make run`。脚本固定本地监听 `127.0.0.1:18080`，强制 `STOCK_WATCHER_WEB_PUBLIC_READ_ONLY=true`、`STOCK_WATCHER_LLM_WRITE_MODE=off`、`STOCK_WATCHER_PREDICTOR_WRITE_MODE=off`、`STOCK_WATCHER_PREDICTOR_PUSH_ENABLED=false` 和 `STOCK_WATCHER_FEISHU_ENABLED=false`，执行 `check-config/init/check` 后启动主程序与隧道；健康检查通过后打印 HTTPS URL，并写入 `.scratch/public-tunnel/url`。未开启该环境变量时，`make run` 只启动本机网页。
+家用机器没有公网 IP 或域名时，可使用 Cloudflare Quick Tunnel 临时发布匿名只读网页。该入口默认关闭；先安装 `cloudflared`，确认 `.env` 中的股池和数据目录有效，再显式设置 `STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=true` 并运行 `make run`。脚本固定本地监听 `127.0.0.1:18080`，强制 `STOCK_WATCHER_WEB_PUBLIC_READ_ONLY=true`、`STOCK_WATCHER_LLM_WRITE_MODE=off`、`STOCK_WATCHER_PREDICTOR_WRITE_MODE=off`、`STOCK_WATCHER_PREDICTOR_PUSH_ENABLED=false`、`STOCK_WATCHER_FEISHU_ENABLED=false` 和 `STOCK_WATCHER_WECHAT_ENABLED=false`，执行 `check-config/init/check` 后启动主程序与隧道；健康检查通过后打印 HTTPS URL，并写入 `.scratch/public-tunnel/url`。未开启该环境变量时，`make run` 只启动本机网页。
 
 该模式不需要路由器端口转发，适合演示和短期分享，但 URL 是临时的：进程停止、机器休眠或隧道重连后可能变化，Cloudflare Quick Tunnel 不提供可用性承诺。公网模式不是认证；它只公开行情和复盘读接口，所有非 GET/HEAD 请求以及 AI 配置、对话、归因和模型测试接口都在应用层返回 404。长期稳定地址需要自有域名与命名隧道，或自有域名 + 认证反向代理。
 
