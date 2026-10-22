@@ -39,12 +39,13 @@ type EvaluationOptions struct {
 }
 
 type PredictionRecord struct {
-	Date          string        `json:"date"`
-	Code          string        `json:"code"`
-	InputEnd      time.Time     `json:"input_end"`
-	BaselineRange float64       `json:"baseline_range"`
-	Actual        TargetMetrics `json:"actual"`
-	Predicted     TargetMetrics `json:"predicted"`
+	Date                 string        `json:"date"`
+	Code                 string        `json:"code"`
+	InputEnd             time.Time     `json:"input_end"`
+	BaselineRange        float64       `json:"baseline_range"`
+	Actual               TargetMetrics `json:"actual"`
+	Predicted            TargetMetrics `json:"predicted"`
+	DirectionProbability *float64      `json:"direction_probability,omitempty"`
 }
 
 type EvaluationDay struct {
@@ -340,7 +341,15 @@ func EvaluateRollingWindows(ctx context.Context, dates []string, provider DayPro
 			if opts.PredictionHook != nil {
 				actual := TargetMetrics{High: sample.Labels[TargetHigh], Low: sample.Labels[TargetLow], Close: sample.Labels[TargetClose]}
 				predicted := TargetMetrics{High: b0Preds[i][TargetHigh], Low: b0Preds[i][TargetLow], Close: b0Preds[i][TargetClose]}
-				if err := opts.PredictionHook(PredictionRecord{Date: sample.Date, Code: sample.Code, InputEnd: sample.InputEnd, BaselineRange: sample.BaselineRange, Actual: actual, Predicted: predicted}); err != nil {
+				var probability *float64
+				if b0Model.Artifact.Direction != nil {
+					value, err := b0Model.Artifact.Direction.probability(sample.Features)
+					if err != nil {
+						return report, fmt.Errorf("predict direction for %s: %w", date, err)
+					}
+					probability = &value
+				}
+				if err := opts.PredictionHook(PredictionRecord{Date: sample.Date, Code: sample.Code, InputEnd: sample.InputEnd, BaselineRange: sample.BaselineRange, Actual: actual, Predicted: predicted, DirectionProbability: probability}); err != nil {
 					return report, fmt.Errorf("record prediction for %s: %w", date, err)
 				}
 			}

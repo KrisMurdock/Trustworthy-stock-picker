@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/monitor"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/predictor"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 	stockruntime "github.com/KrisMurdock/Trustworthy-stock-picker/runtime"
@@ -62,6 +64,9 @@ func run(args []string) error {
 	allowLateReports := f.Bool("allow-late-reports", false, "allow archived reports generated after target open when as_of is before target (predictor-eval only)")
 	baselineOnly := f.Bool("baseline-only", false, "evaluate only the expanding B0 baseline (predictor-eval only)")
 	evalUniverse := f.String("universe", "report", "report or config-diagnostic universe (predictor-eval only)")
+	directionThreshold := f.Float64("direction-threshold", predictor.DefaultDirectionThreshold, "close-direction confidence threshold; 1 disables sign correction (predictor-eval only)")
+	dumpPredictions := f.String("dump-predictions", "", "write B0 out-of-sample predictions as JSON lines (predictor-eval only)")
+	maxTrainingDays := f.Int("max-training-days", 0, "cap expanding B0 training days; 0 uses all (predictor-eval only)")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -88,8 +93,14 @@ func run(args []string) error {
 	if command != "predictor-eval" && (*windows != "40,60,120" || *validationDays != 20 || *halfLife != 60) {
 		return errors.New("predictor-eval flags require the predictor-eval command")
 	}
-	if command != "predictor-eval" && (*allowLateReports || *baselineOnly || *evalUniverse != "report") {
+	if command != "predictor-eval" && (*allowLateReports || *baselineOnly || *evalUniverse != "report" || *directionThreshold != predictor.DefaultDirectionThreshold || *dumpPredictions != "" || *maxTrainingDays != 0) {
 		return errors.New("predictor-eval flags require the predictor-eval command")
+	}
+	if *directionThreshold <= 0 || *directionThreshold > 1 || math.IsNaN(*directionThreshold) || math.IsInf(*directionThreshold, 0) {
+		return errors.New("predictor-eval direction-threshold must be greater than 0 and at most 1")
+	}
+	if *maxTrainingDays < 0 || *maxTrainingDays > 250 {
+		return errors.New("predictor-eval max-training-days must be between 0 and 250")
 	}
 	if command != "plan" && (*code != "" || *entry != 0) {
 		return errors.New("trade price flags require the plan command")
@@ -144,7 +155,7 @@ func run(args []string) error {
 	if command == "predictor-eval" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		return runPredictorEval(ctx, c, *asof, *windows, *validationDays, *halfLife, *allowLateReports, *baselineOnly, *evalUniverse)
+		return runPredictorEval(ctx, c, *asof, *windows, *validationDays, *halfLife, *allowLateReports, *baselineOnly, *evalUniverse, *directionThreshold, *dumpPredictions, *maxTrainingDays)
 	}
 	options, err := logging.EnvOptions()
 	if err != nil {

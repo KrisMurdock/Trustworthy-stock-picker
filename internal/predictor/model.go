@@ -81,6 +81,7 @@ type Artifact struct {
 	Trees           map[Target][]Tree      `json:"trees"`
 	LabelClip       map[Target]float64     `json:"label_clip"`
 	Calibration     *PredictionCalibration `json:"calibration,omitempty"`
+	Direction       *DirectionModel        `json:"direction,omitempty"`
 }
 
 type Model struct {
@@ -167,6 +168,9 @@ func LoadModel(data []byte) (*Model, error) {
 	if a.Calibration != nil && !a.Calibration.valid() {
 		return nil, errors.New("invalid predictor calibration")
 	}
+	if a.Direction != nil && !a.Direction.valid(len(a.Info.FeatureNames)) {
+		return nil, errors.New("invalid predictor direction model")
+	}
 	for _, target := range Targets {
 		if _, ok := a.Base[target]; !ok {
 			return nil, errors.New("predictor model is missing a target base")
@@ -245,6 +249,19 @@ func (m *Model) Predict(values []float64) (map[Target]float64, error) {
 			sum *= calibration.Close
 		}
 		out[target] = sum
+	}
+	if m.Artifact.Direction != nil {
+		probability, err := m.Artifact.Direction.probability(values)
+		if err != nil {
+			return nil, err
+		}
+		if math.Abs(probability-0.5) >= m.Artifact.Direction.ConfidenceThreshold {
+			sign := 1.0
+			if probability < 0.5 {
+				sign = -1
+			}
+			out[TargetClose] = math.Copysign(math.Abs(out[TargetClose]), sign)
+		}
 	}
 	return out, nil
 }

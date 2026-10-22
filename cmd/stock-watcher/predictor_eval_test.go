@@ -25,6 +25,11 @@ func TestPredictorEvalRejectsInvalidFlags(t *testing.T) {
 		{"predictor-eval", "-validation-days", "0"},
 		{"predictor-eval", "-half-life", "0"},
 		{"predictor-eval", "-universe", "bad"},
+		{"predictor-eval", "-direction-threshold", "0"},
+		{"predictor-eval", "-direction-threshold", "1.1"},
+		{"predictor-eval", "-direction-threshold", "NaN"},
+		{"predictor-eval", "-max-training-days", "-1"},
+		{"predictor-eval", "-max-training-days", "251"},
 		{"predictor-eval", "-as-of", "2026-10-18"},
 		{"run", "-windows", "5"},
 		{"run", "-validation-days", "5"},
@@ -32,6 +37,9 @@ func TestPredictorEvalRejectsInvalidFlags(t *testing.T) {
 		{"run", "-allow-late-reports"},
 		{"run", "-baseline-only"},
 		{"run", "-universe", "config-diagnostic"},
+		{"run", "-direction-threshold", "0.02"},
+		{"run", "-dump-predictions", "predictions.jsonl"},
+		{"run", "-max-training-days", "60"},
 	} {
 		if err := run(args); err == nil {
 			t.Fatalf("accepted %v", args)

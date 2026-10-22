@@ -37,6 +37,15 @@
 - 生产模型当前仍使用单一训练区间：读取最近 400 个自然日的 5 分钟线，用截止日全量样本重训；评估输出并展示 walk-forward 指标，卡片只保留主指标与护栏指标。
 - `predictor-eval` 提供离线的多训练窗口 rolling walk-forward 评估；它不改变生产模型权重，也不写入模型、预测库或飞书。
 
+### 3.1 可选收盘方向分类器
+
+- close 回归点估计的幅度信息很弱；训练时额外用同一批已冻结特征拟合一个标准化 logistic 方向分类器，只学习下一根 close 收益的符号。
+- 分类器与三个 GBDT 分开训练，最多使用 25 万个实际收益非零的样本；要求至少 64 个样本且同时存在上涨和下跌两类，否则不写入 artifact。
+- 推理时 high/low 保持不变。只有 `abs(probability-0.5) >= confidence_threshold` 时，才按分类器概率决定 close 的符号，幅度仍取 close 回归的绝对值。
+- 默认 `confidence_threshold=0.02`；阈值 1 表示保留分类器但关闭符号修正。阈值和分类器统计量随 artifact 保存，旧 artifact 没有 `direction` 字段时行为完全不变。
+- 方向分类器只在训练截止日之前拟合，不读取验证日或未来 bar；它不改变日报推荐、机会分或风险门槛。
+- 2026-10-22 的 16 日诊断中，全局符号修正的 MAE 改善不显著，方向准确率仍低于多数类；该能力保持实验状态，未合并到 main，详见 [方向分类器评估](predictor-direction-evaluation.md)。
+
 ## 4. 卡尔曼滤波
 
 - 每只股票、每个交易日维护一个局部线性趋势状态，观测为已完成 bar 的收盘价。
@@ -52,6 +61,7 @@
 - 模型文件、预测库、状态和开关全部位于 `<data_dir>`（生产为 CIFS），不回退到本地目录。
 - 模型 artifact 使用 JSON，受 `storage.Store` 的 8 MiB 文档上限约束；当前模型预计远小于该上限。
 - 模型 artifact 与 `predictor-eval` 输出使用 schema 2；schema 1 不再兼容，升级前需保留完整备份。
+- `direction` 是 artifact 的可选字段；加载时会校验权重、均值、标准差、样本数和上涨比例。缺少该字段的旧 artifact 仍按纯回归模型推理。
 
 目录布局：
 
@@ -190,7 +200,8 @@ go run ./cmd/stock-watcher predictor-eval \
   -as-of 2026-10-19 \
   -windows 40,60,120 \
   -validation-days 20 \
-  -half-life 60
+  -half-life 60 \
+  -direction-threshold 0.02
 ```
 
 边界：
@@ -202,6 +213,7 @@ go run ./cmd/stock-watcher predictor-eval \
 - `B0` 会读取配置日历覆盖的全部交易日，长日历下比固定窗口更慢；这是 expanding 基线的代价。
 - 股票池按验证日当时可见的报告恢复：优先 `report_archive` 中目标交易日 09:30 前生成的归档，缺失时才回退可变的 `selection_run`，并在 `universes[].report_source` 标明来源。
 - 默认要求报告在目标交易日 09:30 前生成。历史报告是事后补生成时，可显式加 `-allow-late-reports`；它仍只接受 `as_of < target` 的记录，优先使用归档并标为 `archive-late`，归档不可读时才回退可变的 `selection_run` 并标为 `selection_run-late`，不会使用目标日数据。
+- `-direction-threshold` 控制方向分类器的符号修正门限；设为 1 可保留分类器但关闭修正，用于成对对照。`-dump-predictions <path>` 把 B0 的逐样本预测写成 JSONL，`direction_probability` 为可选的分类器概率，便于离线做阈值敏感性和置信度分层分析。`-max-training-days` 可把 expanding B0 限制到最近 N 个交易日，用于机器资源受限时的诊断；它不改变验证日和方向分类器的 walk-forward 边界。三个参数都只属于 `predictor-eval`。
 
 窗口与策略：
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,7 +33,7 @@ const (
 	evalUniverseConfigDiagnostic = "config-diagnostic"
 )
 
-func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg string, validationDays, halfLife int, allowLateReports, baselineOnly bool, universe string) error {
+func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg string, validationDays, halfLife int, allowLateReports, baselineOnly bool, universe string, directionThreshold float64, dumpPredictions string, maxTrainingDays int) error {
 	if universe == "" {
 		universe = evalUniverseReport
 	}
@@ -52,6 +53,20 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	}
 	if halfLife < 1 || halfLife > 365 {
 		return errors.New("predictor-eval half-life must be between 1 and 365")
+	}
+	trainOptions := predictor.DefaultTrainOptions()
+	trainOptions.DirectionThreshold = directionThreshold
+	var predictionFile *os.File
+	var predictionWriter *bufio.Writer
+	if dumpPredictions != "" {
+		file, err := os.OpenFile(dumpPredictions, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+		if err != nil {
+			return fmt.Errorf("open prediction dump: %w", err)
+		}
+		predictionFile = file
+		predictionWriter = bufio.NewWriter(file)
+		defer predictionFile.Close()
+		defer func() { _ = predictionWriter.Flush() }()
 	}
 	if !c.Predictor.Enabled {
 		return errors.New("predictor is disabled")
@@ -77,8 +92,8 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	if len(tradingDays) < requiredDays {
 		report, err := predictor.EvaluateRollingWindows(ctx, nil, emptyEvalProvider, predictor.EvaluationOptions{
 			AsOf: asof, Windows: windows, BaselineOnly: baselineOnly, TradingDays: tradingDays,
-			MinTrainingDays: c.Predictor.MinTrainingDays, HalfLifeDays: halfLife,
-			TrainOptions: predictor.DefaultTrainOptions(),
+			MinTrainingDays: c.Predictor.MinTrainingDays, MaxTrainingDays: maxTrainingDays, HalfLifeDays: halfLife,
+			TrainOptions: trainOptions,
 		})
 		if err != nil {
 			return err
@@ -160,8 +175,8 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	if len(metas) == 0 {
 		report, err := predictor.EvaluateRollingWindows(ctx, nil, emptyEvalProvider, predictor.EvaluationOptions{
 			AsOf: asof, Windows: windows, BaselineOnly: baselineOnly, TradingDays: tradingDays,
-			MinTrainingDays: c.Predictor.MinTrainingDays, HalfLifeDays: halfLife,
-			TrainOptions: predictor.DefaultTrainOptions(),
+			MinTrainingDays: c.Predictor.MinTrainingDays, MaxTrainingDays: maxTrainingDays, HalfLifeDays: halfLife,
+			TrainOptions: trainOptions,
 		})
 		if err != nil {
 			return err
@@ -227,11 +242,22 @@ func runPredictorEval(ctx context.Context, c config.Config, asof, windowsArg str
 	}
 	report, err := predictor.EvaluateRollingWindows(ctx, candidateDates, provider, predictor.EvaluationOptions{
 		AsOf: asof, Windows: windows, BaselineOnly: baselineOnly, TradingDays: tradingDays, MarketStates: regimes,
-		MinTrainingDays: c.Predictor.MinTrainingDays, HalfLifeDays: halfLife,
-		TrainOptions: predictor.DefaultTrainOptions(),
+		MinTrainingDays: c.Predictor.MinTrainingDays, MaxTrainingDays: maxTrainingDays, HalfLifeDays: halfLife,
+		TrainOptions: trainOptions,
+		PredictionHook: func(record predictor.PredictionRecord) error {
+			if predictionWriter == nil {
+				return nil
+			}
+			return json.NewEncoder(predictionWriter).Encode(record)
+		},
 	})
 	if err != nil {
 		return err
+	}
+	if predictionWriter != nil {
+		if err := predictionWriter.Flush(); err != nil {
+			return fmt.Errorf("flush prediction dump: %w", err)
+		}
 	}
 	report.Universe = universe
 	report.Notes = append(report.Notes, notes...)

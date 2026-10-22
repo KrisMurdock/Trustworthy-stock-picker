@@ -12,17 +12,19 @@ import (
 
 type TrainOptions struct {
 	Hyperparameters
-	LabelClip   TargetMetrics
-	Calibration PredictionCalibration
+	LabelClip          TargetMetrics
+	Calibration        PredictionCalibration
+	DirectionThreshold float64
 }
 
 var errNoPredictionSamples = errors.New("predictor has no training samples")
 
 func DefaultTrainOptions() TrainOptions {
 	return TrainOptions{
-		Hyperparameters: Hyperparameters{Trees: 120, MaxDepth: 4, MinLeaf: 40, LearningRate: 0.05, L2: 1, Seed: 1949, Bins: 32},
-		LabelClip:       TargetMetrics{High: 0.05, Low: 0.05, Close: 0.05},
-		Calibration:     DefaultPredictionCalibration(),
+		Hyperparameters:    Hyperparameters{Trees: 120, MaxDepth: 4, MinLeaf: 40, LearningRate: 0.05, L2: 1, Seed: 1949, Bins: 32},
+		LabelClip:          TargetMetrics{High: 0.05, Low: 0.05, Close: 0.05},
+		Calibration:        DefaultPredictionCalibration(),
+		DirectionThreshold: DefaultDirectionThreshold,
 	}
 }
 
@@ -117,6 +119,7 @@ func Train(samples []Sample, info ModelInfo, opts TrainOptions) (*Artifact, erro
 		}
 		artifact.Trees[target] = trees
 	}
+	artifact.Direction = fitDirectionModel(ordered, nFeatures, opts.DirectionThreshold)
 	return artifact, nil
 }
 
@@ -285,6 +288,7 @@ func normalizeTrainOptions(opts TrainOptions) TrainOptions {
 		opts.LabelClip.Close = defaults.LabelClip.Close
 	}
 	opts.Calibration = opts.Calibration.normalized()
+	opts.DirectionThreshold = directionThreshold(opts.DirectionThreshold)
 	return opts
 }
 
