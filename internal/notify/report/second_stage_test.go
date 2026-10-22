@@ -37,7 +37,7 @@ func TestSecondStageArticleUsesReferenceStyleAndPriceAnnotations(t *testing.T) {
 		"# 10月22日 三日短线观察：排名靠前，但暂未形成正式推荐",
 		"## 一、排名靠前的观察对象",
 		":::card blue",
-		"### 1. 亿联网络（sz300628）",
+		"### 1. YLWL（sz300628）",
 		"**精排第1名 · 观察第1名 · 测试行业**",
 		"#### 价格与明日区间",
 		"- **推荐买区**：15.00~15.30 购入",
@@ -67,7 +67,7 @@ func TestSecondStageArticleUsesReferenceStyleAndPriceAnnotations(t *testing.T) {
 		":::card amber",
 		":::card grey",
 		"## 二、其他进入观察排名的对象",
-		"### 6. 候选六（sz000006）",
+		"### 6. HXL（sz000006）",
 		"明日高低预测 暂缺（dayrange 模型未生成目标日预测）",
 		"## 三、今天的整体结论",
 		"> 强势观察池，而不是正式推荐池。",
@@ -85,7 +85,7 @@ func TestSecondStageArticleUsesReferenceStyleAndPriceAnnotations(t *testing.T) {
 	if got, want := strings.Count(body, "\n:::\n"), 6; got != want {
 		t.Fatalf("closed stock cards = %d, want %d:\n%s", got, want, body)
 	}
-	for _, unwanted := range []string{"jev_missing", "historical_net_loss_limit_breached", "【公众号"} {
+	for _, unwanted := range []string{"jev_missing", "historical_net_loss_limit_breached", "【公众号", "亿联网络", "金山办公", "海螺水泥", "长江电力", "陕西煤业", "候选六"} {
 		if strings.Contains(body, unwanted) {
 			t.Fatalf("article leaked %q:\n%s", unwanted, body)
 		}

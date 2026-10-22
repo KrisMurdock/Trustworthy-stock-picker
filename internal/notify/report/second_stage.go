@@ -142,7 +142,7 @@ func buildArticleCandidates(r selection.Report, result secondstage.Report) []art
 
 func writeArticleDetail(out *strings.Builder, r selection.Report, row articleCandidate) {
 	code := articleValue(row.candidate.Code, "代码未记录")
-	name := articleValue(row.candidate.Name, code)
+	name := articleStockLabel(code, row.candidate.Name)
 	sector := articleValue(row.candidate.Sector, "行业未记录")
 	out.WriteString(":::card " + articleCardTone(row) + "\n")
 	out.WriteString(fmt.Sprintf("### %d. %s（%s）\n\n", row.rank, name, code))
@@ -179,7 +179,7 @@ func writeArticleDetail(out *strings.Builder, r selection.Report, row articleCan
 
 func writeArticleBrief(out *strings.Builder, r selection.Report, row articleCandidate) {
 	code := articleValue(row.candidate.Code, "代码未记录")
-	name := articleValue(row.candidate.Name, code)
+	name := articleStockLabel(code, row.candidate.Name)
 	sector := articleValue(row.candidate.Sector, "行业未记录")
 	out.WriteString(":::card " + articleCardTone(row) + "\n")
 	out.WriteString(fmt.Sprintf("### %d. %s（%s）\n\n", row.rank, name, code))
