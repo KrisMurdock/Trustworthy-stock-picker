@@ -215,6 +215,36 @@ func TestExecuteLoadsJEVBeforeStrippingDataDir(t *testing.T) {
 	}
 }
 
+func TestBuildLoadsMultipleSecondStageModels(t *testing.T) {
+	c, h := secondStageDailyFixture(t)
+	c.SecondStage.BlendID = "blend_jev_laya"
+	c.SecondStage.FirstStageWeight = 0.4
+	c.SecondStage.Models = []config.ModelWeight{{Name: "jev", Weight: 0.3}, {Name: "laya_official", Weight: 0.3}}
+	for name, score := range map[string]float64{"jev": 0.7, "laya_official": 0.6} {
+		dir := filepath.Join(c.DataDir, "state", "secondstage", name)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		doc, err := json.Marshal(secondstage.JEVDocument{SchemaVersion: 1, AsOf: h.AsOf, Scores: map[string]secondstage.JEVScore{"sz000001": {Adjacent15: score}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, h.AsOf+".json"), doc, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := Build(c, []market.History{h}, h.AsOf, "2026-10-14", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.SecondStage == nil || report.SecondStage.Blend.ID != "blend_jev_laya" || len(report.SecondStage.Models) != 2 || report.SecondStage.Degraded {
+		t.Fatalf("multi-model second-stage was not loaded: %+v", report.SecondStage)
+	}
+	if len(report.SecondStage.Candidates) != 1 || len(report.SecondStage.Candidates[0].Models) != 2 {
+		t.Fatalf("multi-model evidence missing: %+v", report.SecondStage)
+	}
+}
+
 func TestReportIdentityIgnoresNestedGenerationTimes(t *testing.T) {
 	report := Report{
 		Version:     1,

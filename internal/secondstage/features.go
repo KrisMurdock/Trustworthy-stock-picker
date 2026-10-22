@@ -85,15 +85,26 @@ func maxScore(values []float64) float64 {
 }
 
 func scorePercentiles(members []firststage.Candidate, scores map[string]JEVScore, value func(JEVScore) float64) map[string]float64 {
+	values := make(map[string]float64, len(members))
+	for _, candidate := range members {
+		if score, ok := scores[candidate.Code]; ok {
+			values[candidate.Code] = value(score)
+		}
+	}
+	return percentilesByCode(values)
+}
+
+// percentilesByCode ranks higher scores higher and assigns the midpoint
+// percentile to tied rows. The tie handling matches the offline evaluation so
+// production does not silently break equal first-stage or model scores.
+func percentilesByCode(scores map[string]float64) map[string]float64 {
 	type row struct {
 		code  string
 		score float64
 	}
-	rows := make([]row, 0, len(members))
-	for _, candidate := range members {
-		if score, ok := scores[candidate.Code]; ok {
-			rows = append(rows, row{code: candidate.Code, score: value(score)})
-		}
+	rows := make([]row, 0, len(scores))
+	for code, score := range scores {
+		rows = append(rows, row{code: code, score: score})
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].score != rows[j].score {
@@ -106,12 +117,19 @@ func scorePercentiles(members []firststage.Candidate, scores map[string]JEVScore
 	if denominator < 1 {
 		denominator = 1
 	}
-	for index, item := range rows {
-		if len(rows) == 1 {
-			out[item.code] = 0.5
-			continue
+	for index := 0; index < len(rows); {
+		end := index
+		for end+1 < len(rows) && rows[end+1].score == rows[index].score {
+			end++
 		}
-		out[item.code] = float64(index) / float64(denominator)
+		percentile := 0.5
+		if len(rows) > 1 {
+			percentile = (float64(index) + float64(end)) / 2 / float64(denominator)
+		}
+		for tied := index; tied <= end; tied++ {
+			out[rows[tied].code] = percentile
+		}
+		index = end + 1
 	}
 	return out
 }

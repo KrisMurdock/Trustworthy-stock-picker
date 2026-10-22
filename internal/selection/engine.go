@@ -10,7 +10,6 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/secondstage"
-	"path/filepath"
 	"time"
 )
 
@@ -36,12 +35,12 @@ type Input struct {
 	Histories []market.History
 	Raw       []market.History
 	Minutes   []market.MinuteHistory
-	// SecondStageJEV is a frozen, already validated JEV snapshot. Execute
-	// loads it before SafeConfig strips filesystem paths; engines never read
-	// artifacts from disk themselves.
-	SecondStageJEV *secondstage.JEVInput
-	AsOf, Target   string
-	Now            time.Time
+	// SecondStageModels are frozen, already validated offline model snapshots.
+	// Execute loads them before SafeConfig strips filesystem paths; engines
+	// never read artifacts from disk themselves.
+	SecondStageModels []secondstage.ModelInput
+	AsOf, Target      string
+	Now               time.Time
 }
 type Provenance struct {
 	Engine     EngineDescriptor `json:"engine"`
@@ -74,7 +73,7 @@ type builtinEngine struct{ descriptor EngineDescriptor }
 
 func (e builtinEngine) Descriptor() EngineDescriptor { return e.descriptor }
 func (e builtinEngine) Analyze(ctx context.Context, in Input) (Report, error) {
-	return buildWithExecution(ctx, in.Config, in.Histories, in.Raw, in.Minutes, in.SecondStageJEV, in.AsOf, in.Target, in.Now)
+	return buildWithExecution(ctx, in.Config, in.Histories, in.Raw, in.Minutes, in.SecondStageModels, in.AsOf, in.Target, in.Now)
 }
 func DefaultEngine(c config.Config) (Engine, error) {
 	id := "leader_daily_v1"
@@ -117,12 +116,10 @@ func Execute(ctx context.Context, e Engine, in Input, build string) (Report, err
 	if d.RawRequired && len(in.Raw) == 0 {
 		return Report{}, errors.New("algorithm requires raw execution histories")
 	}
-	if in.SecondStageJEV == nil && in.Config.FirstStage.Enabled && in.Config.SecondStage.Enabled {
-		path := filepath.Join(in.Config.DataDir, "state", "jev", in.AsOf+".json")
-		scores, status := secondstage.LoadJEV(path, in.AsOf)
-		in.SecondStageJEV = &secondstage.JEVInput{Status: status, Scores: scores}
+	if in.SecondStageModels == nil && in.Config.FirstStage.Enabled && in.Config.SecondStage.Enabled {
+		in.SecondStageModels = loadSecondStageModels(in.Config, in.AsOf)
 	}
-	if err := secondstage.ValidateJEVInput(in.SecondStageJEV); err != nil {
+	if err := secondstage.ValidateModelInputs(in.SecondStageModels); err != nil {
 		return Report{}, err
 	}
 	in.Version = 1
@@ -257,6 +254,14 @@ func Execute(ctx context.Context, e Engine, in Input, build string) (Report, err
 		if second.Version != secondstage.ReportSchemaVersion || second.AsOf != in.AsOf || second.Target != in.Target {
 			return Report{}, errors.New("invalid second-stage report identity")
 		}
+		if second.Ranker != "" && second.Ranker != secondstage.RankerBlendWeighted {
+			return Report{}, errors.New("unsupported second-stage ranker")
+		}
+		if second.Ranker == secondstage.RankerBlendWeighted {
+			if err := second.Blend.Validate(); err != nil {
+				return Report{}, err
+			}
+		}
 		switch second.Status {
 		case secondstage.StatusOK:
 			if second.TopN < 1 || second.TopN > 100 || len(second.Candidates) == 0 || len(second.Candidates) > second.TopN {
@@ -278,6 +283,15 @@ func Execute(ctx context.Context, e Engine, in Input, build string) (Report, err
 		for _, candidate := range second.Candidates {
 			if candidate.Rank < 1 || candidate.Rank > len(second.Candidates) || secondRanks[candidate.Rank] || secondSeen[candidate.Code] || !firstCodes[candidate.Code] {
 				return Report{}, errors.New("invalid second-stage candidate stock")
+			}
+			if second.Ranker == secondstage.RankerBlendWeighted &&
+				(candidate.FirstStagePercentile < 0 || candidate.FirstStagePercentile > 1 || candidate.BlendScore < 0 || candidate.BlendScore > 1) {
+				return Report{}, errors.New("invalid second-stage blend score")
+			}
+			for _, signal := range candidate.Models {
+				if signal.Percentile < 0 || signal.Percentile > 1 {
+					return Report{}, errors.New("invalid second-stage model percentile")
+				}
 			}
 			secondRanks[candidate.Rank] = true
 			secondSeen[candidate.Code] = true

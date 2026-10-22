@@ -14,7 +14,6 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/secondstage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -70,14 +69,21 @@ func Build(c config.Config, histories []market.History, asof, target string, now
 	return buildDaily(c, histories, nil, asof, target, now)
 }
 
-// BuildWithJEV lets tests and offline replays supply a frozen JEV snapshot.
-// Production callers obtain it from selection.Execute, which reads the
-// artifact before stripping filesystem paths from the engine input.
+// BuildWithJEV lets legacy tests and offline replays supply a frozen JEV
+// snapshot. New callers should build a BlendPlan with multiple ModelInputs.
 func BuildWithJEV(c config.Config, histories []market.History, jev *secondstage.JEVInput, asof, target string, now time.Time) (Report, error) {
-	return buildDaily(c, histories, jev, asof, target, now)
+	var models []secondstage.ModelInput
+	if jev != nil {
+		input := *jev
+		if input.Name == "" {
+			input.Name = secondstage.ModelJEV
+		}
+		models = []secondstage.ModelInput{input}
+	}
+	return buildDaily(c, histories, models, asof, target, now)
 }
 
-func buildDaily(c config.Config, histories []market.History, jev *secondstage.JEVInput, asof, target string, now time.Time) (Report, error) {
+func buildDaily(c config.Config, histories []market.History, models []secondstage.ModelInput, asof, target string, now time.Time) (Report, error) {
 	if c.Strategy.Enabled {
 		return Report{}, errors.New("short-horizon strategy requires raw execution histories")
 	}
@@ -161,7 +167,7 @@ func buildDaily(c config.Config, histories []market.History, jev *secondstage.JE
 	r.Passed = len(ranked)
 	r.Selected = append(r.Selected, ranked[:min(len(ranked), c.Selection.TopN)]...)
 	attachFirstStage(&r, c, histories, asof, target, now)
-	attachSecondStage(&r, c, jev, asof, target, now)
+	attachSecondStage(&r, c, models, asof, target, now)
 	// ID includes configuration, selected results and data date, not wall-clock generation time.
 	identity := reportIdentity(r)
 	data, _ := json.Marshal(identity)
@@ -190,9 +196,9 @@ func BuildWithExecutionMinutes(ctx context.Context, c config.Config, histories, 
 	return buildWithExecution(ctx, c, histories, raw, minutes, nil, asof, target, now)
 }
 
-func buildWithExecution(ctx context.Context, c config.Config, histories, raw []market.History, minutes []market.MinuteHistory, jev *secondstage.JEVInput, asof, target string, now time.Time) (Report, error) {
+func buildWithExecution(ctx context.Context, c config.Config, histories, raw []market.History, minutes []market.MinuteHistory, models []secondstage.ModelInput, asof, target string, now time.Time) (Report, error) {
 	if !c.Strategy.Enabled {
-		return buildDaily(c, histories, jev, asof, target, now)
+		return buildDaily(c, histories, models, asof, target, now)
 	}
 	var result strategy.Result
 	var err error
@@ -252,7 +258,7 @@ func buildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 		}
 	}
 	attachFirstStage(&r, c, histories, asof, target, now)
-	attachSecondStage(&r, c, jev, asof, target, now)
+	attachSecondStage(&r, c, models, asof, target, now)
 	identity := reportIdentity(r)
 	data, err := json.Marshal(identity)
 	if err != nil {
@@ -298,20 +304,21 @@ func attachFirstStage(report *Report, c config.Config, histories []market.Histor
 	report.FirstStage = &result
 }
 
-func attachSecondStage(report *Report, c config.Config, jev *secondstage.JEVInput, asof, target string, now time.Time) {
+func attachSecondStage(report *Report, c config.Config, models []secondstage.ModelInput, asof, target string, now time.Time) {
 	if !c.SecondStage.Enabled || report.FirstStage == nil {
 		return
+	}
+	if models == nil {
+		models = loadSecondStageModels(c, asof)
 	}
 	opts := secondstage.Options{
 		AsOf:        asof,
 		Target:      target,
 		TopN:        c.SecondStage.TopN,
 		PushEnabled: c.SecondStage.PushEnabled,
-		JEV:         jev,
+		Blend:       secondStageBlendPlan(c),
+		Models:      models,
 		Now:         now,
-	}
-	if jev == nil {
-		opts.JEVPath = filepath.Join(c.DataDir, "state", "jev", asof+".json")
 	}
 	result, _ := secondstage.Analyze(*report.FirstStage, opts)
 	report.SecondStage = &result

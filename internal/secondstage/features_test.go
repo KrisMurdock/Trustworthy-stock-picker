@@ -29,6 +29,22 @@ func TestJEVGroupStatsUseGroupRelativePercentile(t *testing.T) {
 	}
 }
 
+func TestJEVGroupStatsAverageTiedPercentiles(t *testing.T) {
+	candidates := []firststage.Candidate{
+		{Rank: 1, Code: "sh600001"},
+		{Rank: 2, Code: "sh600002"},
+		{Rank: 3, Code: "sh600003"},
+	}
+	stats := buildJEVGroupStats(candidates, map[string]JEVScore{
+		"sh600001": {Adjacent15: 0.2},
+		"sh600002": {Adjacent15: 0.8},
+		"sh600003": {Adjacent15: 0.8},
+	})
+	if stats[0].Percentile["sh600001"] != 0 || stats[0].Percentile["sh600002"] != 0.75 || stats[0].Percentile["sh600003"] != 0.75 {
+		t.Fatalf("tied JEV percentiles were not averaged: %+v", stats[0].Percentile)
+	}
+}
+
 func TestFeatureVectorMatchesFeatureContract(t *testing.T) {
 	candidate := firststage.Candidate{
 		Rank:       1,

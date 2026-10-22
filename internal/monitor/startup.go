@@ -67,7 +67,7 @@ func (m *Monitor) enqueueReport(state *State, report selection.Report) (int, err
 		if second.Status == secondstage.StatusFailed {
 			m.Log.Warn("Second-stage ranking failed", "as_of", report.AsOf, "reason", second.Reason)
 		} else {
-			m.Log.Info("Second-stage ranking completed", "as_of", report.AsOf, "status", second.Status, "jev_status", second.JEVStatus, "degraded", second.Degraded, "candidates", len(second.Candidates))
+			m.Log.Info("Second-stage ranking completed", "as_of", report.AsOf, "status", second.Status, "ranker", second.Ranker, "blend_id", second.Blend.ID, "models", len(second.Models), "degraded", second.Degraded, "candidates", len(second.Candidates))
 		}
 	}
 	reason := ""

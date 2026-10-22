@@ -2,6 +2,7 @@ package secondstage
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,11 @@ func writeJEV(t *testing.T, asOf string, scores map[string]JEVScore) string {
 	return path
 }
 
+func loadedModel(t *testing.T, name, asOf, path string) ModelInput {
+	t.Helper()
+	return LoadModel(ModelSource{Name: name, Path: path}, asOf)
+}
+
 func rankingModel() Model {
 	return Model{
 		ModelID:       "test_tree",
@@ -65,7 +71,7 @@ func TestAnalyzeRanksWithJEVAndClipsTopN(t *testing.T) {
 		"sh600002": {Adjacent15: 0.9},
 		"sh600003": {Adjacent15: 0.4},
 	})
-	opts := Options{AsOf: asOf, Target: target, TopN: 2, PushEnabled: true, JEVPath: path, Now: time.Unix(0, 0)}
+	opts := Options{AsOf: asOf, Target: target, TopN: 2, PushEnabled: true, Models: []ModelInput{loadedModel(t, ModelJEV, asOf, path)}, Now: time.Unix(0, 0)}
 	report, err := analyzeWithModel(baseReport(opts), fixtureFirstStage(asOf, target), opts, rankingModel())
 	if err != nil {
 		t.Fatal(err)
@@ -73,11 +79,20 @@ func TestAnalyzeRanksWithJEVAndClipsTopN(t *testing.T) {
 	if report.Status != StatusOK || report.JEVStatus != JEVStatusOK || report.Degraded || !report.PushEnabled {
 		t.Fatalf("unexpected report status: %+v", report)
 	}
+	if report.Ranker != RankerBlendWeighted || report.Blend.ID != DefaultBlendID {
+		t.Fatalf("unexpected ranker: %q", report.Ranker)
+	}
 	if len(report.Candidates) != 2 || report.Candidates[0].Code != "sh600002" || report.Candidates[0].Rank != 1 {
 		t.Fatalf("unexpected top candidates: %+v", report.Candidates)
 	}
 	if !report.Candidates[0].JEVPresent || report.Candidates[0].JEVAdjacent15 != 0.9 {
 		t.Fatalf("JEV evidence lost: %+v", report.Candidates[0])
+	}
+	if report.Candidates[0].FirstStagePercentile != 0.5 || report.Candidates[0].JEVPercentile != 1 || report.Candidates[0].BlendScore != 0.75 {
+		t.Fatalf("unexpected blend inputs: %+v", report.Candidates[0])
+	}
+	if report.Candidates[1].BlendScore != 0.5 {
+		t.Fatalf("unexpected second blend score: %+v", report.Candidates[1])
 	}
 	if len(report.Excluded) != 1 || report.Excluded[0].Code != "sh600003" {
 		t.Fatalf("unexpected exclusions: %+v", report.Excluded)
@@ -86,7 +101,8 @@ func TestAnalyzeRanksWithJEVAndClipsTopN(t *testing.T) {
 
 func TestAnalyzeDegradesWhenJEVMissing(t *testing.T) {
 	asOf, target := "2026-10-20", "2026-10-21"
-	opts := Options{AsOf: asOf, Target: target, TopN: 3, JEVPath: filepath.Join(t.TempDir(), "missing.json"), Now: time.Unix(0, 0)}
+	missingPath := filepath.Join(t.TempDir(), "missing.json")
+	opts := Options{AsOf: asOf, Target: target, TopN: 3, Models: []ModelInput{loadedModel(t, ModelJEV, asOf, missingPath)}, Now: time.Unix(0, 0)}
 	report, err := analyzeWithModel(baseReport(opts), fixtureFirstStage(asOf, target), opts, rankingModel())
 	if err != nil {
 		t.Fatal(err)
@@ -97,10 +113,133 @@ func TestAnalyzeDegradesWhenJEVMissing(t *testing.T) {
 	if len(report.Candidates) != 3 {
 		t.Fatalf("tree-only fallback lost candidates: %+v", report)
 	}
-	for _, candidate := range report.Candidates {
+	wantOrder := []string{"sh600001", "sh600002", "sh600003"}
+	for index, candidate := range report.Candidates {
+		if candidate.Code != wantOrder[index] {
+			t.Fatalf("missing-JEV fallback changed first-stage order: %+v", report.Candidates)
+		}
 		if candidate.JEVPresent || !hasReason(candidate.Reasons, "jev_missing") {
 			t.Fatalf("candidate did not mark missing JEV: %+v", candidate)
 		}
+		if candidate.JEVPercentile != 0.5 || candidate.BlendScore != 0.5*candidate.FirstStagePercentile+0.25 {
+			t.Fatalf("missing-JEV blend did not use a neutral percentile: %+v", candidate)
+		}
+	}
+}
+
+func TestAnalyzeBlendsMultipleModels(t *testing.T) {
+	asOf, target := "2026-10-20", "2026-10-21"
+	plan := BlendPlan{
+		ID:               "blend_60_20_20",
+		FirstStageWeight: 0.4,
+		Models: []BlendWeight{
+			{Name: "jev", Weight: 0.3},
+			{Name: "laya_official", Weight: 0.3},
+		},
+	}
+	models := []ModelInput{
+		{Name: "jev", Status: ModelStatusOK, Scores: map[string]ModelScore{
+			"sh600001": {Adjacent15: 0.1}, "sh600002": {Adjacent15: 0.9}, "sh600003": {Adjacent15: 0.5},
+		}},
+		{Name: "laya_official", Status: ModelStatusOK, Scores: map[string]ModelScore{
+			"sh600001": {Adjacent15: 0.5}, "sh600002": {Adjacent15: 0.7}, "sh600003": {Adjacent15: 0.9},
+		}},
+	}
+	opts := Options{AsOf: asOf, Target: target, TopN: 3, Blend: plan, Models: models, Now: time.Unix(0, 0)}
+	report, err := analyzeWithModel(baseReport(opts), fixtureFirstStage(asOf, target), opts, rankingModel())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Degraded || len(report.Models) != 2 {
+		t.Fatalf("multi-model blend degraded: %+v", report)
+	}
+	want := []string{"sh600002", "sh600003", "sh600001"}
+	wantScores := []float64{0.65, 0.45, 0.4}
+	for index, code := range want {
+		candidate := report.Candidates[index]
+		if candidate.Code != code || math.Abs(candidate.BlendScore-wantScores[index]) > 1e-9 {
+			t.Fatalf("unexpected multi-model order at %d: %+v", index, candidate)
+		}
+	}
+	if report.Candidates[0].Models["laya_official"].Percentile != 0.5 {
+		t.Fatalf("second model percentile missing: %+v", report.Candidates[0].Models)
+	}
+}
+
+func TestBlendPlanValidation(t *testing.T) {
+	if err := DefaultBlendPlan().Validate(); err != nil {
+		t.Fatalf("default blend plan rejected: %v", err)
+	}
+	for _, test := range []struct {
+		name string
+		plan BlendPlan
+	}{
+		{"weights do not sum", BlendPlan{ID: "bad", FirstStageWeight: 0.5, Models: []BlendWeight{{Name: "jev", Weight: 0.4}}}},
+		{"zero model weight", BlendPlan{ID: "bad", FirstStageWeight: 0.5, Models: []BlendWeight{{Name: "jev", Weight: 0}}}},
+		{"duplicate model", BlendPlan{ID: "bad", FirstStageWeight: 0.5, Models: []BlendWeight{{Name: "jev", Weight: 0.25}, {Name: "jev", Weight: 0.25}}}},
+		{"invalid model name", BlendPlan{ID: "bad", FirstStageWeight: 0.5, Models: []BlendWeight{{Name: "../jev", Weight: 0.5}}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.plan.Validate(); err == nil {
+				t.Fatalf("invalid plan accepted: %+v", test.plan)
+			}
+		})
+	}
+}
+
+func TestFirstStagePercentilesUseTieAveraging(t *testing.T) {
+	candidates := []firststage.Candidate{
+		{Rank: 1, Code: "sh600001", BlendScore: 0.9},
+		{Rank: 2, Code: "sh600002", BlendScore: 0.9},
+		{Rank: 3, Code: "sh600003", BlendScore: 0.5},
+		{Rank: 4, Code: "sh600004", BlendScore: 0.1},
+	}
+	got := firstStagePercentilesByCode(candidates)
+	want := map[string]float64{
+		"sh600001": 5.0 / 6.0,
+		"sh600002": 5.0 / 6.0,
+		"sh600003": 1.0 / 3.0,
+		"sh600004": 0,
+	}
+	for code, value := range want {
+		if got[code] != value {
+			t.Fatalf("first-stage percentile for %s = %v want %v", code, got[code], value)
+		}
+	}
+	single := firstStagePercentilesByCode([]firststage.Candidate{{Code: "sh600001", BlendScore: 0.9}})
+	if single["sh600001"] != 0.5 {
+		t.Fatalf("single-candidate percentile = %v", single["sh600001"])
+	}
+}
+
+func TestAnalyzePartialJEVCoverageUsesNeutralPercentile(t *testing.T) {
+	asOf, target := "2026-10-20", "2026-10-21"
+	path := writeJEV(t, asOf, map[string]JEVScore{
+		"sh600001": {Adjacent15: 0.9},
+		"sh600002": {Adjacent15: 0.1},
+	})
+	opts := Options{AsOf: asOf, Target: target, TopN: 3, Models: []ModelInput{loadedModel(t, ModelJEV, asOf, path)}}
+	report, err := analyzeWithModel(baseReport(opts), fixtureFirstStage(asOf, target), opts, rankingModel())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Degraded || report.JEVStatus != JEVStatusOK {
+		t.Fatalf("partial JEV coverage did not degrade: %+v", report)
+	}
+	if len(report.Candidates) != 3 || report.Candidates[0].Code != "sh600001" {
+		t.Fatalf("unexpected order: %+v", report.Candidates)
+	}
+	if report.Candidates[0].BlendScore != 1 {
+		t.Fatalf("first candidate blend score: %+v", report.Candidates[0])
+	}
+	var missing *Candidate
+	for index := range report.Candidates {
+		if report.Candidates[index].Code == "sh600003" {
+			missing = &report.Candidates[index]
+		}
+	}
+	if missing == nil || missing.JEVPresent || missing.JEVPercentile != 0.5 || missing.BlendScore != 0.25 || !hasReason(missing.Reasons, "jev_missing") {
+		t.Fatalf("missing JEV row was not neutralized: %+v", missing)
 	}
 }
 
@@ -134,7 +273,7 @@ func TestInvalidJEVDocumentFallsBack(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"schema_version":1,"as_of":"2026-10-19","scores":{}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	opts := Options{AsOf: asOf, Target: target, TopN: 3, JEVPath: path}
+	opts := Options{AsOf: asOf, Target: target, TopN: 3, Models: []ModelInput{loadedModel(t, ModelJEV, asOf, path)}}
 	report, err := analyzeWithModel(baseReport(opts), fixtureFirstStage(asOf, target), opts, rankingModel())
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +312,7 @@ func TestEmbeddedModelChecksumIsPinned(t *testing.T) {
 	}
 }
 
-func TestValidateJEVInputRejectsMalformedSnapshot(t *testing.T) {
+func TestValidateModelInputsRejectsMalformedSnapshot(t *testing.T) {
 	for _, input := range []*JEVInput{
 		{Status: JEVStatusOK},
 		{Status: "unknown"},
@@ -186,6 +325,9 @@ func TestValidateJEVInputRejectsMalformedSnapshot(t *testing.T) {
 	}
 	if err := ValidateJEVInput(&JEVInput{Status: JEVStatusNone}); err != nil {
 		t.Fatalf("missing JEV snapshot rejected: %v", err)
+	}
+	if err := ValidateModelInputs([]ModelInput{{Name: "jev", Status: ModelStatusNil}, {Name: "jev", Status: ModelStatusNil}}); err == nil {
+		t.Fatal("duplicate model snapshots accepted")
 	}
 }
 

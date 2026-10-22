@@ -9,6 +9,7 @@ import (
 
 func applyEnvironment(c *Config) error {
 	for name, target := range map[string]*string{
+		"STOCK_WATCHER_SECOND_STAGE_BLEND_ID":            &c.SecondStage.BlendID,
 		"STOCK_WATCHER_DATA_DIR":                         &c.DataDir,
 		"STOCK_WATCHER_WEB_ADDR":                         &c.Web.Listen,
 		"STOCK_WATCHER_POOL_FILE":                        &c.PoolFile,
@@ -115,23 +116,24 @@ func applyEnvironment(c *Config) error {
 		}
 	}
 	for name, target := range map[string]*float64{
-		"STOCK_WATCHER_SELECTION_MIN_VOLUME_RATIO": &c.Selection.MinVolumeRatio,
-		"STOCK_WATCHER_SELECTION_RSI_MIN":          &c.Selection.RSIMin,
-		"STOCK_WATCHER_SELECTION_RSI_MAX":          &c.Selection.RSIMax,
-		"STOCK_WATCHER_SELECTION_MIN_DAY_CHANGE":   &c.Selection.MinDayChange,
-		"STOCK_WATCHER_SELECTION_MAX_DAY_CHANGE":   &c.Selection.MaxDayChange,
-		"STOCK_WATCHER_SYNC_MIN_COVERAGE_PCT":      &c.Sync.MinCoveragePct,
-		"STOCK_WATCHER_SYNC_MIN_ANALYZABLE_PCT":    &c.Sync.MinAnalyzablePct,
-		"STOCK_WATCHER_STRATEGY_TARGET_NET_PCT":    &c.Strategy.TargetNetPct,
-		"STOCK_WATCHER_STRATEGY_STOP_NET_PCT":      &c.Strategy.StopNetPct,
-		"STOCK_WATCHER_STRATEGY_TRADE_CASH":        &c.Strategy.TradeCash,
-		"STOCK_WATCHER_STRATEGY_COMMISSION_RATE":   &c.Strategy.CommissionRate,
-		"STOCK_WATCHER_STRATEGY_MIN_COMMISSION":    &c.Strategy.MinCommission,
-		"STOCK_WATCHER_STRATEGY_TRANSFER_RATE":     &c.Strategy.TransferRate,
-		"STOCK_WATCHER_STRATEGY_SELL_STAMP_RATE":   &c.Strategy.SellStampRate,
-		"STOCK_WATCHER_STRATEGY_SLIPPAGE_RATE":     &c.Strategy.SlippageRate,
-		"STOCK_WATCHER_STRATEGY_MAX_ENTRY_GAP_PCT": &c.Strategy.MaxEntryGapPct,
-		"STOCK_WATCHER_STRATEGY_MIN_RANK_SCORE":    &c.Strategy.MinRankScore,
+		"STOCK_WATCHER_SECOND_STAGE_FIRST_STAGE_WEIGHT": &c.SecondStage.FirstStageWeight,
+		"STOCK_WATCHER_SELECTION_MIN_VOLUME_RATIO":      &c.Selection.MinVolumeRatio,
+		"STOCK_WATCHER_SELECTION_RSI_MIN":               &c.Selection.RSIMin,
+		"STOCK_WATCHER_SELECTION_RSI_MAX":               &c.Selection.RSIMax,
+		"STOCK_WATCHER_SELECTION_MIN_DAY_CHANGE":        &c.Selection.MinDayChange,
+		"STOCK_WATCHER_SELECTION_MAX_DAY_CHANGE":        &c.Selection.MaxDayChange,
+		"STOCK_WATCHER_SYNC_MIN_COVERAGE_PCT":           &c.Sync.MinCoveragePct,
+		"STOCK_WATCHER_SYNC_MIN_ANALYZABLE_PCT":         &c.Sync.MinAnalyzablePct,
+		"STOCK_WATCHER_STRATEGY_TARGET_NET_PCT":         &c.Strategy.TargetNetPct,
+		"STOCK_WATCHER_STRATEGY_STOP_NET_PCT":           &c.Strategy.StopNetPct,
+		"STOCK_WATCHER_STRATEGY_TRADE_CASH":             &c.Strategy.TradeCash,
+		"STOCK_WATCHER_STRATEGY_COMMISSION_RATE":        &c.Strategy.CommissionRate,
+		"STOCK_WATCHER_STRATEGY_MIN_COMMISSION":         &c.Strategy.MinCommission,
+		"STOCK_WATCHER_STRATEGY_TRANSFER_RATE":          &c.Strategy.TransferRate,
+		"STOCK_WATCHER_STRATEGY_SELL_STAMP_RATE":        &c.Strategy.SellStampRate,
+		"STOCK_WATCHER_STRATEGY_SLIPPAGE_RATE":          &c.Strategy.SlippageRate,
+		"STOCK_WATCHER_STRATEGY_MAX_ENTRY_GAP_PCT":      &c.Strategy.MaxEntryGapPct,
+		"STOCK_WATCHER_STRATEGY_MIN_RANK_SCORE":         &c.Strategy.MinRankScore,
 	} {
 		if value, ok := os.LookupEnv(name); ok {
 			parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
@@ -140,6 +142,13 @@ func applyEnvironment(c *Config) error {
 			}
 			*target = parsed
 		}
+	}
+	if value, ok := os.LookupEnv("STOCK_WATCHER_SECOND_STAGE_MODELS"); ok {
+		models, err := parseModelWeights(value)
+		if err != nil {
+			return err
+		}
+		c.SecondStage.Models = models
 	}
 	c.LLM.Locked = map[string]bool{}
 	if c.LLM.Sources == nil {
