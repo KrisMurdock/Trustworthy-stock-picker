@@ -140,6 +140,7 @@ func secondStageDailyFixture(t *testing.T) (config.Config, market.History) {
 	c.FirstStage.Enabled = true
 	c.FirstStage.Budget = 1
 	c.SecondStage.Enabled = true
+	c.SecondStage.PushEnabled = true
 	c.SecondStage.TopN = 10
 	h := market.History{Version: 1, Code: "sz000001", Name: "测试股票", Source: "tencent", DataField: "qfqday", VolumeUnit: "provider_raw", FetchedAt: time.Now(), AsOf: bars[len(bars)-1].Date, Adjust: "qfq", Bars: bars}
 	return c, h
@@ -154,7 +155,7 @@ func TestBuildAttachesDegradedSecondStageWithoutJEV(t *testing.T) {
 	if report.FirstStage == nil || report.FirstStage.Status != firststage.StatusOK || len(report.FirstStage.Candidates) != 1 {
 		t.Fatalf("unexpected first-stage result: %+v", report.FirstStage)
 	}
-	if report.SecondStage == nil || report.SecondStage.Status != secondstage.StatusOK || !report.SecondStage.Degraded || report.SecondStage.JEVStatus != secondstage.JEVStatusNone {
+	if report.SecondStage == nil || report.SecondStage.Status != secondstage.StatusOK || !report.SecondStage.PushEnabled || !report.SecondStage.Degraded || report.SecondStage.JEVStatus != secondstage.JEVStatusNone {
 		t.Fatalf("second-stage did not degrade cleanly: %+v", report.SecondStage)
 	}
 	if len(report.SecondStage.Candidates) != 1 || report.SecondStage.Candidates[0].Code != "sz000001" {

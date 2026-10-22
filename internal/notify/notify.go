@@ -17,6 +17,7 @@ type Message struct {
 	Subtitle       string    `json:"subtitle,omitempty"`
 	HeaderIcon     string    `json:"header_icon,omitempty"`
 	WidthMode      string    `json:"width_mode,omitempty"`
+	PlainText      string    `json:"plain_text,omitempty"`
 	Sections       []Section `json:"sections"`
 	Template       string    `json:"template,omitempty"`
 	TrimPolicy     string    `json:"trim_policy,omitempty"`

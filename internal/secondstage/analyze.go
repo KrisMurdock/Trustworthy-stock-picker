@@ -174,6 +174,7 @@ func baseReport(opts Options) Report {
 		GeneratedAt:    now.In(market.Shanghai),
 		FeatureVersion: FeatureVersion,
 		TopN:           opts.TopN,
+		PushEnabled:    opts.PushEnabled,
 		Candidates:     []Candidate{},
 		Excluded:       []Excluded{},
 		Rules: []string{

@@ -59,6 +59,7 @@
 | STOCK_WATCHER_FIRST_STAGE_PUSH_ENABLED | true | 是否推送初筛池飞书卡；依赖初筛已启用 |
 | STOCK_WATCHER_FIRST_STAGE_BUDGET | 95 | 初筛候选池上限，允许 1～500；默认预算 95 只 |
 | STOCK_WATCHER_SECOND_STAGE_ENABLED | true | 是否在第一层候选池上运行 JEV+树模型 Top10 精排；要求第一层已启用 |
+| STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED | true | 是否把精排结果生成公众号纯文本稿并投递到 `second_stage` 路由；依赖精排已启用 |
 | STOCK_WATCHER_SECOND_STAGE_TOP_N | 10 | 第二层输出候选数，允许 1～100 |
 | STOCK_WATCHER_STRUCTURE_GUARD_MODE | shadow | shadow 只观察；enforce 才进入可执行推荐 |
 | STOCK_WATCHER_SELECTION_ENABLED | true | 是否启用趋势筛选 |
@@ -75,6 +76,8 @@
 信号日后第 3 个交易日日报生成后，初筛机器人还会收到窗口回看卡：以 3 个交易日内最高价相对初筛日收盘价涨幅 `≥ +1%` 判定命中，展示全候选召回率、Top 30 覆盖率和 Top 30 精确率；飞书仍只展示 Top 30，第二层精排使用全部候选，期末收盘涨幅只作参考。回看按信号日和窗口结束日生成稳定事件 ID，同一日期组合只入队一次；窗口行情不完整时暂不推送并等待后续轮询。
 
 第二层精排读取 `<$STOCK_WATCHER_DATA_DIR>/state/jev/<as_of>.json` 的离线 JEV 分数，并在 Go 进程内运行树模型；结果写入日报的 `second_stage` 字段。JEV artifact 缺失或过期时仍输出树模型 Top10，但 `second_stage.degraded=true`，不会阻断日报。
+
+`second_stage.push_enabled=true` 时，同一数据日期会生成一份可直接复制的公众号纯文本稿，包含公众号标题、正文、精排名单、逐只数据解读、行业分布、使用边界和风险提示。稿件以纯文本飞书消息投递到独立的 `second_stage` 路由，不会混入 `selection` 的日报卡片或 `first_stage` 的初筛卡。精排降级时标题和正文都会明确标注，未通过第一层或没有候选时不生成文章。文章与精排报告共享稳定事件 ID 和 T+1 09:30 过期时间，重启不会重复发送。
 
 ## 同步、日历与行情源
 
@@ -176,14 +179,14 @@
 | STOCK_WATCHER_FEISHU_CREDENTIALS_FILE | 空 | 显式启用旧版 `feishu.config` 兼容；新部署应改用环境变量 |
 | STOCK_WATCHER_NOTIFY_CHANNELS | 空 | 可选多通道；格式见下 |
 | TUSHARE_TOKEN | 空 | Tushare Token；缺失时跳过 Tushare |
-命名通道使用 `name|type|enabled|webhook_env|secret_env|route`，条目之间用 `;` 分隔；`type` 当前只支持 `feishu`。`route` 可选 `all`、`selection`、`first_stage`、`predictor_realtime`、`predictor_dayrange`，留空表示兼容旧配置并向所有阶段广播：
+命名通道使用 `name|type|enabled|webhook_env|secret_env|route`，条目之间用 `;` 分隔；`type` 当前只支持 `feishu`。`route` 可选 `all`、`selection`、`first_stage`、`second_stage`、`predictor_realtime`、`predictor_dayrange`，留空表示兼容旧配置并向所有阶段广播：
 
 ```dotenv
 STOCK_WATCHER_FEISHU_ENABLED=false
-STOCK_WATCHER_NOTIFY_CHANNELS="first-stage|feishu|true|FEISHU_FIRST_STAGE_WEBHOOK||first_stage;selection|feishu|true|FEISHU_SELECTION_WEBHOOK||selection;predictor-realtime|feishu|true|FEISHU_PREDICTOR_REALTIME_WEBHOOK||predictor_realtime;predictor-dayrange|feishu|true|FEISHU_PREDICTOR_DAYRANGE_WEBHOOK||predictor_dayrange"
+STOCK_WATCHER_NOTIFY_CHANNELS="first-stage|feishu|true|FEISHU_FIRST_STAGE_WEBHOOK||first_stage;second-stage|feishu|true|FEISHU_SECOND_STAGE_WEBHOOK||second_stage;selection|feishu|true|FEISHU_SELECTION_WEBHOOK||selection;predictor-realtime|feishu|true|FEISHU_PREDICTOR_REALTIME_WEBHOOK||predictor_realtime;predictor-dayrange|feishu|true|FEISHU_PREDICTOR_DAYRANGE_WEBHOOK||predictor_dayrange"
 ```
 
-路由含义：`first_stage` 只接收第一层初筛池；`selection` 只接收精筛日报主卡和详情卡；`predictor_realtime` 接收 5 分钟实时预测及偏差卡；`predictor_dayrange` 只接收全天高低价盘前预测。不同路由的投递依赖彼此独立，不会因为另一个机器人失败而互相阻塞。
+路由含义：`first_stage` 只接收第一层初筛池及回看卡；`second_stage` 只接收第二层精排公众号纯文本稿；`selection` 只接收正式日报主卡和详情卡；`predictor_realtime` 接收 5 分钟实时预测及偏差卡；`predictor_dayrange` 只接收全天高低价盘前预测。不同路由的投递依赖彼此独立，不会因为另一个机器人失败而互相阻塞。
 
 凭证只来自环境变量，不写入日志、镜像或仓库。关闭通知时显式设置 `STOCK_WATCHER_FEISHU_ENABLED=false`，并确保没有设置 `STOCK_WATCHER_NOTIFY_CHANNELS` 的启用通道。
 

@@ -182,7 +182,7 @@ func (m *Monitor) migrateLegacy(raw persistedState) (State, error) {
 				return state, err
 			}
 			channels := m.legacyChannels()
-			if err := enqueueCards(&state, report.AsOf, cards, channels, channels); err != nil {
+			if err := enqueueCards(&state, report.AsOf, cards, channels, channels, channels); err != nil {
 				return state, err
 			}
 			for _, name := range channels {
@@ -206,7 +206,7 @@ func (m *Monitor) migrateLegacy(raw persistedState) (State, error) {
 			return state, errors.New("pending report has an invalid T+1 date")
 		}
 		channels := m.legacyChannels()
-		if err := enqueueCards(&state, pending.Report.AsOf, cards, channels, channels); err != nil {
+		if err := enqueueCards(&state, pending.Report.AsOf, cards, channels, channels, channels); err != nil {
 			return state, err
 		}
 		event := state.Events[cards.Main.EventID]
@@ -228,7 +228,7 @@ func (m *Monitor) migrateLegacy(raw persistedState) (State, error) {
 	return state, nil
 }
 
-func enqueueCards(state *State, asof string, cards reportmessage.Cards, selectionChannels, firstStageChannels []string) error {
+func enqueueCards(state *State, asof string, cards reportmessage.Cards, selectionChannels, firstStageChannels, secondStageChannels []string) error {
 	if len(selectionChannels) > 0 {
 		if err := state.EnqueuePart(asof, cards.Main, selectionChannels, "main", 0, ""); err != nil {
 			return err
@@ -250,6 +250,15 @@ func enqueueCards(state *State, asof string, cards reportmessage.Cards, selectio
 			previous = firstStage.EventID
 		}
 	}
+	if len(secondStageChannels) > 0 {
+		previous := ""
+		for i, secondStage := range cards.SecondStage {
+			if err := state.EnqueuePart(asof, secondStage, secondStageChannels, "second_stage", len(cards.Details)+len(cards.FirstStage)+i+1, previous); err != nil {
+				return err
+			}
+			previous = secondStage.EventID
+		}
+	}
 	return nil
 }
 
@@ -260,6 +269,9 @@ func markCardsDelivered(state *State, cards reportmessage.Cards, channel string)
 	}
 	for _, firstStage := range cards.FirstStage {
 		eventIDs = append(eventIDs, firstStage.EventID)
+	}
+	for _, secondStage := range cards.SecondStage {
+		eventIDs = append(eventIDs, secondStage.EventID)
 	}
 	for _, eventID := range eventIDs {
 		event, ok := state.Events[eventID]

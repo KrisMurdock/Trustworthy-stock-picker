@@ -7,11 +7,11 @@ import (
 
 func TestSecondStageDefaultsAndBuiltin(t *testing.T) {
 	second := DefaultSecondStage()
-	if second.Enabled || second.TopN != 10 {
+	if second.Enabled || second.PushEnabled || second.TopN != 10 {
 		t.Fatalf("unexpected defaults: %+v", second)
 	}
 	builtin := Builtin()
-	if !builtin.SecondStage.Enabled || builtin.SecondStage.TopN != 10 {
+	if !builtin.SecondStage.Enabled || !builtin.SecondStage.PushEnabled || builtin.SecondStage.TopN != 10 {
 		t.Fatalf("production second-stage is not enabled: %+v", builtin.SecondStage)
 	}
 }
@@ -24,6 +24,7 @@ func TestSecondStageValidation(t *testing.T) {
 	}{
 		{"top n zero", func(second *SecondStage) { second.Enabled = true; second.TopN = 0 }, "top_n"},
 		{"top n too large", func(second *SecondStage) { second.Enabled = true; second.TopN = 101 }, "top_n"},
+		{"push without enabled", func(second *SecondStage) { second.Enabled = false; second.PushEnabled = true }, "push_enabled requires"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			second := DefaultSecondStage()
@@ -42,12 +43,13 @@ func TestSecondStageValidation(t *testing.T) {
 
 func TestSecondStageEnvironmentOverrides(t *testing.T) {
 	t.Setenv("STOCK_WATCHER_SECOND_STAGE_ENABLED", "false")
+	t.Setenv("STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED", "false")
 	t.Setenv("STOCK_WATCHER_SECOND_STAGE_TOP_N", "7")
 	c := Builtin()
 	if err := applyEnvironment(&c); err != nil {
 		t.Fatal(err)
 	}
-	if c.SecondStage.Enabled || c.SecondStage.TopN != 7 {
+	if c.SecondStage.Enabled || c.SecondStage.PushEnabled || c.SecondStage.TopN != 7 {
 		t.Fatalf("environment did not override second-stage: %+v", c.SecondStage)
 	}
 }

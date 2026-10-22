@@ -438,6 +438,50 @@ func TestUnexpectedSuccessStatusIsUnknown(t *testing.T) {
 	}
 }
 
+func TestPlainTextMessageIsSentVerbatim(t *testing.T) {
+	var payload map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+		ts, _ := strconv.ParseInt(payload["timestamp"].(string), 10, 64)
+		if payload["sign"] != Sign(ts, "test-secret") {
+			t.Error("plain text signature is invalid")
+		}
+		_, _ = w.Write([]byte(`{"code":0}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "test-secret", time.Second)
+	defer c.Close()
+	article := "【公众号标题】\n精排观察\n\n【公众号正文】\n第一段。"
+	if err := c.Send(context.Background(), notify.Message{Version: 2, EventID: "event", PlainText: article}); err != nil {
+		t.Fatal(err)
+	}
+	content, _ := payload["content"].(map[string]any)
+	if payload["msg_type"] != "text" || content["text"] != article {
+		t.Fatalf("plain text payload changed: %+v", payload)
+	}
+	if _, ok := payload["card"]; ok {
+		t.Fatalf("plain text unexpectedly contained a card: %+v", payload)
+	}
+}
+
+func TestOversizedPlainTextIsRejectedWithoutTruncation(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = w.Write([]byte(`{"code":0}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "", time.Second)
+	defer c.Close()
+	err := c.Send(context.Background(), notify.Message{Version: 2, EventID: "event", PlainText: strings.Repeat("长", 30000)})
+	var failure *notify.DeliveryError
+	if !errors.As(err, &failure) || failure.Kind != notify.Permanent || failure.Reason != "payload_limit" || calls != 0 {
+		t.Fatalf("oversized plain text was not rejected: err=%v calls=%d", err, calls)
+	}
+}
+
 func TestOversizedCardIsTrimmedBeforeRequest(t *testing.T) {
 	var calls int
 	var received int

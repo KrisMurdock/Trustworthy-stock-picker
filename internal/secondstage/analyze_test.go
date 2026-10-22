@@ -65,12 +65,12 @@ func TestAnalyzeRanksWithJEVAndClipsTopN(t *testing.T) {
 		"sh600002": {Adjacent15: 0.9},
 		"sh600003": {Adjacent15: 0.4},
 	})
-	opts := Options{AsOf: asOf, Target: target, TopN: 2, JEVPath: path, Now: time.Unix(0, 0)}
+	opts := Options{AsOf: asOf, Target: target, TopN: 2, PushEnabled: true, JEVPath: path, Now: time.Unix(0, 0)}
 	report, err := analyzeWithModel(baseReport(opts), fixtureFirstStage(asOf, target), opts, rankingModel())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Status != StatusOK || report.JEVStatus != JEVStatusOK || report.Degraded {
+	if report.Status != StatusOK || report.JEVStatus != JEVStatusOK || report.Degraded || !report.PushEnabled {
 		t.Fatalf("unexpected report status: %+v", report)
 	}
 	if len(report.Candidates) != 2 || report.Candidates[0].Code != "sh600002" || report.Candidates[0].Rank != 1 {

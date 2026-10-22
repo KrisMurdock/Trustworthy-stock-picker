@@ -89,12 +89,16 @@ func (m *Monitor) enqueueReport(state *State, report selection.Report) (int, err
 	if len(cards.FirstStage) > 0 {
 		firstStageChannels = pendingChannelNames(state, report.AsOf, m.channelNamesForRoute(config.NotifyRouteFirstStage))
 	}
-	queued := len(selectionChannels) + len(firstStageChannels)
+	secondStageChannels := []string{}
+	if len(cards.SecondStage) > 0 {
+		secondStageChannels = pendingChannelNames(state, report.AsOf, m.channelNamesForRoute(config.NotifyRouteSecondStage))
+	}
+	queued := len(selectionChannels) + len(firstStageChannels) + len(secondStageChannels)
 	if queued == 0 {
 		m.Log.Info("Report enqueue skipped", "as_of", report.AsOf, "target", report.Target, "reason", "delivery_already_recorded")
 		return 0, nil
 	}
-	if err := enqueueCards(state, report.AsOf, cards, selectionChannels, firstStageChannels); err != nil {
+	if err := enqueueCards(state, report.AsOf, cards, selectionChannels, firstStageChannels, secondStageChannels); err != nil {
 		return 0, err
 	}
 	if err := m.writeState(*state); err != nil {

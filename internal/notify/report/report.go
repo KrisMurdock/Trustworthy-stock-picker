@@ -34,9 +34,10 @@ var riskPriority = []string{
 }
 
 type Cards struct {
-	Main       notify.Message
-	Details    []notify.Message
-	FirstStage []notify.Message
+	Main        notify.Message
+	Details     []notify.Message
+	FirstStage  []notify.Message
+	SecondStage []notify.Message
 }
 
 func FromSelection(r selection.Report) (Cards, error) {
@@ -81,8 +82,9 @@ func FromSelection(r selection.Report) (Cards, error) {
 		})
 	}
 	firstStage := firstStageCards(r, expires)
+	secondStage := secondStageArticles(r, expires)
 
-	return Cards{Main: main, Details: details, FirstStage: firstStage}, nil
+	return Cards{Main: main, Details: details, FirstStage: firstStage, SecondStage: secondStage}, nil
 }
 
 func firstStageCards(r selection.Report, expires time.Time) []notify.Message {

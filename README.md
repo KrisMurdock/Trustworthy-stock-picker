@@ -248,6 +248,8 @@ func main() {
 
 日报还包含独立的 `first_stage` 高召回初筛：以“未来 3 个交易日最高价相对信号日收盘触及 +1%”为历史标签，将机会分日内排名与版本化 logistic 模型分等权融合，默认预算 145 只，推送开启时只展示综合分前 30 名并合并为一张飞书卡片，但第二层精排使用全部候选。3 个交易日窗口结束后，初筛机器人会追加窗口回看卡，分别展示全部候选召回率、Top 30 覆盖率与 Top 30 精确率，并按信号日与窗口结束日稳定去重。回看会从初筛报告还原当时股池，避免后续股池调整污染召回率。初筛只生成第二层精排的候选参考，不改变 `Selected`、`Ranking`、结构门控或风险门槛；初筛失败只写入 `first_stage.status=failed`，不阻断主报告。
 
+第二层精排完成后，若 `STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED=true`，系统会把同一份冻结精排结果转写为可直接复制的公众号纯文本稿，包含标题、正文、Top N 名单、逐只技术特征、行业分布、数据口径、降级状态和风险提示。稿件通过命名为 `second_stage` 的飞书路由投递，与初筛卡、正式日报卡使用各自独立的重试账本；精排名单仍只是研究观察，不是正式推荐或交易建议。
+
 日线推荐还会读取已保存的完成 5 分钟线，派生 15/30 分钟结构并记录旧 5/15/30 诊断；该诊断只作对照，不改变正式结论。生产结构判断使用 `structure_guard`：`shadow` 模式只输出观察排名和结构通过排名，不产生可执行推荐；`enforce` 模式下只有日线结构通过池内的可入选候选才能成为正式推荐。`structure_guard=pass` 只表示未被结构过滤，不是买点。飞书主卡用原生表格展示 Top10 的结论、价格和主要风险；详情卡按页补齐“结构门控”、“旧 5/15/30 诊断”、匹配规则和“评分推导”，后者给出基础分、日线评分贡献、加减分项、历史证据融合及最终机会分的算式。
 
 ```bash
@@ -302,12 +304,15 @@ Quick Tunnel 的地址在进程重启、机器休眠或隧道重连后可能变�
 | `STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED` | 临时 Cloudflare 公网隧道启动开关，默认 `false`；只由 `make run` 启动器读取 |
 | `STOCK_WATCHER_FEISHU_ENABLED` | 是否启用飞书投递 |
 | `FEISHU_WEBHOOK` / `FEISHU_SECRET` | 飞书 webhook 与可选签名密钥，只从环境读取 |
-| `STOCK_WATCHER_NOTIFY_CHANNELS` | 命名飞书通道及阶段路由；可按初筛、精筛、实时预测和当日预测分流 |
+| `STOCK_WATCHER_NOTIFY_CHANNELS` | 命名飞书通道及阶段路由；可按初筛、精排文章、正式日报、实时预测和当日预测分流 |
 | `STOCK_WATCHER_FEISHU_CREDENTIALS_FILE` | 显式设置时才启用旧 `feishu.config` 兼容 |
 | `STOCK_WATCHER_STRATEGY_ENABLED` | 是否启用全池短周期排名 |
 | `STOCK_WATCHER_FIRST_STAGE_ENABLED` | 是否计算高召回第一层初筛；要求 `daily_adjust=qfq` |
 | `STOCK_WATCHER_FIRST_STAGE_PUSH_ENABLED` | 是否推送初筛池飞书卡；关闭后仍计算 |
 | `STOCK_WATCHER_FIRST_STAGE_BUDGET` | 初筛候选上限，默认 `145` |
+| `STOCK_WATCHER_SECOND_STAGE_ENABLED` | 是否运行 JEV + 树模型 Top10 精排 |
+| `STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED` | 是否生成公众号纯文本稿并投递到 `second_stage` 路由 |
+| `STOCK_WATCHER_SECOND_STAGE_TOP_N` | 精排输出数量，默认 `10` |
 | `STOCK_WATCHER_INTRADAY_ENABLED` | 是否启用 5 分钟采集 |
 | `STOCK_WATCHER_PREDICTOR_ENABLED` | 是否启用 5 分钟实验预测 |
 | `STOCK_WATCHER_PREDICTOR_PUSH_ENABLED` | 是否推送聚合预测卡；关闭后仍保存预测 |

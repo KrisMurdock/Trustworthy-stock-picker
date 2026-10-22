@@ -12,6 +12,7 @@ func Builtin() Config {
 	c.FirstStage.Enabled = true
 	c.FirstStage.PushEnabled = true
 	c.SecondStage.Enabled = true
+	c.SecondStage.PushEnabled = true
 	c.Feishu.Enabled = true
 	c.Predictor.Enabled = true
 	c.Predictor.PushEnabled = true

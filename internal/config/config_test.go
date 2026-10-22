@@ -384,7 +384,7 @@ func TestEnvironmentNotifyChannels(t *testing.T) {
 }
 
 func TestNotificationChannelRoutes(t *testing.T) {
-	for _, route := range []string{NotifyRouteFirstStage, NotifyRouteSelection, NotifyRoutePredictorRealtime, NotifyRoutePredictorDayrange} {
+	for _, route := range []string{NotifyRouteFirstStage, NotifyRouteSecondStage, NotifyRouteSelection, NotifyRoutePredictorRealtime, NotifyRoutePredictorDayrange} {
 		t.Setenv("TEST_"+strings.ToUpper(route)+"_WEBHOOK", "https://open.feishu.cn/open-apis/bot/v2/hook/"+strings.ReplaceAll(route, "_", "-")+"-test")
 	}
 	p := filepath.Join(t.TempDir(), "config.yaml")
@@ -400,6 +400,11 @@ func TestNotificationChannelRoutes(t *testing.T) {
       enabled: true
       route: selection
       webhook_env: TEST_SELECTION_WEBHOOK
+    - name: second-stage
+      type: feishu
+      enabled: true
+      route: second_stage
+      webhook_env: TEST_SECOND_STAGE_WEBHOOK
     - name: predictor-realtime
       type: feishu
       enabled: true
@@ -420,6 +425,7 @@ func TestNotificationChannelRoutes(t *testing.T) {
 	}
 	for route, want := range map[string]string{
 		NotifyRouteFirstStage:        "first-stage",
+		NotifyRouteSecondStage:       "second-stage",
 		NotifyRouteSelection:         "selection",
 		NotifyRoutePredictorRealtime: "predictor-realtime",
 		NotifyRoutePredictorDayrange: "predictor-dayrange",

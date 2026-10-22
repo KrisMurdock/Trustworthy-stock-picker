@@ -335,11 +335,20 @@ func (c *Client) Send(ctx context.Context, message notify.Message) error {
 		timestamp = c.now().Unix()
 	}
 	content := renderContent(message)
-	data, err := c.marshal(message, content, timestamp)
+	var data []byte
+	var err error
+	if message.PlainText != "" {
+		data, err = c.marshalPlainText(message.PlainText, timestamp)
+	} else {
+		data, err = c.marshal(message, content, timestamp)
+	}
 	if err != nil {
 		return &notify.DeliveryError{Channel: c.Name(), Kind: notify.Permanent, Reason: "payload_encode"}
 	}
 	if len(data) > maxPayloadBytes {
+		if message.PlainText != "" {
+			return &notify.DeliveryError{Channel: c.Name(), Kind: notify.Permanent, Reason: "payload_limit"}
+		}
 		content, data = c.fitPayload(message, timestamp, content)
 		if len(data) == 0 || len(data) > maxPayloadBytes {
 			return &notify.DeliveryError{Channel: c.Name(), Kind: notify.Permanent, Reason: "payload_limit"}
@@ -397,6 +406,18 @@ func (c *Client) Send(ctx context.Context, message notify.Message) error {
 
 func (c *Client) marshal(message notify.Message, content string, timestamp int64) ([]byte, error) {
 	payload := cardPayload(message, content)
+	if timestamp != 0 {
+		payload["timestamp"] = strconv.FormatInt(timestamp, 10)
+		payload["sign"] = Sign(timestamp, c.secret)
+	}
+	return json.Marshal(payload)
+}
+
+func (c *Client) marshalPlainText(text string, timestamp int64) ([]byte, error) {
+	payload := map[string]any{
+		"msg_type": "text",
+		"content":  map[string]any{"text": text},
+	}
 	if timestamp != 0 {
 		payload["timestamp"] = strconv.FormatInt(timestamp, 10)
 		payload["sign"] = Sign(timestamp, c.secret)

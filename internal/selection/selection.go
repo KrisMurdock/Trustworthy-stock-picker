@@ -303,11 +303,12 @@ func attachSecondStage(report *Report, c config.Config, jev *secondstage.JEVInpu
 		return
 	}
 	opts := secondstage.Options{
-		AsOf:   asof,
-		Target: target,
-		TopN:   c.SecondStage.TopN,
-		JEV:    jev,
-		Now:    now,
+		AsOf:        asof,
+		Target:      target,
+		TopN:        c.SecondStage.TopN,
+		PushEnabled: c.SecondStage.PushEnabled,
+		JEV:         jev,
+		Now:         now,
 	}
 	if jev == nil {
 		opts.JEVPath = filepath.Join(c.DataDir, "state", "jev", asof+".json")

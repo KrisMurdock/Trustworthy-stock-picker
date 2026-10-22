@@ -24,12 +24,13 @@ const (
 )
 
 type Options struct {
-	AsOf    string
-	Target  string
-	TopN    int
-	JEVPath string
-	JEV     *JEVInput
-	Now     time.Time
+	AsOf        string
+	Target      string
+	TopN        int
+	PushEnabled bool
+	JEVPath     string
+	JEV         *JEVInput
+	Now         time.Time
 }
 
 type JEVInput struct {
@@ -77,6 +78,7 @@ type Report struct {
 	TrainedThrough string      `json:"trained_through,omitempty"`
 	FeatureVersion int         `json:"feature_version"`
 	TopN           int         `json:"top_n"`
+	PushEnabled    bool        `json:"push_enabled"`
 	InputCount     int         `json:"input_count"`
 	JEVStatus      string      `json:"jev_status"`
 	Degraded       bool        `json:"degraded"`

@@ -109,6 +109,7 @@ const (
 	NotifyRouteAll               = "all"
 	NotifyRouteSelection         = "selection"
 	NotifyRouteFirstStage        = "first_stage"
+	NotifyRouteSecondStage       = "second_stage"
 	NotifyRoutePredictorRealtime = "predictor_realtime"
 	NotifyRoutePredictorDayrange = "predictor_dayrange"
 )
@@ -376,7 +377,7 @@ func (c Config) Validate() error {
 		if !regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`).MatchString(channel.Name) || strings.TrimSpace(channel.Type) == "" || channelNames[channel.Name] {
 			return errors.New("notify channels contain an invalid or duplicate name")
 		}
-		if route := strings.TrimSpace(channel.Route); route != "" && route != NotifyRouteAll && route != NotifyRouteSelection && route != NotifyRouteFirstStage && route != NotifyRoutePredictorRealtime && route != NotifyRoutePredictorDayrange {
+		if route := strings.TrimSpace(channel.Route); route != "" && route != NotifyRouteAll && route != NotifyRouteSelection && route != NotifyRouteFirstStage && route != NotifyRouteSecondStage && route != NotifyRoutePredictorRealtime && route != NotifyRoutePredictorDayrange {
 			return errors.New("notify channel route is invalid")
 		}
 		if channel.WebhookEnv != "" && !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(channel.WebhookEnv) {
