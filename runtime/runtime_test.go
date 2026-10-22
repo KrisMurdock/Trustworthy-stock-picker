@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/dayrange"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/predictor"
 )
 
@@ -73,6 +74,65 @@ func TestNewOpensResourcesAndServesDashboardHandler(t *testing.T) {
 	}
 	if err := rt.Run(context.Background()); !errors.Is(err, ErrClosed) {
 		t.Fatalf("run after close returned %v", err)
+	}
+}
+
+func TestDayRangeForecastsMapsPointsAndIntervals(t *testing.T) {
+	now := time.Date(2026, 10, 22, 18, 5, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
+	records := []dayrange.PredictionRecord{
+		{Prediction: dayrange.Prediction{
+			Code: "sz000001", TargetDate: "2026-10-23", ModelID: "model-1", Source: "saved", CreatedAt: now.Add(-time.Minute),
+			ReferencePrice: 10, PointHigh: 10.6, PointLow: 9.5,
+			IntervalHigh: &dayrange.Interval{Lower: 10.2, Upper: 10.9, NominalCoverage: 0.8},
+			IntervalLow:  &dayrange.Interval{Lower: 9.2, Upper: 9.8, NominalCoverage: 0.7},
+		}},
+		{Prediction: dayrange.Prediction{
+			Code: "sz000001", TargetDate: "2026-10-23", ModelID: "model-2", Source: "saved", CreatedAt: now,
+			ReferencePrice: 10.1, PointHigh: 10.7, PointLow: 9.6,
+			IntervalHigh: &dayrange.Interval{Lower: 10.3, Upper: 11, NominalCoverage: 0.85},
+			IntervalLow:  &dayrange.Interval{Lower: 9.1, Upper: 9.7, NominalCoverage: 0.75},
+		}},
+		{Prediction: dayrange.Prediction{
+			Code: "sz000002", TargetDate: "2026-10-23", ModelID: "model-1", Source: "saved", CreatedAt: now,
+			ReferencePrice: 20, PointHigh: 21, PointLow: 19,
+		}},
+		{Prediction: dayrange.Prediction{
+			Code: "sh600000", TargetDate: "2026-10-23", PointHigh: 99, PointLow: 88,
+		}},
+	}
+
+	got := dayRangeForecasts(records, []string{"sz000001", "sz000002", "sz000003"})
+	if len(got) != 2 {
+		t.Fatalf("forecasts = %+v", got)
+	}
+	first := got["sz000001"]
+	if first.ModelID != "model-2" || first.PointHigh != 10.7 || first.PointLow != 9.6 ||
+		first.HighLower != 10.3 || first.HighUpper != 11 || first.HighCoverage != 0.85 ||
+		first.LowLower != 9.1 || first.LowUpper != 9.7 || first.LowCoverage != 0.75 {
+		t.Fatalf("first forecast = %+v", first)
+	}
+	second := got["sz000002"]
+	if second.PointHigh != 21 || second.PointLow != 19 || second.HighLower != 0 || second.LowUpper != 0 {
+		t.Fatalf("missing intervals must stay zero: %+v", second)
+	}
+	if _, ok := got["sh600000"]; ok {
+		t.Fatal("unrequested code was not filtered")
+	}
+	if missing := missingDayRangeForecasts(got, []string{"sz000001", "sz000002", "sz000003", "sz000003"}); missing != 1 {
+		t.Fatalf("missing forecasts = %d, want 1", missing)
+	}
+}
+
+func TestNewWiresDayRangeForecastLoader(t *testing.T) {
+	cfg := runtimeTestConfig(t)
+	cfg.DayRange.Enabled = true
+	rt, err := New(Options{Config: &cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	if rt.dayRange == nil || rt.monitor.DayRangeForecasts == nil {
+		t.Fatal("dayrange forecast loader was not wired into the monitor")
 	}
 }
 

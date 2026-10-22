@@ -43,7 +43,7 @@ func (m *Monitor) prepareStartup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	queued, err := m.enqueueReportDeferred(&state, report, deferSecondStage)
+	queued, err := m.enqueueReportDeferred(ctx, &state, report, deferSecondStage)
 	if err != nil {
 		return err
 	}
@@ -60,10 +60,10 @@ func (m *Monitor) prepareStartup(ctx context.Context) error {
 // Keep the first durable message per data date and channel, including pending
 // or blocked attempts. Report contents (and therefore IDs) can change on refresh.
 func (m *Monitor) enqueueReport(state *State, report selection.Report) (int, error) {
-	return m.enqueueReportDeferred(state, report, false)
+	return m.enqueueReportDeferred(context.Background(), state, report, false)
 }
 
-func (m *Monitor) enqueueReportDeferred(state *State, report selection.Report, deferSecondStage bool) (int, error) {
+func (m *Monitor) enqueueReportDeferred(ctx context.Context, state *State, report selection.Report, deferSecondStage bool) (int, error) {
 	if first := report.FirstStage; first != nil {
 		if first.Status == firststage.StatusFailed {
 			m.Log.Warn("First-stage screening failed", "as_of", report.AsOf, "reason", first.Reason)
@@ -88,6 +88,7 @@ func (m *Monitor) enqueueReportDeferred(state *State, report selection.Report, d
 		m.Log.Info("Report enqueue skipped", "as_of", report.AsOf, "target", report.Target, "reason", reason)
 		return 0, nil
 	}
+	report = m.withDayRangeForecasts(ctx, report)
 	cards, err := reportmessage.FromSelection(report)
 	if err != nil {
 		return 0, err
@@ -113,6 +114,28 @@ func (m *Monitor) enqueueReportDeferred(state *State, report selection.Report, d
 		return 0, err
 	}
 	return queued, nil
+}
+
+func (m *Monitor) withDayRangeForecasts(ctx context.Context, report selection.Report) selection.Report {
+	if m.DayRangeForecasts == nil || report.SecondStage == nil || len(report.SecondStage.Candidates) == 0 {
+		return report
+	}
+	codes := make([]string, 0, len(report.SecondStage.Candidates))
+	for _, candidate := range report.SecondStage.Candidates {
+		if candidate.Code != "" {
+			codes = append(codes, candidate.Code)
+		}
+	}
+	if len(codes) == 0 {
+		return report
+	}
+	forecasts, err := m.DayRangeForecasts(ctx, report.Target, codes)
+	if err != nil {
+		m.Log.Warn("Day-range forecast injection failed", "as_of", report.AsOf, "target", report.Target, "reason", err.Error())
+		return report
+	}
+	report.DayRangeForecasts = forecasts
+	return report
 }
 
 func pendingChannelNames(state *State, asof string, names []string) []string {

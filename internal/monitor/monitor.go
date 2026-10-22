@@ -55,6 +55,7 @@ type Monitor struct {
 	// with the stock pool. A failure is logged but never blocks stock data or
 	// report publication; the context database records its own partial status.
 	MarketContextSync  func(context.Context, string) (marketcontext.SyncResult, error)
+	DayRangeForecasts  func(context.Context, string, []string) (map[string]selection.DayRangeForecast, error)
 	Channels           []notify.Channel
 	Log                *logging.Logger
 	Calendar           *calendar.Calendar
@@ -1091,7 +1092,7 @@ func (m *Monitor) Cycle(ctx context.Context) error {
 	if err != nil {
 		return errors.Join(deliveryErr, err)
 	}
-	if _, err := m.enqueueReportDeferred(&state, report, deferSecondStage); err != nil {
+	if _, err := m.enqueueReportDeferred(ctx, &state, report, deferSecondStage); err != nil {
 		return errors.Join(deliveryErr, err)
 	}
 	if _, reviewErr := m.enqueueFirstStageReview(ctx, &state, report.AsOf); reviewErr != nil {

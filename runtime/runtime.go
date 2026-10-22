@@ -22,6 +22,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/monitor"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/predictor"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 )
 
@@ -249,6 +250,7 @@ func New(opts Options) (*Runtime, error) {
 		if err := r.dayRange.ConfigureExecutionDelivery(store, noticeChannels); err != nil {
 			return nil, err
 		}
+		r.monitor.DayRangeForecasts = r.loadDayRangeForecasts
 	}
 	var dayRangeReader dashboard.DayRangeReader
 	if r.dayRange != nil {
@@ -336,6 +338,92 @@ func (r *Runtime) runMonitors(ctx context.Context) error {
 		runners = append(runners, r.dayRange.Run)
 	}
 	return runMonitors(ctx, runners...)
+}
+
+func (r *Runtime) loadDayRangeForecasts(ctx context.Context, target string, codes []string) (map[string]selection.DayRangeForecast, error) {
+	if r.dayRange == nil {
+		return nil, errors.New("dayrange service is unavailable")
+	}
+	records, err := r.dayRange.Predictions(ctx, target, "")
+	if err != nil {
+		return nil, err
+	}
+	forecasts := dayRangeForecasts(records, codes)
+	if missingDayRangeForecasts(forecasts, codes) == 0 {
+		return forecasts, nil
+	}
+	// The daily article is built immediately after the 18:05 sync, before the
+	// dayrange loop's next tick. Generate the frozen forecast here, without
+	// delivery, so the article has tomorrow's range and the scheduled 08:45
+	// premarket push keeps its own timing.
+	if _, err := r.dayRange.GeneratePredictions(ctx, target, ""); err != nil {
+		if len(forecasts) == 0 {
+			return nil, err
+		}
+		r.log.Warn("Dayrange forecast generation failed; using saved forecasts", "target", target, "error", err.Error())
+		return forecasts, nil
+	}
+	records, err = r.dayRange.Predictions(ctx, target, "")
+	if err != nil {
+		return nil, err
+	}
+	forecasts = dayRangeForecasts(records, codes)
+	if missing := missingDayRangeForecasts(forecasts, codes); missing > 0 {
+		r.log.Warn("Dayrange forecast remained incomplete after generation", "target", target, "missing", missing)
+	}
+	return forecasts, nil
+}
+
+func missingDayRangeForecasts(forecasts map[string]selection.DayRangeForecast, codes []string) int {
+	seen := make(map[string]struct{}, len(codes))
+	missing := 0
+	for _, code := range codes {
+		if code == "" {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		if _, ok := forecasts[code]; !ok {
+			missing++
+		}
+	}
+	return missing
+}
+
+func dayRangeForecasts(records []dayrange.PredictionRecord, codes []string) map[string]selection.DayRangeForecast {
+	wanted := make(map[string]struct{}, len(codes))
+	for _, code := range codes {
+		wanted[code] = struct{}{}
+	}
+	out := make(map[string]selection.DayRangeForecast, len(wanted))
+	created := make(map[string]time.Time, len(wanted))
+	for _, record := range records {
+		if _, ok := wanted[record.Code]; !ok {
+			continue
+		}
+		if previous, ok := created[record.Code]; ok && record.CreatedAt.Before(previous) {
+			continue
+		}
+		forecast := selection.DayRangeForecast{
+			Code: record.Code, TargetDate: record.TargetDate, ModelID: record.ModelID, Source: record.Source,
+			ReferencePrice: record.ReferencePrice, PointHigh: record.PointHigh, PointLow: record.PointLow,
+		}
+		if record.IntervalHigh != nil {
+			forecast.HighLower = record.IntervalHigh.Lower
+			forecast.HighUpper = record.IntervalHigh.Upper
+			forecast.HighCoverage = record.IntervalHigh.NominalCoverage
+		}
+		if record.IntervalLow != nil {
+			forecast.LowLower = record.IntervalLow.Lower
+			forecast.LowUpper = record.IntervalLow.Upper
+			forecast.LowCoverage = record.IntervalLow.NominalCoverage
+		}
+		out[record.Code] = forecast
+		created[record.Code] = record.CreatedAt
+	}
+	return out
 }
 
 // Close stops an active Run, waits for its loops to finish, and releases storage

@@ -64,6 +64,12 @@ func Extract(bars []market.Bar) (Features, error) {
 	return f, nil
 }
 
+// ExtractWithSignals keeps the daily ranking features unchanged while adding
+// the previous-day MACD, RSI and Bollinger observations used by report cards.
+func ExtractWithSignals(bars []market.Bar) (Features, error) {
+	return extractSignalFeatures(bars)
+}
+
 // The rule vocabulary is fixed before holdout evaluation; no parameter search on test data.
 var ruleNames = []string{"baseline", "breakout", "pullback", "momentum", "volume_recovery"}
 

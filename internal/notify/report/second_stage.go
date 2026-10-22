@@ -63,7 +63,7 @@ func secondStageArticleText(r selection.Report, result secondstage.Report) strin
 }
 
 func secondStageArticleDigest(result secondstage.Report) string {
-	digest := fmt.Sprintf("%s三日短线观察：精排 %d 只，附参考买入区间与信号日价格区间。", articleMonthDay(result.Target), len(result.Candidates))
+	digest := fmt.Sprintf("%s三日短线观察：精排 %d 只，附参考买区、明日高低预测、技术指标与结构视角。", articleMonthDay(result.Target), len(result.Candidates))
 	if result.Degraded {
 		digest += "本次模型特征降级。"
 	}
@@ -105,7 +105,10 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 	writeArticleConclusion(&out, r, rows, formal)
 
 	out.WriteString("## 价格区间说明\n\n")
-	out.WriteString(fmt.Sprintf("推荐区间以参考买价为中枢、ATR14 的 %.2g 倍为半宽生成，保留两位小数；日价格区间取信号日 %s 的实际最高价至最低价。价格区间不是目标价，也不保证能够成交。\n\n", articleBuyBandATR, articleMonthDay(result.AsOf)))
+	out.WriteString(fmt.Sprintf("推荐买区以参考买价为中枢、ATR14 的 %.2g 倍为半宽生成，保留两位小数；信号日实际区间取 %s 的最高价至最低价。明日高点和低点来自已保存的 dayrange 预测，点估计之外分别给出各自的名义边际区间；高、低区间不是联合覆盖，也不是收益承诺。预测缺失时文章会明确标注“暂缺”，不临时编造。\n\n", articleBuyBandATR, articleMonthDay(result.AsOf)))
+
+	out.WriteString("## 理论与方法边界\n\n")
+	out.WriteString("缠论部分采用包含关系处理、严格分型、完成笔和笔重叠区；笔重叠区只是连续完成笔的公共交集，不冒充严格缠论中枢。波浪部分采用“简化摆动视角”，依据完成笔方向、回撤比例、均线方向和区间位置作启发式描述，不是严格艾略特浪级计数，也不据此单独给出推荐。技术指标只解释当前状态，不把超买、超卖或单个指标交叉当作交易信号。\n\n")
 
 	out.WriteString("## 数据与方法\n\n")
 	out.WriteString(fmt.Sprintf("信号日 %s，目标交易日 %s；精排模型 %s，输入 %d 只。", result.AsOf, result.Target, articleValue(result.ModelID, "未记录"), result.InputCount))
@@ -140,27 +143,70 @@ func buildArticleCandidates(r selection.Report, result secondstage.Report) []art
 func writeArticleDetail(out *strings.Builder, r selection.Report, row articleCandidate) {
 	code := articleValue(row.candidate.Code, "代码未记录")
 	name := articleValue(row.candidate.Name, code)
-	out.WriteString(fmt.Sprintf("### %d. %s（%s）｜%s\n", row.rank, name, code, articleRankLabel(row)))
-	out.WriteString("- 结构状态：" + articleStructureStatus(row.observation) + "\n")
-	out.WriteString("- 机会分：" + articleScore(row.observation) + "\n")
-	out.WriteString("- 上涨延续分：" + articleContinuation(row.observation) + "\n")
-	out.WriteString("- 主要依据：" + articleReasons(row.observation) + "\n")
-	out.WriteString("- 触发规则：" + articleRules(row.observation) + "\n")
+	sector := articleValue(row.candidate.Sector, "行业未记录")
+	out.WriteString(":::card " + articleCardTone(row) + "\n")
+	out.WriteString(fmt.Sprintf("### %d. %s（%s）\n\n", row.rank, name, code))
+	out.WriteString("**" + articleRankLabel(row) + " · " + sector + "**\n\n")
+
+	out.WriteString("#### 价格与明日区间\n")
 	for _, line := range articlePriceLines(r, row.observation) {
+		out.WriteString("- **" + line.label + "**：" + line.value + "\n")
+	}
+	out.WriteString("\n#### 技术指标\n")
+	for _, line := range articleTechnicalLines(row.observation) {
 		out.WriteString("- " + line + "\n")
 	}
+
+	out.WriteString("\n#### 缠论结构\n")
+	for _, line := range articleChanLines(row.observation) {
+		out.WriteString("- " + line + "\n")
+	}
+	out.WriteString("\n" + articleStructureParagraph(row.observation) + "\n")
+
+	out.WriteString("\n#### 波浪视角（简化）\n")
+	for _, line := range articleWaveLines(row.observation) {
+		out.WriteString("- " + line + "\n")
+	}
+
+	out.WriteString("\n#### 观察结论\n")
+	out.WriteString(fmt.Sprintf("- **机会分 / 延续分**：%s / %s\n", articleScore(row.observation), articleContinuation(row.observation)))
+	out.WriteString("- **主要依据**：" + articleReasons(row.observation) + "\n")
+	out.WriteString("- **触发规则**：" + articleRules(row.observation) + "\n")
 	out.WriteString("\n")
-	out.WriteString(articleStructureParagraph(row.observation) + "\n\n")
 	out.WriteString(articleRiskParagraph(r, row.observation) + "\n\n")
+	out.WriteString(":::\n\n")
 }
 
 func writeArticleBrief(out *strings.Builder, r selection.Report, row articleCandidate) {
 	code := articleValue(row.candidate.Code, "代码未记录")
 	name := articleValue(row.candidate.Name, code)
-	out.WriteString(fmt.Sprintf("### %d. %s（%s）｜%s\n\n", row.rank, name, code, articleRankLabel(row)))
-	out.WriteString(fmt.Sprintf("机会分%s。%s\n\n", articleScore(row.observation), articleStructureParagraph(row.observation)))
-	out.WriteString(strings.Join(articlePriceLines(r, row.observation), "；") + "。\n\n")
-	out.WriteString(articleRiskParagraph(r, row.observation) + "\n\n")
+	sector := articleValue(row.candidate.Sector, "行业未记录")
+	out.WriteString(":::card " + articleCardTone(row) + "\n")
+	out.WriteString(fmt.Sprintf("### %d. %s（%s）\n\n", row.rank, name, code))
+	out.WriteString("**" + articleRankLabel(row) + " · " + sector + "**\n\n")
+	out.WriteString("- **价格**：" + strings.Join(articlePriceLineTexts(r, row.observation), "；") + "。\n")
+	out.WriteString("- **指标**：" + strings.Join(articleBriefTechnical(row.observation), "；") + "。\n")
+	out.WriteString("- **缠论**：" + articleBriefChan(row.observation) + "。\n")
+	out.WriteString("- **波浪**：" + articleBriefWave(row.observation) + "。\n")
+	out.WriteString(fmt.Sprintf("- **结论**：机会分 %s，延续分 %s；%s\n", articleScore(row.observation), articleContinuation(row.observation), articleRiskParagraph(r, row.observation)))
+	out.WriteString("\n:::\n\n")
+}
+
+func articleCardTone(row articleCandidate) string {
+	if row.observation != nil && row.observation.Recommended {
+		return "green"
+	}
+	if row.observation == nil || row.observation.StructureGuard == nil {
+		return "grey"
+	}
+	switch row.observation.StructureGuard.GuardStatus {
+	case strategy.StructureGuardPass:
+		return "blue"
+	case strategy.StructureGuardFail:
+		return "amber"
+	default:
+		return "grey"
+	}
 }
 
 func articleRankLabel(row articleCandidate) string {
@@ -203,6 +249,171 @@ func articleStructureParagraph(candidate *strategy.Candidate) string {
 	default:
 		return "结构状态尚未完成评估，暂不把它视作可通过信号。"
 	}
+}
+
+func articleChanLines(candidate *strategy.Candidate) []string {
+	if candidate == nil || candidate.StructureGuard == nil {
+		return []string{"**结构门控**：未评估；没有可展示的日线、30分钟或5分钟结构证据"}
+	}
+	guard := candidate.StructureGuard
+	lines := []string{fmt.Sprintf("**结构门控**：%s；%s", articleStructureStatus(candidate), articleValue(guard.Reason, "结构证据不足"))}
+	seen := map[string]bool{}
+	for _, level := range guard.Levels {
+		if level.Period == "" || seen[level.Period] {
+			continue
+		}
+		seen[level.Period] = true
+		lines = append(lines, articleChanLevelLine(level))
+	}
+	if !seen["day"] && guard.DailyZone != nil {
+		lines = append(lines, "**日线**：最新笔重叠区 "+articleZoneText(guard.DailyZone))
+	}
+	if len(lines) == 1 {
+		lines = append(lines, "**分级结构**：本次报告未保存日线/30分钟/5分钟明细")
+	}
+	return lines
+}
+
+func articleChanLevelLine(level strategy.StructureLevelEvidence) string {
+	label := map[string]string{"day": "日线", "30m": "30分钟", "5m": "5分钟"}[level.Period]
+	if label == "" {
+		label = level.Period
+	}
+	status := map[string]string{
+		strategy.StructureGuardPass:    "通过",
+		strategy.StructureGuardFail:    "未通过",
+		strategy.StructureGuardUnknown: "未知",
+	}[level.Status]
+	if status == "" {
+		status = level.Status
+	}
+	parts := []string{fmt.Sprintf("**%s**：%s", label, status)}
+	if level.Reason != "" && status != "通过" {
+		parts = append(parts, level.Reason)
+	}
+	if level.Bars > 0 {
+		parts = append(parts, fmt.Sprintf("%d根K线/%d根合并/%d个分型/%d笔", level.Bars, level.MergedBars, level.Fractals, level.FinishedStrokes))
+	}
+	if level.LastFractal != "" {
+		fractal := "顶分型"
+		if level.LastFractal == "bottom" {
+			fractal = "底分型"
+		}
+		text := "最近" + fractal
+		if level.LastFractalAt != "" {
+			text += " " + articleShortTime(level.LastFractalAt)
+		}
+		if level.LastFractalHigh > 0 && level.LastFractalLow > 0 {
+			text += fmt.Sprintf("（%.2f~%.2f）", level.LastFractalLow, level.LastFractalHigh)
+		}
+		parts = append(parts, text)
+	}
+	if level.LastStroke != "" {
+		stroke := "向上笔"
+		if level.LastStroke == "down" {
+			stroke = "向下笔"
+		}
+		parts = append(parts, "最近完成"+stroke)
+	}
+	if level.Zone != nil {
+		parts = append(parts, "笔重叠区 "+articleZoneText(level.Zone))
+	}
+	return strings.Join(parts, "；")
+}
+
+func articleBriefChan(candidate *strategy.Candidate) string {
+	if candidate == nil || candidate.StructureGuard == nil {
+		return "结构未评估"
+	}
+	guard := candidate.StructureGuard
+	parts := []string{"门控" + articleStructureStatus(candidate)}
+	for _, level := range guard.Levels {
+		label := map[string]string{"day": "日线", "30m": "30m", "5m": "5m"}[level.Period]
+		if label == "" {
+			continue
+		}
+		status := map[string]string{
+			strategy.StructureGuardPass:    "通过",
+			strategy.StructureGuardFail:    "未通过",
+			strategy.StructureGuardUnknown: "未知",
+		}[level.Status]
+		if status == "" {
+			status = level.Status
+		}
+		parts = append(parts, label+" "+status)
+	}
+	return strings.Join(parts, "；")
+}
+
+func articleZoneText(zone *strategy.ChanZoneEvidence) string {
+	if zone == nil || zone.Upper <= 0 || zone.Lower <= 0 {
+		return "暂缺"
+	}
+	return fmt.Sprintf("%.2f~%.2f（中轴 %.2f）", zone.Lower, zone.Upper, zone.Mid)
+}
+
+func articleWaveLines(candidate *strategy.Candidate) []string {
+	if candidate == nil || candidate.Wave == nil || candidate.Wave.Stage == "unknown" {
+		return []string{"**阶段**：数据不足，暂不做波浪式确认", "**边界**：只有完成笔和有效区间足够时才描述摆动结构，不用未知证据补造浪级"}
+	}
+	wave := candidate.Wave
+	lines := []string{fmt.Sprintf("**阶段**：%s", articleValue(wave.Label, wave.Stage))}
+	if wave.CompletedStrokes > 0 {
+		line := fmt.Sprintf("**完成笔**：%d 笔", wave.CompletedStrokes)
+		if wave.LastStroke == "up" {
+			line += "；最近完成笔向上"
+		} else if wave.LastStroke == "down" {
+			line += "；最近完成笔向下"
+		}
+		lines = append(lines, line)
+	}
+	if wave.RetracementPct > 0 {
+		lines = append(lines, fmt.Sprintf("**回撤观察**：最近上行段回撤 %.1f%%", wave.RetracementPct))
+	}
+	levels := make([]string, 0, 3)
+	if wave.Support > 0 {
+		levels = append(levels, fmt.Sprintf("支撑 %.2f", wave.Support))
+	}
+	if wave.Invalidation > 0 {
+		levels = append(levels, fmt.Sprintf("失效位 %.2f", wave.Invalidation))
+	}
+	if wave.Resistance > 0 {
+		levels = append(levels, fmt.Sprintf("上方参照 %.2f", wave.Resistance))
+	}
+	if len(levels) > 0 {
+		lines = append(lines, "**关键价位**："+strings.Join(levels, " / "))
+	}
+	if wave.Evidence != "" {
+		lines = append(lines, "**依据**："+wave.Evidence)
+	}
+	limitation := articleValue(wave.Limitation, "仅依据完成笔与回撤的启发式描述，不是严格艾略特浪级计数")
+	lines = append(lines, "**边界**："+limitation)
+	return lines
+}
+
+func articleBriefWave(candidate *strategy.Candidate) string {
+	if candidate == nil || candidate.Wave == nil || candidate.Wave.Stage == "unknown" {
+		return "数据不足，暂不确认"
+	}
+	wave := candidate.Wave
+	parts := []string{articleValue(wave.Label, wave.Stage)}
+	if wave.RetracementPct > 0 {
+		parts = append(parts, fmt.Sprintf("回撤 %.1f%%", wave.RetracementPct))
+	}
+	if wave.Invalidation > 0 {
+		parts = append(parts, fmt.Sprintf("失效位 %.2f", wave.Invalidation))
+	}
+	parts = append(parts, "非严格浪级计数")
+	return strings.Join(parts, "；")
+}
+
+func articleShortTime(value string) string {
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05Z07:00"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed.Format("01-02 15:04")
+		}
+	}
+	return value
 }
 
 func articleRiskParagraph(r selection.Report, candidate *strategy.Candidate) string {
@@ -296,17 +507,209 @@ func uniqueArticleLabels(values []string, labels map[string]string) []string {
 	return out
 }
 
-func articlePriceLines(r selection.Report, candidate *strategy.Candidate) []string {
+type articlePriceLine struct {
+	label string
+	value string
+}
+
+func articlePriceLines(r selection.Report, candidate *strategy.Candidate) []articlePriceLine {
+	lines := make([]articlePriceLine, 0, 5)
 	low, high, ok := articleBuyRange(candidate)
-	buy := "推荐：暂缺（价格数据不足）"
+	buy := "暂缺（价格数据不足）"
 	if ok {
-		buy = fmt.Sprintf("推荐：%.2f~%.2f 购入", low, high)
+		buy = fmt.Sprintf("%.2f~%.2f 购入", low, high)
 	}
-	dayRange := "日价格区间：暂缺（信号日高低价未记录）"
+	lines = append(lines, articlePriceLine{label: "推荐买区", value: buy})
+
+	forecast, hasForecast := articleForecast(r, candidate)
+	if hasForecast && forecast.PointHigh > 0 && forecast.PointLow > 0 {
+		lines = append(lines,
+			articlePriceLine{label: "明日高点", value: articleForecastHighText(forecast)},
+			articlePriceLine{label: "明日低点", value: articleForecastLowText(forecast)},
+		)
+	} else {
+		lines = append(lines, articlePriceLine{label: "明日高低预测", value: "暂缺（dayrange 模型未生成目标日预测）"})
+	}
+
+	dayRange := "暂缺（信号日高低价未记录）"
 	if candidate != nil && candidate.DayLow > 0 && candidate.DayHigh >= candidate.DayLow {
-		dayRange = fmt.Sprintf("日价格区间：%.2f~%.2f（%s实际）", candidate.DayLow, candidate.DayHigh, articleMonthDay(r.AsOf))
+		dayRange = fmt.Sprintf("%.2f~%.2f（%s实际）", candidate.DayLow, candidate.DayHigh, articleMonthDay(r.AsOf))
 	}
-	return []string{buy, dayRange}
+	lines = append(lines, articlePriceLine{label: "信号日区间", value: dayRange})
+	if candidate != nil && candidate.Close > 0 {
+		lines = append(lines, articlePriceLine{label: "信号日收盘", value: fmt.Sprintf("%.2f", candidate.Close)})
+	}
+	return lines
+}
+
+func articlePriceLineTexts(r selection.Report, candidate *strategy.Candidate) []string {
+	lines := articlePriceLines(r, candidate)
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, line.label+" "+line.value)
+	}
+	return out
+}
+
+func articleForecast(r selection.Report, candidate *strategy.Candidate) (selection.DayRangeForecast, bool) {
+	if candidate == nil || r.DayRangeForecasts == nil {
+		return selection.DayRangeForecast{}, false
+	}
+	forecast, ok := r.DayRangeForecasts[candidate.Code]
+	if !ok || forecast.Code != "" && forecast.Code != candidate.Code {
+		return selection.DayRangeForecast{}, false
+	}
+	if forecast.TargetDate != "" && r.Target != "" && forecast.TargetDate != r.Target {
+		return selection.DayRangeForecast{}, false
+	}
+	return forecast, true
+}
+
+func articleForecastHighText(forecast selection.DayRangeForecast) string {
+	text := fmt.Sprintf("%.2f", forecast.PointHigh)
+	if forecast.HighLower > 0 && forecast.HighUpper >= forecast.HighLower {
+		text += fmt.Sprintf("；区间 %.2f~%.2f", forecast.HighLower, forecast.HighUpper)
+		if forecast.HighCoverage > 0 {
+			text += fmt.Sprintf("（名义覆盖 %.0f%%）", forecast.HighCoverage*100)
+		}
+	}
+	return text
+}
+
+func articleForecastLowText(forecast selection.DayRangeForecast) string {
+	text := fmt.Sprintf("%.2f", forecast.PointLow)
+	if forecast.LowLower > 0 && forecast.LowUpper >= forecast.LowLower {
+		text += fmt.Sprintf("；区间 %.2f~%.2f", forecast.LowLower, forecast.LowUpper)
+		if forecast.LowCoverage > 0 {
+			text += fmt.Sprintf("（名义覆盖 %.0f%%）", forecast.LowCoverage*100)
+		}
+	}
+	return text
+}
+
+func articleTechnicalLines(candidate *strategy.Candidate) []string {
+	if candidate == nil {
+		return []string{"技术指标未记录"}
+	}
+	f := candidate.Features
+	m := f.Metrics
+	lines := make([]string, 0, 7)
+	if m.MA5 > 0 && m.MA10 > 0 && m.MA20 > 0 {
+		lines = append(lines, fmt.Sprintf("**均线**：MA5 %.2f / MA10 %.2f / MA20 %.2f；%s", m.MA5, m.MA10, m.MA20, articleMAState(m.MA5, m.MA10, m.MA20)))
+	} else {
+		lines = append(lines, "**均线**：暂缺")
+	}
+
+	rsi := fmt.Sprintf("**RSI14**：%.1f（%s）", m.RSI14, articleRSIState(m.RSI14))
+	if f.SignalIndicators != nil {
+		delta := m.RSI14 - f.SignalIndicators.PreviousRSI14
+		rsi = fmt.Sprintf("**RSI14**：%.1f（前值 %.1f，%+.1f；%s）", m.RSI14, f.SignalIndicators.PreviousRSI14, delta, articleRSIState(m.RSI14))
+	}
+	lines = append(lines, rsi)
+
+	hist := 2 * (m.DIF - m.DEA)
+	macd := fmt.Sprintf("**MACD**：DIF %.3f / DEA %.3f / 柱 %.3f；%s", m.DIF, m.DEA, hist, articleMACDState(m.DIF, m.DEA, hist, hist))
+	if f.SignalIndicators != nil {
+		macd = fmt.Sprintf("**MACD**：DIF %.3f / DEA %.3f / 柱 %.3f；%s", m.DIF, m.DEA, f.SignalIndicators.MACDHistogram, articleMACDState(m.DIF, m.DEA, f.SignalIndicators.MACDHistogram, f.SignalIndicators.PreviousMACDHistogram))
+	}
+	lines = append(lines, macd)
+
+	if f.SignalIndicators != nil && f.SignalIndicators.Bollinger.Middle > 0 {
+		b := f.SignalIndicators.Bollinger
+		position := "位置不可计算"
+		if b.PercentB != nil {
+			position = fmt.Sprintf("%%B %.2f（%s）", *b.PercentB, articleBollingerState(*b.PercentB))
+		}
+		lines = append(lines, fmt.Sprintf("**BOLL**：上 %.2f / 中 %.2f / 下 %.2f；带宽 %.1f%%；%s", b.Upper, b.Middle, b.Lower, b.WidthPct, position))
+	} else {
+		lines = append(lines, "**BOLL**：本次报告未保存布林带明细")
+	}
+
+	lines = append(lines, fmt.Sprintf("**波动与量能**：ATR14 %.2f%%；量比 %.2f；MA20 斜率 %+.2f%%；距 MA20 %+.2f%%",
+		f.ATR14Pct, f.VolumeRatio, f.MA20Slope, f.MA20Distance))
+	lines = append(lines, fmt.Sprintf("**涨跌动量**：1日 %+.2f%% / 5日 %+.2f%% / 10日 %+.2f%%；相对样本池5日 %+.2f%%",
+		f.Return1, f.Return5, f.Return10, f.Relative5))
+	lines = append(lines, fmt.Sprintf("**区间位置**：收盘位于当日 %.0f%% 分位；距20日高点 %.2f%%；上影线占比 %.0f%%",
+		f.ClosePosition*100, f.High20Distance, f.UpperWick*100))
+	return lines
+}
+
+func articleBriefTechnical(candidate *strategy.Candidate) []string {
+	if candidate == nil {
+		return []string{"指标未记录"}
+	}
+	f := candidate.Features
+	m := f.Metrics
+	out := []string{
+		fmt.Sprintf("MA5/10/20 %.2f/%.2f/%.2f", m.MA5, m.MA10, m.MA20),
+		fmt.Sprintf("RSI14 %.1f（%s）", m.RSI14, articleRSIState(m.RSI14)),
+	}
+	if f.SignalIndicators != nil {
+		out = append(out, fmt.Sprintf("MACD柱 %.3f，%s", f.SignalIndicators.MACDHistogram, articleMACDState(m.DIF, m.DEA, f.SignalIndicators.MACDHistogram, f.SignalIndicators.PreviousMACDHistogram)))
+		if f.SignalIndicators.Bollinger.PercentB != nil {
+			out = append(out, fmt.Sprintf("BOLL %%B %.2f", *f.SignalIndicators.Bollinger.PercentB))
+		}
+	}
+	out = append(out, fmt.Sprintf("ATR %.2f%%", f.ATR14Pct), fmt.Sprintf("量比 %.2f", f.VolumeRatio))
+	return out
+}
+
+func articleMAState(ma5, ma10, ma20 float64) string {
+	switch {
+	case ma5 > ma10 && ma10 > ma20:
+		return "多头排列"
+	case ma5 < ma10 && ma10 < ma20:
+		return "空头排列"
+	case ma5 > ma10:
+		return "短期均线转强、尚未形成完整多头排列"
+	default:
+		return "均线交织"
+	}
+}
+
+func articleRSIState(value float64) string {
+	switch {
+	case value >= 80:
+		return "明显超买区"
+	case value >= 70:
+		return "偏热"
+	case value >= 50:
+		return "偏强"
+	case value >= 30:
+		return "偏弱"
+	default:
+		return "超卖区"
+	}
+}
+
+func articleMACDState(dif, dea, hist, previous float64) string {
+	switch {
+	case dif > dea && hist > previous:
+		return "红柱扩张"
+	case dif > dea && hist <= previous:
+		return "多头区间、动能收敛"
+	case dif <= dea && hist > previous:
+		return "空头区间、跌势收敛"
+	default:
+		return "绿柱扩张"
+	}
+}
+
+func articleBollingerState(percentB float64) string {
+	switch {
+	case percentB > 1:
+		return "上轨外"
+	case percentB >= 0.8:
+		return "上轨附近"
+	case percentB >= 0.5:
+		return "中轨上方"
+	case percentB >= 0.2:
+		return "中轨下方"
+	case percentB >= 0:
+		return "下轨附近"
+	default:
+		return "下轨外"
+	}
 }
 
 func articleBuyRange(candidate *strategy.Candidate) (float64, float64, bool) {

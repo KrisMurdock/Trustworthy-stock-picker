@@ -334,6 +334,39 @@ func TestPredictCanUseOnlyAValidatedModel(t *testing.T) {
 	}
 }
 
+func TestGeneratePredictionsSavesWithoutPublishing(t *testing.T) {
+	c := serviceConfig()
+	days := serviceDays(c, "2025-09-01", "2026-10-19")
+	data := premarketData(days, "sz000001")
+	now := time.Date(2026, 10, 20, 8, 45, 0, 0, shanghai)
+	service, store := newDayRangeServiceForTest(t, now, data)
+	result, err := service.GeneratePredictions(context.Background(), "2026-10-20", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Predictions) != 1 || len(store.predictions) != 1 {
+		t.Fatalf("generated predictions = %d, saved = %d", len(result.Predictions), len(store.predictions))
+	}
+	if result.Predictions[0].InputThrough != "2026-10-19" {
+		t.Fatalf("unexpected prediction input: %+v", result.Predictions[0])
+	}
+	if _, err := service.GeneratePredictions(context.Background(), "2026-10-20", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.predictions) != 1 {
+		t.Fatalf("generated prediction was duplicated: %d", len(store.predictions))
+	}
+
+	afterOpen := time.Date(2026, 10, 20, 10, 0, 0, 0, shanghai)
+	lateService, lateStore := newDayRangeServiceForTest(t, afterOpen, data)
+	if _, err := lateService.GeneratePredictions(context.Background(), "2026-10-20", ""); err == nil {
+		t.Fatal("post-open generation was allowed")
+	}
+	if len(lateStore.predictions) != 0 {
+		t.Fatalf("prediction was backfilled after the open: %d", len(lateStore.predictions))
+	}
+}
+
 func TestPredictInvalidatesCorruptModelAndFallsBackToBaseline(t *testing.T) {
 	c := serviceConfig()
 	days := serviceDays(c, "2025-09-01", "2026-10-20")

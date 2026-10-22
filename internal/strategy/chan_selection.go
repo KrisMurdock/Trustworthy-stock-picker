@@ -89,6 +89,7 @@ func applyStructureGuard(result *Result, c config.Config, histories, raw []marke
 			reranked.Plan = base.Plan
 			reranked.Chan = base.Chan
 			reranked.StructureGuard = base.StructureGuard
+			reranked.Wave = base.Wave
 			reranked.ObservationRank = base.ObservationRank
 			reranked.Rank = base.Rank
 			reranked.ObservationScore = base.ObservationScore

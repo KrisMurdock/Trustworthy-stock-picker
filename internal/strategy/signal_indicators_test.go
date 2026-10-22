@@ -51,6 +51,37 @@ func TestSignalIndicatorValuesAndFlatBand(t *testing.T) {
 	}
 }
 
+func TestExtractWithSignalsKeepsBaseFeaturesAndAddsSignalEvidence(t *testing.T) {
+	bars := make([]market.Bar, 60)
+	for i := range bars {
+		price := 10 + float64(i)*.03 + math.Sin(float64(i)/3)*.2
+		bars[i] = market.Bar{Date: time.Date(2026, 1, 1, 0, 0, 0, 0, market.Shanghai).AddDate(0, 0, i).Format("2006-01-02"), Open: price - .05, Close: price, High: price + .15, Low: price - .15, Volume: 1000}
+	}
+	base, err := Extract(bars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detailed, err := ExtractWithSignals(bars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.SignalIndicators != nil || detailed.SignalIndicators == nil || detailed.SignalIndicators.Version != 1 {
+		t.Fatalf("signal indicator boundary changed: base=%+v detailed=%+v", base.SignalIndicators, detailed.SignalIndicators)
+	}
+	withSignals := detailed
+	detailed.SignalIndicators = nil
+	if base != detailed {
+		t.Fatalf("ExtractWithSignals changed ranking features: base=%+v detailed=%+v", base, detailed)
+	}
+	x := withSignals.SignalIndicators
+	if x.PreviousRSI14 <= 0 || x.Bollinger.Middle <= 0 || x.Bollinger.Upper <= x.Bollinger.Lower || x.Bollinger.PercentB == nil || x.PreviousPercentB == nil {
+		t.Fatalf("incomplete signal evidence: %+v", x)
+	}
+	if x.MACDHistogram != 2*(withSignals.Metrics.DIF-withSignals.Metrics.DEA) {
+		t.Fatalf("MACD histogram uses a different convention: %+v", x)
+	}
+}
+
 func TestFixedIndicatorRulesAndMissingEvidence(t *testing.T) {
 	b, previousB := .4, .3
 	f := Features{ATR14Pct: 3, MA20Distance: 5, VolumeRatio: .8,

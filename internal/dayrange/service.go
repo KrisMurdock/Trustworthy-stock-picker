@@ -274,6 +274,18 @@ type PredictionResult struct {
 }
 
 func (s *Service) Predict(ctx context.Context, target string, code string) (PredictionResult, error) {
+	return s.predict(ctx, target, code, true)
+}
+
+// GeneratePredictions computes and saves the premarket forecast without
+// publishing the dayrange delivery cards. Report generation uses this path so
+// the article can include the frozen forecast without moving the scheduled
+// premarket push.
+func (s *Service) GeneratePredictions(ctx context.Context, target string, code string) (PredictionResult, error) {
+	return s.predict(ctx, target, code, false)
+}
+
+func (s *Service) predict(ctx context.Context, target string, code string, publish bool) (PredictionResult, error) {
 	result := PredictionResult{Mode: ModePremarket}
 	if s == nil || s.Store == nil || s.Market == nil {
 		return result, errors.New("dayrange service is incomplete")
@@ -383,14 +395,16 @@ func (s *Service) Predict(ctx context.Context, target string, code string) (Pred
 	if len(result.Predictions) > 0 {
 		result.Source = result.Predictions[0].Source
 	}
-	records, err = s.Store.LoadPredictions(ctx, target, "")
-	if err != nil {
-		return result, err
+	if publish {
+		records, err = s.Store.LoadPredictions(ctx, target, "")
+		if err != nil {
+			return result, err
+		}
+		if err := s.publishSavedPremarket(ctx, target, records, result.Skipped, now); err != nil {
+			return result, err
+		}
 	}
-	if err := s.publishSavedPremarket(ctx, target, records, result.Skipped, now); err != nil {
-		return result, err
-	}
-	s.Log.Info("Dayrange premarket predictions generated", "target_date", target, "published", len(result.Predictions), "skipped", len(result.Skipped), "source", result.Source)
+	s.Log.Info("Dayrange premarket predictions generated", "target_date", target, "published", len(result.Predictions), "skipped", len(result.Skipped), "source", result.Source, "delivery", publish)
 	return result, nil
 }
 

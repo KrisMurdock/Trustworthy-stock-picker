@@ -6,12 +6,56 @@ import (
 	"strings"
 )
 
+const (
+	cardShellOpenStyle   = "margin:22px 0;border:1px solid #dbe5f0;border-radius:12px;background:#ffffff;overflow:hidden;"
+	cardBarStylePrefix   = "height:4px;background:"
+	cardBarStyleSuffix   = ";font-size:0;line-height:0;"
+	cardContentOpenStyle = "padding:18px 18px 14px;color:#334155;font-size:15px;line-height:1.8;"
+	cardHeading3Style    = "margin:0 0 12px;color:#0f172a;font-size:19px;line-height:1.45;font-weight:700;"
+	cardHeading4Prefix   = "margin:16px 0 8px;color:"
+	cardHeading4Suffix   = ";font-size:15px;line-height:1.5;font-weight:700;"
+	cardQuoteStylePrefix = "margin:12px 0;padding:10px 12px;border-left:3px solid "
+	cardQuoteStyleSuffix = ";background:#f8fafc;color:#475569;"
+	cardQuoteTextStyle   = "margin:0;font-size:15px;line-height:1.8;"
+	articleHeading4Style = "margin:18px 0 8px;color:#1e3a8a;font-size:16px;line-height:1.5;font-weight:700;"
+	cardBlueColor        = "#2563eb"
+	cardGreenColor       = "#16a34a"
+	cardAmberColor       = "#d97706"
+	cardGreyColor        = "#64748b"
+	cardNeutralColor     = "#2563eb"
+)
+
+type cardTheme struct {
+	barColor string
+	accent   string
+}
+
+var cardThemes = map[string]cardTheme{
+	"neutral": {barColor: cardNeutralColor, accent: cardNeutralColor},
+	"blue":    {barColor: cardBlueColor, accent: cardBlueColor},
+	"green":   {barColor: cardGreenColor, accent: cardGreenColor},
+	"amber":   {barColor: cardAmberColor, accent: cardAmberColor},
+	"grey":    {barColor: cardGreyColor, accent: cardGreyColor},
+	"gray":    {barColor: cardGreyColor, accent: cardGreyColor},
+}
+
 // RenderHTML converts the deterministic article body into the small HTML
-// subset accepted by WeChat drafts. It deliberately emits no images, links or
-// inline scripts, so the draft cannot depend on blocked or untrusted assets.
+// subset accepted by WeChat drafts. It deliberately emits no images, links,
+// classes, external styles or inline scripts, so the draft cannot depend on
+// blocked or untrusted assets.
 func RenderHTML(body string) (string, error) {
 	body = strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\r", "\n")
 	var out strings.Builder
+	if err := renderLines(&out, strings.Split(body, "\n"), nil); err != nil {
+		return "", err
+	}
+	if out.Len() == 0 {
+		return "", errors.New("empty article body")
+	}
+	return out.String(), nil
+}
+
+func renderLines(out *strings.Builder, lines []string, card *cardTheme) error {
 	list := ""
 	flushList := func() {
 		switch list {
@@ -22,79 +66,232 @@ func RenderHTML(body string) (string, error) {
 		}
 		list = ""
 	}
-	for _, raw := range strings.Split(body, "\n") {
+
+	for index := 0; index < len(lines); index++ {
+		raw := lines[index]
 		trimmed := strings.TrimSpace(raw)
 		if trimmed == "" {
 			flushList()
 			continue
 		}
+
+		if tone, ok := parseCardOpen(trimmed); ok {
+			if card != nil {
+				return errors.New("nested card blocks are not supported")
+			}
+			flushList()
+			end, err := findCardEnd(lines, index+1)
+			if err != nil {
+				return err
+			}
+			if cardLinesEmpty(lines[index+1 : end]) {
+				return errors.New("empty card block")
+			}
+
+			theme := cardThemeFor(tone)
+			var inner strings.Builder
+			if err := renderLines(&inner, lines[index+1:end], &theme); err != nil {
+				return err
+			}
+			if inner.Len() == 0 {
+				return errors.New("empty card block")
+			}
+
+			out.WriteString(`<section style="`)
+			out.WriteString(cardShellOpenStyle)
+			out.WriteString(`">`)
+			out.WriteString(`<section style="`)
+			out.WriteString(cardBarStylePrefix)
+			out.WriteString(theme.barColor)
+			out.WriteString(cardBarStyleSuffix)
+			out.WriteString(`"></section>`)
+			out.WriteString(`<section style="`)
+			out.WriteString(cardContentOpenStyle)
+			out.WriteString(`">`)
+			out.WriteString(inner.String())
+			out.WriteString(`</section></section>`)
+			index = end
+			continue
+		}
+
+		if trimmed == ":::" {
+			flushList()
+			return errors.New("unexpected card closing fence")
+		}
+
 		switch {
+		case strings.HasPrefix(trimmed, "#### "):
+			flushList()
+			if card == nil {
+				writeHeading(out, "h4", strings.TrimSpace(trimmed[5:]), articleHeading4Style)
+			} else {
+				writeHeading(out, "h4", strings.TrimSpace(trimmed[5:]), cardHeading4Prefix+card.accent+cardHeading4Suffix)
+			}
 		case strings.HasPrefix(trimmed, "### "):
 			flushList()
-			writeHeading(&out, "h3", strings.TrimSpace(trimmed[4:]))
+			if card == nil {
+				writeHeading(out, "h3", strings.TrimSpace(trimmed[4:]), "")
+			} else {
+				writeHeading(out, "h3", strings.TrimSpace(trimmed[4:]), cardHeading3Style)
+			}
 		case strings.HasPrefix(trimmed, "## "):
 			flushList()
-			writeHeading(&out, "h2", strings.TrimSpace(trimmed[3:]))
+			if card != nil {
+				return errors.New("card blocks only allow level 3 and level 4 headings")
+			}
+			writeHeading(out, "h2", strings.TrimSpace(trimmed[3:]), "")
 		case strings.HasPrefix(trimmed, "# "):
 			flushList()
-			writeHeading(&out, "h1", strings.TrimSpace(trimmed[2:]))
+			if card != nil {
+				return errors.New("card blocks only allow level 3 and level 4 headings")
+			}
+			writeHeading(out, "h1", strings.TrimSpace(trimmed[2:]), "")
 		case strings.HasPrefix(trimmed, "- "):
 			if list != "ul" {
 				flushList()
-				out.WriteString("<ul>")
+				writeListOpen(out, "ul")
 				list = "ul"
 			}
-			out.WriteString("<li>")
-			out.WriteString(html.EscapeString(strings.TrimSpace(trimmed[2:])))
-			out.WriteString("</li>")
+			writeListItem(out, strings.TrimSpace(trimmed[2:]))
 		case isNumberedLine(trimmed):
 			if list != "ol" {
 				flushList()
-				out.WriteString("<ol>")
+				writeListOpen(out, "ol")
 				list = "ol"
 			}
-			index := strings.Index(trimmed, ". ")
-			out.WriteString("<li>")
-			out.WriteString(html.EscapeString(strings.TrimSpace(trimmed[index+2:])))
-			out.WriteString("</li>")
+			itemIndex := strings.Index(trimmed, ". ")
+			writeListItem(out, strings.TrimSpace(trimmed[itemIndex+2:]))
 		case strings.HasPrefix(trimmed, "> "):
 			flushList()
-			out.WriteString("<blockquote><p>")
-			out.WriteString(html.EscapeString(strings.TrimSpace(trimmed[2:])))
-			out.WriteString("</p></blockquote>")
+			if card == nil {
+				out.WriteString("<blockquote><p>")
+				writeInline(out, strings.TrimSpace(trimmed[2:]))
+				out.WriteString("</p></blockquote>")
+			} else {
+				out.WriteString(`<blockquote style="`)
+				out.WriteString(cardQuoteStylePrefix)
+				out.WriteString(card.accent)
+				out.WriteString(cardQuoteStyleSuffix)
+				out.WriteString(`"><p style="`)
+				out.WriteString(cardQuoteTextStyle)
+				out.WriteString(`">`)
+				writeInline(out, strings.TrimSpace(trimmed[2:]))
+				out.WriteString("</p></blockquote>")
+			}
 		case isHeading(trimmed):
 			flushList()
-			writeHeading(&out, "h2", trimmed)
+			if card != nil {
+				return errors.New("card blocks only allow level 3 and level 4 headings")
+			}
+			writeHeading(out, "h2", trimmed, "")
 		default:
 			flushList()
 			indent := len(raw) - len(strings.TrimLeft(raw, " \t"))
-			escaped := html.EscapeString(trimmed)
-			if indent > 0 {
-				if indent > 8 {
-					indent = 8
-				}
-				escaped = strings.Repeat("&nbsp;", indent) + escaped
+			if indent > 8 {
+				indent = 8
 			}
 			out.WriteString("<p>")
-			out.WriteString(escaped)
+			out.WriteString(strings.Repeat("&nbsp;", indent))
+			writeInline(out, trimmed)
 			out.WriteString("</p>")
 		}
 	}
 	flushList()
-	if out.Len() == 0 {
-		return "", errors.New("empty article body")
-	}
-	return out.String(), nil
+	return nil
 }
 
-func writeHeading(out *strings.Builder, tag, text string) {
+func parseCardOpen(line string) (string, bool) {
+	if line == ":::card" {
+		return "neutral", true
+	}
+	if !strings.HasPrefix(line, ":::card") {
+		return "", false
+	}
+	rest := line[len(":::card"):]
+	if rest == "" || (rest[0] != ' ' && rest[0] != '\t') {
+		return "", false
+	}
+	fields := strings.Fields(rest)
+	if len(fields) != 1 {
+		return "unknown", true
+	}
+	return strings.ToLower(fields[0]), true
+}
+
+func findCardEnd(lines []string, start int) (int, error) {
+	for index := start; index < len(lines); index++ {
+		trimmed := strings.TrimSpace(lines[index])
+		if _, ok := parseCardOpen(trimmed); ok {
+			return 0, errors.New("nested card blocks are not supported")
+		}
+		if trimmed == ":::" {
+			return index, nil
+		}
+	}
+	return 0, errors.New("unclosed card block")
+}
+
+func cardLinesEmpty(lines []string) bool {
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func cardThemeFor(tone string) cardTheme {
+	if theme, ok := cardThemes[strings.ToLower(strings.TrimSpace(tone))]; ok {
+		return theme
+	}
+	return cardThemes["neutral"]
+}
+
+func writeHeading(out *strings.Builder, tag, text, style string) {
 	out.WriteString("<")
 	out.WriteString(tag)
+	if style != "" {
+		out.WriteString(` style="`)
+		out.WriteString(style)
+		out.WriteString(`"`)
+	}
 	out.WriteString(">")
-	out.WriteString(html.EscapeString(text))
+	writeInline(out, text)
 	out.WriteString("</")
 	out.WriteString(tag)
 	out.WriteString(">")
+}
+
+func writeListOpen(out *strings.Builder, tag string) {
+	out.WriteString("<")
+	out.WriteString(tag)
+	out.WriteString(">")
+}
+
+func writeListItem(out *strings.Builder, text string) {
+	out.WriteString("<li>")
+	writeInline(out, text)
+	out.WriteString("</li>")
+}
+
+// writeInline supports only paired **bold** markers. Markers are split after
+// escaping, so the generated <strong> tags are the only raw HTML in the text
+// path and user-provided tags can never become markup.
+func writeInline(out *strings.Builder, text string) {
+	escaped := html.EscapeString(text)
+	if strings.Count(escaped, "**")%2 != 0 {
+		out.WriteString(escaped)
+		return
+	}
+	for index, part := range strings.Split(escaped, "**") {
+		if index%2 == 0 {
+			out.WriteString(part)
+			continue
+		}
+		out.WriteString("<strong>")
+		out.WriteString(part)
+		out.WriteString("</strong>")
+	}
 }
 
 func isHeading(line string) bool {

@@ -159,6 +159,7 @@ type Candidate struct {
 	Plan                      *Plan                   `json:"reference_plan,omitempty"`
 	Chan                      *ChanEvidence           `json:"chan,omitempty"`
 	StructureGuard            *StructureGuardEvidence `json:"structure_guard,omitempty"`
+	Wave                      *WaveEvidence           `json:"wave,omitempty"`
 	Continuation              *ContinuationStats      `json:"continuation,omitempty"`
 }
 
@@ -690,7 +691,12 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 			if err := ctx.Err(); err != nil {
 				return result, err
 			}
-			f, err := Extract(h.Bars[:i+1])
+			var f Features
+			if i == len(h.Bars)-1 {
+				f, err = ExtractWithSignals(h.Bars[:i+1])
+			} else {
+				f, err = Extract(h.Bars[:i+1])
+			}
 			if err != nil {
 				return result, err
 			}
@@ -840,6 +846,8 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 				candidate.Close = signal.Close
 				candidate.DayHigh = signal.High
 				candidate.DayLow = signal.Low
+				wave := AnalyzeWave(d.Adjusted.Bars)
+				candidate.Wave = &wave
 				p, err := NewPlan(s, x.Code, signal.Close*(1+s.SlippageRate))
 				if err != nil {
 					candidate.Recommended = false

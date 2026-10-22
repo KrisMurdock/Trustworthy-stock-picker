@@ -175,13 +175,13 @@ func TestDeferredSecondStageDoesNotBlockFirstDelivery(t *testing.T) {
 		SecondStage: &secondstage.Report{Version: secondstage.ReportSchemaVersion, Status: secondstage.StatusOK, AsOf: "2026-10-13", Target: "2026-10-14", PushEnabled: true, InputCount: 1, Candidates: []secondstage.Candidate{{Rank: 1, Code: "sz000001", Name: "测试股票"}}},
 	}
 	state := notify.NewLedger()
-	if queued, err := m.enqueueReportDeferred(&state, report, true); err != nil || queued != 1 {
+	if queued, err := m.enqueueReportDeferred(context.Background(), &state, report, true); err != nil || queued != 1 {
 		t.Fatalf("deferred report queued=%d err=%v", queued, err)
 	}
 	if _, ok := state.Events["report-id:second-stage:article"]; ok {
 		t.Fatal("second-stage article was queued before artifacts were ready")
 	}
-	if queued, err := m.enqueueReportDeferred(&state, report, false); err != nil || queued != 1 {
+	if queued, err := m.enqueueReportDeferred(context.Background(), &state, report, false); err != nil || queued != 1 {
 		t.Fatalf("ready second stage queued=%d err=%v", queued, err)
 	}
 	if _, ok := state.Events["report-id:second-stage:article"]; !ok {
