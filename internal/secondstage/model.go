@@ -102,10 +102,11 @@ func parseModel(data []byte, wantSHA string) (Model, error) {
 	if doc.SchemaVersion != ModelSchemaVersion || strings.TrimSpace(doc.ModelID) == "" || doc.Target != "future_three_day_max_high_return_pct" {
 		return Model{}, errors.New("unsupported second-stage model contract")
 	}
-	if doc.FeatureVersion != FeatureVersion || len(doc.FeatureNames) != len(FeatureNames) {
+	expectedFeatures, ok := featureNamesForVersion(doc.FeatureVersion)
+	if !ok || len(doc.FeatureNames) != len(expectedFeatures) {
 		return Model{}, errors.New("invalid second-stage feature contract")
 	}
-	for index, name := range FeatureNames {
+	for index, name := range expectedFeatures {
 		if doc.FeatureNames[index] != name {
 			return Model{}, errors.New("second-stage feature order is invalid")
 		}
@@ -117,7 +118,7 @@ func parseModel(data []byte, wantSHA string) (Model, error) {
 		return Model{}, errors.New("invalid second-stage label clip")
 	}
 	for _, tree := range doc.Trees {
-		if err := validateTree(tree); err != nil {
+		if err := validateTree(tree, len(expectedFeatures)); err != nil {
 			return Model{}, err
 		}
 	}
@@ -139,7 +140,7 @@ func parseModel(data []byte, wantSHA string) (Model, error) {
 	}, nil
 }
 
-func validateTree(tree Tree) error {
+func validateTree(tree Tree, featureCount int) error {
 	if len(tree.Nodes) == 0 || len(tree.Nodes) > 4096 {
 		return errors.New("invalid second-stage tree size")
 	}
@@ -150,7 +151,7 @@ func validateTree(tree Tree) error {
 			}
 			continue
 		}
-		if node.Feature < 0 || node.Feature >= len(FeatureNames) || node.Left < 0 || node.Right < 0 || node.Left >= len(tree.Nodes) || node.Right >= len(tree.Nodes) || node.Left == index || node.Right == index || !finite(node.Threshold) {
+		if node.Feature < 0 || node.Feature >= featureCount || node.Left < 0 || node.Right < 0 || node.Left >= len(tree.Nodes) || node.Right >= len(tree.Nodes) || node.Left == index || node.Right == index || !finite(node.Threshold) {
 			return errors.New("invalid second-stage tree node")
 		}
 	}

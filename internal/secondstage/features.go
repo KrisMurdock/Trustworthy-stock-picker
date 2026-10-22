@@ -1,6 +1,7 @@
 package secondstage
 
 import (
+	"math"
 	"sort"
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
@@ -37,6 +38,15 @@ var FeatureNames = []string{
 	"touch_rate20",
 	"pool_return5",
 }
+
+// FeatureNamesV2 keeps the frozen v1 prefix and appends teacher-interaction
+// features. The order must match the offline trainer byte for byte.
+var FeatureNamesV2 = append(append([]string(nil), FeatureNames...),
+	"rank_jump_adjacent15",
+	"geo_blend_jev",
+	"harmonic_blend_jev",
+	"return_to_atr_ratio",
+)
 
 type jevGroupStats struct {
 	Max             float64
@@ -134,7 +144,7 @@ func percentilesByCode(scores map[string]float64) map[string]float64 {
 	return out
 }
 
-func featureVector(candidate firststage.Candidate, jev JEVScore, jevPresent bool, group jevGroupStats, rankPosition, poolReturn5 float64) []float64 {
+func featureVector(candidate firststage.Candidate, jev JEVScore, jevPresent bool, group jevGroupStats, rankPosition, poolReturn5 float64, featureVersion int) []float64 {
 	present := 0.0
 	if jevPresent {
 		present = 1
@@ -146,7 +156,7 @@ func featureVector(candidate firststage.Candidate, jev JEVScore, jevPresent bool
 		relative = jev.Adjacent15 / group.Max
 	}
 	f := candidate.Features
-	return []float64{
+	vector := []float64{
 		candidate.BlendScore,
 		rankPosition,
 		candidate.BaseRank,
@@ -175,4 +185,45 @@ func featureVector(candidate firststage.Candidate, jev JEVScore, jevPresent bool
 		f.TouchRate20,
 		poolReturn5,
 	}
+	if featureVersion != FeatureVersionV2 {
+		return vector
+	}
+	blend := clamp01(candidate.BlendScore)
+	rankJump := 0.0
+	geo := 0.0
+	harmonic := 0.0
+	if jevPresent {
+		teacher := clamp01(percentile)
+		rankJump = teacher - (1 - rankPosition)
+		geo = math.Sqrt(blend * teacher)
+		harmonic = harmonicMean(blend, teacher)
+	}
+	return append(vector,
+		rankJump,
+		geo,
+		harmonic,
+		f.Return5/math.Max(f.ATR14Pct, 0.5),
+	)
+}
+
+func featureNamesForVersion(version int) ([]string, bool) {
+	switch version {
+	case FeatureVersionV1:
+		return FeatureNames, true
+	case FeatureVersionV2:
+		return FeatureNamesV2, true
+	default:
+		return nil, false
+	}
+}
+
+func clamp01(value float64) float64 {
+	return math.Max(0, math.Min(1, value))
+}
+
+func harmonicMean(left, right float64) float64 {
+	if left <= 0 || right <= 0 {
+		return 0
+	}
+	return 2 / (1/left + 1/right)
 }

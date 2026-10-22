@@ -36,7 +36,7 @@
 
 /mnt/windows_database/trained_models/
 ├── initial_screening/
-├── reranking/
+├── reranking/stage3-dual-target/20261022-stage3-v2/
 ├── intraday_prediction/
 └── dayrange_prediction/
 
@@ -54,10 +54,11 @@
 /mnt/windows_database/evaluations/
 ├── reranking/secondstage-compare/
 ├── reranking/chinese-decision-holdout-20261015-16/
+├── reranking/stage3-dual-target/20261022-stage3-v2/
 └── intraday_prediction/predictor-calibration-v7/v7/
 ```
 
-`trained_models/` 目前只建立阶段目录；尚未产生需要独立落盘的研究训练模型。生产构建中内嵌的第一层、第二层模型不属于外部研究模型，见下文运行时边界。
+`trained_models/reranking/stage3-dual-target/20261022-stage3-v2/` 保存 `FeatureVersion=2` 双目标树候选、训练报告与 2660 行推理一致性 fixture；模型 SHA-256 为 `66cc58190bb0582e94b0ab95e6684a26f668af9a21e7f93383e38b9919414f8b`。该候选在验证期未跑赢现有生产树，未进入 Go 二进制，只用于复现实验。生产构建中内嵌的第一层、第二层模型不属于外部研究模型，见下文运行时边界。
 
 已下载权重的稳定目录与校验值：
 

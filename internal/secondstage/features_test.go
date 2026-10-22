@@ -58,11 +58,34 @@ func TestFeatureVectorMatchesFeatureContract(t *testing.T) {
 	}
 	scores := map[string]JEVScore{"sh600001": {Adjacent15: 0.4, Full15Top12: 0.3}}
 	groups := buildJEVGroupStats([]firststage.Candidate{candidate}, scores)
-	vector := featureVector(candidate, scores[candidate.Code], true, groups[0], 0, 1.5)
+	vector := featureVector(candidate, scores[candidate.Code], true, groups[0], 0, 1.5, FeatureVersion)
 	if len(vector) != len(FeatureNames) {
 		t.Fatalf("feature vector length %d != contract %d", len(vector), len(FeatureNames))
 	}
 	if vector[1] != 0 || vector[6] != 0.5 || vector[7] != 1 || vector[9] != 0.5 || vector[10] != 1 {
 		t.Fatalf("unexpected JEV features: %+v", vector)
+	}
+}
+
+func TestFeatureVectorV2AddsTeacherInteractions(t *testing.T) {
+	candidate := firststage.Candidate{
+		Rank:       1,
+		Code:       "sh600001",
+		BlendScore: 0.8,
+		Features:   firststage.FeatureSnapshot{Return5: 2, ATR14Pct: 4},
+	}
+	scores := map[string]JEVScore{"sh600001": {Adjacent15: 0.4}}
+	groups := buildJEVGroupStats([]firststage.Candidate{candidate}, scores)
+	vector := featureVector(candidate, scores[candidate.Code], true, groups[0], 0.25, 1.5, FeatureVersionV2)
+	if len(vector) != len(FeatureNamesV2) {
+		t.Fatalf("v2 feature vector length %d != contract %d", len(vector), len(FeatureNamesV2))
+	}
+	if math.Abs(vector[27]+0.25) > 1e-12 || math.Abs(vector[28]-math.Sqrt(0.4)) > 1e-12 || math.Abs(vector[29]-8.0/13.0) > 1e-12 || vector[30] != 0.5 {
+		t.Fatalf("unexpected v2 interactions: %+v", vector[27:])
+	}
+
+	missing := featureVector(candidate, JEVScore{}, false, groups[0], 0.25, 1.5, FeatureVersionV2)
+	if missing[27] != 0 || missing[28] != 0 || missing[29] != 0 || missing[30] != 0.5 {
+		t.Fatalf("missing JEV interactions were not neutral: %+v", missing[27:])
 	}
 }

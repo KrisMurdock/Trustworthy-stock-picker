@@ -40,7 +40,7 @@ blend_score = first_stage_weight × first_stage_percentile
 
 默认计划为 `blend_50_50`：第一层 50% + `jev` 50%。报告写入 `ranker=blend_weighted_v1`、`blend.id`、`blend.models`，候选写入 `models` 百分位明细；旧的 `jev_*` 字段保留，继续镜像 `models.jev`。新增模型只需在计划中加入名称和权重、重分配其余权重使总和仍为 1，并提供同 schema 的 artifact，不需要修改排序代码。树模型仍加载并输出 `predicted_max_high_return_pct` 辅助字段，但不再决定顺序；树模型 JSON 继续校验 schema、特征顺序、树结构、数值范围和 SHA-256。
 
-旧树模型训练样本从历史第一层结果重建 `model_rank` 时使用 `clamp(2 × 第一层 blend_score - base_rank, 0, 1)`，该等式只在旧线性 0.5/0.5 融合下成立。当前第一层已改为 Rank-Gauss 0.44/0.56，旧树模型只保留为辅助预测字段，不能用于新的排序结论；在新的离线教师分数、历史候选和训练样本生成前，不得重训或替换树模型。
+树模型 artifact 现在支持 `feature_version=1` 的 27 维冻结特征和 `feature_version=2` 的 31 维特征集。V2 在 v1 前缀后追加 `rank_jump_adjacent15`、`geo_blend_jev`、`harmonic_blend_jev`、`return_to_atr_ratio`；JEV 缺失时，三个教师交互项固定为中性 0，波动率调整动量仍独立计算。生产 `second_stage_gbdt_v1` 继续使用 v1 特征和旧 artifact，只输出辅助预测字段；V2 双目标候选已完整评估，但因验证指标未跑赢生产模型而未切换。
 
 通用 artifact 路径为 `<data_dir>/state/secondstage/<model>/<as_of>.json`，schema 为 `schema_version: 1`，必须精确匹配信号日并且包含候选的 `adjacent15` 与 `full15_top12` 分数。`jev` 在通用路径不存在时兼容读取 `<data_dir>/state/jev/<as_of>.json`。某个模型缺失、过期或路径为空时，该模型对所有候选贡献中性 0.5 百分位，`degraded=true`，并在候选 `reasons` 标记 `model_missing:<model>`（`jev` 继续使用兼容原因 `jev_missing`）；部分候选缺失时只对缺失行使用中性 0.5 百分位。artifact 存在但 JSON/schema/日期/数值非法时标记对应模型状态为 `invalid`，同样降级而不是静默通过。
 
@@ -136,8 +136,10 @@ Go 生产进程仍只读取离线 artifact，不导入 Laya 或 Chinese Decision
 
 - 旧树模型 `second_stage_gbdt_v1`：80 棵深度 2 的回归树，27 个冻结特征，`max_features=0.4`，SHA-256 为 `21cb6c2a19706381cdb0ce2598ceda743b81227b22391cb5f92ba429d9d4e960`；现在只提供辅助预测字段。
 - 训练区间 2026-09-03 至 2026-09-21，共 1885 行；只使用标签在 2026-09-28 验证起点前成熟的样本，避免训练标签跨入留出区间。
-- 旧树模型留出区间 2026-09-28 至 2026-10-14，共 8 个交易日、1160 行。树模型 Top10 平均未来三日最大高点涨幅为 4.29%，第一阶段融合基线为 3.87%；NDCG@10 为 0.360 对 0.328，`+1%` 命中率为 71.2% 对 68.8%，Top10 第三日收盘收益为 -6.12% 对 -6.48%。该结果只描述旧排序器，不再代表当前主线。
-- 按交易日 block bootstrap 2000 次，主指标差值 `+0.420` 个百分点，95% CI `[+0.113, +0.729]`；NDCG、命中率和收盘收益的置信区间跨 0，不能表述为稳定增益。
+- 在更新后的中位秩 Rank-Gauss 第一层输入上，旧树模型 2026-09-28 至 2026-10-14 的 8 日验证 Top10 为 `MaxHigh@10=4.835%`、`NDCG@10=0.738`、`Close3@10=-4.851%`、`Hit1@10=71.25%`。任务书中的 4.29% / 0.360 / -6.12% / 71.2% 是旧字典序线性第一层输入下的历史结果，不能与当前输入组合混用。
+- `FeatureVersion=2` 已在 Go 侧支持 4 个教师交互特征，并在 JEV 缺失时提供中性降级；2026-08-27 至 09-21 的 18 个训练日通过 purged walk-forward 选中 ATR 防守双头树，但 09-28 至 10-14 验证仅得到 `MaxHigh@10=3.859%`、`NDCG@10=0.707`、`Close3@10=-6.369%`、`Hit1@10=70.0%`，未通过预设门禁，也未跑赢现有生产树的 4.835% / 0.738 / -4.851% / 71.25%。因此生产 `second_stage_gbdt_v1` 和 artifact SHA-256 均未切换；V2 双头候选及完整报告归档在 Windows 训练目录。
+- V2 候选的 Python 训练器与 Go `Model.Predict` 在 2660 行训练、验证和留出样本上逐行比对，最大绝对误差为 0，满足 `< 1e-9` 的导出契约。
+- 按 3 交易日循环块、2000 次 bootstrap 比较 V2 ATR 防守模型与现有生产树：`MaxHigh@10` 差值 95% CI `[-2.075, -0.040]` 个百分点，`Close3@10` 差值 95% CI `[-2.967, -0.503]` 个百分点，均不支持切换。
 - JEV 原始分数不能跨相邻组直接比较；旧树模型使用组内百分位、组内相对强度和 top12 组内占比，新主线同样先做组内百分位，而不是把 JEV 当作跨组概率。
 - 留出区间只有 8 个交易日且处于下跌市，以上结果只描述该样本的排序表现，不外推为未来收益、成功概率或交易建议。
 

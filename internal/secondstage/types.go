@@ -14,7 +14,9 @@ import (
 const (
 	ReportSchemaVersion = 1
 	ModelSchemaVersion  = 1
-	FeatureVersion      = 1
+	FeatureVersionV1    = 1
+	FeatureVersionV2    = 2
+	FeatureVersion      = FeatureVersionV1
 
 	RankerBlendWeighted = "blend_weighted_v1"
 	DefaultBlendID      = "blend_50_50"

@@ -146,6 +146,7 @@ func analyzeWithModel(report Report, first firststage.Report, opts Options, mode
 	report.ModelSHA256 = model.SHA256
 	report.TrainedFrom = model.TrainFrom
 	report.TrainedThrough = model.TrainThrough
+	report.FeatureVersion = model.FeatureVersion
 	report.InputCount = len(first.Candidates)
 	report.Ranker = RankerBlendWeighted
 	report.Blend = plan
@@ -252,7 +253,7 @@ func analyzeWithModel(report Report, first firststage.Report, opts Options, mode
 		if stats, ok := modelStats[ModelJEV][group]; ok {
 			jevStats = stats
 		}
-		values := featureVector(candidate, ModelScore{Adjacent15: jevSignal.Adjacent15, Full15Top12: jevSignal.Full15Top12}, jevSignal.Present, jevStats, rankPosition, poolReturn5)
+		values := featureVector(candidate, ModelScore{Adjacent15: jevSignal.Adjacent15, Full15Top12: jevSignal.Full15Top12}, jevSignal.Present, jevStats, rankPosition, poolReturn5, model.FeatureVersion)
 		prediction, err := model.Predict(values)
 		if err != nil {
 			return fail(report, fmt.Errorf("second-stage candidate %s: %w", candidate.Code, err))
