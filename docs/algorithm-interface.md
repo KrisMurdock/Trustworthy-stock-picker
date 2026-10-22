@@ -27,7 +27,6 @@
 `second_stage` 只消费第一层已冻结的候选池，按“未来 3 个交易日最高价相对信号日收盘的最大涨幅”连续标签排序，默认输出 Top10。该标签用于排序研究，不是可成交收益；第二层也不改变 `selected`、正式推荐、结构门控、风险门槛或交易建议。
 
 生产推理只运行编译进二进制的 Go 代码。离线阶段用本地 JEV-CPU、Laya official / multilingual 或 Chinese Decision 0.8B 对第一层候选按相邻 15 只分组做 listwise 打分；生产进程不导入 Python、不启动子进程、不调用外部推理服务。模型只覆盖第一层全池，不能只看第一层 Top15，否则会丢失理想 Top10 中的大部分候选。
-
 当 `second_stage.push_enabled=true` 时，精排完成后会基于同一份冻结报告生成公众号纯文本稿。稿件包含公众号标题、正文、Top N 名单、逐只技术特征解读、行业分布、数据口径、降级状态和风险提示，并投递到独立的 `second_stage` 飞书路由。文章是结构化报告的确定性转写，不调用 LLM，不重新计算排名；精排名单仍不等于可执行推荐。
 
 每个离线模型的原始分数只在同一组内可比。2026-10-22 起，第二层主线排序改为可配置的加权百分位融合：
@@ -49,15 +48,37 @@ blend_score = first_stage_weight × first_stage_percentile
 
 `scripts/secondstage/laya_scores.py` 提供与 JEV 相同的离线 listwise 协议：按候选分组、对三种选项排列取平均，并输出相同 schema 的 `adjacent15` / `full15_top12` artifact。它支持两个 checkpoint：`official` 对应 `convaiinnovations/laya`（ModernBERT-large，英文官方版），`multilingual` 对应 `convaiinnovations/laya-multilingual`（mmBERT 多语言版）。两者使用完全相同的 prompt、分组和评分代码，便于在同一历史样本上比较。
 
-脚本默认按相邻 15 只分组；研究评估可在三个模型上统一使用 `--group-size 5`，以控制上下文长度和 CPU 开销，此时 artifact 的 `model.group_size` 与 `prompt_version` 会记录实际口径，但字段名仍保持 `adjacent15` / `full15_top12` 以兼容 Go 读取契约。Laya 概率未经校准，跨组不可直接比较；消费方必须先做组内百分位或等价归一化，不能把概率解释为成功概率、收益承诺或投资建议。
+脚本默认按相邻 15 只分组；研究评估可在四个模型上统一使用 `--group-size 5`，以控制上下文长度和 CPU 开销，此时 artifact 的 `model.group_size` 与 `prompt_version` 会记录实际口径，但字段名仍保持 `adjacent15` / `full15_top12` 以兼容 Go 读取契约。Laya 概率未经校准，跨组不可直接比较；消费方必须先做组内百分位或等价归一化，不能把概率解释为成功概率、收益承诺或投资建议。
 
-Go 生产进程仍只读取离线 artifact，不导入 Laya、不启动 Python 子进程；将 Laya artifact 写到通用模型路径并在 blend 计划中配置权重即可参与多模型融合。Laya 概率同样先做组内百分位归一化；树模型辅助预测仍按 JEV 分布训练，不能把 Laya 概率或树模型预测解释为校准后的收益。
+### Chinese Decision 离线打分
+
+`scripts/secondstage/chinese_decision_scores.py` 适配 `quincyqiang/chinese-decision-0.8b`。该模型基于 Qwen3.5-0.8B，按官方协议把上下文和候选组织成中文 prompt，读取最后一个位置上候选项字母的 logits，使用 `decision_config.json` 中的温度校准后直接得到 choice 概率，不生成文本。适配器复用 Laya 脚本的分组、三种选项排列平均和 artifact schema，因此输出可以直接作为 `chinese_decision` 模型参与 Go 端 blend。
+
+通过 `--model <local-path>` 指向已下载的模型目录，生产进程仍只读取 artifact，不依赖 PyTorch、Transformers 或 Python 子进程。该模型是面向通用中文选择、评分和是非判断的零样本决策模型，金融训练数据为 choice / score / noul 各 8,000 条，并不是股票专用模型；组内概率同样只用于排序归一化，不代表上涨概率、成功概率或收益承诺。
+
+下载模型、研究训练模型、特征集和评估结果统一保存在共享盘的 `download_models/`、`trained_models/`、`build_features/` 和 `evaluations/` 根目录；阶段标识和当前路径见 [模型、特征与评估产物存储](model-storage.md)。脚本使用显式本地路径，不依赖共享盘内符号链接。
+
+Go 生产进程仍只读取离线 artifact，不导入 Laya 或 Chinese Decision、不启动 Python 子进程；将同 schema artifact 写到通用模型路径并在 blend 计划中配置权重即可参与多模型融合。模型概率同样先做组内百分位归一化；树模型辅助预测仍按 JEV 分布训练，不能把 Laya、Chinese Decision 概率或树模型预测解释为校准后的收益。
 
 离线验收以交易日等权的“Top10 平均未来三日最大高点涨幅”为主指标，`NDCG@10` 为辅助指标；同时记录 Top10 第三日收盘收益和 `+1%` 命中率作为风险护栏，并按交易日做 block bootstrap。历史结果只描述样本内/样本外排序表现，不是成功概率、收益承诺或投资建议。
 
 ### 主线 blend 验证与旧树模型留出
 
-- 2026-10-22 起生产主线为 `ranker=blend_weighted_v1`，默认计划 `blend_50_50` 为 JEV 50/50。2026-09-24 至 2026-10-14 的 9 个测试交易日、first-stage Top95、5 人组的精排对比如下（已按同向、同分取中位的百分位口径重算）：
+- 2026-10-22 起生产主线为 `ranker=blend_weighted_v1`，默认计划 `blend_50_50` 为 JEV 50/50。2026-09-24 至 2026-10-14 的 9 个测试交易日、5 人组对比如下（已按同向、同分取中位的百分位口径重算）。初筛阶段使用全候选池重排，平均每日 163 只候选：
+
+| 初筛排序器 | Hit@10 | NDCG@10 | MaxHigh@10 | Close3@10 |
+|---|---:|---:|---:|---:|
+| first-stage baseline | 63.3% | 0.638 | +3.47% | -6.44% |
+| JEV-CPU | 58.9% | 0.573 | +3.17% | -5.11% |
+| Laya official | 64.4% | 0.622 | +1.94% | -5.02% |
+| Laya multilingual | 64.4% | 0.613 | +2.01% | -4.92% |
+| Chinese Decision 0.8B | 62.2% | 0.627 | +2.48% | -3.64% |
+| JEV 50/50 blend | 58.9% | 0.573 | +3.28% | -5.11% |
+| Laya official 50/50 blend | 65.6% | 0.630 | +2.04% | -4.90% |
+| Laya multilingual 50/50 blend | 64.4% | 0.613 | +2.15% | -4.84% |
+| Chinese Decision 50/50 blend | 63.3% | 0.634 | +2.68% | -3.76% |
+
+- 精排阶段固定 first-stage Top95：
 
 | 精排排序器 | Hit@10 | NDCG@10 | MaxHigh@10 | Close3@10 |
 |---|---:|---:|---:|---:|
@@ -65,13 +86,20 @@ Go 生产进程仍只读取离线 artifact，不导入 Laya、不启动 Python �
 | JEV-CPU | 57.8% | 0.573 | +2.54% | -4.90% |
 | Laya official | 56.7% | 0.573 | +3.08% | -4.79% |
 | Laya multilingual | 57.8% | 0.585 | +3.09% | -4.77% |
+| Chinese Decision 0.8B | 73.3% | 0.694 | +2.84% | -2.37% |
 | JEV 50/50 blend | 61.1% | 0.594 | +3.04% | -5.60% |
 | Laya official 50/50 blend | 56.7% | 0.571 | +3.10% | -5.76% |
 | Laya multilingual 50/50 blend | 64.4% | 0.629 | +3.51% | -5.92% |
+| Chinese Decision 50/50 blend | 67.8% | 0.651 | +2.76% | -3.67% |
 
-- 这 9 个交易日里，JEV 50/50 相对 first-stage 改善了第三日收盘回撤（-5.60% 对 -6.44%），但命中率和 NDCG 更低；Laya multilingual 50/50 的命中率和最大高点最高，但 NDCG 和第三日收盘仍略弱于 first-stage。样本短且处于下跌段，不能据此宣称任一组合有稳定增益。
-- 默认保留 JEV 50/50 是为了兼容现有 artifact 生产链，不代表 JEV 已在这些指标上胜出。切换到更多模型或更换权重前，必须用独立留出区间重新验证，不能直接沿用本表的样本内排序。
-- 上述对比只有 9 个交易日、处于下跌市、第一层模型训练覆盖该区间，且三个模型统一使用 5 人组而非生产默认 15 人组；不能把结果外推为长期收益或生产 15 人组结论。
+- 初筛阶段没有单一模型在所有指标上胜出：Laya 两版的 `Hit@10` 均为 64.4%，Laya official 50/50 融合为 65.6%，但 `MaxHigh@10` 都低于 first-stage baseline 的 +3.47%；Chinese Decision 的 `Close3@10` 最好（-3.64%），最大高点为 +2.48%。
+- 精排阶段 Chinese Decision 单模型的 `Hit@10`、`NDCG@10` 和 `Close3@10` 都最好，分别为 73.3%、0.694、-2.37%，但 `MaxHigh@10` 只有 +2.84%；`MaxHigh@10` 最高的是 Laya multilingual 50/50（+3.51%）。命中率、NDCG、最大高点和收盘回撤并不指向同一个赢家，不能只用一个指标宣称全面胜出。
+- 精排 Chinese Decision 对 JEV 的配对差值为：`Hit@10` +15.6 个百分点，95% CI `[+7.8, +25.6]`；`NDCG@10` +0.121，CI `[+0.002, +0.250]`；`MaxHigh@10` +0.30 个百分点，CI `[-0.67, +1.24]`；`Close3@10` +2.52 个百分点，CI `[+1.28, +3.72]`。回撤改善在 8/9 个交易日为正，但最大高点差异不显著。
+- 50/50 融合的 Chinese Decision 对 JEV：`Hit@10` +6.7 个百分点，CI `[-5.6, +17.8]`；`NDCG@10` +0.057，CI `[-0.080, +0.198]`；`MaxHigh@10` -0.28 个百分点，CI `[-1.42, +0.69]`；`Close3@10` +1.92 个百分点，CI `[+1.09, +2.67]`。只有收盘回撤改善在这组样本中稳定，命中率增量仍不显著。
+- 两个 Laya checkpoint 的差异很小。精排 official 对 multilingual：`Hit@10` -1.1 个百分点，CI `[-3.3, 0.0]`；`NDCG@10` -0.012，CI `[-0.037, 0.000]`；`MaxHigh@10` -0.01 个百分点，CI `[-0.26, +0.22]`；`Close3@10` -0.01 个百分点，CI `[-0.15, +0.10]`。若只能选一个，精排可优先 multilingual，但不能声称有显著优势。
+- 精排 Top10 特征均值显示偏好差异：first-stage baseline 的 ATR14 为 6.38%、5 日收益为 -1.11%；Laya official 为 5.49% / -3.31%；Laya multilingual 为 5.49% / -3.13%；Chinese Decision 为 3.61% / +1.99%。Chinese Decision 更偏向低波动、正短期动量的候选，这与它在下跌样本中回撤更小、最大高点弹性较低一致。
+- 默认保留 JEV 50/50 是为了兼容现有 artifact 生产链，不代表 JEV 已在这些指标上胜出。切换到 Chinese Decision、混合多模型或更换权重前，必须用独立留出区间重新验证，不能直接沿用本表的样本内排序。
+- 上述对比只有 9 个交易日、处于下跌市、第一层模型训练覆盖该区间、四个模型统一使用 5 人组而非生产默认 15 人组，且未计入滑点、涨跌停、T+1、容量和交易成本；不能把结果外推为长期收益或生产 15 人组结论。
 - 旧树模型 `second_stage_gbdt_v1`：80 棵深度 2 的回归树，27 个冻结特征，`max_features=0.4`，SHA-256 为 `21cb6c2a19706381cdb0ce2598ceda743b81227b22391cb5f92ba429d9d4e960`；现在只提供辅助预测字段。
 - 训练区间 2026-09-03 至 2026-09-21，共 1885 行；只使用标签在 2026-09-28 验证起点前成熟的样本，避免训练标签跨入留出区间。
 - 旧树模型留出区间 2026-09-28 至 2026-10-14，共 8 个交易日、1160 行。树模型 Top10 平均未来三日最大高点涨幅为 4.29%，第一阶段融合基线为 3.87%；NDCG@10 为 0.360 对 0.328，`+1%` 命中率为 71.2% 对 68.8%，Top10 第三日收盘收益为 -6.12% 对 -6.48%。该结果只描述旧排序器，不再代表当前主线。

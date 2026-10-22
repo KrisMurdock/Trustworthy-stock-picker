@@ -8,6 +8,8 @@
 
 `python3 tests/secondstage_laya_test.py` 离线校验 Laya 第二层打分器：5/15 人分组、三种选项排列、批量前向与逐组结果一致、上下文截断拒绝、artifact schema 和 `--skip-existing`；不加载模型、不访问网络。
 
+`python3 tests/secondstage_chinese_decision_test.py` 离线校验 Chinese Decision 适配器：中文候选 prompt、温度校准、choice/score/noul 选项、组内排列平均、超 26 项拒绝和 Laya 兼容 artifact；不加载模型、不访问网络。
+
 `python3 tests/strategy_model_test.py` 使用 Node.js 20+ 运行网页计算模型，与原脚本对照 55 组有效情景，并验证 22 组无效输入。金额取整、风险/现金/费用限制、多个持仓批次与固定止盈金额都必须一致。该检查已接入 `make smoke` / `make ci`，因此本地 CI 需要 Python 3 和 Node；生产 Go 镜像不需要这些运行时。
 
 看板使用真实 Chromium 验证，先安装 Python Playwright 及其 Chromium，再执行：
@@ -21,7 +23,7 @@ python3 tests/dashboard_smoke.py --image stock-watcher:dashboard-test
 
 可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 或 `--browser` 指定已安装的 Chromium。测试以真实 `stock-watcher run` 启动看板与调度循环，容器模式使用生产 entrypoint、只读根目录、8080 容器端口和本机随机端口映射。所有测试数据通过 `tests/fixtures/dashboard` 调用生产 SQLite 初始化和快照事务写入：三个池内股票、两个有行情、一个缺失，以及 v1/v2 两日排名报告。启用 `-dayrange` fixture 时还会写入两条盘前预测、已核对/未核对实际值、数据审计、模型和验证门禁评估。测试禁止行情客户端通过外网请求，使用关闭的本地代理模拟上游故障；凭证关闭。测试覆盖八个页面的独立加载、当前导航项、旧 hash 重定向、`/stocks?status=`、`/chart?code=`、`/rankings?as_of=` 与 `/day-range?date=` 深链接、跨页点击、页面标题、控制台与网络、资产版本及缓存策略、全池查询和排序、历史排名、新日报自动跟随和明确选择历史后的保持、移动布局、空数据库、网关 403/接口 503 与浏览器超时后的恢复、只读 API 和 SIGTERM。原生模式另验缺失配置无法启动。
 
-`/day-range` 的浏览器断言覆盖盘前区间、实际高低价核对、验证门禁、阶段六未实现提示、非法查询 400、POST 405、断网时保留旧结果和重试恢复，以及 390px 移动布局。`go test ./internal/secondstage ./internal/selection` 验证多模型加权 blend 的百分位计算、模型缺失中性回退、TopN 截断、artifact 路径和报告契约；`go test ./internal/dayrange ./internal/storage` 另验时间顺序拆分、训练取消、artifact checksum、校准、基线回退、预测/核对、模型保留、独立 `dayrange.db` schema，以及 `predictor_dayrange` 路由隔离、分页载荷上限、投递幂等、重启补发和关闭推送；`go test ./internal/dashboard` 覆盖只读 API 的参数边界、503 与 504 超时。
+`/day-range` 的浏览器断言覆盖盘前区间、实际高低价核对、验证门禁、阶段六未实现提示、非法查询 400、POST 405、断网时保留旧结果和重试恢复，以及 390px 移动布局。`go test ./internal/secondstage ./internal/selection` 验证多模型加权 blend 的百分位计算、模型缺失中性回退、TopN 截断、artifact 路径和报告契约；`make secondstage-laya-test` 与 `make secondstage-chinese-decision-test` 分别验证两种离线打分适配器的分组、排列平均和 artifact 兼容性；`go test ./internal/dayrange ./internal/storage` 另验时间顺序拆分、训练取消、artifact checksum、校准、基线回退、预测/核对、模型保留、独立 `dayrange.db` schema，以及 `predictor_dayrange` 路由隔离、分页载荷上限、投递幂等、重启补发和关闭推送；`go test ./internal/dashboard` 覆盖只读 API 的参数边界、503 与 504 超时。
 
 浏览器测试仅使用一个浏览器并串行运行有数据/空数据库场景；结束删除临时目录、进程与容器。桌面和移动截图保存在被 Git 忽略的 `.scratch/dashboard-verification/`，标准输出记录本地二进制 SHA-256 或所测镜像 ID。当前看板没有账号或角色体系，预期允许匿名读取；不存在普通用户和管理员界面，不能将匿名浏览器验证表述为角色权限验证。测试不连接真实部署 URL，本地通过仍需要部署后重新检查。
 

@@ -393,11 +393,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(
-    argv: Sequence[str] | None = None,
-    loader: Callable[[argparse.Namespace], tuple[Callable[[Mapping[str, Any], Mapping[str, Any]], Any], dict[str, Any]]] = laya_loader,
+def execute(
+    args: argparse.Namespace,
+    loader: Callable[[argparse.Namespace], tuple[Callable[[Mapping[str, Any], Mapping[str, Any]], Any], dict[str, Any]]],
 ) -> int:
-    args = parse_args(argv)
     candidates_by_date, features = load_inputs(args.candidates, args.dataset)
     dates = sorted(candidates_by_date)
     if args.dates:
@@ -441,6 +440,13 @@ def main(
             flush=True,
         )
     return 0
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    loader: Callable[[argparse.Namespace], tuple[Callable[[Mapping[str, Any], Mapping[str, Any]], Any], dict[str, Any]]] = laya_loader,
+) -> int:
+    return execute(parse_args(argv), loader)
 
 
 if __name__ == "__main__":
