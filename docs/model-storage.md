@@ -43,6 +43,7 @@
 /mnt/windows_database/build_features/
 ├── initial_screening/firststage-recall/firststage-recall-milestone-artifacts/
 ├── reranking/secondstage-compare/
+├── reranking/chinese-decision-holdout-20261015-16/
 ├── intraday_prediction/predictor-calibration-v7/predictor-v8/
 ├── intraday_prediction/feature-optimization/feature-opt-20261021/
 ├── intraday_prediction/market-context-v6/market-context-v6/
@@ -52,6 +53,7 @@
 
 /mnt/windows_database/evaluations/
 ├── reranking/secondstage-compare/
+├── reranking/chinese-decision-holdout-20261015-16/
 └── intraday_prediction/predictor-calibration-v7/v7/
 ```
 
