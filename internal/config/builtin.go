@@ -13,6 +13,18 @@ func Builtin() Config {
 	c.FirstStage.PushEnabled = true
 	c.SecondStage.Enabled = true
 	c.SecondStage.PushEnabled = true
+	c.SecondStage.BlendID = "risk_all20_local035_eta1"
+	c.SecondStage.FirstStageWeight = 0.2
+	c.SecondStage.Models = []ModelWeight{
+		{Name: "jev", Weight: 0.2},
+		{Name: "laya_official", Weight: 0.2},
+		{Name: "laya_multilingual", Weight: 0.2},
+		{Name: "chinese_decision", Weight: 0.2},
+	}
+	c.SecondStage.GroupSize = 5
+	c.SecondStage.Calibration = "local"
+	c.SecondStage.CalibrationParam = 0.35
+	c.SecondStage.RiskEta = 1
 	c.Feishu.Enabled = true
 	c.Predictor.Enabled = true
 	c.Predictor.PushEnabled = true

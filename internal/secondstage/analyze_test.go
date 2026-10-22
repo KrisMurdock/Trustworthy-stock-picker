@@ -166,6 +166,105 @@ func TestAnalyzeBlendsMultipleModels(t *testing.T) {
 	}
 }
 
+func TestAnalyzeLocalCalibrationAndATRRiskAdjustment(t *testing.T) {
+	asOf, target := "2026-10-20", "2026-10-21"
+	plan := BlendPlan{
+		ID:               "risk_all20_local035_eta1",
+		FirstStageWeight: 0.2,
+		Models: []BlendWeight{
+			{Name: "jev", Weight: 0.2},
+			{Name: "laya_official", Weight: 0.2},
+			{Name: "laya_multilingual", Weight: 0.2},
+			{Name: "chinese_decision", Weight: 0.2},
+		},
+		GroupSize:        5,
+		Calibration:      CalibrationLocal,
+		CalibrationParam: 0.35,
+		RiskEta:          1,
+	}
+	first := firststage.Report{
+		Version: firststage.ReportSchemaVersion,
+		Status:  firststage.StatusOK,
+		AsOf:    asOf,
+		Target:  target,
+		Candidates: []firststage.Candidate{
+			{Rank: 1, Code: "sh600001", BlendScore: 0.9, Features: firststage.FeatureSnapshot{ATR14Pct: 9}},
+			{Rank: 2, Code: "sh600002", BlendScore: 0.8, Features: firststage.FeatureSnapshot{ATR14Pct: 1}},
+			{Rank: 3, Code: "sh600003", BlendScore: 0.7, Features: firststage.FeatureSnapshot{ATR14Pct: 1}},
+			{Rank: 4, Code: "sh600004", BlendScore: 0.6, Features: firststage.FeatureSnapshot{ATR14Pct: 1}},
+			{Rank: 5, Code: "sh600005", BlendScore: 0.5, Features: firststage.FeatureSnapshot{ATR14Pct: 1}},
+		},
+	}
+	models := make([]ModelInput, 0, 4)
+	for _, name := range []string{"jev", "laya_official", "laya_multilingual", "chinese_decision"} {
+		models = append(models, ModelInput{Name: name, Status: ModelStatusOK, Scores: map[string]ModelScore{
+			"sh600001": {Adjacent15: 0.1},
+			"sh600002": {Adjacent15: 0.2},
+			"sh600003": {Adjacent15: 0.3},
+			"sh600004": {Adjacent15: 0.4},
+			"sh600005": {Adjacent15: 0.5},
+		}})
+	}
+	opts := Options{AsOf: asOf, Target: target, TopN: 5, Blend: plan, Models: models, Now: time.Unix(0, 0)}
+	report, err := analyzeWithModel(baseReport(opts), first, opts, rankingModel())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Degraded || len(report.Models) != 4 {
+		t.Fatalf("complete five-signal blend degraded: %+v", report)
+	}
+	wantOrder := []string{"sh600005", "sh600004", "sh600003", "sh600002", "sh600001"}
+	for index, code := range wantOrder {
+		if report.Candidates[index].Code != code {
+			t.Fatalf("risk-adjusted order at %d = %s want %s: %+v", index, report.Candidates[index].Code, code, report.Candidates)
+		}
+	}
+	best := report.Candidates[0]
+	if math.Abs(best.WeightedScore-0.54) > 1e-12 || math.Abs(best.ATRPercentile-0.375) > 1e-12 || math.Abs(best.RiskPenalty-0.375) > 1e-12 || math.Abs(best.BlendScore-0.165) > 1e-12 {
+		t.Fatalf("unexpected risk-adjusted scores: %+v", best)
+	}
+	jev := best.Models["jev"]
+	if math.Abs(jev.Percentile-1) > 1e-12 || math.Abs(jev.Calibrated-0.675) > 1e-12 {
+		t.Fatalf("unexpected local calibration: %+v", jev)
+	}
+	worst := report.Candidates[len(report.Candidates)-1]
+	if worst.Code != "sh600001" || math.Abs(worst.WeightedScore-0.46) > 1e-12 || math.Abs(worst.RiskPenalty-1) > 1e-12 || math.Abs(worst.BlendScore+0.54) > 1e-12 {
+		t.Fatalf("unexpected high-ATR candidate: %+v", worst)
+	}
+}
+
+func TestAnalyzeMissingModelRemainsNeutralWithLocalCalibration(t *testing.T) {
+	asOf, target := "2026-10-20", "2026-10-21"
+	plan := BlendPlan{
+		ID:               "two_model_local",
+		FirstStageWeight: 0.5,
+		Models:           []BlendWeight{{Name: "jev", Weight: 0.25}, {Name: "laya_official", Weight: 0.25}},
+		GroupSize:        5,
+		Calibration:      CalibrationLocal,
+		CalibrationParam: 0.35,
+	}
+	models := []ModelInput{
+		{Name: "jev", Status: ModelStatusOK, Scores: map[string]ModelScore{
+			"sh600001": {Adjacent15: 0.9}, "sh600002": {Adjacent15: 0.8}, "sh600003": {Adjacent15: 0.7},
+		}},
+		{Name: "laya_official", Status: ModelStatusNil},
+	}
+	opts := Options{AsOf: asOf, Target: target, TopN: 3, Blend: plan, Models: models}
+	report, err := analyzeWithModel(baseReport(opts), fixtureFirstStage(asOf, target), opts, rankingModel())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Degraded {
+		t.Fatalf("missing model did not degrade: %+v", report)
+	}
+	for _, candidate := range report.Candidates {
+		signal := candidate.Models["laya_official"]
+		if signal.Present || signal.Calibrated != 0.5 || !hasReason(candidate.Reasons, "model_missing:laya_official") {
+			t.Fatalf("missing model was not neutral: %+v", candidate)
+		}
+	}
+}
+
 func TestBlendPlanValidation(t *testing.T) {
 	if err := DefaultBlendPlan().Validate(); err != nil {
 		t.Fatalf("default blend plan rejected: %v", err)
@@ -178,6 +277,10 @@ func TestBlendPlanValidation(t *testing.T) {
 		{"zero model weight", BlendPlan{ID: "bad", FirstStageWeight: 0.5, Models: []BlendWeight{{Name: "jev", Weight: 0}}}},
 		{"duplicate model", BlendPlan{ID: "bad", FirstStageWeight: 0.5, Models: []BlendWeight{{Name: "jev", Weight: 0.25}, {Name: "jev", Weight: 0.25}}}},
 		{"invalid model name", BlendPlan{ID: "bad", FirstStageWeight: 0.5, Models: []BlendWeight{{Name: "../jev", Weight: 0.5}}}},
+		{"invalid group size", BlendPlan{ID: "bad", FirstStageWeight: 1, Models: []BlendWeight{{Name: "jev", Weight: 0}}, GroupSize: 101}},
+		{"invalid calibration", BlendPlan{ID: "bad", FirstStageWeight: 1, Models: []BlendWeight{{Name: "jev", Weight: 0}}, Calibration: "bayes"}},
+		{"invalid calibration parameter", BlendPlan{ID: "bad", FirstStageWeight: 1, Models: []BlendWeight{{Name: "jev", Weight: 0}}, CalibrationParam: -0.1}},
+		{"invalid risk eta", BlendPlan{ID: "bad", FirstStageWeight: 1, Models: []BlendWeight{{Name: "jev", Weight: 0}}, RiskEta: 1.1}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := test.plan.Validate(); err == nil {

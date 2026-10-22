@@ -7,6 +7,9 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
 )
 
+// JEVGroupSize is the frozen grouping used by the auxiliary tree model. The
+// production blend may choose a different group size without changing tree
+// feature semantics.
 const JEVGroupSize = 15
 
 var FeatureNames = []string{
@@ -54,12 +57,15 @@ type jevGroupStats struct {
 	Top12Percentile map[string]float64
 }
 
-func buildJEVGroupStats(candidates []firststage.Candidate, scores map[string]JEVScore) map[int]jevGroupStats {
+func buildJEVGroupStats(candidates []firststage.Candidate, scores map[string]JEVScore, groupSize int) map[int]jevGroupStats {
+	if groupSize < 1 {
+		groupSize = JEVGroupSize
+	}
 	groups := map[int][]firststage.Candidate{}
 	for index, candidate := range candidates {
-		group := index / JEVGroupSize
+		group := index / groupSize
 		if candidate.Rank > 0 {
-			group = (candidate.Rank - 1) / JEVGroupSize
+			group = (candidate.Rank - 1) / groupSize
 		}
 		groups[group] = append(groups[group], candidate)
 	}

@@ -10,6 +10,7 @@ import (
 func applyEnvironment(c *Config) error {
 	for name, target := range map[string]*string{
 		"STOCK_WATCHER_SECOND_STAGE_BLEND_ID":            &c.SecondStage.BlendID,
+		"STOCK_WATCHER_SECOND_STAGE_CALIBRATION":         &c.SecondStage.Calibration,
 		"STOCK_WATCHER_DATA_DIR":                         &c.DataDir,
 		"STOCK_WATCHER_WEB_ADDR":                         &c.Web.Listen,
 		"STOCK_WATCHER_POOL_FILE":                        &c.PoolFile,
@@ -86,6 +87,7 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_DAILY_HISTORY_DAYS":          &c.Daily.HistoryDays,
 		"STOCK_WATCHER_FIRST_STAGE_BUDGET":          &c.FirstStage.Budget,
 		"STOCK_WATCHER_SECOND_STAGE_TOP_N":          &c.SecondStage.TopN,
+		"STOCK_WATCHER_SECOND_STAGE_GROUP_SIZE":     &c.SecondStage.GroupSize,
 		"STOCK_WATCHER_SELECTION_MIN_SCORE":         &c.Selection.MinScore,
 		"STOCK_WATCHER_SELECTION_TOP_N":             &c.Selection.TopN,
 		"STOCK_WATCHER_SYNC_INCREMENTAL_BARS":       &c.Sync.IncrementalBars,
@@ -117,6 +119,8 @@ func applyEnvironment(c *Config) error {
 	}
 	for name, target := range map[string]*float64{
 		"STOCK_WATCHER_SECOND_STAGE_FIRST_STAGE_WEIGHT": &c.SecondStage.FirstStageWeight,
+		"STOCK_WATCHER_SECOND_STAGE_CALIBRATION_PARAM":  &c.SecondStage.CalibrationParam,
+		"STOCK_WATCHER_SECOND_STAGE_RISK_ETA":           &c.SecondStage.RiskEta,
 		"STOCK_WATCHER_SELECTION_MIN_VOLUME_RATIO":      &c.Selection.MinVolumeRatio,
 		"STOCK_WATCHER_SELECTION_RSI_MIN":               &c.Selection.RSIMin,
 		"STOCK_WATCHER_SELECTION_RSI_MAX":               &c.Selection.RSIMax,

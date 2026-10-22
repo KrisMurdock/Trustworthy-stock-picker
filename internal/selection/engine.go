@@ -10,6 +10,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/secondstage"
+	"math"
 	"time"
 )
 
@@ -280,12 +281,13 @@ func Execute(ctx context.Context, e Engine, in Input, build string) (Report, err
 			firstCodes[candidate.Code] = true
 		}
 		secondRanks := map[int]bool{}
+		minBlendScore := -second.Blend.RiskEta - 1e-9
 		for _, candidate := range second.Candidates {
 			if candidate.Rank < 1 || candidate.Rank > len(second.Candidates) || secondRanks[candidate.Rank] || secondSeen[candidate.Code] || !firstCodes[candidate.Code] {
 				return Report{}, errors.New("invalid second-stage candidate stock")
 			}
 			if second.Ranker == secondstage.RankerBlendWeighted &&
-				(candidate.FirstStagePercentile < 0 || candidate.FirstStagePercentile > 1 || candidate.BlendScore < 0 || candidate.BlendScore > 1) {
+				(candidate.FirstStagePercentile < 0 || candidate.FirstStagePercentile > 1 || math.IsNaN(candidate.BlendScore) || math.IsInf(candidate.BlendScore, 0) || candidate.BlendScore < minBlendScore || candidate.BlendScore > 1+1e-9) {
 				return Report{}, errors.New("invalid second-stage blend score")
 			}
 			for _, signal := range candidate.Models {

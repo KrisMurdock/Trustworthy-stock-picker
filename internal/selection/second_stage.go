@@ -13,6 +13,10 @@ func secondStageBlendPlan(c config.Config) secondstage.BlendPlan {
 		ID:               c.SecondStage.BlendID,
 		FirstStageWeight: c.SecondStage.FirstStageWeight,
 		Models:           make([]secondstage.BlendWeight, 0, len(c.SecondStage.Models)),
+		GroupSize:        c.SecondStage.GroupSize,
+		Calibration:      c.SecondStage.Calibration,
+		CalibrationParam: c.SecondStage.CalibrationParam,
+		RiskEta:          c.SecondStage.RiskEta,
 	}
 	for _, model := range c.SecondStage.Models {
 		plan.Models = append(plan.Models, secondstage.BlendWeight{Name: model.Name, Weight: model.Weight})

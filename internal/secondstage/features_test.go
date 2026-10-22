@@ -15,7 +15,7 @@ func TestJEVGroupStatsUseGroupRelativePercentile(t *testing.T) {
 		candidates[index] = firststage.Candidate{Rank: index + 1, Code: code}
 		scores[code] = JEVScore{Adjacent15: float64(index%15) / 10, Full15Top12: float64(index%15) / 20}
 	}
-	stats := buildJEVGroupStats(candidates, scores)
+	stats := buildJEVGroupStats(candidates, scores, JEVGroupSize)
 	first := stats[0]
 	if first.Max != 1.4 || math.Abs(first.Percentile[candidates[0].Code]-0) > 1e-9 || math.Abs(first.Percentile[candidates[5].Code]-5.0/14.0) > 1e-9 || math.Abs(first.Percentile[candidates[14].Code]-1) > 1e-9 {
 		t.Fatalf("unexpected first group stats: %+v", first)
@@ -39,7 +39,7 @@ func TestJEVGroupStatsAverageTiedPercentiles(t *testing.T) {
 		"sh600001": {Adjacent15: 0.2},
 		"sh600002": {Adjacent15: 0.8},
 		"sh600003": {Adjacent15: 0.8},
-	})
+	}, JEVGroupSize)
 	if stats[0].Percentile["sh600001"] != 0 || stats[0].Percentile["sh600002"] != 0.75 || stats[0].Percentile["sh600003"] != 0.75 {
 		t.Fatalf("tied JEV percentiles were not averaged: %+v", stats[0].Percentile)
 	}
@@ -57,7 +57,7 @@ func TestFeatureVectorMatchesFeatureContract(t *testing.T) {
 		Features:   firststage.FeatureSnapshot{Return5: 2},
 	}
 	scores := map[string]JEVScore{"sh600001": {Adjacent15: 0.4, Full15Top12: 0.3}}
-	groups := buildJEVGroupStats([]firststage.Candidate{candidate}, scores)
+	groups := buildJEVGroupStats([]firststage.Candidate{candidate}, scores, JEVGroupSize)
 	vector := featureVector(candidate, scores[candidate.Code], true, groups[0], 0, 1.5, FeatureVersion)
 	if len(vector) != len(FeatureNames) {
 		t.Fatalf("feature vector length %d != contract %d", len(vector), len(FeatureNames))
@@ -75,7 +75,7 @@ func TestFeatureVectorV2AddsTeacherInteractions(t *testing.T) {
 		Features:   firststage.FeatureSnapshot{Return5: 2, ATR14Pct: 4},
 	}
 	scores := map[string]JEVScore{"sh600001": {Adjacent15: 0.4}}
-	groups := buildJEVGroupStats([]firststage.Candidate{candidate}, scores)
+	groups := buildJEVGroupStats([]firststage.Candidate{candidate}, scores, JEVGroupSize)
 	vector := featureVector(candidate, scores[candidate.Code], true, groups[0], 0.25, 1.5, FeatureVersionV2)
 	if len(vector) != len(FeatureNamesV2) {
 		t.Fatalf("v2 feature vector length %d != contract %d", len(vector), len(FeatureNamesV2))

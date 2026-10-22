@@ -17,6 +17,10 @@ type SecondStage struct {
 	BlendID          string        `yaml:"blend_id" json:"blend_id"`
 	FirstStageWeight float64       `yaml:"first_stage_weight" json:"first_stage_weight"`
 	Models           []ModelWeight `yaml:"models" json:"models"`
+	GroupSize        int           `yaml:"group_size" json:"group_size"`
+	Calibration      string        `yaml:"calibration" json:"calibration"`
+	CalibrationParam float64       `yaml:"calibration_param" json:"calibration_param"`
+	RiskEta          float64       `yaml:"risk_eta" json:"risk_eta"`
 }
 
 type ModelWeight struct {
@@ -32,6 +36,8 @@ func DefaultSecondStage() SecondStage {
 		BlendID:          "blend_50_50",
 		FirstStageWeight: 0.5,
 		Models:           []ModelWeight{{Name: "jev", Weight: 0.5}},
+		GroupSize:        15,
+		Calibration:      "none",
 	}
 }
 
@@ -50,6 +56,18 @@ func (s SecondStage) Validate() error {
 	}
 	if !finiteWeight(s.FirstStageWeight) || s.FirstStageWeight < 0 || s.FirstStageWeight > 1 {
 		return errors.New("second_stage.first_stage_weight must be between 0 and 1")
+	}
+	if s.GroupSize < 1 || s.GroupSize > 100 {
+		return errors.New("second_stage.group_size must be between 1 and 100")
+	}
+	if s.Calibration != "none" && s.Calibration != "local" {
+		return errors.New("second_stage.calibration must be none or local")
+	}
+	if !finiteWeight(s.CalibrationParam) || s.CalibrationParam < 0 || s.CalibrationParam > 1 {
+		return errors.New("second_stage.calibration_param must be between 0 and 1")
+	}
+	if !finiteWeight(s.RiskEta) || s.RiskEta < 0 || s.RiskEta > 1 {
+		return errors.New("second_stage.risk_eta must be between 0 and 1")
 	}
 	if len(s.Models) == 0 {
 		return errors.New("second_stage.models must not be empty")

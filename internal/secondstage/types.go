@@ -21,6 +21,8 @@ const (
 	RankerBlendWeighted = "blend_weighted_v1"
 	DefaultBlendID      = "blend_50_50"
 	ModelJEV            = "jev"
+	CalibrationNone     = "none"
+	CalibrationLocal    = "local"
 
 	StatusOK       = "ok"
 	StatusEmpty    = "empty"
@@ -48,6 +50,10 @@ type BlendPlan struct {
 	ID               string        `json:"id"`
 	FirstStageWeight float64       `json:"first_stage_weight"`
 	Models           []BlendWeight `json:"models"`
+	GroupSize        int           `json:"group_size,omitempty"`
+	Calibration      string        `json:"calibration,omitempty"`
+	CalibrationParam float64       `json:"calibration_param,omitempty"`
+	RiskEta          float64       `json:"risk_eta,omitempty"`
 }
 
 type BlendWeight struct {
@@ -60,6 +66,8 @@ func DefaultBlendPlan() BlendPlan {
 		ID:               DefaultBlendID,
 		FirstStageWeight: 0.5,
 		Models:           []BlendWeight{{Name: ModelJEV, Weight: 0.5}},
+		GroupSize:        JEVGroupSize,
+		Calibration:      CalibrationNone,
 	}
 }
 
@@ -106,6 +114,9 @@ type Candidate struct {
 	FirstStagePercentile float64                    `json:"first_stage_percentile"`
 	JEVPercentile        float64                    `json:"jev_percentile"`
 	Models               map[string]ModelSignal     `json:"models,omitempty"`
+	WeightedScore        float64                    `json:"weighted_score"`
+	ATRPercentile        float64                    `json:"atr_percentile"`
+	RiskPenalty          float64                    `json:"risk_penalty"`
 	BlendScore           float64                    `json:"blend_score"`
 	PredictedMaxHigh     float64                    `json:"predicted_max_high_return_pct"`
 	Features             firststage.FeatureSnapshot `json:"features"`
@@ -116,6 +127,7 @@ type ModelSignal struct {
 	Adjacent15  float64 `json:"adjacent15"`
 	Full15Top12 float64 `json:"full15_top12"`
 	Percentile  float64 `json:"percentile"`
+	Calibrated  float64 `json:"calibrated_percentile"`
 	Present     bool    `json:"present"`
 }
 

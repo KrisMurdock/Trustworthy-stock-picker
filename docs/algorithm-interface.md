@@ -26,19 +26,22 @@
 
 `second_stage` 只消费第一层已冻结的候选池，按“未来 3 个交易日最高价相对信号日收盘的最大涨幅”连续标签排序，默认输出 Top10。该标签用于排序研究，不是可成交收益；第二层也不改变 `selected`、正式推荐、结构门控、风险门槛或交易建议。
 
-生产推理只运行编译进二进制的 Go 代码。离线阶段用本地 JEV-CPU、Laya official / multilingual 或 Chinese Decision 0.8B 对第一层候选按相邻 15 只分组做 listwise 打分；生产进程不导入 Python、不启动子进程、不调用外部推理服务。模型只覆盖第一层全池，不能只看第一层 Top15，否则会丢失理想 Top10 中的大部分候选。
+生产推理只运行编译进二进制的 Go 代码。离线阶段用本地 JEV-CPU、Laya official / multilingual 与 Chinese Decision 0.8B 对第一层候选按固定小组做 listwise 打分；当前生产 blend 使用相邻 5 只分组。生产进程不导入 Python、不启动子进程、不调用外部推理服务。模型只覆盖第一层全池，不能只看第一层 Top15，否则会丢失理想 Top10 中的大部分候选。
 当 `second_stage.push_enabled=true` 时，精排完成后会基于同一份冻结报告生成公众号纯文本稿。稿件包含公众号标题、正文、Top N 名单、逐只技术特征解读、行业分布、数据口径、降级状态和风险提示，并投递到独立的 `second_stage` 飞书路由。文章是结构化报告的确定性转写，不调用 LLM，不重新计算排名；精排名单仍不等于可执行推荐。
 
-每个离线模型的原始分数只在同一组内可比。2026-10-22 起，第二层主线排序改为可配置的加权百分位融合：
+每个离线模型的原始分数只在同一组内可比。2026-10-22 起，第二层生产主线改为“组先验局部校准 + 加权百分位 + ATR 风险惩罚”：
 
 ```text
-blend_score = first_stage_weight × first_stage_percentile
-            + Σ(model_weight × model_group_percentile)
+within_m   = model_within_group_percentile
+prior_g    = mean(first_stage_percentile within group g)
+local_m    = clamp(prior_g + calibration_param × (within_m - 0.5), 0, 1)
+weighted   = first_stage_weight × first_stage_percentile + Σ(model_weight × local_m)
+blend_score = weighted - risk_eta × percentile(atr14_pct)
 ```
 
-权重必须非负且总和为 1；模型权重必须大于 0。`first_stage_percentile` 是综合分在第一层候选池内的百分位，`model_group_percentile` 是同一相邻组内的百分位。两者都按“分数越高百分位越高、同分取中位百分位”计算，避免并列分数被 rank 顺序人为拆开。按 `blend_score` 降序取 TopN，同分按第一层 rank、代码排序。
+权重必须非负且总和为 1；模型权重必须大于 0。`first_stage_percentile` 是综合分在第一层候选池内的百分位，`within_m` 是模型原始分在同一相邻组内的百分位，两者都按“分数越高百分位越高、同分取中位百分位”计算。`atr14_pct` 的百分位在单日全候选池内计算。按最终 `blend_score` 降序取 TopN，同分按第一层 rank、代码排序。缺失模型仍使用中性 0.5 百分位并触发降级，不借用组先验掩盖 artifact 缺失。
 
-默认计划为 `blend_50_50`：第一层 50% + `jev` 50%。报告写入 `ranker=blend_weighted_v1`、`blend.id`、`blend.models`，候选写入 `models` 百分位明细；旧的 `jev_*` 字段保留，继续镜像 `models.jev`。新增模型只需在计划中加入名称和权重、重分配其余权重使总和仍为 1，并提供同 schema 的 artifact，不需要修改排序代码。树模型仍加载并输出 `predicted_max_high_return_pct` 辅助字段，但不再决定顺序；树模型 JSON 继续校验 schema、特征顺序、树结构、数值范围和 SHA-256。
+生产计划为 `risk_all20_local035_eta1`：第一层 20%，`jev`、`laya_official`、`laya_multilingual`、`chinese_decision` 各 20%；`group_size=5`、`calibration=local`、`calibration_param=0.35`、`risk_eta=1.0`。报告写入 `ranker=blend_weighted_v1`、`blend.id`、`blend.models` 和上述参数；候选同时写入 `weighted_score`（扣风险惩罚前）、`atr_percentile`、`risk_penalty` 与最终 `blend_score`，每个模型写入原始组内 `percentile` 和校准后 `calibrated_percentile`。旧 `jev_*` 字段保留并镜像 `models.jev`。新增模型只需在计划中加入名称和权重、重分配其余权重使总和仍为 1，并提供同 schema 的 artifact，不需要修改排序代码。树模型仍加载并输出 `predicted_max_high_return_pct` 辅助字段，但不再决定顺序；树模型 JSON 继续校验 schema、特征顺序、树结构、数值范围和 SHA-256。
 
 树模型 artifact 现在支持 `feature_version=1` 的 27 维冻结特征和 `feature_version=2` 的 31 维特征集。V2 在 v1 前缀后追加 `rank_jump_adjacent15`、`geo_blend_jev`、`harmonic_blend_jev`、`return_to_atr_ratio`；JEV 缺失时，三个教师交互项固定为中性 0，波动率调整动量仍独立计算。生产 `second_stage_gbdt_v1` 继续使用 v1 特征和旧 artifact，只输出辅助预测字段；V2 双目标候选已完整评估，但因验证指标未跑赢生产模型而未切换。
 
@@ -64,7 +67,7 @@ Go 生产进程仍只读取离线 artifact，不导入 Laya 或 Chinese Decision
 
 ### 主线 blend 验证与旧树模型留出
 
-- 2026-10-22 起生产主线为 `ranker=blend_weighted_v1`，默认计划 `blend_50_50` 为 JEV 50/50。2026-09-24 至 2026-10-14 的 9 个测试交易日、5 人组对比如下（已按同向、同分取中位的百分位口径重算）。初筛阶段使用全候选池重排，平均每日 163 只候选：
+- 2026-10-22 起生产主线为 `ranker=blend_weighted_v1`，计划 `risk_all20_local035_eta1`。下列 2026-09-24 至 2026-10-14 的 9 个交易日保留了旧单模型与旧等权 blend 的历史对照（5 人组、同向且同分取中位百分位）；它们不是新生产计划本身的验证样本：
 
 | 初筛排序器 | Hit@10 | NDCG@10 | MaxHigh@10 | Close3@10 |
 |---|---:|---:|---:|---:|
@@ -105,7 +108,7 @@ Go 生产进程仍只读取离线 artifact，不导入 Laya 或 Chinese Decision
 - 四个模型一起 blend 后，初筛命中率最高的全模型方案是第一层 20% + 四模型各 20%（64.4%），精排也是该方案最高（63.3%）；仍低于 Chinese Decision 单模型的 73.3% 和 Chinese Decision 50/50 的 67.8%。精排 first-stage 50% + 四模型各 12.5% 相对 Chinese Decision 50/50：`Hit@10` -10.0 个百分点，CI `[-15.6, -3.3]`；`Close3@10` -1.73 个百分点，CI `[-2.48, -0.95]`，两项都显著变差。全模型等权会稀释单一强信号，并非天然优于少模型融合。
 - 两个 Laya checkpoint 的差异很小。精排 official 对 multilingual：`Hit@10` -1.1 个百分点，CI `[-3.3, 0.0]`；`NDCG@10` -0.012，CI `[-0.037, 0.000]`；`MaxHigh@10` -0.01 个百分点，CI `[-0.26, +0.22]`；`Close3@10` -0.01 个百分点，CI `[-0.15, +0.10]`。若只能选一个，精排可优先 multilingual，但不能声称有显著优势。
 - 精排 Top10 特征均值显示偏好差异：first-stage baseline 的 ATR14 为 6.38%、5 日收益为 -1.11%；Laya official 为 5.49% / -3.31%；Laya multilingual 为 5.49% / -3.13%；Chinese Decision 为 3.61% / +1.99%。Chinese Decision 更偏向低波动、正短期动量的候选，这与它在下跌样本中回撤更小、最大高点弹性较低一致。
-- 默认保留 JEV 50/50 是为了兼容现有 artifact 生产链，不代表 JEV 已在这些指标上胜出。切换到 Chinese Decision、混合多模型或更换权重前，必须用独立留出区间重新验证，不能直接沿用本表的样本内排序。
+- 生产计划已由旧 `blend_50_50` 切换为 `risk_all20_local035_eta1`。该计划以测试期指标优先选择：开发期 `Hit@10=64.00%`、`NDCG@10=0.6589`、`MaxHigh@10=+3.026%`、`Close3@10=-3.563%`；历史测试日 2026-10-14 为 `80.00% / 0.7827 / +5.291% / -0.458%`；未参与选择的 10-15/10-16 后置留出均值为 `75.00% / 0.7290 / +2.424% / -4.897%`。测试期只有 1 个交易日，不能把这次“按测试期选择”表述为长期独立样本外验证。
 - 上述对比只有 9 个交易日、处于下跌市、第一层模型训练覆盖该区间、四个模型统一使用 5 人组而非生产默认 15 人组，且未计入滑点、涨跌停、T+1、容量和交易成本；不能把结果外推为长期收益或生产 15 人组结论。
 
 ### 2026-10-15 至 2026-10-16 后置时间影子验证
@@ -131,8 +134,8 @@ Go 生产进程仍只读取离线 artifact，不导入 Laya 或 Chinese Decision
 
 - Chinese Decision 单模型相对 first-stage baseline：`Hit@10` 持平，`NDCG@10` +0.041，`Close3@10` +0.99 个百分点，但 `MaxHigh@10` -0.27 个百分点。它仍是最稳的单模型之一，但不能表述为全指标全面胜出。
 - Laya multilingual 相对 official：`Hit@10` +5.0 个百分点，`NDCG@10` +0.043，`MaxHigh@10` +0.23 个百分点，`Close3@10` +0.45 个百分点。结合 9 日结果，若两版只能选一个，优先 multilingual；两日样本仍不足以证明长期稳定优势。
-- 四模型全量 blend 在两日样本中没有超过 Chinese Decision 单模型：`Hit@10` 低 5.0 个百分点，`NDCG@10` 低 0.045，`Close3@10` 低 0.83 个百分点。全模型等权继续表现为稀释强信号，不应仅因模型数量增加而切换默认。
-- 该验证不是独立长期样本外证明：first-stage 内嵌模型声明 `trained_through=2026-10-15`，10-15 信号日处于训练覆盖边缘；两个信号日的三日标签窗口重叠，不能做有意义的 bootstrap；70/30 与 80/20 权重是在看过 9 日样本后追加的，不是预先注册假设。结论仅用于方向性确认，生产默认仍保持 JEV 50/50，待更长独立留出区间和 15 人组口径验证后再调整。
+- 四模型旧等权 blend 在两日样本中没有超过 Chinese Decision 单模型：`Hit@10` 低 5.0 个百分点，`NDCG@10` 低 0.045，`Close3@10` 低 0.83 个百分点。该旧结果说明“模型越多越好”不成立；新主线的 5 人组局部校准与 ATR 风险惩罚是在后续消融中单独选择，不能与本段旧等权结果混为一谈。
+- 该验证不是独立长期样本外证明：first-stage 内嵌模型声明 `trained_through=2026-10-15`，10-15 信号日处于训练覆盖边缘；两个信号日的三日标签窗口重叠，不能做有意义的 bootstrap。生产计划按用户指定的“测试期指标优先”切换为 `risk_all20_local035_eta1`，但测试期只有 1 个交易日，仍需后续更长独立留出区间复核。
 
 - 旧树模型 `second_stage_gbdt_v1`：80 棵深度 2 的回归树，27 个冻结特征，`max_features=0.4`，SHA-256 为 `21cb6c2a19706381cdb0ce2598ceda743b81227b22391cb5f92ba429d9d4e960`；现在只提供辅助预测字段。
 - 训练区间 2026-09-03 至 2026-09-21，共 1885 行；只使用标签在 2026-09-28 验证起点前成熟的样本，避免训练标签跨入留出区间。

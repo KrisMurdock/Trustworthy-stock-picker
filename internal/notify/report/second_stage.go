@@ -87,9 +87,14 @@ func secondStageArticleText(r selection.Report, result secondstage.Report) strin
 	out.WriteString("四、数据与方法\n")
 	out.WriteString(fmt.Sprintf("模型：%s；信号日：%s；目标交易日：%s。\n", articleValue(result.ModelID, "未记录"), result.AsOf, result.Target))
 	if result.Degraded {
-		out.WriteString("本次 JEV 状态为 " + articleValue(result.JEVStatus, "unknown") + "，精排使用中性 JEV 特征，结果标记为降级；降级结果不应与完整特征结果直接比较。\n")
+		missing := missingModelNames(result)
+		if len(missing) > 0 {
+			out.WriteString("本次缺失的离线模型为 " + strings.Join(missing, "、") + "，缺失项按中性 0.5 百分位参与排序，结果标记为降级；降级结果不应与完整模型结果直接比较。\n")
+		} else {
+			out.WriteString("本次离线模型覆盖不完整，缺失项按中性 0.5 百分位参与排序，结果标记为降级；降级结果不应与完整模型结果直接比较。\n")
+		}
 	} else {
-		out.WriteString("本次 JEV 特征完整。JEV 只作为离线教师特征使用，生产进程不启动 Python、子进程或外部推理服务。\n")
+		out.WriteString("本次离线模型特征完整。外部模型只提供离线分数，生产进程不启动 Python、子进程或外部推理服务。\n")
 	}
 	if r.FirstStage != nil {
 		out.WriteString(fmt.Sprintf("初筛池：有效 %d/%d，初筛模型 %s。\n", r.FirstStage.Eligible, r.FirstStage.PoolSize, articleValue(r.FirstStage.ModelID, "未记录")))
@@ -109,9 +114,19 @@ func secondStageConclusion(result secondstage.Report) string {
 	line := fmt.Sprintf("本次精排从 %d 只初筛候选中输出 %d 只，排在最前面的是%s（%s）。其初筛排名为第 %d，模型预测未来 3 日最大高点涨幅为 %+.2f%%。",
 		result.InputCount, len(result.Candidates), name, first.Code, first.FirstStageRank, first.PredictedMaxHigh)
 	if result.Degraded {
-		line += " 本次 JEV 特征不完整，结果为降级版本，优先把它当作观察线索而不是完整信号。"
+		line += " 本次离线模型特征不完整，结果为降级版本，优先把它当作观察线索而不是完整信号。"
 	}
 	return line
+}
+
+func missingModelNames(result secondstage.Report) []string {
+	missing := make([]string, 0, len(result.Models))
+	for _, model := range result.Models {
+		if model.Status != secondstage.ModelStatusOK {
+			missing = append(missing, model.Name)
+		}
+	}
+	return missing
 }
 
 func secondStageSectorSummary(result secondstage.Report) string {

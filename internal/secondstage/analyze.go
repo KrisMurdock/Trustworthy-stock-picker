@@ -71,6 +71,18 @@ func (plan BlendPlan) Validate() error {
 	if !finite(plan.FirstStageWeight) || plan.FirstStageWeight < 0 || plan.FirstStageWeight > 1 {
 		return errors.New("second-stage first-stage weight must be between 0 and 1")
 	}
+	if plan.GroupSize < 0 || plan.GroupSize > 100 {
+		return errors.New("second-stage group size must be between 1 and 100")
+	}
+	if plan.Calibration != "" && plan.Calibration != CalibrationNone && plan.Calibration != CalibrationLocal {
+		return errors.New("second-stage calibration must be empty, none, or local")
+	}
+	if !finite(plan.CalibrationParam) || plan.CalibrationParam < 0 || plan.CalibrationParam > 1 {
+		return errors.New("second-stage calibration parameter must be between 0 and 1")
+	}
+	if !finite(plan.RiskEta) || plan.RiskEta < 0 || plan.RiskEta > 1 {
+		return errors.New("second-stage risk eta must be between 0 and 1")
+	}
 	if len(plan.Models) == 0 {
 		return errors.New("second-stage blend models must not be empty")
 	}
@@ -93,6 +105,16 @@ func (plan BlendPlan) Validate() error {
 		return fmt.Errorf("second-stage blend weights must sum to 1, got %.6f", total)
 	}
 	return nil
+}
+
+func (plan BlendPlan) normalized() BlendPlan {
+	if plan.GroupSize < 1 {
+		plan.GroupSize = JEVGroupSize
+	}
+	if plan.Calibration == "" {
+		plan.Calibration = CalibrationNone
+	}
+	return plan
 }
 
 func validModelName(name string) bool {
@@ -135,6 +157,7 @@ func analyzeWithModel(report Report, first firststage.Report, opts Options, mode
 	if strings.TrimSpace(plan.ID) == "" {
 		plan = DefaultBlendPlan()
 	}
+	plan = plan.normalized()
 	if err := plan.Validate(); err != nil {
 		return fail(report, err)
 	}
@@ -188,17 +211,18 @@ func analyzeWithModel(report Report, first firststage.Report, opts Options, mode
 		poolReturn5 += candidate.Features.Return5
 	}
 	poolReturn5 /= float64(len(first.Candidates))
-	modelStats := make(map[string]map[int]jevGroupStats, len(plan.Models))
+	firstStagePct := firstStagePercentilesByCode(first.Candidates)
+	groupPriors := firstStageGroupPriors(first.Candidates, firstStagePct, plan.GroupSize)
 	modelPercentiles := make(map[string]map[string]float64, len(plan.Models))
 	for _, weight := range plan.Models {
 		input := inputs[weight.Name]
 		if input.Status != ModelStatusOK {
 			continue
 		}
-		groups := buildJEVGroupStats(first.Candidates, input.Scores)
+		groups := buildJEVGroupStats(first.Candidates, input.Scores, plan.GroupSize)
 		percentiles := make(map[string]float64, len(input.Scores))
 		for index, candidate := range first.Candidates {
-			group := candidateGroup(candidate, index)
+			group := candidateGroup(candidate, index, plan.GroupSize)
 			if _, ok := input.Scores[candidate.Code]; !ok {
 				continue
 			}
@@ -206,7 +230,6 @@ func analyzeWithModel(report Report, first firststage.Report, opts Options, mode
 				percentiles[candidate.Code] = percentile
 			}
 		}
-		modelStats[weight.Name] = groups
 		modelPercentiles[weight.Name] = percentiles
 		if len(percentiles) < len(first.Candidates) {
 			report.Degraded = true
@@ -216,7 +239,11 @@ func analyzeWithModel(report Report, first firststage.Report, opts Options, mode
 	for index := range report.Models {
 		report.Models[index].Covered = len(modelPercentiles[report.Models[index].Name])
 	}
-	firstStagePct := firstStagePercentilesByCode(first.Candidates)
+	jevFeatureStats := map[int]jevGroupStats{}
+	if jev, ok := inputs[ModelJEV]; ok && jev.Status == ModelStatusOK {
+		jevFeatureStats = buildJEVGroupStats(first.Candidates, jev.Scores, JEVGroupSize)
+	}
+	atrPercentiles := atrPercentilesByCode(first.Candidates)
 	rankDenominator := len(first.Candidates) - 1
 	if rankDenominator < 1 {
 		rankDenominator = 1
@@ -224,22 +251,29 @@ func analyzeWithModel(report Report, first firststage.Report, opts Options, mode
 
 	rows := make([]Candidate, 0, len(first.Candidates))
 	for index, candidate := range first.Candidates {
-		group := candidateGroup(candidate, index)
+		group := candidateGroup(candidate, index, plan.GroupSize)
 		rankPosition := float64(index) / float64(rankDenominator)
 		if candidate.Rank > 0 {
 			rankPosition = float64(candidate.Rank-1) / float64(rankDenominator)
 		}
 		firstStagePercentile := firstStagePct[candidate.Code]
-		blendScore := plan.FirstStageWeight * firstStagePercentile
+		prior := groupPriors[group]
+		weightedScore := plan.FirstStageWeight * firstStagePercentile
 		signals := make(map[string]ModelSignal, len(plan.Models))
-		jevSignal := ModelSignal{Percentile: 0.5}
+		jevSignal := ModelSignal{Percentile: 0.5, Calibrated: 0.5}
 		for _, weight := range plan.Models {
 			input := inputs[weight.Name]
-			signal := ModelSignal{Percentile: 0.5}
+			signal := ModelSignal{Percentile: 0.5, Calibrated: 0.5}
 			if input.Status == ModelStatusOK {
 				if score, ok := input.Scores[candidate.Code]; ok {
 					if percentile, ok := modelPercentiles[weight.Name][candidate.Code]; ok {
-						signal = ModelSignal{Adjacent15: score.Adjacent15, Full15Top12: score.Full15Top12, Percentile: percentile, Present: true}
+						signal = ModelSignal{
+							Adjacent15:  score.Adjacent15,
+							Full15Top12: score.Full15Top12,
+							Percentile:  percentile,
+							Calibrated:  calibrateModelPercentile(percentile, prior, plan),
+							Present:     true,
+						}
 					}
 				}
 			}
@@ -247,10 +281,11 @@ func analyzeWithModel(report Report, first firststage.Report, opts Options, mode
 			if weight.Name == ModelJEV {
 				jevSignal = signal
 			}
-			blendScore += weight.Weight * signal.Percentile
+			weightedScore += weight.Weight * signal.Calibrated
 		}
 		jevStats := jevGroupStats{Percentile: map[string]float64{}}
-		if stats, ok := modelStats[ModelJEV][group]; ok {
+		jevFeatureGroup := candidateGroup(candidate, index, JEVGroupSize)
+		if stats, ok := jevFeatureStats[jevFeatureGroup]; ok {
 			jevStats = stats
 		}
 		values := featureVector(candidate, ModelScore{Adjacent15: jevSignal.Adjacent15, Full15Top12: jevSignal.Full15Top12}, jevSignal.Present, jevStats, rankPosition, poolReturn5, model.FeatureVersion)
@@ -258,6 +293,9 @@ func analyzeWithModel(report Report, first firststage.Report, opts Options, mode
 		if err != nil {
 			return fail(report, fmt.Errorf("second-stage candidate %s: %w", candidate.Code, err))
 		}
+		atrPercentile := atrPercentiles[candidate.Code]
+		riskPenalty := plan.RiskEta * atrPercentile
+		blendScore := weightedScore - riskPenalty
 		row := Candidate{
 			Code:                 candidate.Code,
 			Name:                 candidate.Name,
@@ -270,6 +308,9 @@ func analyzeWithModel(report Report, first firststage.Report, opts Options, mode
 			FirstStagePercentile: firstStagePercentile,
 			JEVPercentile:        jevSignal.Percentile,
 			Models:               signals,
+			WeightedScore:        weightedScore,
+			ATRPercentile:        atrPercentile,
+			RiskPenalty:          riskPenalty,
 			BlendScore:           blendScore,
 			PredictedMaxHigh:     prediction,
 			Features:             candidate.Features,
@@ -317,11 +358,46 @@ func firstStagePercentilesByCode(candidates []firststage.Candidate) map[string]f
 	return percentilesByCode(scores)
 }
 
-func candidateGroup(candidate firststage.Candidate, index int) int {
-	if candidate.Rank > 0 {
-		return (candidate.Rank - 1) / JEVGroupSize
+func firstStageGroupPriors(candidates []firststage.Candidate, percentiles map[string]float64, groupSize int) map[int]float64 {
+	sums := map[int]float64{}
+	counts := map[int]int{}
+	for index, candidate := range candidates {
+		group := candidateGroup(candidate, index, groupSize)
+		sums[group] += percentiles[candidate.Code]
+		counts[group]++
 	}
-	return index / JEVGroupSize
+	priors := make(map[int]float64, len(sums))
+	for group, sum := range sums {
+		priors[group] = sum / float64(counts[group])
+	}
+	return priors
+}
+
+func calibrateModelPercentile(percentile, prior float64, plan BlendPlan) float64 {
+	switch plan.Calibration {
+	case CalibrationLocal:
+		return clamp01(prior + plan.CalibrationParam*(percentile-0.5))
+	default:
+		return percentile
+	}
+}
+
+func atrPercentilesByCode(candidates []firststage.Candidate) map[string]float64 {
+	values := make(map[string]float64, len(candidates))
+	for _, candidate := range candidates {
+		values[candidate.Code] = candidate.Features.ATR14Pct
+	}
+	return percentilesByCode(values)
+}
+
+func candidateGroup(candidate firststage.Candidate, index, groupSize int) int {
+	if groupSize < 1 {
+		groupSize = JEVGroupSize
+	}
+	if candidate.Rank > 0 {
+		return (candidate.Rank - 1) / groupSize
+	}
+	return index / groupSize
 }
 
 func baseReport(opts Options) Report {
@@ -344,6 +420,8 @@ func baseReport(opts Options) Report {
 		Rules: []string{
 			"目标：未来3个交易日最高价相对信号日收盘的最大涨幅，是排序标签，不是可成交收益。",
 			"候选只来自第一阶段高召回池；排名按计划权重融合第一阶段综合分池内百分位与离线模型组内百分位。",
+			"模型百分位先按配置的组大小计算；启用 local 校准时，以组内第一阶段百分位均值为先验向组内模型分收缩。",
+			"启用风险权重时，从加权融合分中扣除 ATR14 百分位惩罚；blend_score 为最终风险调整排序分，weighted_score 保留扣罚前分数。",
 			"离线模型只提供分数，生产进程不启动 Python、子进程或外部推理服务。",
 			"树模型预测保留为辅助字段，不参与 Top10 排序。",
 			"输出 Top10 仅为研究候选，不改变正式推荐、风险门槛或交易建议。",

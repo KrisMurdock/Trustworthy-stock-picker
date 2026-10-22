@@ -61,9 +61,13 @@
 | STOCK_WATCHER_SECOND_STAGE_ENABLED | true | 是否在第一层候选池上运行加权模型 blend Top10 精排；要求第一层已启用 |
 | STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED | true | 是否把精排结果生成公众号纯文本稿并投递到 `second_stage` 路由；依赖精排已启用 |
 | STOCK_WATCHER_SECOND_STAGE_TOP_N | 10 | 第二层输出候选数，允许 1～100 |
-| STOCK_WATCHER_SECOND_STAGE_BLEND_ID | blend_50_50 | 写入报告的 blend 计划标识，便于冻结和比较实验口径 |
-| STOCK_WATCHER_SECOND_STAGE_FIRST_STAGE_WEIGHT | 0.5 | 第一层池内百分位权重，范围 0～1；与所有模型权重之和必须为 1 |
-| STOCK_WATCHER_SECOND_STAGE_MODELS | jev=0.5 | 逗号分隔的 `model=weight` 权重表；模型名允许小写字母、数字、点、下划线和连字符 |
+| STOCK_WATCHER_SECOND_STAGE_BLEND_ID | risk_all20_local035_eta1 | 写入报告的 blend 计划标识，便于冻结和比较实验口径 |
+| STOCK_WATCHER_SECOND_STAGE_FIRST_STAGE_WEIGHT | 0.2 | 第一层池内百分位权重，范围 0～1；与所有模型权重之和必须为 1 |
+| STOCK_WATCHER_SECOND_STAGE_MODELS | jev=0.2,laya_official=0.2,laya_multilingual=0.2,chinese_decision=0.2 | 逗号分隔的 `model=weight` 权重表；模型名允许小写字母、数字、点、下划线和连字符 |
+| STOCK_WATCHER_SECOND_STAGE_GROUP_SIZE | 5 | 模型组内百分位与局部校准先验的分组大小，允许 1～100 |
+| STOCK_WATCHER_SECOND_STAGE_CALIBRATION | local | 模型百分位校准方式；`none` 不校准，`local` 用组内第一层先验做局部收缩 |
+| STOCK_WATCHER_SECOND_STAGE_CALIBRATION_PARAM | 0.35 | `local` 校准的收缩系数，范围 0～1 |
+| STOCK_WATCHER_SECOND_STAGE_RISK_ETA | 1 | ATR14 百分位风险惩罚系数，范围 0～1；0 表示不调整 |
 | STOCK_WATCHER_STRUCTURE_GUARD_MODE | shadow | shadow 只观察；enforce 才进入可执行推荐 |
 | STOCK_WATCHER_SELECTION_ENABLED | true | 是否启用趋势筛选 |
 | STOCK_WATCHER_SELECTION_MIN_SCORE | 70 | 趋势最低分 |
@@ -78,7 +82,7 @@
 
 信号日后第 3 个交易日日报生成后，初筛机器人还会收到窗口回看卡：以 3 个交易日内最高价相对初筛日收盘价涨幅 `≥ +1%` 判定命中，展示全候选召回率、Top 30 覆盖率和 Top 30 精确率；飞书仍只展示 Top 30，第二层精排使用全部候选，期末收盘涨幅只作参考。回看按信号日和窗口结束日生成稳定事件 ID，同一日期组合只入队一次；窗口行情不完整时暂不推送并等待后续轮询。
 
-第二层精排读取 `<$STOCK_WATCHER_DATA_DIR>/state/secondstage/<model>/<as_of>.json` 的离线分数；`jev` 兼容回退到 `state/jev/<as_of>.json`。Go 进程按 `first_stage_weight × 第一层池内百分位 + Σ(model_weight × 模型组内百分位)` 输出 Top10，结果写入日报的 `second_stage` 字段。默认 `blend_50_50` 为 JEV 50/50，JEV 与 Laya（`official` / `multilingual`）共用同一 artifact schema；新增模型需要增加 artifact，并重分配第一层与全部模型权重使总和仍为 1。某个模型缺失或过期时按中性 0.5 百分位参与并标记 `second_stage.degraded=true`，不会阻断日报；树模型只保留辅助预测字段。
+第二层精排读取 `<$STOCK_WATCHER_DATA_DIR>/state/secondstage/<model>/<as_of>.json` 的离线分数；`jev` 兼容回退到 `state/jev/<as_of>.json`。Go 进程先计算模型组内百分位与组内第一层先验，再按 `local = clamp(prior + calibration_param × (within - 0.5), 0, 1)` 校准，最后按 `blend_score = first_stage_weight × first_stage_percentile + Σ(model_weight × local) - risk_eta × atr14_percentile` 输出 Top10，结果写入日报的 `second_stage` 字段。默认 `risk_all20_local035_eta1` 为第一层 20% + JEV/Laya official/Laya multilingual/Chinese Decision 各 20%，`group_size=5`、`calibration_param=0.35`、`risk_eta=1`；所有模型共用同一 artifact schema。新增模型需要增加 artifact，并重分配第一层与全部模型权重使总和仍为 1。某个模型缺失或过期时按中性 0.5 百分位参与并标记 `second_stage.degraded=true`，不会阻断日报；树模型只保留辅助预测字段。
 
 `second_stage.push_enabled=true` 时，同一数据日期会生成一份可直接复制的公众号纯文本稿，包含公众号标题、正文、精排名单、逐只数据解读、行业分布、使用边界和风险提示。稿件以纯文本飞书消息投递到独立的 `second_stage` 路由，不会混入 `selection` 的日报卡片或 `first_stage` 的初筛卡。精排降级时标题和正文都会明确标注，未通过第一层或没有候选时不生成文章。文章与精排报告共享稳定事件 ID 和 T+1 09:30 过期时间，重启不会重复发送。
 
