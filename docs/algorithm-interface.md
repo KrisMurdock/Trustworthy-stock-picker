@@ -77,6 +77,9 @@ Go 生产进程仍只读取离线 artifact，不导入 Laya 或 Chinese Decision
 | Laya official 50/50 blend | 65.6% | 0.630 | +2.04% | -4.90% |
 | Laya multilingual 50/50 blend | 64.4% | 0.613 | +2.15% | -4.84% |
 | Chinese Decision 50/50 blend | 63.3% | 0.634 | +2.68% | -3.76% |
+| all-model blend 50% + 4×12.5% | 63.3% | 0.619 | +2.60% | -4.83% |
+| all-model blend 20% + 4×20% | 64.4% | 0.640 | +2.05% | -3.94% |
+| 4-model equal, no first-stage | 61.1% | 0.592 | +2.04% | -3.60% |
 
 - 精排阶段固定 first-stage Top95：
 
@@ -91,11 +94,15 @@ Go 生产进程仍只读取离线 artifact，不导入 Laya 或 Chinese Decision
 | Laya official 50/50 blend | 56.7% | 0.571 | +3.10% | -5.76% |
 | Laya multilingual 50/50 blend | 64.4% | 0.629 | +3.51% | -5.92% |
 | Chinese Decision 50/50 blend | 67.8% | 0.651 | +2.76% | -3.67% |
+| all-model blend 50% + 4×12.5% | 57.8% | 0.572 | +3.05% | -5.40% |
+| all-model blend 20% + 4×20% | 63.3% | 0.596 | +3.39% | -3.86% |
+| 4-model equal, no first-stage | 63.3% | 0.613 | +2.85% | -3.41% |
 
 - 初筛阶段没有单一模型在所有指标上胜出：Laya 两版的 `Hit@10` 均为 64.4%，Laya official 50/50 融合为 65.6%，但 `MaxHigh@10` 都低于 first-stage baseline 的 +3.47%；Chinese Decision 的 `Close3@10` 最好（-3.64%），最大高点为 +2.48%。
 - 精排阶段 Chinese Decision 单模型的 `Hit@10`、`NDCG@10` 和 `Close3@10` 都最好，分别为 73.3%、0.694、-2.37%，但 `MaxHigh@10` 只有 +2.84%；`MaxHigh@10` 最高的是 Laya multilingual 50/50（+3.51%）。命中率、NDCG、最大高点和收盘回撤并不指向同一个赢家，不能只用一个指标宣称全面胜出。
 - 精排 Chinese Decision 对 JEV 的配对差值为：`Hit@10` +15.6 个百分点，95% CI `[+7.8, +25.6]`；`NDCG@10` +0.121，CI `[+0.002, +0.250]`；`MaxHigh@10` +0.30 个百分点，CI `[-0.67, +1.24]`；`Close3@10` +2.52 个百分点，CI `[+1.28, +3.72]`。回撤改善在 8/9 个交易日为正，但最大高点差异不显著。
 - 50/50 融合的 Chinese Decision 对 JEV：`Hit@10` +6.7 个百分点，CI `[-5.6, +17.8]`；`NDCG@10` +0.057，CI `[-0.080, +0.198]`；`MaxHigh@10` -0.28 个百分点，CI `[-1.42, +0.69]`；`Close3@10` +1.92 个百分点，CI `[+1.09, +2.67]`。只有收盘回撤改善在这组样本中稳定，命中率增量仍不显著。
+- 四个模型一起 blend 后，初筛命中率最高的全模型方案是第一层 20% + 四模型各 20%（64.4%），精排也是该方案最高（63.3%）；仍低于 Chinese Decision 单模型的 73.3% 和 Chinese Decision 50/50 的 67.8%。精排 first-stage 50% + 四模型各 12.5% 相对 Chinese Decision 50/50：`Hit@10` -10.0 个百分点，CI `[-15.6, -3.3]`；`Close3@10` -1.73 个百分点，CI `[-2.48, -0.95]`，两项都显著变差。全模型等权会稀释单一强信号，并非天然优于少模型融合。
 - 两个 Laya checkpoint 的差异很小。精排 official 对 multilingual：`Hit@10` -1.1 个百分点，CI `[-3.3, 0.0]`；`NDCG@10` -0.012，CI `[-0.037, 0.000]`；`MaxHigh@10` -0.01 个百分点，CI `[-0.26, +0.22]`；`Close3@10` -0.01 个百分点，CI `[-0.15, +0.10]`。若只能选一个，精排可优先 multilingual，但不能声称有显著优势。
 - 精排 Top10 特征均值显示偏好差异：first-stage baseline 的 ATR14 为 6.38%、5 日收益为 -1.11%；Laya official 为 5.49% / -3.31%；Laya multilingual 为 5.49% / -3.13%；Chinese Decision 为 3.61% / +1.99%。Chinese Decision 更偏向低波动、正短期动量的候选，这与它在下跌样本中回撤更小、最大高点弹性较低一致。
 - 默认保留 JEV 50/50 是为了兼容现有 artifact 生产链，不代表 JEV 已在这些指标上胜出。切换到 Chinese Decision、混合多模型或更换权重前，必须用独立留出区间重新验证，不能直接沿用本表的样本内排序。
