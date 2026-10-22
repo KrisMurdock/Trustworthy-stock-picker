@@ -27,9 +27,9 @@ func TestGoldenParityWithExperimentModel(t *testing.T) {
 		t.Fatalf("unexpected report: %+v", report)
 	}
 	want := []Candidate{
-		{Rank: 1, Code: "sz000001", Name: "甲", Close: 26.8, BaseScore: 88.75, ModelScore: 0.6767201002789583, BaseRank: 1, ModelRank: 1, BlendScore: 1},
-		{Rank: 2, Code: "sz000002", Name: "乙", Close: 28.1, BaseScore: 78.75, ModelScore: 0.5167815427286157, BaseRank: 0, ModelRank: 0.5, BlendScore: 0.25},
-		{Rank: 3, Code: "sz000003", Name: "丙", Close: 29.4, BaseScore: 78.75, ModelScore: 0.35166398127921217, BaseRank: 0.5, ModelRank: 0, BlendScore: 0.25},
+		{Rank: 1, Code: "sz000001", Name: "甲", Close: 26.8, BaseScore: 88.75, ModelScore: 0.6767201002789583, BaseRank: 1, ModelRank: 1, BlendScore: 0.5},
+		{Rank: 2, Code: "sz000002", Name: "乙", Close: 28.1, BaseScore: 78.75, ModelScore: 0.5167815427286157, BaseRank: 0.25, ModelRank: 0.5, BlendScore: 0.34697523579018497},
+		{Rank: 3, Code: "sz000003", Name: "丙", Close: 29.4, BaseScore: 78.75, ModelScore: 0.35166398127921217, BaseRank: 0.25, ModelRank: 0, BlendScore: 0.2766655755618844},
 	}
 	for i := range want {
 		got := report.Candidates[i]
@@ -62,6 +62,52 @@ func TestGoldenParityWithExperimentModel(t *testing.T) {
 	}
 	if report.ModelID != ModelID || report.ModelVersion != ModelSchemaVersion || report.ModelSHA256 != modelArtifactSHA256 || report.TrainedThrough != "2026-10-15" {
 		t.Fatalf("missing model provenance: %+v", report)
+	}
+}
+
+func TestRankRowsUsesTieAwareMidRanks(t *testing.T) {
+	rows := []row{
+		{code: "sz000005", baseScore: 10, model: 10},
+		{code: "sz000004", baseScore: 10, model: 10},
+		{code: "sz000003", baseScore: 5, model: 5},
+		{code: "sz000002", baseScore: 5, model: 5},
+		{code: "sz000001", baseScore: 1, model: 1},
+	}
+	rankRows(rows, 0.5, 0.5, "linear")
+	for _, index := range []int{0, 1} {
+		if rows[index].baseRank != 0.875 || rows[index].modelRank != 0.875 {
+			t.Fatalf("top tie rank = %+v", rows[index])
+		}
+	}
+	for _, index := range []int{2, 3} {
+		if rows[index].baseRank != 0.375 || rows[index].modelRank != 0.375 {
+			t.Fatalf("middle tie rank = %+v", rows[index])
+		}
+	}
+	if rows[4].baseRank != 0 || rows[4].modelRank != 0 {
+		t.Fatalf("bottom rank = %+v", rows[4])
+	}
+
+	rankRows(rows[:1], 0.5, 0.5, "linear")
+	if rows[0].baseRank != 0.5 || rows[0].modelRank != 0.5 || rows[0].blend != 0.5 {
+		t.Fatalf("single-row percentile = %+v", rows[0])
+	}
+}
+
+func TestRankGaussBlendIsMonotonicAndBounded(t *testing.T) {
+	rows := []row{
+		{code: "sz000001", baseScore: 10, model: 0.9},
+		{code: "sz000002", baseScore: 10, model: 0.1},
+		{code: "sz000003", baseScore: 5, model: 0.5},
+	}
+	rankRows(rows, 0.44, 0.56, "rank_gauss")
+	for _, item := range rows {
+		if item.blend < 0 || item.blend > 1 || math.IsNaN(item.blend) {
+			t.Fatalf("rank-gauss blend is not a percentile: %+v", item)
+		}
+	}
+	if rows[0].blend <= rows[1].blend || rows[1].blend <= rows[2].blend {
+		t.Fatalf("rank-gauss ordering = %+v", rows)
 	}
 }
 
@@ -125,6 +171,9 @@ func TestModelArtifactValidation(t *testing.T) {
 	}
 	if _, err := parseModel([]byte(strings.Replace(string(modelArtifact), `"scales": [`, `"scales": [0, `, 1))); err == nil {
 		t.Fatal("invalid parameter length accepted")
+	}
+	if _, err := parseModel([]byte(strings.Replace(string(modelArtifact), `"operator": "rank_gauss"`, `"operator": "unknown"`, 1))); err == nil {
+		t.Fatal("unknown blend operator accepted")
 	}
 	if _, err := parseModel([]byte(strings.Replace(string(modelArtifact), `{`, `{"unknown": 1,`, 1))); err == nil {
 		t.Fatal("unknown model field accepted")

@@ -143,7 +143,7 @@ func Analyze(histories []market.History, pool []config.Stock, opts Options) (Rep
 	report.ModelSHA256 = model.SHA256
 	report.TrainedFrom = model.TrainFrom
 	report.TrainedThrough = model.TrainThrough
-	report.Rules[2] = fmt.Sprintf("综合分 = %.2f × 机会分日内排名 + %.2f × logistic 模型分日内排名", model.BaseWeight, model.ModelWeight)
+	report.Rules[2] = blendRule(model)
 	return analyzeWithModel(report, histories, pool, opts, model)
 }
 
@@ -302,7 +302,7 @@ func analyzeWithModel(report Report, histories []market.History, pool []config.S
 			return failReport(report, errors.New("first-stage produced a non-finite score"))
 		}
 	}
-	rankRows(rows, model.BaseWeight, model.ModelWeight)
+	rankRows(rows, model.BaseWeight, model.ModelWeight, model.BlendOperator)
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].blend != rows[j].blend {
 			return rows[i].blend > rows[j].blend
@@ -485,7 +485,7 @@ func predict(model Model, z [featureCount]float64) float64 {
 	return exp / (1 + exp)
 }
 
-func rankRows(rows []row, baseWeight, modelWeight float64) {
+func rankRows(rows []row, baseWeight, modelWeight float64, operator string) {
 	baseOrder := make([]int, len(rows))
 	modelOrder := make([]int, len(rows))
 	for i := range rows {
@@ -506,15 +506,63 @@ func rankRows(rows []row, baseWeight, modelWeight float64) {
 		}
 		return left.code < right.code
 	})
-	denominator := max(1, len(rows)-1)
-	for rank, index := range baseOrder {
-		rows[index].baseRank = float64(rank) / float64(denominator)
-	}
-	for rank, index := range modelOrder {
-		rows[index].modelRank = float64(rank) / float64(denominator)
+	assignMidRanks(rows, baseOrder, func(index int, rank float64) {
+		rows[index].baseRank = rank
+	}, func(index int) float64 { return rows[index].baseScore })
+	assignMidRanks(rows, modelOrder, func(index int, rank float64) {
+		rows[index].modelRank = rank
+	}, func(index int) float64 { return rows[index].model })
+	if operator == "rank_gauss" {
+		for i := range rows {
+			baseZ := normalQuantile((rows[i].baseRank + 1) / (float64(len(rows)) + 1))
+			modelZ := normalQuantile((rows[i].modelRank + 1) / (float64(len(rows)) + 1))
+			rows[i].blend = normalCDF(baseWeight*baseZ + modelWeight*modelZ)
+		}
+		return
 	}
 	for i := range rows {
 		rows[i].blend = baseWeight*rows[i].baseRank + modelWeight*rows[i].modelRank
+	}
+}
+
+func blendRule(model Model) string {
+	if model.BlendOperator == "rank_gauss" {
+		return fmt.Sprintf("综合分 = Φ(%.2f × Φ⁻¹(机会分中位百分位) + %.2f × Φ⁻¹(logistic 模型中位百分位))", model.BaseWeight, model.ModelWeight)
+	}
+	return fmt.Sprintf("综合分 = %.2f × 机会分中位百分位 + %.2f × logistic 模型中位百分位", model.BaseWeight, model.ModelWeight)
+}
+
+func normalQuantile(p float64) float64 {
+	return math.Sqrt2 * math.Erfinv(2*p-1)
+}
+
+func normalCDF(value float64) float64 {
+	return 0.5 * (1 + math.Erf(value/math.Sqrt2))
+}
+
+// assignMidRanks gives every tied score the mean of the positions it spans.
+// A tied group cannot gain an advantage from stock-code lexicographic order,
+// and a one-row universe uses the neutral 0.5 percentile.
+func assignMidRanks(rows []row, order []int, set func(index int, rank float64), score func(index int) float64) {
+	if len(order) == 0 {
+		return
+	}
+	if len(order) == 1 {
+		set(order[0], 0.5)
+		return
+	}
+	denominator := float64(len(order) - 1)
+	for start := 0; start < len(order); {
+		end := start
+		value := score(order[start])
+		for end+1 < len(order) && score(order[end+1]) == value {
+			end++
+		}
+		rank := (float64(start) + float64(end)) / 2 / denominator
+		for position := start; position <= end; position++ {
+			set(order[position], rank)
+		}
+		start = end + 1
 	}
 }
 

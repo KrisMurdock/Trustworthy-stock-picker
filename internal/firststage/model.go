@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	ModelSchemaVersion = 1
+	ModelSchemaVersion = 2
 	ModelID            = "logistic_z"
 	ModelTarget        = "future_three_day_max_high_touch_1pct"
 )
@@ -22,7 +22,7 @@ const (
 //go:embed model.json
 var modelArtifact []byte
 
-const modelArtifactSHA256 = "41242068967f52ec11cd6936f24c3dbbb066d09980ae345aad2d0f1cd2356316"
+const modelArtifactSHA256 = "8a833e8d124c94fdd1487ad614a01d263ea579f2859d641e4120b02fb34f9988"
 
 var modelFeatures = []string{
 	"z_atr14_pct",
@@ -46,6 +46,7 @@ type Model struct {
 	Intercept     float64
 	BaseWeight    float64
 	ModelWeight   float64
+	BlendOperator string
 	TrainRows     int
 	TrainFrom     string
 	TrainThrough  string
@@ -68,6 +69,7 @@ type modelDocument struct {
 		BaseWeight  float64 `json:"base_weight"`
 		ModelWeight float64 `json:"model_weight"`
 		Rank        string  `json:"rank"`
+		Operator    string  `json:"operator"`
 	} `json:"blend"`
 }
 
@@ -136,7 +138,7 @@ func parseModel(data []byte) (Model, error) {
 	if !finite(doc.Intercept) || doc.TrainRows < 1 || doc.TrainFrom == "" || doc.TrainThrough == "" {
 		return Model{}, errors.New("first-stage model metadata is invalid")
 	}
-	if !finite(doc.Blend.BaseWeight) || !finite(doc.Blend.ModelWeight) || doc.Blend.BaseWeight <= 0 || doc.Blend.ModelWeight <= 0 || math.Abs(doc.Blend.BaseWeight+doc.Blend.ModelWeight-1) > 1e-9 || doc.Blend.Rank != "within_day" {
+	if !finite(doc.Blend.BaseWeight) || !finite(doc.Blend.ModelWeight) || doc.Blend.BaseWeight <= 0 || doc.Blend.ModelWeight <= 0 || math.Abs(doc.Blend.BaseWeight+doc.Blend.ModelWeight-1) > 1e-9 || doc.Blend.Rank != "within_day" || (doc.Blend.Operator != "linear" && doc.Blend.Operator != "rank_gauss") {
 		return Model{}, errors.New("first-stage model blend is invalid")
 	}
 	return Model{
@@ -150,6 +152,7 @@ func parseModel(data []byte) (Model, error) {
 		Intercept:     doc.Intercept,
 		BaseWeight:    doc.Blend.BaseWeight,
 		ModelWeight:   doc.Blend.ModelWeight,
+		BlendOperator: doc.Blend.Operator,
 		TrainRows:     doc.TrainRows,
 		TrainFrom:     doc.TrainFrom,
 		TrainThrough:  doc.TrainThrough,

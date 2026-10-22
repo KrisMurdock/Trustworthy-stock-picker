@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "model": "logistic_z",
   "target": "future_three_day_max_high_touch_1pct",
   "features": [
@@ -47,8 +47,9 @@
   "train_from": "2026-01-14",
   "train_through": "2026-10-15",
   "blend": {
-    "base_weight": 0.5,
-    "model_weight": 0.5,
-    "rank": "within_day"
+    "base_weight": 0.44,
+    "model_weight": 0.56,
+    "rank": "within_day",
+    "operator": "rank_gauss"
   }
 }
