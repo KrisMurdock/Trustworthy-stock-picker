@@ -110,7 +110,7 @@ func TestPremarketArticleFallsBackToSavedForecastsAndFitsWeChatLimit(t *testing.
 	if len([]rune(rendered)) >= 20000 || len(rendered) >= 1<<20 {
 		t.Fatalf("rendered article exceeds WeChat limit: runes=%d bytes=%d", len([]rune(rendered)), len(rendered))
 	}
-	if got := strings.Count(rendered, "<section style=\"margin:22px 0;"); got != 10 {
+	if got := strings.Count(rendered, "<section style=\"margin:18px 0;"); got != 10 {
 		t.Fatalf("rendered cards = %d, want 10", got)
 	}
 }
