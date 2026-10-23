@@ -46,8 +46,8 @@ journalctl -u stock-watcher.service -n 50 --no-pager
 1. 在公众号后台取得 AppID/AppSecret，设置 `STOCK_WATCHER_WECHAT_ENABLED=true`，并设置 `WECHAT_APP_ID` 和 `WECHAT_APP_SECRET`，或用 `STOCK_WATCHER_WECHAT_CREDENTIALS_FILE` 指向权限为 `600` 的私有 `wechat.config`。环境变量优先于文件；文件不提交、不回显。可选设置 `WECHAT_THUMB_MEDIA_ID` 复用永久封面素材，或设置 `STOCK_WATCHER_WECHAT_AUTHOR`。
 2. 把运行主机的公网出口 IP 加入公众号后台的 IP 白名单。容器、systemd 或本地进程的出口 IP 可能不同，必须以实际发起 `api.weixin.qq.com` 请求的主机为准。确认出站网络允许访问该域名。
 3. 保持 `STOCK_WATCHER_SECOND_STAGE_ENABLED=true` 和 `STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED=true`。执行 `./bin/stock-watcher check-config`，再启动 `run`；公开接口或 mock 不能替代真实账号验证。
-4. 下一份精排报告生成后，检查公众号草稿箱是否出现标题、摘要、正文和封面完整的草稿。`status` 中 `wechat-draft` 的 `delivered` 仅表示草稿已创建；还要人工确认草稿内容和排版，再从公众号后台决定是否发布或群发。
-5. 若日志出现 `wechat_api_40164_ip_not_whitelisted`，更新白名单后执行 `./bin/stock-watcher retry wechat-draft`。若出现 `40164` 以外的权限错误，先核对 AppID/AppSecret、账号接口权限和 `second_stage` 开关；不要用重复启动进程绕过投递账本。
+4. 下一份精排报告或盘前预测生成后，检查公众号草稿箱是否出现标题、摘要、正文和封面完整的草稿；盘前稿应在 08:45 后、09:30 前生成。`status` 中 `wechat-draft` 的 `delivered` 仅表示草稿已创建；还要人工确认草稿内容和排版，再从公众号后台决定是否发布或群发。
+5. 若日志出现 `wechat_api_40164_ip_not_whitelisted`，更新白名单后执行 `./bin/stock-watcher retry wechat-draft`。若出现 `40164` 以外的权限错误，先核对 AppID/AppSecret、账号接口权限，以及 `second_stage`/`dayrange` 推送开关；不要用重复启动进程绕过投递账本。
 
 当前仓库的自动化验证覆盖模拟微信接口的成功、鉴权刷新、限流、IP 白名单和输入校验；没有真实 AppID/AppSecret 与实际公众号草稿箱，不能宣称真实部署已验证。首次上线应按上述步骤在真实账号完成一次受控草稿验收。
 

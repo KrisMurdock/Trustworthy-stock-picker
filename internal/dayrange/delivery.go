@@ -23,9 +23,9 @@ type DeliveryStore interface {
 	Check() error
 }
 
-// ConfigureDelivery loads the persistent ledger and limits delivery to the
-// predictor_dayrange route. Calling it again replaces the delivery dependencies
-// without creating a second in-memory ledger.
+// ConfigureDelivery loads the persistent ledger for the predictor_dayrange
+// cards and the article-only wechat_premarket route. Calling it again replaces
+// the delivery dependencies without creating a second in-memory ledger.
 func (s *Service) ConfigureDelivery(store DeliveryStore, channels []notify.Channel) error {
 	if s == nil {
 		return errors.New("dayrange service is incomplete")
@@ -137,6 +137,9 @@ func (s *Service) publishSavedPremarket(ctx context.Context, target string, reco
 	if err := s.publishExecutionCard(ctx, target, predictions, now); err != nil {
 		s.Log.Warn("Premarket execution card failed", "target_date", target, "error", err.Error())
 	}
+	if err := s.publishPremarketArticle(ctx, target, predictions, skipped, generatedAt, now); err != nil {
+		s.Log.Warn("Premarket article draft failed", "target_date", target, "error", err.Error())
+	}
 	return s.publishPremarket(ctx, target, predictions, skipped, generatedAt)
 }
 
@@ -152,6 +155,9 @@ func (s *Service) flushLocked(ctx context.Context, now time.Time) error {
 	}
 	allowed := map[string]bool{}
 	for _, name := range s.deliveryChannelsLocked() {
+		allowed[name] = true
+	}
+	for _, name := range s.articleChannelsLocked() {
 		allowed[name] = true
 	}
 	channels := map[string]notify.Channel{}

@@ -509,11 +509,15 @@ second_stage:
 		t.Fatalf("wechat environment not applied: %+v", c.Wechat)
 	}
 	channels := c.NotificationChannels()
-	if len(channels) != 1 || channels[0].Name != WechatDraftChannelName || channels[0].Type != "wechat" || channels[0].Route != NotifyRouteSecondStage {
+	wantRoute := NotifyRouteSecondStage + "," + NotifyRouteWechatPremarket
+	if len(channels) != 1 || channels[0].Name != WechatDraftChannelName || channels[0].Type != "wechat" || channels[0].Route != wantRoute {
 		t.Fatalf("unexpected wechat channel: %+v", channels)
 	}
 	if got := c.ChannelNamesForRoute(NotifyRouteSecondStage); len(got) != 1 || got[0] != WechatDraftChannelName {
 		t.Fatalf("second-stage route = %v", got)
+	}
+	if got := c.ChannelNamesForRoute(NotifyRouteWechatPremarket); len(got) != 1 || got[0] != WechatDraftChannelName {
+		t.Fatalf("premarket article route = %v", got)
 	}
 	if got := c.ChannelNamesForRoute(NotifyRouteSelection); len(got) != 0 {
 		t.Fatalf("selection route unexpectedly contains %v", got)
@@ -522,6 +526,27 @@ second_stage:
 	t.Setenv("WECHAT_APP_SECRET", "")
 	if _, err := Load(p); err == nil || strings.Contains(err.Error(), "test-app-secret") {
 		t.Fatalf("missing secret error leaked or was accepted: %v", err)
+	}
+}
+
+func TestWechatDraftAllowsPremarketOnlyPush(t *testing.T) {
+	t.Setenv("STOCK_WATCHER_WECHAT_ENABLED", "true")
+	t.Setenv("WECHAT_APP_ID", "wx-premarket-app")
+	t.Setenv("WECHAT_APP_SECRET", "premarket-app-secret")
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	text := valid + `dayrange:
+  enabled: true
+  push_enabled: true
+`
+	if err := os.WriteFile(p, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.ChannelNamesForRoute(NotifyRouteWechatPremarket); len(got) != 1 || got[0] != WechatDraftChannelName {
+		t.Fatalf("premarket article route = %v", got)
 	}
 }
 

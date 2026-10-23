@@ -189,27 +189,27 @@
 | FEISHU_*_WEBHOOK | 空 | 命名通道路由引用的独立 webhook 环境变量，例如 `FEISHU_PREMARKET_EXECUTION_WEBHOOK` |
 | STOCK_WATCHER_FEISHU_CREDENTIALS_FILE | 空 | 显式启用旧版 `feishu.config` 兼容；新部署应改用环境变量 |
 | STOCK_WATCHER_NOTIFY_CHANNELS | 空 | 可选多通道；格式见下 |
-| STOCK_WATCHER_WECHAT_ENABLED | false | 是否把第二层精排文章写入微信公众号草稿箱；只创建草稿，不发布、不群发 |
+| STOCK_WATCHER_WECHAT_ENABLED | false | 是否把第二层精排文章和盘前观察稿写入微信公众号草稿箱；只创建草稿，不发布、不群发 |
 | STOCK_WATCHER_WECHAT_CREDENTIALS_FILE | 空 | 可选的私有凭证文件；支持 `AppID`/`AppSecret` 成对格式或 `app_id=...` 形式，相对路径按配置基准目录解析 |
 | WECHAT_APP_ID | 空 | 公众号 AppID；优先从环境读取，也可由凭证文件提供 |
 | WECHAT_APP_SECRET | 空 | 公众号 AppSecret；优先从环境读取，也可由凭证文件提供，必须保持私密 |
 | WECHAT_THUMB_MEDIA_ID | 空 | 可选封面永久素材 media_id；留空时首次发送自动上传内置封面 |
 | STOCK_WATCHER_WECHAT_AUTHOR | 空 | 可选草稿作者名，最多 16 个字符 |
 | TUSHARE_TOKEN | 空 | Tushare Token；缺失时跳过 Tushare |
-命名通道使用 `name|type|enabled|webhook_env|secret_env|route`，条目之间用 `;` 分隔；命名通道的 `type` 当前只支持 `feishu`，微信公众号草稿由 `STOCK_WATCHER_WECHAT_ENABLED` 自动创建为内置 `wechat-draft` 渠道。`route` 可选 `all`、`selection`、`first_stage`、`second_stage`、`premarket_execution`、`predictor_realtime`、`predictor_dayrange`，留空表示兼容旧配置并向所有阶段广播：
+命名通道使用 `name|type|enabled|webhook_env|secret_env|route`，条目之间用 `;` 分隔；命名通道的 `type` 当前只支持 `feishu`，微信公众号草稿由 `STOCK_WATCHER_WECHAT_ENABLED` 自动创建为内置 `wechat-draft` 渠道。`route` 可选 `all`、`selection`、`first_stage`、`second_stage`、`premarket_execution`、`predictor_realtime`、`predictor_dayrange`、`wechat_premarket`；多个路由可用英文逗号分隔，留空表示兼容旧配置并向所有阶段广播：
 
 ```dotenv
 STOCK_WATCHER_FEISHU_ENABLED=false
 STOCK_WATCHER_NOTIFY_CHANNELS="first-stage|feishu|true|FEISHU_FIRST_STAGE_WEBHOOK||first_stage;second-stage|feishu|true|FEISHU_SECOND_STAGE_WEBHOOK||second_stage;selection|feishu|true|FEISHU_SELECTION_WEBHOOK||selection;premarket-execution|feishu|true|FEISHU_PREMARKET_EXECUTION_WEBHOOK||premarket_execution;predictor-realtime|feishu|true|FEISHU_PREDICTOR_REALTIME_WEBHOOK||predictor_realtime;predictor-dayrange|feishu|true|FEISHU_PREDICTOR_DAYRANGE_WEBHOOK||predictor_dayrange"
 ```
 
-路由含义：`first_stage` 只接收第一层初筛池及回看卡；`second_stage` 只接收第二层精排公众号稿；`selection` 只接收正式日报主卡和详情卡；`premarket_execution` 只接收盘前执行确认卡；`predictor_realtime` 接收 5 分钟实时预测及偏差卡；`predictor_dayrange` 只接收全天高低价盘前预测。不同路由的投递依赖彼此独立，不会因为另一个机器人失败而互相阻塞。微信公众号草稿使用内置的 `wechat-draft` 渠道，固定绑定 `second_stage`，不会接收其他阶段。
+路由含义：`first_stage` 只接收第一层初筛池及回看卡；`second_stage` 只接收第二层精排公众号稿；`selection` 只接收正式日报主卡和详情卡；`premarket_execution` 只接收盘前执行确认卡；`predictor_realtime` 接收 5 分钟实时预测及偏差卡；`predictor_dayrange` 只接收全天高低价盘前预测；`wechat_premarket` 只接收盘前公众号草稿。不同路由的投递依赖彼此独立，不会因为另一个机器人失败而互相阻塞。微信公众号草稿使用内置的 `wechat-draft` 渠道，同时绑定 `second_stage` 与 `wechat_premarket`，不会接收初筛、正式日报、实时预测或飞书专用执行卡。
 
 凭证只来自环境变量或权限受控的私有文件，不写入日志、镜像或仓库。关闭通知时显式设置 `STOCK_WATCHER_FEISHU_ENABLED=false` 和 `STOCK_WATCHER_WECHAT_ENABLED=false`，并确保没有设置 `STOCK_WATCHER_NOTIFY_CHANNELS` 的启用通道。
 
 ### 微信公众号草稿
 
-`STOCK_WATCHER_WECHAT_ENABLED=true` 时，系统会把 `second_stage.push_enabled=true` 生成的精排文章通过 `draft/add` 写入公众号草稿箱。该通道固定只接收第二层精排文章；`first_stage`、正式日报、预测和执行确认卡不会进入草稿箱。启用该通道还要求 `STOCK_WATCHER_SECOND_STAGE_ENABLED=true` 与 `STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED=true`，否则 `check-config` 会拒绝启动。
+`STOCK_WATCHER_WECHAT_ENABLED=true` 时，系统会通过 `draft/add` 写入两类公众号草稿：收盘后的第二层精排文章，以及盘前 08:45 保存预测后生成的“盘前观察”稿。盘前稿把精排候选、执行状态、预测高/低点、边际区间、技术指标、缠论与波浪视角合并为一篇；精排队列暂缺时按已保存预测降级生成，并明确标注序号不是推荐排名。初筛、正式日报、实时预测和飞书专用执行卡不会进入草稿箱。启用该通道要求第二层精排推送或 dayrange 盘前推送至少有一个开启，否则 `check-config` 会拒绝启动。
 
 公众号后台需要提供 AppID 和 AppSecret，可放入 `WECHAT_APP_ID`/`WECHAT_APP_SECRET` 环境变量，或设置 `STOCK_WATCHER_WECHAT_CREDENTIALS_FILE` 指向权限为 `0600` 的私有文件；环境变量优先于文件。凭证文件支持 `AppID` 下一行 `AppSecret` 两段式，也支持 `app_id=...` 配 `app_secret=...` 的形式，单个文件最多读取 64 KiB。`wechat.config` 已被 Git 忽略，不得提交。
 
@@ -219,7 +219,7 @@ STOCK_WATCHER_NOTIFY_CHANNELS="first-stage|feishu|true|FEISHU_FIRST_STAGE_WEBHOO
 
 未设置 `WECHAT_THUMB_MEDIA_ID` 时，首次发送会自动上传内置 900×506 PNG 封面并缓存 media_id；进程重启后会重新上传。长期运行建议先在公众号后台取得永久图片素材的 media_id，再设置 `WECHAT_THUMB_MEDIA_ID`，避免重复上传。草稿正文由确定性纯文本转换为安全 HTML，不包含外部图片、外链或脚本。
 
-草稿事件与精排文章共享 T+1 09:30 过期时间；文章未生成、精排降级到没有候选或事件已过期时不会创建草稿。投递账本采用至少一次语义；若微信已创建草稿但本地在记录成功前崩溃，重启后可能重复创建草稿，需要在草稿箱人工清理重复项。
+草稿事件与精排文章共享 T+1 09:30 过期时间；盘前稿最晚在目标交易日 09:30 前有效。文章未生成、精排降级到没有候选或事件已过期时不会创建草稿，也不临时编造价格。投递账本采用至少一次语义；若微信已创建草稿但本地在记录成功前崩溃，重启后可能重复创建草稿，需要在草稿箱人工清理重复项。
 
 ## AI 与大师复盘配置
 

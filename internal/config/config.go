@@ -122,8 +122,39 @@ const (
 	NotifyRoutePremarketExecution = "premarket_execution"
 	NotifyRoutePredictorRealtime  = "predictor_realtime"
 	NotifyRoutePredictorDayrange  = "predictor_dayrange"
+	NotifyRouteWechatPremarket    = "wechat_premarket"
 	WechatDraftChannelName        = "wechat-draft"
 )
+
+var notifyRoutes = map[string]bool{
+	NotifyRouteAll:                true,
+	NotifyRouteSelection:          true,
+	NotifyRouteFirstStage:         true,
+	NotifyRouteSecondStage:        true,
+	NotifyRoutePremarketExecution: true,
+	NotifyRoutePredictorRealtime:  true,
+	NotifyRoutePredictorDayrange:  true,
+	NotifyRouteWechatPremarket:    true,
+}
+
+func validNotifyRoute(route string) bool {
+	for _, part := range strings.Split(route, ",") {
+		if !notifyRoutes[strings.TrimSpace(part)] {
+			return false
+		}
+	}
+	return true
+}
+
+func notifyRouteMatches(configured, route string) bool {
+	for _, part := range strings.Split(configured, ",") {
+		part = strings.TrimSpace(part)
+		if part == NotifyRouteAll || part == route {
+			return true
+		}
+	}
+	return false
+}
 
 var stockCode = regexp.MustCompile(`^(sh(60|68)[0-9]{4}|sz(00|30)[0-9]{4})$`)
 
@@ -397,7 +428,7 @@ func (c Config) Validate() error {
 		if !regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`).MatchString(channel.Name) || strings.TrimSpace(channel.Type) == "" || channelNames[channel.Name] {
 			return errors.New("notify channels contain an invalid or duplicate name")
 		}
-		if route := strings.TrimSpace(channel.Route); route != "" && route != NotifyRouteAll && route != NotifyRouteSelection && route != NotifyRouteFirstStage && route != NotifyRouteSecondStage && route != NotifyRoutePremarketExecution && route != NotifyRoutePredictorRealtime && route != NotifyRoutePredictorDayrange {
+		if route := strings.TrimSpace(channel.Route); route != "" && !validNotifyRoute(route) {
 			return errors.New("notify channel route is invalid")
 		}
 		if channel.WebhookEnv != "" && !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(channel.WebhookEnv) {
@@ -415,8 +446,8 @@ func (c Config) Validate() error {
 		if utf8.RuneCountInString(strings.TrimSpace(c.Wechat.Author)) > 16 {
 			return errors.New("wechat author must be at most 16 characters")
 		}
-		if !c.SecondStage.Enabled || !c.SecondStage.PushEnabled {
-			return errors.New("wechat draft requires second_stage.enabled and second_stage.push_enabled")
+		if !(c.SecondStage.Enabled && c.SecondStage.PushEnabled) && !(c.DayRange.Enabled && c.DayRange.PushEnabled) {
+			return errors.New("wechat draft requires second_stage or dayrange push")
 		}
 		if channelNames[WechatDraftChannelName] {
 			return errors.New("notify channel name wechat-draft is reserved")
@@ -476,7 +507,7 @@ func (c Config) Validate() error {
 				return errors.New("enabled Feishu requires a valid HTTPS custom bot webhook")
 			}
 		case "wechat":
-			if !c.Wechat.Enabled || channel.Name != WechatDraftChannelName || channel.Route != NotifyRouteSecondStage {
+			if !c.Wechat.Enabled || channel.Name != WechatDraftChannelName || !notifyRouteMatches(channel.Route, NotifyRouteSecondStage) || !notifyRouteMatches(channel.Route, NotifyRouteWechatPremarket) {
 				return errors.New("enabled WeChat draft channel is invalid")
 			}
 		default:
@@ -512,7 +543,7 @@ func (c Config) NotificationChannels() []NotifyChannel {
 		out = append(out, NotifyChannel{Name: "feishu-main", Type: "feishu", Enabled: true, Webhook: c.Feishu.Webhook, Secret: c.Feishu.Secret})
 	}
 	if c.Wechat.Enabled {
-		out = append(out, NotifyChannel{Name: WechatDraftChannelName, Type: "wechat", Enabled: true, Route: NotifyRouteSecondStage})
+		out = append(out, NotifyChannel{Name: WechatDraftChannelName, Type: "wechat", Enabled: true, Route: NotifyRouteSecondStage + "," + NotifyRouteWechatPremarket})
 	}
 	return out
 }
@@ -524,7 +555,7 @@ func (c Config) ChannelNamesForRoute(route string) []string {
 	names := []string{}
 	for _, channel := range c.NotificationChannels() {
 		channelRoute := strings.TrimSpace(channel.Route)
-		if !configured || channelRoute == "" || channelRoute == NotifyRouteAll || channelRoute == route {
+		if !configured || channelRoute == "" || notifyRouteMatches(channelRoute, route) {
 			names = append(names, channel.Name)
 		}
 	}
