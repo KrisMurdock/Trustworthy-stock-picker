@@ -34,17 +34,20 @@ func run() error {
 		topN         = flag.Int("top", 5, "top candidates per day")
 		horizon      = flag.Int("horizon", 5, "holding horizon in trading days")
 		budget       = flag.Float64("budget", 0, "trade cash per position (0 uses the built-in 20000)")
+		years        = flag.Int("years", 3, "lookback years for adjusted bars and daily metrics")
 		minTrainDays = flag.Int("min-train-days", 40, "minimum prior signal dates before the first evaluation")
 		retrainEvery = flag.Int("retrain-every", 5, "retrain frequency in evaluation days")
 		ridge        = flag.Float64("ridge", 1.0, "L2 regularization for the research logistic model")
 		bootstrap    = flag.Int("bootstrap", 2000, "date-cluster bootstrap resamples")
 		seed         = flag.Int64("seed", 20261026, "bootstrap seed")
 		placeboSeed  = flag.Int64("placebo-seed", 0, "permute turnover features across stocks within each date (0 disables the placebo control)")
-		workers      = flag.Int("workers", 4, "parallel BaoStock metric fetches")
+		workers      = flag.Int("workers", 4, "parallel adjusted bar fetches")
+		metricJobs   = flag.Int("metric-workers", 1, "parallel Sohu daily metric fetches")
 		cachePath    = flag.String("cache", ".scratch/turnover-study/metrics.json", "daily metric cache")
+		barCachePath = flag.String("bar-cache", ".scratch/turnover-study/qfq-bars.json", "adjusted bar cache")
 		reportPath   = flag.String("report", ".scratch/turnover-study/report.json", "JSON report output")
-		refresh      = flag.Bool("refresh", false, "refetch cached daily metrics")
-		skipFetch    = flag.Bool("offline", false, "fail rather than fetch missing daily metrics")
+		refresh      = flag.Bool("refresh", false, "refetch cached adjusted bars and daily metrics")
+		skipFetch    = flag.Bool("offline", false, "fail rather than fetch missing adjusted bars or daily metrics")
 		requireCIFS  = flag.Bool("require-cifs", false, "require the market data directory to be CIFS")
 	)
 	flag.Parse()
@@ -55,7 +58,10 @@ func run() error {
 	if err != nil {
 		return errors.New("through must be YYYY-MM-DD")
 	}
-	loadFrom := fromTime.AddDate(-2, 0, 0).Format(time.DateOnly)
+	if *years < 1 || *years > 10 {
+		return errors.New("years must be between 1 and 10")
+	}
+	loadFrom := fromTime.AddDate(-*years, 0, 0).Format(time.DateOnly)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -72,28 +78,9 @@ func run() error {
 	for _, stock := range cfg.Stocks {
 		codes = append(codes, stock.Code)
 	}
-	adjusted, err := db.LoadDailyTrainingBars(context.Background(), codes, loadFrom, *through, "qfq")
-	if err != nil {
-		return err
-	}
 	raw, err := db.LoadDailyTrainingBars(context.Background(), codes, loadFrom, *through, "none")
 	if err != nil {
 		return err
-	}
-	tradingDays, err := calendarDays(context.Background(), db, adjusted, *through)
-	if err != nil {
-		return err
-	}
-	if len(tradingDays) == 0 {
-		return errors.New("no trading days in the selected window")
-	}
-	qfqStart := earliestAdjustDate(adjusted)
-	if qfqStart == "" {
-		return errors.New("no adjusted daily bars found")
-	}
-	if *from == "" {
-		index := min(65, len(tradingDays)-1)
-		*from = tradingDays[index]
 	}
 	loggingOptions, err := logging.EnvOptions()
 	if err != nil {
@@ -105,8 +92,22 @@ func run() error {
 		return err
 	}
 	defer logger.Close()
-
-	metrics, err := loadMetrics(context.Background(), cfg, logger, *cachePath, qfqStart, *through, *refresh, *skipFetch, *workers)
+	adjusted, err := loadAdjusted(context.Background(), cfg, logger, *barCachePath, loadFrom, *through, raw, *refresh, *skipFetch, *workers)
+	if err != nil {
+		return err
+	}
+	tradingDays, err := calendarDays(context.Background(), db, adjusted, *through)
+	if err != nil {
+		return err
+	}
+	if len(tradingDays) == 0 {
+		return errors.New("no trading days in the selected window")
+	}
+	if *from == "" {
+		index := min(65, len(tradingDays)-1)
+		*from = tradingDays[index]
+	}
+	metrics, err := loadMetrics(context.Background(), cfg, logger, *cachePath, loadFrom, *through, expectedStarts(cfg.Stocks, loadFrom, raw), *refresh, *skipFetch, *metricJobs)
 	if err != nil {
 		return err
 	}
@@ -157,7 +158,7 @@ func earliestAdjustDate(bars map[string][]market.Bar) string {
 	return start
 }
 
-func loadMetrics(ctx context.Context, cfg config.Config, logger *logging.Logger, path, from, through string, refresh, offline bool, workers int) (map[string][]market.DailyMetric, error) {
+func loadMetrics(ctx context.Context, cfg config.Config, logger *logging.Logger, path, from, through string, expected map[string]string, refresh, offline bool, workers int) (map[string][]market.DailyMetric, error) {
 	cache := map[string]market.DailyMetricHistory{}
 	if !refresh {
 		if payload, err := os.ReadFile(path); err == nil {
@@ -171,10 +172,19 @@ func loadMetrics(ctx context.Context, cfg config.Config, logger *logging.Logger,
 	need := []config.Stock{}
 	for _, stock := range cfg.Stocks {
 		history, ok := cache[stock.Code]
-		// A recent listing can legitimately start after the requested global
-		// from-date. The feature extractor skips stocks without a full
-		// 21-observation warmup, so only the cache tail must cover the study end.
-		if !ok || history.Validate() != nil || history.FetchedAt.IsZero() || len(history.Metrics) == 0 || history.Metrics[len(history.Metrics)-1].Date < through {
+		start := expected[stock.Code]
+		if start == "" {
+			continue
+		}
+		startLimit, err := addCalendarDays(start, 120)
+		if err != nil {
+			return nil, err
+		}
+		// A recent listing or long suspension can legitimately start after the
+		// requested global from-date. A cache that starts far after the stock's
+		// first raw bar is stale and must be refetched for the longer window.
+		if !ok || history.Validate() != nil || history.FetchedAt.IsZero() || len(history.Metrics) == 0 ||
+			history.Metrics[len(history.Metrics)-1].Date < through || history.Metrics[0].Date > startLimit {
 			need = append(need, stock)
 		}
 	}
@@ -182,7 +192,7 @@ func loadMetrics(ctx context.Context, cfg config.Config, logger *logging.Logger,
 		return nil, fmt.Errorf("metric cache is incomplete: %d stocks need fetching", len(need))
 	}
 	if len(need) > 0 {
-		client := market.NewBaoStockClient(20*time.Second, 350*time.Millisecond)
+		client := market.NewSohuMetricsClient(20*time.Second, 350*time.Millisecond)
 		defer client.Close()
 		if workers < 1 {
 			workers = 1
@@ -190,6 +200,7 @@ func loadMetrics(ctx context.Context, cfg config.Config, logger *logging.Logger,
 		jobs := make(chan config.Stock)
 		var mu sync.Mutex
 		var firstErr error
+		var cacheErr error
 		var wg sync.WaitGroup
 		for worker := 0; worker < workers; worker++ {
 			wg.Add(1)
@@ -216,6 +227,9 @@ func loadMetrics(ctx context.Context, cfg config.Config, logger *logging.Logger,
 					}
 					mu.Lock()
 					cache[stock.Code] = history
+					if err := writeJSONAtomic(path, cache); err != nil && cacheErr == nil {
+						cacheErr = err
+					}
 					mu.Unlock()
 					logger.Info("daily metric fetched", "code", stock.Code, "rows", len(history.Metrics))
 				}
@@ -226,11 +240,11 @@ func loadMetrics(ctx context.Context, cfg config.Config, logger *logging.Logger,
 		}
 		close(jobs)
 		wg.Wait()
+		if cacheErr != nil {
+			return nil, cacheErr
+		}
 		if firstErr != nil {
 			return nil, firstErr
-		}
-		if err := writeJSONAtomic(path, cache); err != nil {
-			return nil, err
 		}
 	}
 	out := make(map[string][]market.DailyMetric, len(cache))
@@ -257,7 +271,7 @@ func writeJSONAtomic(path string, value any) error {
 
 func printSummary(report turnoverstudy.Report, path string) {
 	fmt.Printf("report=%s\n", path)
-	fmt.Printf("data stocks=%d metric_stocks=%d feature_stocks=%d metric_rows=%d metric_range=%s..%s\n", report.Data.Stocks, report.Data.MetricStocks, report.Data.FeatureStocks, report.Data.MetricRows, report.Data.MetricFirstDate, report.Data.MetricLastDate)
+	fmt.Printf("data stocks=%d metric_stocks=%d feature_stocks=%d metric_rows=%d adjusted_range=%s..%s metric_range=%s..%s\n", report.Data.Stocks, report.Data.MetricStocks, report.Data.FeatureStocks, report.Data.MetricRows, report.Data.AdjustedFirstDate, report.Data.AdjustedLastDate, report.Data.MetricFirstDate, report.Data.MetricLastDate)
 	fmt.Printf("data feature_rows=%d resolved_labels=%d positive_labels=%d label_coverage=%.2f%% positive_rate=%.2f%%\n", report.Data.FeatureRows, report.Data.ResolvedLabels, report.Data.PositiveLabels, report.Data.LabelCoveragePct, report.Data.PositiveRatePct)
 	fmt.Printf("dates signal=%d matured=%d eval=%d training=%d from=%s through=%s budget=%.0f\n", report.DateRange.SignalDates, report.DateRange.MaturedSignalDates, report.DateRange.EvalDates, report.DateRange.TrainingDates, report.DateRange.FirstEvalDate, report.DateRange.LastEvalDate, report.TradeCash)
 	fmt.Printf("baseline slots=%d executed=%d mean_executed=%.3f%% mean_slot=%.3f%% win=%.2f%% target=%.2f%% stop=%.2f%% cohort=%.2f%%\n", report.Baseline.Slots, report.Baseline.Executed, report.Baseline.MeanExecutedNetPct, report.Baseline.MeanSlotNetPct, report.Baseline.WinRatePct, report.Baseline.TargetRatePct, report.Baseline.StopRatePct, report.Baseline.CohortCompoundedPct)

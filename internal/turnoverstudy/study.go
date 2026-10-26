@@ -120,6 +120,8 @@ type DataCoverage struct {
 	MetricRows          int            `json:"metric_rows"`
 	MetricFirstDate     string         `json:"metric_first_date"`
 	MetricLastDate      string         `json:"metric_last_date"`
+	AdjustedFirstDate   string         `json:"adjusted_first_date"`
+	AdjustedLastDate    string         `json:"adjusted_last_date"`
 	FeatureStocks       int            `json:"feature_stocks"`
 	FeatureRows         int            `json:"feature_rows"`
 	TurnoverFeatureRows int            `json:"turnover_feature_rows"`
@@ -208,6 +210,18 @@ func Run(ctx context.Context, data Data, opts Options) (Report, error) {
 			}
 		}
 	}
+	adjustedFirst, adjustedLast := "", ""
+	for _, bars := range data.Adjusted {
+		if len(bars) == 0 {
+			continue
+		}
+		if adjustedFirst == "" || bars[0].Date < adjustedFirst {
+			adjustedFirst = bars[0].Date
+		}
+		if last := bars[len(bars)-1].Date; last > adjustedLast {
+			adjustedLast = last
+		}
+	}
 	dateIndex := make(map[string]int, len(data.TradingDays))
 	for i, day := range data.TradingDays {
 		dateIndex[day] = i
@@ -220,6 +234,8 @@ func Run(ctx context.Context, data Data, opts Options) (Report, error) {
 	report.Data.MetricRows = metricRows
 	report.Data.MetricFirstDate = metricFirst
 	report.Data.MetricLastDate = metricLast
+	report.Data.AdjustedFirstDate = adjustedFirst
+	report.Data.AdjustedLastDate = adjustedLast
 	report.From, report.Through = first, last
 	report.TradeCash = opts.TradeCash
 	if len(raw) == 0 {
