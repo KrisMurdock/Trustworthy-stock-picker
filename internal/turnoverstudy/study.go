@@ -40,6 +40,7 @@ type Options struct {
 	Through       string
 	TopN          int
 	Horizon       int
+	TradeCash     float64
 	MinTrainDays  int
 	RetrainEvery  int
 	Ridge         float64
@@ -100,6 +101,7 @@ type Report struct {
 	PlaceboSeed   int64               `json:"placebo_seed,omitempty"`
 	From          string              `json:"from"`
 	Through       string              `json:"through"`
+	TradeCash     float64             `json:"trade_cash"`
 	FeatureNames  []string            `json:"feature_names"`
 	FeatureGroups map[string][]string `json:"feature_groups"`
 	Data          DataCoverage        `json:"data"`
@@ -169,6 +171,9 @@ type rawRow struct {
 
 func Run(ctx context.Context, data Data, opts Options) (Report, error) {
 	opts = normalizeOptions(opts)
+	if opts.TradeCash < 1000 || opts.TradeCash > 1e8 {
+		return Report{}, errors.New("turnover study trade cash must be between 1000 and 100000000")
+	}
 	modelID := "turnover_study_v1"
 	if opts.PlaceboSeed != 0 {
 		modelID = "turnover_study_placebo_v1"
@@ -179,6 +184,7 @@ func Run(ctx context.Context, data Data, opts Options) (Report, error) {
 			"Baseline is the first-stage feature proxy: ATR, low20 distance, return5, RSI14, touch_rate20, base_score, volume_ratio, high20 distance; base_score includes the upper-wick penalty and 0-100 clamp used by production.",
 			"Turnover features are point-in-time BaoStock turn/amount observations; no future observation is used. Float market value is derived from amount / turnover rate as a size control.",
 			"Labels are next-session-open entries with the repository's 3% target, 3% stop, fees and T+1 daily simulation.",
+			"Trade cash is the per-position budget; a minimum board lot that cannot be funded is recorded as cash_insufficient rather than silently resized or dropped from the ranking.",
 			"Walk-forward training uses only labels whose five-session horizon closed strictly before each evaluation date.",
 			"The baseline is a refitted proxy of the first-stage feature set, not the frozen production logistic artifact; this isolates the feature increment but is not a production replay.",
 			"The study covers the saved qfq window only. A short single-regime sample cannot establish durable edge.",
@@ -215,6 +221,7 @@ func Run(ctx context.Context, data Data, opts Options) (Report, error) {
 	report.Data.MetricFirstDate = metricFirst
 	report.Data.MetricLastDate = metricLast
 	report.From, report.Through = first, last
+	report.TradeCash = opts.TradeCash
 	if len(raw) == 0 {
 		return report, errors.New("no eligible turnover-study rows")
 	}
@@ -298,6 +305,9 @@ func normalizeOptions(opts Options) Options {
 	if opts.Horizon <= 0 {
 		opts.Horizon = 5
 	}
+	if opts.TradeCash <= 0 {
+		opts.TradeCash = config.DefaultStrategy().TradeCash
+	}
 	if opts.MinTrainDays <= 0 {
 		opts.MinTrainDays = 40
 	}
@@ -339,6 +349,8 @@ func buildRows(ctx context.Context, data Data, opts Options, dateIndex map[strin
 			return nil, coverage, "", "", err
 		}
 		var dayRows []rawRow
+		simConfig := config.DefaultStrategy()
+		simConfig.TradeCash = opts.TradeCash
 		for _, stock := range data.Stocks {
 			adjusted := data.Adjusted[stock.Code]
 			rawBars := data.Raw[stock.Code]
@@ -370,7 +382,7 @@ func buildRows(ctx context.Context, data Data, opts Options, dateIndex map[strin
 			}
 			lowDistance := (adjusted[idx].Close/low - 1) * 100
 			touch := touchRate20(adjusted[:idx+1])
-			outcome, err := strategy.Simulate(config.DefaultStrategy(), data.Calendar, stock.Code, rawBars[rawIdx], rawBars[rawIdx+1:], opts.Horizon)
+			outcome, err := strategy.Simulate(simConfig, data.Calendar, stock.Code, rawBars[rawIdx], rawBars[rawIdx+1:], opts.Horizon)
 			if err != nil {
 				return nil, coverage, "", "", err
 			}

@@ -33,6 +33,7 @@ func run() error {
 		through      = flag.String("through", "", "last signal date (default: latest saved quote)")
 		topN         = flag.Int("top", 5, "top candidates per day")
 		horizon      = flag.Int("horizon", 5, "holding horizon in trading days")
+		budget       = flag.Float64("budget", 0, "trade cash per position (0 uses the built-in 20000)")
 		minTrainDays = flag.Int("min-train-days", 40, "minimum prior signal dates before the first evaluation")
 		retrainEvery = flag.Int("retrain-every", 5, "retrain frequency in evaluation days")
 		ridge        = flag.Float64("ridge", 1.0, "L2 regularization for the research logistic model")
@@ -117,7 +118,7 @@ func run() error {
 	report, err := turnoverstudy.Run(context.Background(), turnoverstudy.Data{
 		Stocks: cfg.Stocks, Adjusted: adjusted, Raw: raw, Metrics: metrics, Calendar: cal, TradingDays: tradingDays,
 	}, turnoverstudy.Options{From: *from, Through: *through, TopN: *topN, Horizon: *horizon,
-		MinTrainDays: *minTrainDays, RetrainEvery: *retrainEvery, Ridge: *ridge, Bootstrap: *bootstrap, BootstrapSeed: *seed, PlaceboSeed: *placeboSeed})
+		TradeCash: *budget, MinTrainDays: *minTrainDays, RetrainEvery: *retrainEvery, Ridge: *ridge, Bootstrap: *bootstrap, BootstrapSeed: *seed, PlaceboSeed: *placeboSeed})
 	if err != nil {
 		return err
 	}
@@ -258,7 +259,7 @@ func printSummary(report turnoverstudy.Report, path string) {
 	fmt.Printf("report=%s\n", path)
 	fmt.Printf("data stocks=%d metric_stocks=%d feature_stocks=%d metric_rows=%d metric_range=%s..%s\n", report.Data.Stocks, report.Data.MetricStocks, report.Data.FeatureStocks, report.Data.MetricRows, report.Data.MetricFirstDate, report.Data.MetricLastDate)
 	fmt.Printf("data feature_rows=%d resolved_labels=%d positive_labels=%d label_coverage=%.2f%% positive_rate=%.2f%%\n", report.Data.FeatureRows, report.Data.ResolvedLabels, report.Data.PositiveLabels, report.Data.LabelCoveragePct, report.Data.PositiveRatePct)
-	fmt.Printf("dates signal=%d matured=%d eval=%d training=%d from=%s through=%s\n", report.DateRange.SignalDates, report.DateRange.MaturedSignalDates, report.DateRange.EvalDates, report.DateRange.TrainingDates, report.DateRange.FirstEvalDate, report.DateRange.LastEvalDate)
+	fmt.Printf("dates signal=%d matured=%d eval=%d training=%d from=%s through=%s budget=%.0f\n", report.DateRange.SignalDates, report.DateRange.MaturedSignalDates, report.DateRange.EvalDates, report.DateRange.TrainingDates, report.DateRange.FirstEvalDate, report.DateRange.LastEvalDate, report.TradeCash)
 	fmt.Printf("baseline slots=%d executed=%d mean_executed=%.3f%% mean_slot=%.3f%% win=%.2f%% target=%.2f%% stop=%.2f%% cohort=%.2f%%\n", report.Baseline.Slots, report.Baseline.Executed, report.Baseline.MeanExecutedNetPct, report.Baseline.MeanSlotNetPct, report.Baseline.WinRatePct, report.Baseline.TargetRatePct, report.Baseline.StopRatePct, report.Baseline.CohortCompoundedPct)
 	fmt.Printf("candidate slots=%d executed=%d mean_executed=%.3f%% mean_slot=%.3f%% win=%.2f%% target=%.2f%% stop=%.2f%% cohort=%.2f%%\n", report.Candidate.Slots, report.Candidate.Executed, report.Candidate.MeanExecutedNetPct, report.Candidate.MeanSlotNetPct, report.Candidate.WinRatePct, report.Candidate.TargetRatePct, report.Candidate.StopRatePct, report.Candidate.CohortCompoundedPct)
 	fmt.Printf("increment mean_executed=%+.3f%% mean_slot=%+.3f%% win=%+.2fpp target=%+.2fpp stop=%+.2fpp cohort=%+.2f%%\n", report.Increment.MeanExecutedNetPct, report.Increment.MeanSlotNetPct, report.Increment.WinRatePct, report.Increment.TargetRatePct, report.Increment.StopRatePct, report.Increment.CohortCompoundedPct)
