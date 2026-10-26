@@ -49,7 +49,7 @@ blend_score = weighted - risk_eta × percentile(atr14_pct)
 
 ### 收盘后 artifact 生成与延迟发布
 
-交易日 15:00 收盘后，Go 进程按 `daily.run_at` 同步当日行情，完成第一层初筛和主报告后即可先投递；精排不阻塞主报告。`deploy/stock-watcher-secondstage.timer` 在 15:00、15:05、15:10、15:15、15:20 触发离线生成服务，`scripts/secondstage/generate_daily.py` 等待当日冻结初筛报告，生成 `candidates_stage2_top95.json`、`dataset.json`，再并行运行 JEV、Laya official、Laya multilingual 和 Chinese Decision。四路全部成功后才把四份 artifact 原子发布到通用路径；任一失败不会留下部分发布。
+交易日 15:00 收盘后，Go 进程按 `daily.run_at` 同步当日行情，完成第一层初筛和主报告后即可先投递；精排不阻塞主报告。`deploy/stock-watcher-secondstage.timer` 在 15:00、15:05、15:10、15:15、15:20 触发离线生成服务，`scripts/secondstage/generate_daily.py` 等待当日冻结初筛报告，生成 `candidates_stage2_top95.json`、`dataset.json`，再并行运行 JEV、Laya official、Laya multilingual 和 Chinese Decision。默认四路全部成功后才把四份 artifact 原子发布到通用路径；任一失败不会留下部分发布。显式启用可选 DeepSeek 支路时，五路全部成功后才会发布，默认行为不变。
 
 Go 进程在 `second_stage.publish_by`（默认 15:28）之前每分钟重试读取 artifact：到齐后只基于冻结初筛重算精排、替换同日派生报告并投递精排稿，不重新下载行情或改变 `report_input`。到点时先做最后一次读取；仍未齐则释放中性降级结果并标记 `degraded=true`。Python 只存在于离线 artifact 生成链，生产 Go 二进制仍不启动 Python、子进程或外部推理服务。安装与排障命令见 [部署、升级与排障](deployment.md)。
 
@@ -68,6 +68,49 @@ Go 进程在 `second_stage.publish_by`（默认 15:28）之前每分钟重试读
 下载模型、研究训练模型、特征集和评估结果统一保存在共享盘的 `download_models/`、`trained_models/`、`build_features/` 和 `evaluations/` 根目录；阶段标识和当前路径见 [模型、特征与评估产物存储](model-storage.md)。脚本使用显式本地路径，不依赖共享盘内符号链接。
 
 Go 生产进程仍只读取离线 artifact，不导入 Laya 或 Chinese Decision、不启动 Python 子进程；将同 schema artifact 写到通用模型路径并在 blend 计划中配置权重即可参与多模型融合。模型概率同样先做组内百分位归一化；树模型辅助预测仍按 JEV 分布训练，不能把 Laya、Chinese Decision 概率或树模型预测解释为校准后的收益。
+
+### DeepSeek 离线打分与两阶段对比（实验支路）
+
+`scripts/secondstage/deepseek_scores.py` 通过 OpenAI 兼容的 `chat/completions` 接口调用 DeepSeek，支持 `stage1` 全池初筛和 `stage2` Top95 精排，输出与 JEV/Laya 相同的 `schema_version: 1` artifact（`adjacent15`、`full15_top12`），可直接参与离线评估。默认按相邻 5 只分组，对三种选项顺序取平均，温度固定为 0，并要求响应精确覆盖组内全部代码；非法 JSON、缺项、越界分数和输出 token 截断都会使该组失败，而不是静默补分。`--reasoning-effort` 可显式覆盖推理档，日报管线固定使用 `none` 以控制延迟；高推理档可能耗尽输出预算，不作为默认实验口径。
+
+私有配置只从 `--config`（默认仓库根部 `llm.config`，已被 Git 忽略）或环境变量读取。配置字段为 `bash_url`、`apikey`、`model` 和可选的 `effort`；环境变量优先级为显式 CLI、`DEEPSEEK_BASE_URL`/`DEEPSEEK_MODEL`/`DEEPSEEK_REASONING_EFFORT`/`DEEPSEEK_API_KEY`、私有配置。Base URL 必须是绝对 HTTP(S) URL，且禁止内嵌凭证、查询参数和 Fragment；HTTP 只允许回环地址。密钥不得写入仓库、日志、提交信息或评估报告。请求对 408/409/429/5xx 和网络超时做有限重试，401/403 不重试；成功响应按请求载荷哈希缓存，解析失败会删除该缓存并绕过缓存重试。
+
+`generate_daily.py --deepseek` 会把 DeepSeek 作为可选第五路加入同一个并发批次，并传递 `--reasoning-effort none`；未指定时仍只生成原来的四路。第一阶段可用 `--top-out` 写出 DeepSeek 自选 Top95，供第二阶段和端到端评估复用。所有已选模型成功后才原子发布；任一路失败不会留下部分新 artifact，Go 进程仍只读取最终文件，不在生产进程同步调用外部服务。
+
+`scripts/secondstage/evaluate_deepseek.py` 只读取冻结候选、标签和 artifact，不访问网络。它比较 first-stage、旧树模型、JEV、DeepSeek 以及若干固定权重融合，按交易日做 tie-aware 组内百分位和配对 bootstrap。下表是 legacy 原始候选行（含代码、名称、base/model/blend 分数和重复 features）的历史结果，不是 2026-10-26 紧凑 state 实验的数值基线。2026-09-24 至 10-14 的 9 个测试日、每日 163 只全池和 Top95 精排结果如下；Top10 指标为交易日等权平均：
+
+| 第二阶段排序器 | Hit@10 | NDCG@10 | MaxHigh@10 | Close3@10 |
+|---|---:|---:|---:|---:|
+| first-stage blend | 68.9% | 0.679 | +3.86% | -6.86% |
+| 本地树 | 67.8% | 0.690 | +4.36% | -5.01% |
+| JEV | 55.6% | 0.550 | +2.54% | -6.46% |
+| DeepSeek | 63.3% | 0.609 | +2.97% | -4.22% |
+
+DeepSeek 相对本地树为 `Hit@10` -4.4 个百分点、`NDCG@10` -0.081、`MaxHigh@10` -1.39 个百分点，只有 `Close3@10` +0.78 个百分点，不能表述为优于本地树。相对 JEV，DeepSeek 的 `Hit@10` +7.8 个百分点、`NDCG@10` +0.059、`MaxHigh@10` +0.42 个百分点、`Close3@10` +2.24 个百分点，其中收盘回撤改善的 bootstrap 区间不跨 0，但命中率和 NDCG 区间仍包含 0。DeepSeek 自选 Top95 的端到端两阶段 `Hit@10` 为 63.3%（first-stage 61.1%），但 `NDCG@10` 0.611 对 0.621、`MaxHigh@10` +2.29% 对 +3.29%，仍非整体更优。
+
+2026-10-15、10-16 的 2 日敏感性结果中，DeepSeek 的 `Hit@10` 为 70.0%、`NDCG@10` 0.753，低于本地树（100.0%、1.000）和 JEV（85.0%、0.851）。这两个日期此前已用于其他研究，只能作为敏感性检查，不是独立长期样本外证明；9 个测试日样本也较短。因此 DeepSeek 支路保持默认关闭，生产 blend 权重不变，不能把上述结果解释为成功概率、收益承诺或投资建议。
+
+### 紧凑 state 的数值 vs 文字分档实验
+
+2026-10-26 追加的实验只比较 state 表达，不改变候选池、分组、评分目标和 artifact schema。`--state-profile compact` 把候选隐藏为 `C1...Cn`，只保留 10 个数值特征（均线距离/斜率、5 日收益、相对强度、RSI14、收盘位置、量比、20 日高点距离、ATR14、上影线），不发送代码、名称、base/model/blend 分数或重复 features。`--state-format text` 再把每个特征按当日候选池的 tie-aware 分位切成七档：`very low`、`low`、`low-to-mid`、`mid`、`mid-to-high`、`high`、`very high`，切点为 10%/25%/40%/60%/75%/90%。文字档只保留当日相对位置，不再保留绝对幅度。`--state-format text` 必须与 `--state-profile compact` 同用；默认仍是 legacy numeric，生产行为不变。紧凑数值基线与旧 legacy 表也不可直接比较：同一 9 日固定精排的 `Hit@10` 为 74.4% 对 63.3%，因为候选可见字段、重复 features 和分数信息都变了。
+
+两臂使用同一 DeepSeek 模型、同一 5 人组、三种选项顺序、`temperature=0` 和 `reasoning_effort=none`。初筛覆盖每日 163 只全池；固定精排使用同一 first-stage Top95；端到端使用各臂自己的初筛 Top95。下表为交易日等权平均，箭头左侧为紧凑数值 state，右侧为文字 state。表中的“强势/弱势”只描述候选池整体命中率和第三日收盘收益，不是指数或宏观状态：
+
+| 区间 | 阶段 | Hit@10 | NDCG@10 | MaxHigh@10 | Close3@10 |
+|---|---|---:|---:|---:|---:|
+| 2026-08-03～08-13（9 日，强势） | 初筛 | 81.1% → 93.3% | 0.849 → 0.935 | +6.16% → +8.26% | +2.33% → +4.81% |
+| 2026-08-03～08-13（9 日，强势） | 固定 Top95 | 78.9% → 93.3% | 0.828 → 0.938 | +5.88% → +8.84% | +1.96% → +5.12% |
+| 2026-08-03～08-13（9 日，强势） | 端到端 | 78.9% → 84.4% | 0.774 → 0.871 | +5.23% → +6.43% | +1.65% → +2.84% |
+| 2026-09-24～10-14（9 日，弱势） | 初筛 | 71.1% → 60.0% | 0.693 → 0.593 | +2.72% → +2.18% | -1.39% → -5.12% |
+| 2026-09-24～10-14（9 日，弱势） | 固定 Top95 | 74.4% → 64.4% | 0.732 → 0.629 | +2.76% → +2.42% | -1.58% → -3.69% |
+| 2026-09-24～10-14（9 日，弱势） | 端到端 | 61.1% → 63.3% | 0.596 → 0.627 | +1.95% → +2.07% | -2.51% → -2.90% |
+| 2026-10-15～10-16（2 日敏感性） | 固定 Top95 | 70.0% → 90.0% | 0.750 → 0.906 | +3.21% → +4.11% | -1.37% → +0.46% |
+
+两臂初筛 Top95 在 9 日区块中平均只有约 69/95 只重叠，说明 state 表达会显著改变初筛选择；端到端结果不能简单归因于第二阶段精排。
+
+结论是“区间相关，不是稳定提升”。8 月强势区间里文字 state 在初筛、固定精排和端到端都更好，初筛 `Recall@95` 也从 54.5% 升到 59.5%；9 月弱势区间里文字 state 在初筛和固定精排明显更差，初筛 `Recall@95` 从 63.5% 降到 59.6%，端到端只有轻微正向差异且 bootstrap 区间跨 0；10 月 15-16 的 2 日敏感性文字 state 更好，重复运行方向一致，但样本只有 2 天。一个事后解释是：文字档丢失了 ATR、RSI、上影线等绝对风险幅度，在普涨、候选区分度高的区间相对排序更重要，在弱势区间绝对幅度更重要；这只是观察，不是因果结论。
+
+因此不能把文字 state 当作两个阶段的普遍改进，也不能据此替换生产数值 state。默认仍使用 legacy numeric；若要继续研究，应先按市场宽度/波动状态预先定义路由规则，或在更多独立日期上验证数值与文字分数融合，再决定是否接入日报。该实验的局限包括：9 个测试日和 2 日敏感性样本都短，10-15/16 已用于其他研究；8 月区块是在看到方向反转后追加的事后分块，不是预先注册的独立验证；只使用一个 DeepSeek 模型和一组固定切点；文字档按当日候选池计算，候选池大小变化会改变档位边界；标签是未来三个交易日最大最高价和第三日收盘涨幅，未计交易成本；历史排序结果不代表成功概率、收益承诺或投资建议。
 
 离线验收以交易日等权的“Top10 平均未来三日最大高点涨幅”为主指标，`NDCG@10` 为辅助指标；同时记录 Top10 第三日收盘收益和 `+1%` 命中率作为风险护栏，并按交易日做 block bootstrap。历史结果只描述样本内/样本外排序表现，不是成功概率、收益承诺或投资建议。
 

@@ -69,12 +69,53 @@ class GenerateDailyTests(unittest.TestCase):
             threads=8,
             laya_max_len=4096,
             laya_head_max_len=256,
+            deepseek=False,
         )
         commands = generate_daily.model_commands(args, "2026-10-21", Path("candidates.json"), Path("dataset.json"), Path("scores"))
         for name in ("laya_official", "laya_multilingual"):
             command = commands[name][0]
             self.assertEqual(command[command.index("--max-len") + 1], "4096")
             self.assertEqual(command[command.index("--head-max-len") + 1], "256")
+
+    def test_deepseek_is_opt_in_and_uses_private_config(self) -> None:
+        args = argparse.Namespace(
+            python="/usr/bin/python3.11",
+            models_root=Path("/models"),
+            group_size=5,
+            threads=8,
+            laya_max_len=4096,
+            laya_head_max_len=256,
+            deepseek=True,
+            deepseek_config=Path("/private/llm.config"),
+            deepseek_model="deepseek/deepseek-flash",
+            deepseek_workers=6,
+        )
+        commands = generate_daily.model_commands(args, "2026-10-21", Path("candidates.json"), Path("dataset.json"), Path("scores"))
+        self.assertIn("deepseek", commands)
+        command, output = commands["deepseek"]
+        self.assertEqual(command[command.index("--config") + 1], "/private/llm.config")
+        self.assertEqual(command[command.index("--stage") + 1], "stage2")
+        self.assertEqual(command[command.index("--model") + 1], "deepseek/deepseek-flash")
+        self.assertEqual(command[command.index("--reasoning-effort") + 1], "none")
+        self.assertEqual(output, Path("scores/deepseek/2026-10-21.json"))
+        self.assertNotIn("deepseek", generate_daily.selected_models(argparse.Namespace(deepseek=False)))
+
+    def test_deepseek_config_is_not_printed_by_worker_args(self) -> None:
+        args = argparse.Namespace(
+            python="/usr/bin/python3.11",
+            models_root=Path("/models"),
+            group_size=5,
+            threads=8,
+            laya_max_len=4096,
+            laya_head_max_len=256,
+            deepseek=True,
+            deepseek_config=Path("/private/llm.config"),
+            deepseek_model="",
+            deepseek_workers=4,
+        )
+        command, _ = generate_daily.model_commands(args, "2026-10-21", Path("c.json"), Path("d.json"), Path("s"))["deepseek"]
+        self.assertEqual(command[command.index("--workers") + 1], "4")
+        self.assertNotIn("apikey", " ".join(command).lower())
 
     def test_deadline_only_applies_to_current_signal_date(self) -> None:
         shanghai = ZoneInfo("Asia/Shanghai")
