@@ -61,7 +61,7 @@ class Transport:
         self.calls += 1
         payload = json.loads(request.data)
         content = json.loads(payload["messages"][-1]["content"])
-        codes = [row["code"] for row in content["candidates"]]
+        codes = [row.get("code") or row["id"] for row in content["candidates"]]
         return score_response({code: float(int(code[1:]) * 10) for code in codes})
 
 
@@ -105,6 +105,60 @@ class DeepSeekScoreTests(unittest.TestCase):
             deepseek_scores.parse_score_content('{"scores":[{"code":"a","score":60}]}', ["a", "b"])
         with self.assertRaisesRegex(deepseek_scores.InputError, "duplicate"):
             deepseek_scores.parse_score_content('{"scores":[{"code":"a","score":60},{"code":"a","score":40}]}', ["a"])
+
+    def test_compact_state_hides_identity_and_keeps_ten_numeric_fields(self) -> None:
+        prepared = [
+            {
+                "candidate": {"code": f"c{index}", "name": f"stock-{index}", "rank": index + 1},
+                "features": feature_snapshot(index),
+            }
+            for index in range(2)
+        ]
+        rows, id_to_code = deepseek_scores.build_state_rows(prepared, "2026-10-21", "compact", "numeric")
+        expected = {"id", *(name for name, _, _ in deepseek_scores.COMPACT_FIELDS)}
+        self.assertEqual(set(rows[0]), expected)
+        self.assertNotIn("code", rows[0])
+        self.assertNotIn("name", rows[0])
+        self.assertEqual(id_to_code, {"C1": "c0", "C2": "c1"})
+        self.assertIsInstance(rows[0]["return_5d_pct"], float)
+
+    def test_compact_text_state_uses_seven_within_day_levels(self) -> None:
+        prepared = []
+        for index in range(7):
+            features = feature_snapshot(index)
+            features["return5"] = float(index)
+            prepared.append({
+                "candidate": {"code": f"c{index}", "rank": index + 1},
+                "features": features,
+            })
+        rows, _ = deepseek_scores.build_state_rows(prepared, "2026-10-21", "compact", "text")
+        self.assertEqual(
+            [row["return_5d_pct"] for row in rows],
+            ["very low", "low", "low-to-mid", "mid", "mid-to-high", "high", "very high"],
+        )
+        with self.assertRaisesRegex(deepseek_scores.InputError, "text requires compact"):
+            deepseek_scores.build_state_rows(prepared, "2026-10-21", "legacy", "text")
+
+    def test_text_prompt_declares_categorical_legend(self) -> None:
+        rows = [
+            {"id": "C1", "return_5d_pct": "high"},
+            {"id": "C2", "return_5d_pct": "low"},
+        ]
+        payload = json.loads(deepseek_scores.build_prompt("stage2", "2026-10-21", rows, [0, 1], "text"))
+        self.assertEqual(payload["state_format"], "categorical")
+        self.assertEqual(payload["label_order"], list(deepseek_scores.TEXT_LABELS))
+        self.assertIn("cross-sectional", payload["state_note"])
+
+    def test_legacy_numeric_prompt_keeps_original_wire_shape(self) -> None:
+        legacy = json.loads(deepseek_scores.build_prompt(
+            "stage2", "2026-10-21", [{"code": "c1"}, {"code": "c2"}], [0, 1],
+        ))
+        self.assertNotIn("state_format", legacy)
+        compact = json.loads(deepseek_scores.build_prompt(
+            "stage2", "2026-10-21", [{"id": "C1"}, {"id": "C2"}], [0, 1],
+            "numeric", "compact",
+        ))
+        self.assertEqual(compact["state_format"], "numeric")
 
     def test_score_group_averages_three_orders(self) -> None:
         transport = Transport()
@@ -181,7 +235,7 @@ class DeepSeekScoreTests(unittest.TestCase):
             attempts["count"] += 1
             payload = json.loads(request.data)
             content = json.loads(payload["messages"][-1]["content"])
-            codes = [row["code"] for row in content["candidates"]]
+            codes = [row.get("code") or row["id"] for row in content["candidates"]]
             if attempts["count"] == 1:
                 return response({
                     "choices": [{"finish_reason": "stop", "message": {"content": "not json"}}],
@@ -261,12 +315,15 @@ class DeepSeekScoreTests(unittest.TestCase):
                 base_url="",
                 model="",
                 api_key_env="UNUSED",
+                reasoning_effort="",
                 timeout=10,
                 retries=1,
                 max_output_tokens=256,
                 cache_dir=root / "cache",
                 no_cache=False,
                 skip_existing=False,
+                state_profile="legacy",
+                state_format="numeric",
                 top_out=root / "stage2.json",
                 top_n=3,
             )
@@ -279,6 +336,59 @@ class DeepSeekScoreTests(unittest.TestCase):
             next_document = json.loads((root / "stage2.json").read_text(encoding="utf-8"))
             top = next_document["dates"]["2026-10-21"]
             self.assertEqual([row["code"] for row in top], ["c05", "c04", "c03"])
+
+    def test_compact_execute_maps_option_ids_back_to_candidate_codes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidates = []
+            samples = []
+            for index in range(6):
+                code = f"c{index:02d}"
+                features = feature_snapshot(index)
+                candidates.append({
+                    "code": code,
+                    "name": f"stock-{index}",
+                    "rank": index + 1,
+                    "base_score": 50 + index,
+                    "blend_score": 0.5 + index / 100,
+                    "features": features,
+                })
+                samples.append({"as_of": "2026-10-21", "code": code, "features": features})
+            candidates_path = root / "candidates.json"
+            dataset_path = root / "dataset.json"
+            candidates_path.write_text(json.dumps({"schema_version": 1, "dates": {"2026-10-21": candidates}}), encoding="utf-8")
+            dataset_path.write_text(json.dumps({"samples": samples}), encoding="utf-8")
+            args = argparse.Namespace(
+                candidates=candidates_path,
+                dataset=dataset_path,
+                output_dir=root / "scores",
+                stage="stage2",
+                dates="2026-10-21",
+                max_dates=0,
+                group_size=5,
+                workers=2,
+                config=Path("/unused"),
+                base_url="",
+                model="",
+                api_key_env="UNUSED",
+                reasoning_effort="",
+                timeout=10,
+                retries=1,
+                max_output_tokens=256,
+                cache_dir=root / "cache",
+                no_cache=False,
+                skip_existing=False,
+                state_profile="compact",
+                state_format="text",
+                top_out=None,
+                top_n=3,
+            )
+            client = deepseek_scores.Client("https://example.test/v1", "key", "model", transport=Transport())
+            self.assertEqual(deepseek_scores.execute(args, client=client), 0)
+            artifact = json.loads((root / "scores" / "2026-10-21.json").read_text(encoding="utf-8"))
+            self.assertEqual(set(artifact["scores"]), {f"c{index:02d}" for index in range(6)})
+            self.assertEqual(artifact["model"]["state_profile"], "compact")
+            self.assertEqual(artifact["model"]["state_format"], "text")
 
 
 if __name__ == "__main__":

@@ -45,12 +45,12 @@ secondstage-generate-daily-test:
 	python3 tests/secondstage_generate_daily_test.py
 
 secondstage-deepseek-test:
-	python3 -m unittest tests.secondstage_deepseek_scores_test tests.secondstage_evaluate_deepseek_test
+	python3 -m unittest tests.secondstage_deepseek_scores_test tests.secondstage_evaluate_deepseek_test tests.secondstage_compare_state_formats_test
 
 smoke: build
 	python3 tests/secondstage_laya_test.py
 	python3 tests/secondstage_chinese_decision_test.py
-	python3 -m unittest tests.secondstage_deepseek_scores_test tests.secondstage_evaluate_deepseek_test
+	python3 -m unittest tests.secondstage_deepseek_scores_test tests.secondstage_evaluate_deepseek_test tests.secondstage_compare_state_formats_test
 	python3 tests/secondstage_generate_daily_test.py
 	bash tests/run_test.sh
 	bash tests/public_tunnel_test.sh

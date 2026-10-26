@@ -33,6 +33,20 @@ DEFAULT_MAX_OUTPUT_TOKENS = 4096
 DEFAULT_RETRIES = 3
 DEFAULT_PARSE_RETRIES = 2
 PROMPT_VERSION = "deepseek-adjacent-v1"
+TEXT_LABELS = ("very low", "low", "low-to-mid", "mid", "mid-to-high", "high", "very high")
+TEXT_CUTS = (0.10, 0.25, 0.40, 0.60, 0.75, 0.90)
+COMPACT_FIELDS = (
+    ("close_vs_ma20_pct", ("ma20_distance",), 1),
+    ("ma20_slope_5d_pct", ("ma20_slope",), 1),
+    ("return_5d_pct", ("return5",), 1),
+    ("relative_strength_5d_pct", ("rel_return5", "relative_return5"), 1),
+    ("rsi14", ("rsi14",), 0),
+    ("close_position", ("close_position",), 2),
+    ("volume_ratio", ("volume_ratio5", "volume_ratio"), 2),
+    ("distance_to_20d_high_pct", ("high20_distance",), 1),
+    ("atr14_pct", ("atr14_pct", "atr14"), 1),
+    ("upper_wick", ("upper_wick",), 2),
+)
 SYSTEM_PROMPT = (
     "You are a point-in-time stock ranking model. Use only the supplied facts. "
     "Return one JSON object and no markdown, explanation, or reasoning text."
@@ -76,22 +90,79 @@ def feature_value(features: Mapping[str, Any], *names: str) -> Any:
     raise InputError(f"missing feature: {names[0]}")
 
 
-def short_candidate(candidate: Mapping[str, Any], features: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "code": str(candidate["code"]),
-        "name": str(candidate.get("name", "")),
-        "base_score": rounded(candidate.get("base_score", 0.0)),
-        "close_vs_ma20_pct": rounded(feature_value(features, "ma20_distance")),
-        "ma20_slope_5d_pct": rounded(feature_value(features, "ma20_slope")),
-        "return_5d_pct": rounded(feature_value(features, "return5")),
-        "relative_strength_5d_pct": rounded(feature_value(features, "rel_return5", "relative_return5")),
-        "rsi14": rounded(feature_value(features, "rsi14"), 0),
-        "close_position": rounded(feature_value(features, "close_position"), 2),
-        "volume_ratio": rounded(feature_value(features, "volume_ratio5", "volume_ratio"), 2),
-        "distance_to_20d_high_pct": rounded(feature_value(features, "high20_distance")),
-        "atr14_pct": rounded(feature_value(features, "atr14_pct", "atr14")),
-        "upper_wick": rounded(feature_value(features, "upper_wick"), 2),
-    }
+def compact_candidate(features: Mapping[str, Any], candidate_id: str) -> dict[str, Any]:
+    row: dict[str, Any] = {"id": candidate_id}
+    for name, aliases, digits in COMPACT_FIELDS:
+        row[name] = rounded(feature_value(features, *aliases), digits)
+    return row
+
+
+def percentile_ranks(values: Sequence[float]) -> list[float]:
+    """Return tie-aware percentile ranks in [0, 1] for one date-wide field."""
+    if not values:
+        return []
+    order = sorted(range(len(values)), key=lambda index: (values[index], index))
+    result = [0.0] * len(values)
+    if len(values) == 1:
+        result[order[0]] = 0.5
+        return result
+    denominator = len(values) - 1
+    start = 0
+    while start < len(order):
+        end = start
+        while end + 1 < len(order) and values[order[end + 1]] == values[order[start]]:
+            end += 1
+        rank = ((start + end) / 2) / denominator
+        for position in range(start, end + 1):
+            result[order[position]] = rank
+        start = end + 1
+    return result
+
+
+def text_label(percentile: float) -> str:
+    for cut, label in zip(TEXT_CUTS, TEXT_LABELS):
+        if percentile < cut:
+            return label
+    return TEXT_LABELS[-1]
+
+
+def candidate_key(candidate: Mapping[str, Any]) -> str:
+    value = candidate.get("code")
+    if not isinstance(value, str) or not value.strip():
+        value = candidate.get("id")
+    if not isinstance(value, str) or not value.strip():
+        raise InputError("candidate state must contain code or id")
+    return value
+
+
+def build_state_rows(
+    prepared: Sequence[Mapping[str, Any]],
+    as_of: str,
+    profile: str,
+    state_format: str,
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Build model-visible candidate state and an option-id to stock-code map."""
+    if profile != "compact":
+        raise InputError("state profiles are legacy or compact; text requires compact")
+    rows: list[dict[str, Any]] = []
+    id_to_code: dict[str, str] = {}
+    for index, item in enumerate(prepared, 1):
+        candidate = item["candidate"]
+        features = item["features"]
+        candidate_id = f"C{index}"
+        row = compact_candidate(features, candidate_id)
+        rows.append(row)
+        id_to_code[candidate_id] = str(candidate["code"])
+    if state_format == "numeric":
+        return rows, id_to_code
+    if state_format != "text":
+        raise InputError(f"unknown state format: {state_format}")
+    for name, _, _ in COMPACT_FIELDS:
+        values = [float(row[name]) for row in rows]
+        labels = [text_label(rank) for rank in percentile_ranks(values)]
+        for row, label in zip(rows, labels):
+            row[name] = label
+    return rows, id_to_code
 
 
 def permutation_orders(count: int) -> list[list[int]]:
@@ -112,7 +183,14 @@ def permutation_orders(count: int) -> list[list[int]]:
     return result
 
 
-def build_prompt(stage: str, as_of: str, candidates: Sequence[Mapping[str, Any]], order: Sequence[int]) -> str:
+def build_prompt(
+    stage: str,
+    as_of: str,
+    candidates: Sequence[Mapping[str, Any]],
+    order: Sequence[int],
+    state_format: str = "numeric",
+    state_profile: str = "legacy",
+) -> str:
     if stage not in CRITERIA:
         raise InputError(f"unknown stage: {stage}")
     ordered = [candidates[index] for index in order]
@@ -131,6 +209,15 @@ def build_prompt(stage: str, as_of: str, candidates: Sequence[Mapping[str, Any]]
             "Use a spread of scores when evidence differs; ties are allowed.",
         ],
     }
+    if state_format == "text":
+        payload["state_format"] = "categorical"
+        payload["state_note"] = (
+            "Each candidate feature is a within-day cross-sectional level, not an exact value. "
+            "Compare the level ordering and weigh the stated criterion."
+        )
+        payload["label_order"] = list(TEXT_LABELS)
+    elif state_profile == "compact":
+        payload["state_format"] = "numeric"
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -365,14 +452,21 @@ class Client:
         usage = document.get("usage") if isinstance(document.get("usage"), Mapping) else {}
         return content, {**usage, "cache_hit": cached}
 
-    def score_group(self, stage: str, as_of: str, candidates: Sequence[Mapping[str, Any]]) -> tuple[dict[str, float], list[Mapping[str, Any]]]:
-        codes = [str(candidate["code"]) for candidate in candidates]
+    def score_group(
+        self,
+        stage: str,
+        as_of: str,
+        candidates: Sequence[Mapping[str, Any]],
+        state_format: str = "numeric",
+        state_profile: str = "legacy",
+    ) -> tuple[dict[str, float], list[Mapping[str, Any]]]:
+        codes = [candidate_key(candidate) for candidate in candidates]
         if len(candidates) < 2:
             return {codes[0]: 0.5} if codes else {}, []
         by_code: dict[str, list[float]] = defaultdict(list)
         usages: list[Mapping[str, Any]] = []
         for order in permutation_orders(len(candidates)):
-            prompt = build_prompt(stage, as_of, candidates, order)
+            prompt = build_prompt(stage, as_of, candidates, order, state_format, state_profile)
             last_error: InputError | None = None
             scores: dict[str, float] | None = None
             for attempt in range(DEFAULT_PARSE_RETRIES + 1):
@@ -445,6 +539,8 @@ def score_date(
     candidates: Sequence[Mapping[str, Any]],
     group_size: int,
     workers: int,
+    state_format: str = "numeric",
+    state_profile: str = "legacy",
 ) -> tuple[dict[str, float], dict[str, Any]]:
     groups = [list(candidates[start : start + group_size]) for start in range(0, len(candidates), group_size)]
     scores: dict[str, float] = {}
@@ -452,7 +548,10 @@ def score_date(
     requests = 0
     cache_hits = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
-        futures = [executor.submit(client.score_group, stage, as_of, group) for group in groups]
+        futures = [
+            executor.submit(client.score_group, stage, as_of, group, state_format, state_profile)
+            for group in groups
+        ]
         for future in concurrent.futures.as_completed(futures):
             group_scores, group_usages = future.result()
             scores.update(group_scores)
@@ -464,7 +563,7 @@ def score_date(
                         usage[key] += float(item.get(key, 0) or 0)
                     except (TypeError, ValueError):
                         pass
-    expected = {str(candidate["code"]) for candidate in candidates}
+    expected = {candidate_key(candidate) for candidate in candidates}
     if set(scores) != expected:
         missing = sorted(expected - set(scores))
         raise InputError(f"DeepSeek did not score every candidate: {', '.join(missing[:5])}")
@@ -519,6 +618,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model", default="", help="override the private config model")
     parser.add_argument("--api-key-env", default="DEEPSEEK_API_KEY")
     parser.add_argument("--reasoning-effort", default="", help="override config effort: none, minimal, low, medium, or high")
+    parser.add_argument("--state-profile", choices=("legacy", "compact"), default="legacy")
+    parser.add_argument("--state-format", choices=("numeric", "text"), default="numeric")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     parser.add_argument("--retries", type=int, default=DEFAULT_RETRIES)
     parser.add_argument("--max-output-tokens", type=int, default=DEFAULT_MAX_OUTPUT_TOKENS)
@@ -537,6 +638,8 @@ def execute(args: argparse.Namespace, client: Client | None = None) -> int:
         raise InputError("--workers must be positive")
     if args.top_n < 1:
         raise InputError("--top-n must be positive")
+    if args.state_format == "text" and args.state_profile != "compact":
+        raise InputError("--state-format text requires --state-profile compact")
     candidates_by_date, _ = load_inputs(args.candidates, args.dataset)
     dates = sorted(candidates_by_date)
     if args.dates:
@@ -576,13 +679,26 @@ def execute(args: argparse.Namespace, client: Client | None = None) -> int:
         "group_size": args.group_size,
         "permutations": len(permutation_orders(min(args.group_size, 10))),
         "timeout_seconds": client.timeout,
+        "state_profile": args.state_profile,
+        "state_format": args.state_format,
     }
+    if args.state_format == "text":
+        metadata["state_labels"] = list(TEXT_LABELS)
     started = time.perf_counter()
     total_usage: dict[str, float] = defaultdict(float)
     for index, as_of in enumerate(pending, 1):
         prepared = candidates_by_date[as_of]
         candidates = [dict(item["candidate"], _features=item["features"]) for item in prepared]
-        scores, usage = score_date(client, args.stage, as_of, candidates, args.group_size, args.workers)
+        if args.state_profile == "compact":
+            state_rows, id_to_code = build_state_rows(prepared, as_of, args.state_profile, args.state_format)
+        else:
+            state_rows = candidates
+            id_to_code = {str(candidate["code"]): str(candidate["code"]) for candidate in candidates}
+        scores_by_id, usage = score_date(
+            client, args.stage, as_of, state_rows, args.group_size, args.workers,
+            args.state_format, args.state_profile,
+        )
+        scores = {id_to_code[state_id]: score for state_id, score in scores_by_id.items()}
         for key, value in usage.items():
             total_usage[key] += float(value)
         codes = [str(candidate["code"]) for candidate in candidates]
