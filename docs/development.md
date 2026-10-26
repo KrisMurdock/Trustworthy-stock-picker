@@ -59,6 +59,17 @@ python3 scripts/secondstage/deepseek_scores.py \
   --config /root/data/codebase/toys_project/stock_watcher/llm.config --reasoning-effort none
 ```
 
+若研究 state 表达，使用 `--state-profile compact`（隐藏代码、名称和分数，只保留 10 个特征）以及 `--state-format numeric|text`。`text` 会按当日候选池的七档分位输出 `very low` 到 `very high`，必须与 `compact` 同用；默认仍是 `legacy` + `numeric`。两臂应使用不同输出目录和各自的 `--top-out`，避免复用另一臂的 Top95：
+
+```bash
+python3 scripts/secondstage/deepseek_scores.py \
+  --candidates /tmp/secondstage/candidates.json --dataset /tmp/secondstage/dataset.json \
+  --stage stage1 --output-dir /tmp/secondstage/scores/text-stage1 \
+  --config /root/data/codebase/toys_project/stock_watcher/llm.config --reasoning-effort none \
+  --state-profile compact --state-format text \
+  --top-out /tmp/secondstage/candidates_text_top95.json
+```
+
 评估只读取冻结输入和 artifact，不调用模型：
 
 ```bash
@@ -71,7 +82,16 @@ python3 scripts/secondstage/evaluate_deepseek.py \
   --out-dir /tmp/secondstage/evaluation
 ```
 
-完整两阶段对比还需提供 `--stage1-candidates`、`--deepseek-stage1-dir`、`--deepseek-e2e-candidates`、`--deepseek-e2e-stage2-dir` 和 `--jev-stage1`；只比较 Top95 精排时加 `--stage2-only`。本轮 9 日测试和 2 日敏感性结论、指标边界见 [算法接入契约](algorithm-interface.md#deepseek-离线打分与两阶段对比实验支路)。对应单测可用 `make secondstage-deepseek-test` 或 `python3 -m unittest tests.secondstage_deepseek_scores_test tests.secondstage_evaluate_deepseek_test tests.secondstage_generate_daily_test` 运行。
+数值与文字两臂分别生成 `comparison.json` 后，用只读对比脚本汇总 stage1、stage2 和端到端，并给出文字减数值的配对 bootstrap：
+
+```bash
+python3 scripts/secondstage/compare_state_formats.py \
+  --numeric /tmp/secondstage/evaluation-numeric/comparison.json \
+  --text /tmp/secondstage/evaluation-text/comparison.json \
+  --out-dir /tmp/secondstage/state-format-comparison
+```
+
+完整两阶段对比还需提供 `--stage1-candidates`、`--deepseek-stage1-dir`、`--deepseek-e2e-candidates`、`--deepseek-e2e-stage2-dir` 和 `--jev-stage1`；只比较 Top95 精排时加 `--stage2-only`。数值与文字实验的区间相关结论和指标边界见 [算法接入契约](algorithm-interface.md#deepseek-离线打分与两阶段对比实验支路)。对应单测可用 `make secondstage-deepseek-test` 或 `python3 -m unittest tests.secondstage_deepseek_scores_test tests.secondstage_evaluate_deepseek_test tests.secondstage_compare_state_formats_test tests.secondstage_generate_daily_test` 运行。
 
 没有匹配服务时直接 exec Go；其他仓库或不同 `CONFIG` 不会触发服务停止，仍由数据目录写锁判断是否冲突。每次 systemd 查询限时 3 秒，停止服务限时 30 秒。查询不可用时继续原生启动，由 CLI 返回真实结果。容器和 systemd 均直接启动 Go。`make -n run` 只预演命令，不启动或停止进程。
 
