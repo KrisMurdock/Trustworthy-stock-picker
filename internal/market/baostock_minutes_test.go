@@ -32,7 +32,7 @@ func baoMinuteRows(t *testing.T, code string, days []string) [][]string {
 }
 
 func TestBaoStockMinuteRangePaginationAndVolumeUnit(t *testing.T) {
-	days := []string{"2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-07", "2026-09-08"}
+	days := []string{"2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-14"}
 	allRows := baoMinuteRows(t, "sh.600036", days)
 	address := baoTestServer(t, func(kind string, parts []string) (string, string) {
 		if kind == "00" {
@@ -48,11 +48,16 @@ func TestBaoStockMinuteRangePaginationAndVolumeUnit(t *testing.T) {
 				filtered = append(filtered, row)
 			}
 		}
-		page, _ := strconv.Atoi(parts[2])
-		begin := (page - 1) * baoPageSize
-		end := begin + baoPageSize
-		if begin > len(filtered) {
+		page, pageErr := strconv.Atoi(parts[2])
+		pageSize, sizeErr := strconv.Atoi(parts[3])
+		if pageErr != nil || sizeErr != nil || page < 1 || pageSize != baoMinutePageSize {
+			t.Errorf("unexpected minute pagination page=%q size=%q", parts[2], parts[3])
 			return "close", ""
+		}
+		begin := (page - 1) * pageSize
+		end := begin + pageSize
+		if begin >= len(filtered) {
+			return "96", baoReply(parts, nil)
 		}
 		if end > len(filtered) {
 			end = len(filtered)

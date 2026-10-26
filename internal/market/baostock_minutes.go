@@ -14,7 +14,7 @@ import (
 )
 
 const baoMinuteFields = "date,time,code,open,high,low,close,volume,amount,adjustflag"
-const baoMinuteMaxPages = 10
+const baoMinutePageSize = 400
 
 // MinuteArchive is a provider-neutral historical minute range. Unlike the
 // realtime MinuteHistory contract, it is not bounded by the provider's 640-bar
@@ -65,9 +65,10 @@ func validArchiveMinuteBar(b MinuteBar) bool {
 	return b.Low > 0 && b.High >= math.Max(b.Open, b.Close) && b.Low <= math.Min(b.Open, b.Close)
 }
 
-// FetchMinuteRange downloads native five-minute bars through BaoStock. Windows
-// are capped at seven calendar days so a normal five-session week fits in one
-// 250-row page; the public endpoint closes connections after repeated queries.
+// FetchMinuteRange downloads native five-minute bars through BaoStock. The
+// public endpoint closes a session after one historical query, so every page
+// owns a fresh TCP session. 500-row pages reset the connection; 400 is the
+// largest verified page size.
 func (c *BaoStockClient) FetchMinuteRange(ctx context.Context, stock config.Stock, from, through string) (MinuteArchive, error) {
 	h := MinuteArchive{
 		Version: 1, Code: stock.Code, Name: stock.Name, Source: "baostock", Period: 5,
@@ -83,20 +84,13 @@ func (c *BaoStockClient) FetchMinuteRange(ctx context.Context, stock config.Stoc
 		return h, &DataError{Reason: "invalid_minute_archive_range"}
 	}
 	code := stock.Code[:2] + "." + stock.Code[2:]
-	for start := first; !start.After(last); {
-		end := start.AddDate(0, 0, 6)
-		if end.After(last) {
-			end = last
-		}
-		bars, err := c.fetchMinuteWindow(ctx, code, start.Format("2006-01-02"), end.Format("2006-01-02"))
-		if err != nil {
-			return MinuteArchive{}, err
-		}
-		h.Bars = append(h.Bars, bars...)
-		if len(h.Bars) > MinuteArchiveLimit {
-			return MinuteArchive{}, &DataError{Reason: "minute_archive_exceeds_limit"}
-		}
-		start = end.AddDate(0, 0, 1)
+	bars, err := c.fetchMinutePages(ctx, code, from, through)
+	if err != nil {
+		return MinuteArchive{}, err
+	}
+	h.Bars = bars
+	if len(h.Bars) > MinuteArchiveLimit {
+		return MinuteArchive{}, &DataError{Reason: "minute_archive_exceeds_limit"}
 	}
 	if err := h.Validate(); err != nil {
 		return MinuteArchive{}, &DataError{Reason: err.Error()}
@@ -104,16 +98,16 @@ func (c *BaoStockClient) FetchMinuteRange(ctx context.Context, stock config.Stoc
 	return h, nil
 }
 
-func (c *BaoStockClient) fetchMinuteWindow(ctx context.Context, code, pageStart, pageEnd string) ([]MinuteBar, error) {
+func (c *BaoStockClient) fetchMinutePages(ctx context.Context, code, pageStart, pageEnd string) ([]MinuteBar, error) {
 	var bars []MinuteBar
 	complete := false
-	for page := 1; page <= baoMinuteMaxPages; page++ {
+	for page := 1; page <= minutePageLimit(pageStart, pageEnd); page++ {
 		pageBars, err := c.fetchMinutePage(ctx, code, pageStart, pageEnd, page)
 		if err != nil {
 			return nil, fmt.Errorf("baostock minutes %s page %d: %w", pageStart, page, err)
 		}
 		bars = append(bars, pageBars...)
-		if len(pageBars) < baoPageSize {
+		if len(pageBars) < baoMinutePageSize {
 			complete = true
 			break
 		}
@@ -122,6 +116,20 @@ func (c *BaoStockClient) fetchMinuteWindow(ctx context.Context, code, pageStart,
 		return nil, &DataError{Reason: "baostock_minute_exceeds_limit"}
 	}
 	return bars, nil
+}
+
+func minutePageLimit(pageStart, pageEnd string) int {
+	first, e1 := time.ParseInLocation("2006-01-02", pageStart, Shanghai)
+	last, e2 := time.ParseInLocation("2006-01-02", pageEnd, Shanghai)
+	if e1 != nil || e2 != nil || first.After(last) {
+		return 0
+	}
+	days := int(last.Sub(first).Hours()/24) + 1
+	pages := (days*48 + baoMinutePageSize - 1) / baoMinutePageSize
+	if pages < 3 {
+		pages = 3
+	}
+	return pages + 2
 }
 
 func (c *BaoStockClient) fetchMinutePage(ctx context.Context, code, pageStart, pageEnd string, page int) ([]MinuteBar, error) {
@@ -158,7 +166,7 @@ func (c *BaoStockClient) fetchMinutePageSession(ctx context.Context, s *baoSessi
 		return nil, err
 	}
 	body := strings.Join([]string{
-		"query_history_k_data_plus", "anonymous", strconv.Itoa(page), strconv.Itoa(baoPageSize),
+		"query_history_k_data_plus", "anonymous", strconv.Itoa(page), strconv.Itoa(baoMinutePageSize),
 		code, baoMinuteFields, pageStart, pageEnd, "5", "3",
 	}, baoSeparator)
 	parts, err := s.exchange(ctx, "95", "96", body)
@@ -166,7 +174,7 @@ func (c *BaoStockClient) fetchMinutePageSession(ctx context.Context, s *baoSessi
 		return nil, err
 	}
 	if len(parts) < 13 || parts[2] != "query_history_k_data_plus" || parts[3] != "anonymous" ||
-		parts[4] != strconv.Itoa(page) || parts[5] != strconv.Itoa(baoPageSize) || parts[7] != code ||
+		parts[4] != strconv.Itoa(page) || parts[5] != strconv.Itoa(baoMinutePageSize) || parts[7] != code ||
 		parts[8] != baoMinuteFields || parts[9] != pageStart || parts[10] != pageEnd ||
 		parts[11] != "5" || parts[12] != "3" {
 		return nil, &DataError{Reason: "baostock_minute_query_mismatch"}
@@ -177,7 +185,7 @@ func (c *BaoStockClient) fetchMinutePageSession(ctx context.Context, s *baoSessi
 	if parts[6] != "" && json.Unmarshal([]byte(parts[6]), &data) != nil {
 		return nil, &DataError{Reason: "invalid_baostock_minute_records"}
 	}
-	if len(data.Records) > baoPageSize {
+	if len(data.Records) > baoMinutePageSize {
 		return nil, &DataError{Reason: "invalid_baostock_minute_page_size"}
 	}
 	bars := make([]MinuteBar, 0, len(data.Records))
