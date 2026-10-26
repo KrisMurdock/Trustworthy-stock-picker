@@ -3,8 +3,8 @@
 
 The production Go process never calls this script. A post-close systemd timer
 waits for the frozen first-stage report, writes candidate/feature inputs, then
-runs the four offline decision models in parallel. Artifacts are published
-atomically only when every model succeeded.
+runs the configured offline decision models in parallel. Artifacts are
+published atomically only when every selected model succeeded.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ DEFAULT_FEATURES_ROOT = DATA_DIR / "build_features"
 DEFAULT_MODELS_ROOT = DATA_DIR / "download_models"
 DEFAULT_PYTHON_ENV = Path("/root/python_env/blend-eval")
 MODEL_NAMES = ("jev", "laya_official", "laya_multilingual", "chinese_decision")
+DEEPSEEK_MODEL = "deepseek"
 
 
 class PipelineError(RuntimeError):
@@ -66,8 +67,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--wait-interval", type=float, default=5.0)
     parser.add_argument("--max-runtime", type=float, default=1200.0, help="model runtime cap when no deadline applies")
     parser.add_argument("--no-wait", action="store_true", help="fail immediately when today's report is absent")
-    parser.add_argument("--skip-existing", action="store_true", help="exit when all four date artifacts already exist")
+    parser.add_argument("--skip-existing", action="store_true", help="exit when all selected date artifacts already exist")
     parser.add_argument("--prepare-only", action="store_true", help="build candidate/feature inputs only")
+    parser.add_argument("--deepseek", action="store_true", help="also generate the optional DeepSeek second-stage artifact")
+    parser.add_argument("--deepseek-config", type=Path, default=Path(os.environ.get("STOCK_WATCHER_DEEPSEEK_CONFIG_FILE", REPOSITORY_ROOT / "llm.config")))
+    parser.add_argument("--deepseek-model", default="", help="override the model named in the DeepSeek config file")
+    parser.add_argument("--deepseek-workers", type=int, default=6)
     return parser.parse_args(argv)
 
 
@@ -269,7 +274,7 @@ def model_commands(args: argparse.Namespace, as_of: str, candidates: Path, datas
     chinese = SCRIPT_DIR / "chinese_decision_scores.py"
     jev = SCRIPT_DIR / "jev_scores.py"
     common = [str(candidates), str(dataset), "--output-dir"]
-    return {
+    commands = {
         "laya_official": ([
             *base, str(laya), "--candidates", common[0], "--dataset", common[1], "--output-dir", str(scores_root / "laya_official"),
             "--dates", as_of, "--group-size", str(args.group_size), "--checkpoint", "official", "--model", str(args.models_root / "laya" / "official"), "--device", "cpu",
@@ -289,10 +294,30 @@ def model_commands(args: argparse.Namespace, as_of: str, candidates: Path, datas
             "--as-of", as_of, "--group-size", str(args.group_size), "--model", str(args.models_root / "jev" / "Qwen3-0.6B"), "--threads", str(args.threads),
         ], scores_root / "jev" / f"{as_of}.json"),
     }
+    if getattr(args, "deepseek", False):
+        deepseek = SCRIPT_DIR / "deepseek_scores.py"
+        command = [
+            *base, str(deepseek), "--candidates", common[0], "--dataset", common[1],
+            "--output-dir", str(scores_root / DEEPSEEK_MODEL), "--stage", "stage2",
+            "--dates", as_of, "--group-size", str(args.group_size),
+            "--workers", str(getattr(args, "deepseek_workers", 6)),
+            "--reasoning-effort", "none",
+            "--config", str(args.deepseek_config),
+        ]
+        if getattr(args, "deepseek_model", ""):
+            command.extend(["--model", args.deepseek_model])
+        commands[DEEPSEEK_MODEL] = (command, scores_root / DEEPSEEK_MODEL / f"{as_of}.json")
+    return commands
 
 
-def all_artifacts_exist(state_root: Path, as_of: str) -> bool:
-    return all((state_root / name / f"{as_of}.json").is_file() for name in MODEL_NAMES)
+def selected_models(args: argparse.Namespace) -> tuple[str, ...]:
+    if getattr(args, "deepseek", False):
+        return (*MODEL_NAMES, DEEPSEEK_MODEL)
+    return MODEL_NAMES
+
+
+def all_artifacts_exist(state_root: Path, as_of: str, models: Sequence[str] = MODEL_NAMES) -> bool:
+    return all((state_root / name / f"{as_of}.json").is_file() for name in models)
 
 
 def sha256(path: Path) -> str:
@@ -305,12 +330,15 @@ def sha256(path: Path) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    models = selected_models(args)
     if args.group_size < 2:
         raise PipelineError("--group-size must be at least 2")
-    if args.jobs < 1 or args.jobs > len(MODEL_NAMES):
-        raise PipelineError(f"--jobs must be between 1 and {len(MODEL_NAMES)}")
+    if args.jobs < 1 or args.jobs > len(models):
+        raise PipelineError(f"--jobs must be between 1 and {len(models)}")
     if args.threads < 1:
         raise PipelineError("--threads must be positive")
+    if getattr(args, "deepseek_workers", 1) < 1:
+        raise PipelineError("--deepseek-workers must be positive")
     if args.laya_max_len < 512 or args.laya_head_max_len < 64:
         raise PipelineError("Laya token budgets must leave room for the candidate state and question")
     now = datetime.now(SHANGHAI)
@@ -318,7 +346,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.as_of is None and not is_trading_day(args.database, as_of):
         log(f"{as_of} is not a stored trading day; no artifacts required")
         return 0
-    if args.skip_existing and all_artifacts_exist(args.state_root, as_of):
+    if args.skip_existing and all_artifacts_exist(args.state_root, as_of, models):
         log(f"all artifacts already exist for {as_of}")
         return 0
     deadline = deadline_for(as_of, args.deadline, now)
@@ -376,13 +404,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if errors:
         raise PipelineError("; ".join(errors))
     published: dict[str, str] = {}
-    for name in MODEL_NAMES:
+    for name in models:
         output = commands[name][1]
         target = args.state_root / name / f"{as_of}.json"
         atomic_publish(output, target)
         published[name] = str(target)
     write_json(run_root / "published.json", {"as_of": as_of, "artifacts": published})
-    log(f"published four artifacts for {as_of}: {', '.join(published)}")
+    log(f"published {len(published)} artifacts for {as_of}: {', '.join(published)}")
     return 0
 
 

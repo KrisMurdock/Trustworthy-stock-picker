@@ -25,7 +25,7 @@ make run
 
 Go `run` 启动后立即同步最近已收盘交易日的完整股池，并并发同步核心 A 股指数与全量行业/概念板块，生成分析并投递尚未过期的 T+1 消息，之后进入定时轮询；已送达的同日同通道消息不重复发送。盘中不会推送已过买入时点的旧推荐。同步失败会自动重试，原始行情和报告保持在数据目录。`once` 仍仅执行一次受内置 `daily.run_at` 限制的定时流程；手动 `sync` 和 `once` 触发同步时也使用同一套股票与市场环境同步路径。
 
-默认 `daily.run_at=15:00`。收盘后 Go 进程先完成行情同步、第一层初筛和主报告，精排稿可以延后到 `second_stage.publish_by=15:28`。四模型 artifact 由 `deploy/stock-watcher-secondstage.timer` 调用 `scripts/secondstage/generate_daily.py` 离线生成；开发验证可用独立目录运行：
+默认 `daily.run_at=15:00`。收盘后 Go 进程先完成行情同步、第一层初筛和主报告，精排稿可以延后到 `second_stage.publish_by=15:28`。默认四模型 artifact 由 `deploy/stock-watcher-secondstage.timer` 调用 `scripts/secondstage/generate_daily.py` 离线生成；开发验证可用独立目录运行：
 
 ```bash
 PYTHONPATH=/root/python_env/blend-eval python3.11 scripts/secondstage/generate_daily.py \
@@ -33,7 +33,45 @@ PYTHONPATH=/root/python_env/blend-eval python3.11 scripts/secondstage/generate_d
   --features-root /tmp/secondstage-smoke --state-root /tmp/secondstage-smoke/state
 ```
 
-该脚本不属于生产 Go 进程；它只读取冻结报告并把四路 artifact 原子写入 `state/secondstage/<model>/<as_of>.json`。网络不可用时先确认本地模型目录和 `HF_HUB_OFFLINE=1`，不要在生产同步中调用在线 Hugging Face。
+该脚本不属于生产 Go 进程；它只读取冻结报告并把已选模型的 artifact 原子写入 `state/secondstage/<model>/<as_of>.json`。网络不可用时先确认本地模型目录和 `HF_HUB_OFFLINE=1`，不要在生产同步中调用在线 Hugging Face。
+
+可选 DeepSeek 第五路默认关闭。启用时传入私有配置；`llm.config` 已被 Git 忽略，也可以用 `STOCK_WATCHER_DEEPSEEK_CONFIG_FILE` 指定，禁止把密钥写入仓库或日志：
+
+```bash
+PYTHONPATH=/root/python_env/blend-eval python3.11 scripts/secondstage/generate_daily.py \
+  --as-of 2026-10-21 --deadline '' \
+  --features-root /tmp/secondstage-smoke --state-root /tmp/secondstage-smoke/state \
+  --deepseek --deepseek-config /root/data/codebase/toys_project/stock_watcher/llm.config
+```
+
+五路全部成功后才发布；任一路失败不会留下部分新 artifact。DeepSeek 日报支路固定 `reasoning_effort=none`，避免高推理档耗尽输出预算。两阶段研究可以分别运行：
+
+```bash
+python3 scripts/secondstage/deepseek_scores.py \
+  --candidates /tmp/secondstage/candidates.json --dataset /tmp/secondstage/dataset.json \
+  --stage stage1 --output-dir /tmp/secondstage/scores/deepseek-stage1 \
+  --config /root/data/codebase/toys_project/stock_watcher/llm.config --reasoning-effort none \
+  --top-out /tmp/secondstage/candidates_deepseek_top95.json
+
+python3 scripts/secondstage/deepseek_scores.py \
+  --candidates /tmp/secondstage/candidates_stage2_top95.json --dataset /tmp/secondstage/dataset.json \
+  --stage stage2 --output-dir /tmp/secondstage/scores/deepseek-stage2 \
+  --config /root/data/codebase/toys_project/stock_watcher/llm.config --reasoning-effort none
+```
+
+评估只读取冻结输入和 artifact，不调用模型：
+
+```bash
+python3 scripts/secondstage/evaluate_deepseek.py \
+  --dataset /tmp/secondstage/dataset.json \
+  --stage2-candidates /tmp/secondstage/candidates_stage2_top95.json \
+  --deepseek-stage2-dir /tmp/secondstage/scores/deepseek-stage2 \
+  --jev-stage2 /tmp/secondstage/jev_stage2.json \
+  --tree-model internal/secondstage/model.json \
+  --out-dir /tmp/secondstage/evaluation
+```
+
+完整两阶段对比还需提供 `--stage1-candidates`、`--deepseek-stage1-dir`、`--deepseek-e2e-candidates`、`--deepseek-e2e-stage2-dir` 和 `--jev-stage1`；只比较 Top95 精排时加 `--stage2-only`。本轮 9 日测试和 2 日敏感性结论、指标边界见 [算法接入契约](algorithm-interface.md#deepseek-离线打分与两阶段对比实验支路)。对应单测可用 `make secondstage-deepseek-test` 或 `python3 -m unittest tests.secondstage_deepseek_scores_test tests.secondstage_evaluate_deepseek_test tests.secondstage_generate_daily_test` 运行。
 
 没有匹配服务时直接 exec Go；其他仓库或不同 `CONFIG` 不会触发服务停止，仍由数据目录写锁判断是否冲突。每次 systemd 查询限时 3 秒，停止服务限时 30 秒。查询不可用时继续原生启动，由 CLI 返回真实结果。容器和 systemd 均直接启动 Go。`make -n run` 只预演命令，不启动或停止进程。
 

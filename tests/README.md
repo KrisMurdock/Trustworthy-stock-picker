@@ -10,6 +10,8 @@
 
 `python3 tests/secondstage_chinese_decision_test.py` 离线校验 Chinese Decision 适配器：中文候选 prompt、温度校准、choice/score/noul 选项、组内排列平均、超 26 项拒绝和 Laya 兼容 artifact；不加载模型、不访问网络。
 
+`make secondstage-deepseek-test` 离线校验可选 DeepSeek 支路：私有配置字段与优先级、HTTP 错误分类重试、401/403 不重试、非法 JSON 解析重试、缓存隔离、三排列平均、artifact schema、自选 Top95 输出，以及评估脚本的 tie-aware 组内百分位、融合权重、Top10 指标和日期/分数校验；不访问网络、不读取真实密钥。该检查已接入 `make smoke` / `make ci`。
+
 `python3 tests/strategy_model_test.py` 使用 Node.js 20+ 运行网页计算模型，与原脚本对照 55 组有效情景，并验证 22 组无效输入。金额取整、风险/现金/费用限制、多个持仓批次与固定止盈金额都必须一致。该检查已接入 `make smoke` / `make ci`，因此本地 CI 需要 Python 3 和 Node；生产 Go 镜像不需要这些运行时。
 
 看板使用真实 Chromium 验证，先安装 Python Playwright 及其 Chromium，再执行：

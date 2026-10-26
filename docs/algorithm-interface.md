@@ -49,7 +49,7 @@ blend_score = weighted - risk_eta × percentile(atr14_pct)
 
 ### 收盘后 artifact 生成与延迟发布
 
-交易日 15:00 收盘后，Go 进程按 `daily.run_at` 同步当日行情，完成第一层初筛和主报告后即可先投递；精排不阻塞主报告。`deploy/stock-watcher-secondstage.timer` 在 15:00、15:05、15:10、15:15、15:20 触发离线生成服务，`scripts/secondstage/generate_daily.py` 等待当日冻结初筛报告，生成 `candidates_stage2_top95.json`、`dataset.json`，再并行运行 JEV、Laya official、Laya multilingual 和 Chinese Decision。四路全部成功后才把四份 artifact 原子发布到通用路径；任一失败不会留下部分发布。
+交易日 15:00 收盘后，Go 进程按 `daily.run_at` 同步当日行情，完成第一层初筛和主报告后即可先投递；精排不阻塞主报告。`deploy/stock-watcher-secondstage.timer` 在 15:00、15:05、15:10、15:15、15:20 触发离线生成服务，`scripts/secondstage/generate_daily.py` 等待当日冻结初筛报告，生成 `candidates_stage2_top95.json`、`dataset.json`，再并行运行 JEV、Laya official、Laya multilingual 和 Chinese Decision。默认四路全部成功后才把四份 artifact 原子发布到通用路径；任一失败不会留下部分发布。显式启用可选 DeepSeek 支路时，五路全部成功后才会发布，默认行为不变。
 
 Go 进程在 `second_stage.publish_by`（默认 15:28）之前每分钟重试读取 artifact：到齐后只基于冻结初筛重算精排、替换同日派生报告并投递精排稿，不重新下载行情或改变 `report_input`。到点时先做最后一次读取；仍未齐则释放中性降级结果并标记 `degraded=true`。Python 只存在于离线 artifact 生成链，生产 Go 二进制仍不启动 Python、子进程或外部推理服务。安装与排障命令见 [部署、升级与排障](deployment.md)。
 
@@ -68,6 +68,27 @@ Go 进程在 `second_stage.publish_by`（默认 15:28）之前每分钟重试读
 下载模型、研究训练模型、特征集和评估结果统一保存在共享盘的 `download_models/`、`trained_models/`、`build_features/` 和 `evaluations/` 根目录；阶段标识和当前路径见 [模型、特征与评估产物存储](model-storage.md)。脚本使用显式本地路径，不依赖共享盘内符号链接。
 
 Go 生产进程仍只读取离线 artifact，不导入 Laya 或 Chinese Decision、不启动 Python 子进程；将同 schema artifact 写到通用模型路径并在 blend 计划中配置权重即可参与多模型融合。模型概率同样先做组内百分位归一化；树模型辅助预测仍按 JEV 分布训练，不能把 Laya、Chinese Decision 概率或树模型预测解释为校准后的收益。
+
+### DeepSeek 离线打分与两阶段对比（实验支路）
+
+`scripts/secondstage/deepseek_scores.py` 通过 OpenAI 兼容的 `chat/completions` 接口调用 DeepSeek，支持 `stage1` 全池初筛和 `stage2` Top95 精排，输出与 JEV/Laya 相同的 `schema_version: 1` artifact（`adjacent15`、`full15_top12`），可直接参与离线评估。默认按相邻 5 只分组，对三种选项顺序取平均，温度固定为 0，并要求响应精确覆盖组内全部代码；非法 JSON、缺项、越界分数和输出 token 截断都会使该组失败，而不是静默补分。`--reasoning-effort` 可显式覆盖推理档，日报管线固定使用 `none` 以控制延迟；高推理档可能耗尽输出预算，不作为默认实验口径。
+
+私有配置只从 `--config`（默认仓库根部 `llm.config`，已被 Git 忽略）或环境变量读取。配置字段为 `bash_url`、`apikey`、`model` 和可选的 `effort`；环境变量优先级为显式 CLI、`DEEPSEEK_BASE_URL`/`DEEPSEEK_MODEL`/`DEEPSEEK_REASONING_EFFORT`/`DEEPSEEK_API_KEY`、私有配置。Base URL 必须是绝对 HTTP(S) URL，且禁止内嵌凭证、查询参数和 Fragment；HTTP 只允许回环地址。密钥不得写入仓库、日志、提交信息或评估报告。请求对 408/409/429/5xx 和网络超时做有限重试，401/403 不重试；成功响应按请求载荷哈希缓存，解析失败会删除该缓存并绕过缓存重试。
+
+`generate_daily.py --deepseek` 会把 DeepSeek 作为可选第五路加入同一个并发批次，并传递 `--reasoning-effort none`；未指定时仍只生成原来的四路。第一阶段可用 `--top-out` 写出 DeepSeek 自选 Top95，供第二阶段和端到端评估复用。所有已选模型成功后才原子发布；任一路失败不会留下部分新 artifact，Go 进程仍只读取最终文件，不在生产进程同步调用外部服务。
+
+`scripts/secondstage/evaluate_deepseek.py` 只读取冻结候选、标签和 artifact，不访问网络。它比较 first-stage、旧树模型、JEV、DeepSeek 以及若干固定权重融合，按交易日做 tie-aware 组内百分位和配对 bootstrap。2026-09-24 至 10-14 的 9 个测试日、每日 163 只全池和 Top95 精排结果如下；Top10 指标为交易日等权平均：
+
+| 第二阶段排序器 | Hit@10 | NDCG@10 | MaxHigh@10 | Close3@10 |
+|---|---:|---:|---:|---:|
+| first-stage blend | 68.9% | 0.679 | +3.86% | -6.86% |
+| 本地树 | 67.8% | 0.690 | +4.36% | -5.01% |
+| JEV | 55.6% | 0.550 | +2.54% | -6.46% |
+| DeepSeek | 63.3% | 0.609 | +2.97% | -4.22% |
+
+DeepSeek 相对本地树为 `Hit@10` -4.4 个百分点、`NDCG@10` -0.081、`MaxHigh@10` -1.39 个百分点，只有 `Close3@10` +0.78 个百分点，不能表述为优于本地树。相对 JEV，DeepSeek 的 `Hit@10` +7.8 个百分点、`NDCG@10` +0.059、`MaxHigh@10` +0.42 个百分点、`Close3@10` +2.24 个百分点，其中收盘回撤改善的 bootstrap 区间不跨 0，但命中率和 NDCG 区间仍包含 0。DeepSeek 自选 Top95 的端到端两阶段 `Hit@10` 为 63.3%（first-stage 61.1%），但 `NDCG@10` 0.611 对 0.621、`MaxHigh@10` +2.29% 对 +3.29%，仍非整体更优。
+
+2026-10-15、10-16 的 2 日敏感性结果中，DeepSeek 的 `Hit@10` 为 70.0%、`NDCG@10` 0.753，低于本地树（100.0%、1.000）和 JEV（85.0%、0.851）。这两个日期此前已用于其他研究，只能作为敏感性检查，不是独立长期样本外证明；9 个测试日样本也较短。因此 DeepSeek 支路保持默认关闭，生产 blend 权重不变，不能把上述结果解释为成功概率、收益承诺或投资建议。
 
 离线验收以交易日等权的“Top10 平均未来三日最大高点涨幅”为主指标，`NDCG@10` 为辅助指标；同时记录 Top10 第三日收盘收益和 `+1%` 命中率作为风险护栏，并按交易日做 block bootstrap。历史结果只描述样本内/样本外排序表现，不是成功概率、收益承诺或投资建议。
 
