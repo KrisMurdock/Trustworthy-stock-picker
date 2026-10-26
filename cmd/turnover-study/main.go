@@ -35,6 +35,7 @@ func run() error {
 		horizon      = flag.Int("horizon", 5, "holding horizon in trading days")
 		budget       = flag.Float64("budget", 0, "trade cash per position (0 uses the built-in 20000)")
 		years        = flag.Int("years", 3, "lookback years for adjusted bars and daily metrics")
+		featureSet   = flag.String("feature-set", "full", "candidate feature set: full, turnover, amount, amount-level, amount-dynamics, amount-size")
 		minTrainDays = flag.Int("min-train-days", 40, "minimum prior signal dates before the first evaluation")
 		retrainEvery = flag.Int("retrain-every", 5, "retrain frequency in evaluation days")
 		ridge        = flag.Float64("ridge", 1.0, "L2 regularization for the research logistic model")
@@ -119,7 +120,7 @@ func run() error {
 	report, err := turnoverstudy.Run(context.Background(), turnoverstudy.Data{
 		Stocks: cfg.Stocks, Adjusted: adjusted, Raw: raw, Metrics: metrics, Calendar: cal, TradingDays: tradingDays,
 	}, turnoverstudy.Options{From: *from, Through: *through, TopN: *topN, Horizon: *horizon,
-		TradeCash: *budget, MinTrainDays: *minTrainDays, RetrainEvery: *retrainEvery, Ridge: *ridge, Bootstrap: *bootstrap, BootstrapSeed: *seed, PlaceboSeed: *placeboSeed})
+		TradeCash: *budget, MinTrainDays: *minTrainDays, RetrainEvery: *retrainEvery, Ridge: *ridge, Bootstrap: *bootstrap, BootstrapSeed: *seed, PlaceboSeed: *placeboSeed, FeatureSet: *featureSet})
 	if err != nil {
 		return err
 	}
@@ -271,6 +272,7 @@ func writeJSONAtomic(path string, value any) error {
 
 func printSummary(report turnoverstudy.Report, path string) {
 	fmt.Printf("report=%s\n", path)
+	fmt.Printf("feature_set=%s features=%d\n", report.FeatureSet, len(report.FeatureNames))
 	fmt.Printf("data stocks=%d metric_stocks=%d feature_stocks=%d metric_rows=%d adjusted_range=%s..%s metric_range=%s..%s\n", report.Data.Stocks, report.Data.MetricStocks, report.Data.FeatureStocks, report.Data.MetricRows, report.Data.AdjustedFirstDate, report.Data.AdjustedLastDate, report.Data.MetricFirstDate, report.Data.MetricLastDate)
 	fmt.Printf("data feature_rows=%d resolved_labels=%d positive_labels=%d label_coverage=%.2f%% positive_rate=%.2f%%\n", report.Data.FeatureRows, report.Data.ResolvedLabels, report.Data.PositiveLabels, report.Data.LabelCoveragePct, report.Data.PositiveRatePct)
 	fmt.Printf("dates signal=%d matured=%d eval=%d training=%d from=%s through=%s budget=%.0f\n", report.DateRange.SignalDates, report.DateRange.MaturedSignalDates, report.DateRange.EvalDates, report.DateRange.TrainingDates, report.DateRange.FirstEvalDate, report.DateRange.LastEvalDate, report.TradeCash)

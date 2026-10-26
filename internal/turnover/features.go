@@ -16,18 +16,41 @@ const (
 	MinHistory  = LongWindow + 1
 )
 
-// FeatureNames is the frozen order used by the research models and reports.
-var FeatureNames = []string{
+// TurnoverFeatureNames contains the pure turnover-rate block. The order is
+// frozen because the research model reports standardized coefficients by name.
+var TurnoverFeatureNames = []string{
 	"log_turnover_rate",
 	"log_turnover_ratio_5",
 	"log_turnover_ratio_20",
 	"log_turnover_5_20",
 	"turnover_z_20",
 	"turnover_cv_20",
+}
+
+var AmountLevelFeatureNames = []string{
 	"log_amount",
+}
+
+var AmountDynamicsFeatureNames = []string{
 	"log_amount_ratio_5",
 	"amount_z_20",
+}
+
+var AmountFeatureNames = joinFeatureNames(AmountLevelFeatureNames, AmountDynamicsFeatureNames)
+
+var FloatMcapFeatureNames = []string{
 	"log_float_mcap",
+}
+
+// FeatureNames is the frozen order used by the research models and reports.
+var FeatureNames = joinFeatureNames(TurnoverFeatureNames, AmountFeatureNames, FloatMcapFeatureNames)
+
+func joinFeatureNames(groups ...[]string) []string {
+	out := []string{}
+	for _, group := range groups {
+		out = append(out, group...)
+	}
+	return out
 }
 
 type Features struct {

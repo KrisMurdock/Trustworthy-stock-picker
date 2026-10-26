@@ -2,10 +2,25 @@ package turnover
 
 import (
 	"math"
+	"reflect"
 	"testing"
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 )
+
+func TestFeatureGroupsPreserveFrozenOrder(t *testing.T) {
+	if len(TurnoverFeatureNames) != 6 || len(AmountLevelFeatureNames) != 1 || len(AmountDynamicsFeatureNames) != 2 || len(AmountFeatureNames) != 3 || len(FloatMcapFeatureNames) != 1 {
+		t.Fatalf("unexpected group sizes: turnover=%d amount_level=%d amount_dynamics=%d amount=%d float=%d", len(TurnoverFeatureNames), len(AmountLevelFeatureNames), len(AmountDynamicsFeatureNames), len(AmountFeatureNames), len(FloatMcapFeatureNames))
+	}
+	want := []string{
+		"log_turnover_rate", "log_turnover_ratio_5", "log_turnover_ratio_20", "log_turnover_5_20", "turnover_z_20", "turnover_cv_20",
+		"log_amount", "log_amount_ratio_5", "amount_z_20", "log_float_mcap",
+	}
+	got := joinFeatureNames(TurnoverFeatureNames, AmountFeatureNames, FloatMcapFeatureNames)
+	if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(FeatureNames, want) {
+		t.Fatalf("feature order changed: got %v want %v", got, want)
+	}
+}
 
 func TestExtractUsesOnlySignalHistory(t *testing.T) {
 	metrics := make([]market.DailyMetric, 0, 24)

@@ -1,12 +1,58 @@
 package turnoverstudy
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
+	"reflect"
 	"sort"
 	"testing"
+
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/turnover"
 )
+
+func TestRunRejectsUnknownFeatureSet(t *testing.T) {
+	if _, err := Run(context.Background(), Data{}, Options{FeatureSet: "unknown"}); err == nil {
+		t.Fatal("unknown feature set was accepted")
+	}
+}
+
+func TestCandidateFeatureSets(t *testing.T) {
+	cases := []struct {
+		set  string
+		want []string
+	}{
+		{FeatureSetFull, turnover.FeatureNames},
+		{FeatureSetTurnover, turnover.TurnoverFeatureNames},
+		{FeatureSetAmount, turnover.AmountFeatureNames},
+		{FeatureSetAmountLevel, turnover.AmountLevelFeatureNames},
+		{FeatureSetAmountDynamics, turnover.AmountDynamicsFeatureNames},
+		{FeatureSetAmountSize, append(append([]string(nil), turnover.AmountFeatureNames...), turnover.FloatMcapFeatureNames...)},
+	}
+	for _, tt := range cases {
+		got := CandidateFeatureNamesFor(tt.set)
+		want := append(append([]string(nil), BaselineFeatureNames...), tt.want...)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s names = %v, want %v", tt.set, got, want)
+		}
+		indexes := additionalFeatureIndexes(tt.set)
+		if len(indexes) != len(tt.want) {
+			t.Fatalf("%s indexes = %v", tt.set, indexes)
+		}
+		for i, index := range indexes {
+			if turnover.FeatureNames[index] != tt.want[i] {
+				t.Fatalf("%s index %d maps to %s, want %s", tt.set, i, turnover.FeatureNames[index], tt.want[i])
+			}
+		}
+	}
+	if _, err := normalizeFeatureSet("unknown"); err == nil {
+		t.Fatal("unknown feature set was accepted")
+	}
+	if got, err := normalizeFeatureSet(""); err != nil || got != FeatureSetFull {
+		t.Fatalf("empty feature set normalized to %q, %v", got, err)
+	}
+}
 
 func TestShuffleTurnoverBlockPreservesBaselineAndBlockDistribution(t *testing.T) {
 	rows := []rawRow{

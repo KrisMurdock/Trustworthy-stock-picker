@@ -6,6 +6,7 @@ package turnoverstudy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"math/rand"
 	"sort"
@@ -30,9 +31,51 @@ var BaselineFeatureNames = []string{
 	"high20_distance",
 }
 
+const (
+	FeatureSetFull           = "full"
+	FeatureSetTurnover       = "turnover"
+	FeatureSetAmount         = "amount"
+	FeatureSetAmountLevel    = "amount-level"
+	FeatureSetAmountDynamics = "amount-dynamics"
+	FeatureSetAmountSize     = "amount-size"
+)
+
 func CandidateFeatureNames() []string {
+	return CandidateFeatureNamesFor(FeatureSetFull)
+}
+
+func CandidateFeatureNamesFor(featureSet string) []string {
 	out := append([]string(nil), BaselineFeatureNames...)
-	return append(out, turnover.FeatureNames...)
+	return append(out, AdditionalFeatureNames(featureSet)...)
+}
+
+func AdditionalFeatureNames(featureSet string) []string {
+	switch featureSet {
+	case FeatureSetTurnover:
+		return append([]string(nil), turnover.TurnoverFeatureNames...)
+	case FeatureSetAmount:
+		return append([]string(nil), turnover.AmountFeatureNames...)
+	case FeatureSetAmountLevel:
+		return append([]string(nil), turnover.AmountLevelFeatureNames...)
+	case FeatureSetAmountDynamics:
+		return append([]string(nil), turnover.AmountDynamicsFeatureNames...)
+	case FeatureSetAmountSize:
+		out := append([]string(nil), turnover.AmountFeatureNames...)
+		return append(out, turnover.FloatMcapFeatureNames...)
+	default:
+		return append([]string(nil), turnover.FeatureNames...)
+	}
+}
+
+func normalizeFeatureSet(featureSet string) (string, error) {
+	switch featureSet {
+	case "", FeatureSetFull:
+		return FeatureSetFull, nil
+	case FeatureSetTurnover, FeatureSetAmount, FeatureSetAmountLevel, FeatureSetAmountDynamics, FeatureSetAmountSize:
+		return featureSet, nil
+	default:
+		return "", fmt.Errorf("unknown feature set %q", featureSet)
+	}
 }
 
 type Options struct {
@@ -46,6 +89,7 @@ type Options struct {
 	Ridge         float64
 	Bootstrap     int
 	BootstrapSeed int64
+	FeatureSet    string
 	// PlaceboSeed, when non-zero, permutes each date's turnover feature block
 	// across stocks before fitting. It preserves the block's joint distribution
 	// while destroying its link to the actual stock, providing a capacity-only
@@ -97,6 +141,7 @@ type Bootstrap struct {
 type Report struct {
 	SchemaVersion int                 `json:"schema_version"`
 	ModelID       string              `json:"model_id"`
+	FeatureSet    string              `json:"feature_set"`
 	Placebo       bool                `json:"placebo"`
 	PlaceboSeed   int64               `json:"placebo_seed,omitempty"`
 	From          string              `json:"from"`
@@ -173,6 +218,12 @@ type rawRow struct {
 
 func Run(ctx context.Context, data Data, opts Options) (Report, error) {
 	opts = normalizeOptions(opts)
+	featureSet, err := normalizeFeatureSet(opts.FeatureSet)
+	if err != nil {
+		return Report{}, err
+	}
+	opts.FeatureSet = featureSet
+	candidateNames := CandidateFeatureNamesFor(featureSet)
 	if opts.TradeCash < 1000 || opts.TradeCash > 1e8 {
 		return Report{}, errors.New("turnover study trade cash must be between 1000 and 100000000")
 	}
@@ -180,11 +231,19 @@ func Run(ctx context.Context, data Data, opts Options) (Report, error) {
 	if opts.PlaceboSeed != 0 {
 		modelID = "turnover_study_placebo_v1"
 	}
-	report := Report{SchemaVersion: ReportSchemaVersion, ModelID: modelID, Placebo: opts.PlaceboSeed != 0, PlaceboSeed: opts.PlaceboSeed, FeatureNames: CandidateFeatureNames(),
-		FeatureGroups: map[string][]string{"baseline": append([]string(nil), BaselineFeatureNames...), "turnover": append([]string(nil), turnover.FeatureNames...)},
-		Data:          DataCoverage{Stocks: len(data.Stocks)}, Notes: []string{
+	report := Report{SchemaVersion: ReportSchemaVersion, ModelID: modelID, FeatureSet: featureSet, Placebo: opts.PlaceboSeed != 0, PlaceboSeed: opts.PlaceboSeed, FeatureNames: candidateNames,
+		FeatureGroups: map[string][]string{
+			"baseline":        append([]string(nil), BaselineFeatureNames...),
+			"turnover":        append([]string(nil), turnover.TurnoverFeatureNames...),
+			"amount":          append([]string(nil), turnover.AmountFeatureNames...),
+			"amount_level":    append([]string(nil), turnover.AmountLevelFeatureNames...),
+			"amount_dynamics": append([]string(nil), turnover.AmountDynamicsFeatureNames...),
+			"float_mcap":      append([]string(nil), turnover.FloatMcapFeatureNames...),
+			"candidate":       append([]string(nil), candidateNames...),
+		},
+		Data: DataCoverage{Stocks: len(data.Stocks)}, Notes: []string{
 			"Baseline is the first-stage feature proxy: ATR, low20 distance, return5, RSI14, touch_rate20, base_score, volume_ratio, high20 distance; base_score includes the upper-wick penalty and 0-100 clamp used by production.",
-			"Turnover features are point-in-time BaoStock turn/amount observations; no future observation is used. Float market value is derived from amount / turnover rate as a size control.",
+			"Turnover features are point-in-time Sohu turn/amount observations; no future observation is used. Float market value is derived from amount / turnover rate as a size control.",
 			"Labels are next-session-open entries with the repository's 3% target, 3% stop, fees and T+1 daily simulation.",
 			"Trade cash is the per-position budget; a minimum board lot that cannot be funded is recorded as cash_insufficient rather than silently resized or dropped from the ranking.",
 			"Walk-forward training uses only labels whose five-session horizon closed strictly before each evaluation date.",
@@ -194,6 +253,9 @@ func Run(ctx context.Context, data Data, opts Options) (Report, error) {
 		}}
 	if opts.PlaceboSeed != 0 {
 		report.Notes = append(report.Notes, "Placebo control: the turnover feature block was permuted across stocks within each date; the candidate model therefore has the same extra capacity but no stock-specific liquidity signal.")
+	}
+	if featureSet != FeatureSetFull {
+		report.Notes = append(report.Notes, "Ablation mode: the candidate adds only the selected feature group; baseline and trading simulation are unchanged.")
 	}
 	if err := validateData(data); err != nil {
 		return report, err
@@ -315,6 +377,9 @@ func shuffleTurnoverBlock(rows []rawRow, offset int, rng *rand.Rand) {
 }
 
 func normalizeOptions(opts Options) Options {
+	if opts.FeatureSet == "" {
+		opts.FeatureSet = FeatureSetFull
+	}
 	if opts.TopN <= 0 {
 		opts.TopN = 5
 	}
@@ -357,6 +422,7 @@ func buildRows(ctx context.Context, data Data, opts Options, dateIndex map[strin
 	out := []rawRow{}
 	featureStocks := map[string]bool{}
 	first, last := "", ""
+	featureIndexes := additionalFeatureIndexes(opts.FeatureSet)
 	for _, day := range data.TradingDays {
 		if opts.From != "" && day < opts.From || opts.Through != "" && day > opts.Through {
 			continue
@@ -406,7 +472,10 @@ func buildRows(ctx context.Context, data Data, opts Options, dateIndex map[strin
 				features.ATR14Pct, lowDistance, features.Return5, features.Metrics.RSI14, touch, 0,
 				features.VolumeRatio, features.High20Distance,
 			}
-			values = append(values, tf.Values()...)
+			turnoverValues := tf.Values()
+			for _, index := range featureIndexes {
+				values = append(values, turnoverValues[index])
+			}
 			row := rawRow{date: day, code: stock.Code, values: values, outcome: outcome,
 				trendScore: features.Metrics.Score, ma20Slope: features.MA20Slope,
 				ma20Distance: features.MA20Distance, closePosition: features.ClosePosition,
@@ -438,7 +507,7 @@ func buildRows(ctx context.Context, data Data, opts Options, dateIndex map[strin
 			last = day
 		}
 		coverage.FeatureRows += len(dayRows)
-		if len(dayRows[0].values) == len(CandidateFeatureNames()) {
+		if len(dayRows[0].values) == len(CandidateFeatureNamesFor(opts.FeatureSet)) {
 			coverage.TurnoverFeatureRows += len(dayRows)
 		}
 	}
@@ -461,6 +530,19 @@ func buildRows(ctx context.Context, data Data, opts Options, dateIndex map[strin
 		coverage.PositiveRatePct = float64(coverage.PositiveLabels) / float64(coverage.ResolvedLabels) * 100
 	}
 	return out, coverage, first, last, nil
+}
+
+func additionalFeatureIndexes(featureSet string) []int {
+	indexes := make(map[string]int, len(turnover.FeatureNames))
+	for i, name := range turnover.FeatureNames {
+		indexes[name] = i
+	}
+	names := AdditionalFeatureNames(featureSet)
+	out := make([]int, 0, len(names))
+	for _, name := range names {
+		out = append(out, indexes[name])
+	}
+	return out
 }
 
 func baseScore(trendScore int, return5, poolReturn5, ma20Slope, ma20Distance, closePosition, volumeRatio, atr14, upperWick float64) float64 {
@@ -584,6 +666,8 @@ func walkForward(ctx context.Context, data Data, byDate map[string][]rawRow, dat
 	if len(dates) < opts.MinTrainDays+opts.Horizon+1 {
 		return Aggregate{}, Aggregate{}, Bootstrap{}, nil, nil, 0, errors.New("not enough dates for walk-forward validation")
 	}
+	candidateNames := CandidateFeatureNamesFor(opts.FeatureSet)
+	candidateFeatures := len(candidateNames)
 	baseAgg := aggregateAccumulator{worst: math.Inf(1), best: math.Inf(-1)}
 	candAgg := aggregateAccumulator{worst: math.Inf(1), best: math.Inf(-1)}
 	baseDaily, candDaily := []float64{}, []float64{}
@@ -623,7 +707,7 @@ func walkForward(ctx context.Context, data Data, byDate map[string][]rawRow, dat
 		}
 		if retrainAt < 0 || i-retrainAt >= opts.RetrainEvery {
 			lastBetaBase = fitLogistic(train, len(BaselineFeatureNames), opts.Ridge)
-			lastBetaCand = fitLogistic(train, len(CandidateFeatureNames()), opts.Ridge)
+			lastBetaCand = fitLogistic(train, candidateFeatures, opts.Ridge)
 			retrainAt = i
 			trainingDates = len(trainDates)
 		}
@@ -632,7 +716,7 @@ func walkForward(ctx context.Context, data Data, byDate map[string][]rawRow, dat
 		}
 		rows := byDate[date]
 		baseRank := rankRows(rows, lastBetaBase, len(BaselineFeatureNames))
-		candRank := rankRows(rows, lastBetaCand, len(CandidateFeatureNames()))
+		candRank := rankRows(rows, lastBetaCand, candidateFeatures)
 		basePick, candPick := baseRank[:min(opts.TopN, len(baseRank))], candRank[:min(opts.TopN, len(candRank))]
 		for _, row := range basePick {
 			baseAgg.add(row.outcome)
@@ -664,7 +748,7 @@ func walkForward(ctx context.Context, data Data, byDate map[string][]rawRow, dat
 	cand.CohortCount, cand.CohortCompoundedPct, cand.CohortMaxDrawdownPct = cohorts(candDaily, opts.Horizon)
 	bootstrap := bootstrapDaily(baseDaily, candDaily, opts.Bootstrap, opts.BootstrapSeed, opts.Horizon)
 	coefficients := make([]Coefficient, 0, len(lastBetaCand)-1)
-	for i, name := range CandidateFeatureNames() {
+	for i, name := range candidateNames {
 		coefficients = append(coefficients, Coefficient{Name: name, Value: lastBetaCand[i+1]})
 	}
 	return base, cand, bootstrap, coefficients, evalDates, trainingDates, nil
