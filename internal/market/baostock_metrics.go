@@ -33,7 +33,7 @@ type DailyMetricHistory struct {
 }
 
 func (h DailyMetricHistory) Validate() error {
-	if h.Version != 1 || !config.ValidCode(h.Code) || h.Source != "baostock" || h.FetchedAt.IsZero() || len(h.Metrics) == 0 {
+	if h.Version != 1 || !config.ValidCode(h.Code) || (h.Source != "baostock" && h.Source != "sohu") || h.FetchedAt.IsZero() || len(h.Metrics) == 0 {
 		return fmt.Errorf("invalid daily metric history metadata")
 	}
 	previous := ""
