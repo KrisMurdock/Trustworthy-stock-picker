@@ -88,7 +88,7 @@ SQLite schema 5 新增 `session_status`、`status_sync`、`market_calendar`、`c
 
 历史 5 分钟补全使用 `backfill-minutes`：
 
-- BaoStock 按最多 7 个自然日一个窗口请求，单窗口正常不超过 250 根；每页使用独立 TCP 会话，网络/限流错误按 1s、2s 退避重试，避免公共端点在长连接连续分页后断连。
+- BaoStock 按完整请求区间顺序分页，历史分钟每页请求 400 根；每页使用独立 TCP 会话，网络/限流错误按 1s、2s 退避重试，避免公共端点在长连接连续分页后断连。400 根是实测可稳定返回的最大页大小，500 根会被公共端点重置连接。
 - 默认回补配置日历内最近 200 个交易日；`-from`、`-as-of`、`-codes` 可缩小范围。BaoStock 成交量以“股”返回，写入前按腾讯原始口径换算：科创板保留股数，其他板块除以 100 转为手，保证跨补数边界的量比特征连续。
 - 导入只插入缺失的 `(code,end_unix)`，不删除、不覆盖腾讯已保存的重叠分钟；重叠 OHLC/成交量差异计入 `overlap_mismatch`，不会静默混源。所有历史 bar 标记为已完成，不补造停牌或缺根。
 - 建议先把 `STOCK_WATCHER_DATA_DIR` 指向独立 staging 目录并执行 `init`，再运行 `backfill-minutes`；此阶段生产 `run` 可继续运行。合并到生产前必须停止 `run` 释放 `.stock-watcher.lock`，再执行 `backfill-minutes -import-from <staging-data-dir>`。`-reference-dir <production-data-dir>` 可用于 staging 断点续跑：按生产日线日期跳过已完整覆盖的股票。
