@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/articlechart"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
 )
 
@@ -181,4 +182,114 @@ func TestSendRejectsInvalidArticleBeforeCallingWeChat(t *testing.T) {
 
 func articleMessage() notify.Message {
 	return notify.Message{Article: &notify.Article{Title: "观察标题", Digest: "观察摘要", Body: "先说结论\n正文"}}
+}
+
+func TestSendUploadsInlineChartAndReusesCachedURL(t *testing.T) {
+	tokenCalls, uploadCalls, draftCalls := 0, 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/cgi-bin/stable_token":
+			tokenCalls++
+			fmt.Fprint(w, `{"access_token":"token-1","expires_in":7200}`)
+		case "/cgi-bin/media/uploadimg":
+			uploadCalls++
+			if r.URL.Query().Get("access_token") != "token-1" {
+				t.Fatalf("unexpected upload token: %s", r.URL.RawQuery)
+			}
+			if err := r.ParseMultipartForm(maxArticleBytes); err != nil {
+				t.Fatal(err)
+			}
+			file, header, err := r.FormFile("media")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			if header.Filename != "chart.png" {
+				t.Fatalf("unexpected chart filename: %s", header.Filename)
+			}
+			signature := make([]byte, 8)
+			if _, err := file.Read(signature); err != nil {
+				t.Fatal(err)
+			}
+			if string(signature) != "\x89PNG\r\n\x1a\n" {
+				t.Fatalf("uploaded chart is not PNG: %q", signature)
+			}
+			fmt.Fprint(w, `{"url":"https://mmbiz.qpic.cn/chart-1"}`)
+		case "/cgi-bin/draft/add":
+			draftCalls++
+			var payload draftRequest
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			content := payload.Articles[0].Content
+			if !strings.Contains(content, `<img src="https://mmbiz.qpic.cn/chart-1"`) ||
+				!strings.Contains(content, "sz000001 日 K 结构图") {
+				t.Fatalf("draft lost chart markup: %s", content)
+			}
+			fmt.Fprint(w, `{"media_id":"draft-1"}`)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := newDraftClient("wechat-draft", "appid", "appsecret", "cover-fixed", "", time.Second, server.URL)
+	message := notify.Message{Article: &notify.Article{
+		Title: "观察标题", Body: "先说结论\n\n[[chart:chart-sz000001]]\n",
+		Charts: []articlechart.Spec{wechatTestChart()},
+	}}
+	if err := client.Send(context.Background(), message); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Send(context.Background(), message); err != nil {
+		t.Fatal(err)
+	}
+	if tokenCalls != 1 || uploadCalls != 1 || draftCalls != 2 {
+		t.Fatalf("calls token=%d upload=%d draft=%d", tokenCalls, uploadCalls, draftCalls)
+	}
+}
+
+func TestSendRejectsUnrenderableChartBeforeDraft(t *testing.T) {
+	draftCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/cgi-bin/stable_token":
+			fmt.Fprint(w, `{"access_token":"token-1","expires_in":7200}`)
+		case "/cgi-bin/draft/add":
+			draftCalls++
+			fmt.Fprint(w, `{"media_id":"draft-1"}`)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	chart := wechatTestChart()
+	chart.Bars[0].High = chart.Bars[0].Low - 1
+	client := newDraftClient("wechat-draft", "appid", "appsecret", "cover-fixed", "", time.Second, server.URL)
+	err := client.Send(context.Background(), notify.Message{Article: &notify.Article{
+		Title: "观察标题", Body: "[[chart:chart-sz000001]]\n", Charts: []articlechart.Spec{chart},
+	}})
+	var failure *notify.DeliveryError
+	if !errors.As(err, &failure) || failure.Kind != notify.Permanent {
+		t.Fatalf("error = %T %v", err, err)
+	}
+	if draftCalls != 0 {
+		t.Fatalf("invalid chart reached draft/add: %d", draftCalls)
+	}
+}
+
+func wechatTestChart() articlechart.Spec {
+	bars := []articlechart.Bar{
+		{Date: "2026-10-16", Open: 10, High: 10.4, Low: 9.8, Close: 10.2},
+		{Date: "2026-10-17", Open: 10.2, High: 10.6, Low: 10.0, Close: 10.5},
+		{Date: "2026-10-20", Open: 10.5, High: 10.8, Low: 10.3, Close: 10.6},
+		{Date: "2026-10-21", Open: 10.6, High: 11.0, Low: 10.4, Close: 10.9},
+	}
+	return articlechart.Spec{
+		Version: articlechart.Version, ID: "chart-sz000001", Code: "sz000001", AsOf: "2026-10-21", Adjust: "qfq",
+		Caption: "sz000001 日 K 结构图", Bars: bars,
+		Zone:   &articlechart.Zone{FromDate: bars[0].Date, ToDate: bars[2].Date, Upper: 10.6, Lower: 10.2},
+		Levels: []articlechart.Level{{Kind: "support", Label: "SUP", Price: 10.2}},
+	}
 }

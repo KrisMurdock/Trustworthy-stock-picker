@@ -4,6 +4,7 @@ package wechat
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/articlechart"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
 )
 
@@ -52,6 +54,9 @@ type Client struct {
 
 	coverMu sync.Mutex
 	coverID string
+
+	inlineMu   sync.Mutex
+	inlineURLs map[string]string
 }
 
 // NewDraftClient returns a client backed by the public WeChat API.
@@ -80,6 +85,7 @@ func newDraftClient(name, appID, appSecret, thumbMediaID, author string, timeout
 		author:       oneLine(author),
 		baseURL:      strings.TrimRight(baseURL, "/"),
 		now:          time.Now,
+		inlineURLs:   map[string]string{},
 	}
 }
 
@@ -104,11 +110,16 @@ func (c *Client) Send(ctx context.Context, message notify.Message) error {
 		Title:  oneLine(message.Article.Title),
 		Digest: oneLine(message.Article.Digest),
 		Body:   strings.TrimSpace(message.Article.Body),
+		Charts: message.Article.Charts,
 	}
 	if err := validateArticle(article, c.author); err != nil {
 		return c.deliveryError(notify.Permanent, "wechat_invalid_article: "+err.Error(), 0)
 	}
-	content, err := RenderHTML(article.Body)
+	images, err := c.uploadInlineCharts(ctx, article.Charts)
+	if err != nil {
+		return err
+	}
+	content, err := RenderHTMLWithImages(article.Body, images)
 	if err != nil {
 		return c.deliveryError(notify.Permanent, "wechat_content_render", 0)
 	}
@@ -165,6 +176,7 @@ type apiResponse struct {
 	AccessToken string `json:"access_token"`
 	ExpiresIn   int    `json:"expires_in"`
 	MediaID     string `json:"media_id"`
+	URL         string `json:"url"`
 }
 
 type apiError struct {
@@ -174,6 +186,87 @@ type apiError struct {
 
 func (e *apiError) Error() string { return e.err.Error() }
 func (e *apiError) Unwrap() error { return e.err }
+
+func (c *Client) uploadInlineCharts(ctx context.Context, charts []articlechart.Spec) (map[string]RenderedImage, error) {
+	if len(charts) == 0 {
+		return nil, nil
+	}
+	images := make(map[string]RenderedImage, len(charts))
+	for _, spec := range charts {
+		pngBytes, err := articlechart.RenderPNG(spec)
+		if err != nil {
+			return nil, c.deliveryError(notify.Permanent, "wechat_chart_render: "+spec.ID, 0)
+		}
+		imageURL, err := c.inlineImageURL(ctx, pngBytes)
+		if err != nil {
+			return nil, err
+		}
+		images[spec.ID] = RenderedImage{URL: imageURL, Caption: spec.Caption}
+	}
+	return images, nil
+}
+
+func (c *Client) inlineImageURL(ctx context.Context, pngBytes []byte) (string, error) {
+	key := fmt.Sprintf("%x", sha256.Sum256(pngBytes))
+	c.inlineMu.Lock()
+	cached := c.inlineURLs[key]
+	c.inlineMu.Unlock()
+	if cached != "" {
+		return cached, nil
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		token, err := c.accessToken(ctx)
+		if err != nil {
+			return "", err
+		}
+		imageURL, err := c.uploadInlineImage(ctx, token, pngBytes)
+		if err != nil {
+			if attempt == 0 && isTokenError(err) {
+				c.invalidateToken()
+				continue
+			}
+			return "", err
+		}
+		c.inlineMu.Lock()
+		if len(c.inlineURLs) >= 128 {
+			c.inlineURLs = map[string]string{}
+		}
+		c.inlineURLs[key] = imageURL
+		c.inlineMu.Unlock()
+		return imageURL, nil
+	}
+	return "", c.deliveryError(notify.Retryable, "wechat_token_refresh_failed", 0)
+}
+
+func (c *Client) uploadInlineImage(ctx context.Context, token string, pngBytes []byte) (string, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("media", "chart.png")
+	if err != nil {
+		return "", c.deliveryError(notify.Permanent, "wechat_chart_encode", 0)
+	}
+	if _, err := part.Write(pngBytes); err != nil {
+		return "", c.deliveryError(notify.Permanent, "wechat_chart_encode", 0)
+	}
+	if err := writer.Close(); err != nil {
+		return "", c.deliveryError(notify.Permanent, "wechat_chart_encode", 0)
+	}
+	endpoint := c.baseURL + "/cgi-bin/media/uploadimg?access_token=" + url.QueryEscape(token)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &body)
+	if err != nil {
+		return "", c.deliveryError(notify.Permanent, "wechat_request_build", 0)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response, err := c.do(request)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(response.URL)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.User != nil {
+		return "", c.deliveryError(notify.Unknown, "wechat_missing_inline_image_url", 0)
+	}
+	return response.URL, nil
+}
 
 func (c *Client) addDraft(ctx context.Context, article notify.Article, content, thumb string) (string, error) {
 	payload := draftRequest{Articles: []draftArticle{{
