@@ -10,16 +10,17 @@ import (
 )
 
 const (
-	PhaseValidationVersion    = 3
-	PhaseValidationMethod     = "walk_forward_rule_phase_v3"
-	phaseValidationHorizon    = 5
-	phaseValidationLookback   = 250
-	phaseValidationStep       = 5
-	phaseValidationMovePct    = 1.0
-	phaseValidationMinSamples = 300
-	phaseValidationMinStocks  = 30
-	phaseValidationMinDates   = 30
-	phaseValidationLimitation = "规则阶段的方向合理性检查；全池 walk-forward；特征使用当前前复权快照，公司行为窗口未重建；使用未来 5 根已保存日线标签、5 日信号步长（单股收益区间首尾相接不重叠），共享信号日且非独立留出集；不代表收益、成功率或交易信号"
+	PhaseValidationVersion             = 4
+	PhaseValidationMethod              = "walk_forward_rule_phase_v4"
+	phaseValidationHorizon             = 5
+	phaseValidationLookback            = 250
+	phaseValidationStep                = 5
+	phaseValidationMovePct             = 1.0
+	phaseValidationMinSamples          = 300
+	phaseValidationMinStocks           = 30
+	phaseValidationMinDates            = 30
+	PhaseValidationMinBalancedAccuracy = 0.40
+	phaseValidationLimitation          = "规则阶段的方向合理性检查；全池 walk-forward；特征使用当前前复权快照，公司行为窗口未重建；使用未来 5 根已保存日线标签、5 日信号步长（单股收益区间首尾相接不重叠），共享信号日且非独立留出集；不代表收益、成功率或交易信号"
 )
 
 type PhaseClassValidation struct {
@@ -46,6 +47,7 @@ type PhaseValidation struct {
 	Version          int                    `json:"schema_version"`
 	Method           string                 `json:"method"`
 	Status           string                 `json:"status"`
+	Verdict          string                 `json:"verdict,omitempty"`
 	AsOf             string                 `json:"as_of"`
 	HorizonDays      int                    `json:"horizon_days"`
 	From             string                 `json:"from,omitempty"`
@@ -76,7 +78,7 @@ type PhaseValidation struct {
 func EvaluatePhaseValidation(ctx context.Context, histories, raw []market.History, asof string) PhaseValidation {
 	report := PhaseValidation{
 		Version: PhaseValidationVersion, Method: PhaseValidationMethod,
-		Status: "unavailable", AsOf: asof, HorizonDays: phaseValidationHorizon,
+		Status: "unavailable", Verdict: "unavailable", AsOf: asof, HorizonDays: phaseValidationHorizon,
 		MinSamples: phaseValidationMinSamples, MinStocks: phaseValidationMinStocks, MinDates: phaseValidationMinDates,
 		Classes: []PhaseClassValidation{}, Limitation: phaseValidationLimitation,
 	}
@@ -236,10 +238,22 @@ func EvaluatePhaseValidation(ctx context.Context, histories, raw []market.Histor
 	}
 	if report.Stocks < phaseValidationMinStocks || report.Predicted < phaseValidationMinSamples || report.Dates < phaseValidationMinDates {
 		report.Status = "insufficient"
+		report.Verdict = "insufficient"
 		return report
 	}
 	report.Status = "ok"
+	report.Verdict = PhasePerformanceVerdict(report.Accuracy, report.BaselineAccuracy, report.BalancedAccuracy)
 	return report
+}
+
+// PhasePerformanceVerdict separates sample sufficiency from discriminating
+// power. A validation can have enough samples and still be weak when accuracy
+// does not beat the majority class or balanced accuracy stays near random.
+func PhasePerformanceVerdict(accuracy, baseline, balanced float64) string {
+	if accuracy > baseline && balanced > PhaseValidationMinBalancedAccuracy {
+		return "pass"
+	}
+	return "weak"
 }
 
 type phaseLabelClose struct {

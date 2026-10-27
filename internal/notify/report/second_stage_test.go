@@ -123,7 +123,8 @@ func TestSecondStageCompactArticleKeepsPhasePipelineAndValidationBoundaries(t *t
 	}
 	body := cards.SecondStage[0].Article.Body
 	for _, want := range []string{
-		"阶段链路：初筛 10/193 → 树 10/10、JEV 0/10 → 规则阶段验证 9650样本/50日/191/193只，覆盖86.0%，准确61.0%，基线48.0%，平衡55.0%。阶段按日线规则定向，模型仅微调置信度。",
+		"阶段链路：初筛 10/193 → 树 10/10、JEV 0/10。阶段按日线规则定向，模型仅微调置信度。",
+		"验证：9650样本/50日/191/193只；覆盖86.0%；准确61.0%，基线48.0%，平衡55.0%；通过。",
 		"**阶段**：上涨 72/100",
 	} {
 		if !strings.Contains(body, want) {
@@ -192,10 +193,48 @@ func TestArticlePhaseValidationShowsCurrentMetricsWhenSamplesAreInsufficient(t *
 	}
 	compactBody := cards.SecondStage[0].Article.Body
 	for _, want := range []string{
-		"规则阶段验证样本不足（8样本/2日/2只；需300/30/30），当前准确50.0%",
+		"验证：8样本/2日/2只；样本不足（需300/30/30），仅作观察。",
 	} {
 		if !strings.Contains(compactBody, want) {
 			t.Fatalf("compact insufficient validation article missing %q:\n%s", want, compactBody)
+		}
+	}
+}
+
+func TestArticlePhaseValidationReportsWeakPerformance(t *testing.T) {
+	validation := &strategy.PhaseValidation{
+		Status: "ok", Verdict: "weak", HorizonDays: 5,
+		Predicted: 6833, Dates: 99, Stocks: 191, Universe: 191, PoolSize: 193, Evaluated: 6833, Coverage: 1,
+		Accuracy: 0.342, BalancedAccuracy: 0.345, BaselineAccuracy: 0.463, LabelSource: "unadjusted_close",
+	}
+
+	compact := articleTestReport(10)
+	compact.PhaseValidation = validation
+	cards, err := FromSelection(compact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compactBody := cards.SecondStage[0].Article.Body
+	for _, want := range []string{
+		"验证：6833样本/99日/191/193只；覆盖100.0%；准确34.2%，基线46.3%，平衡34.5%；未通过。",
+	} {
+		if !strings.Contains(compactBody, want) {
+			t.Fatalf("compact weak validation article missing %q:\n%s", want, compactBody)
+		}
+	}
+
+	detailed := articleTestReport(6)
+	detailed.PhaseValidation = validation
+	cards, err = FromSelection(detailed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := cards.SecondStage[0].Article.Body
+	for _, want := range []string{
+		"- **结论**：未通过（样本达标；准确率 34.2%、多数类基线 46.3%，平衡准确率 34.5%；未显示可验证的方向预测优势）。",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("detailed weak validation article missing %q:\n%s", want, body)
 		}
 	}
 }

@@ -449,7 +449,8 @@ func articleBriefWave(candidate *strategy.Candidate) string {
 
 func writeArticlePhasePipeline(out *strings.Builder, r selection.Report, rows []articleCandidate, compact bool) {
 	if compact {
-		out.WriteString("阶段链路：" + articlePhasePipelineCompact(r, rows) + "\n\n")
+		out.WriteString("阶段链路：" + articlePhasePipelineCompact(r, rows) + "\n")
+		out.WriteString(articlePhaseValidationCompactLine(r.PhaseValidation) + "\n\n")
 		return
 	}
 	treeCovered, jevCovered := phaseModelCoverage(r, rows)
@@ -464,8 +465,7 @@ func writeArticlePhasePipeline(out *strings.Builder, r selection.Report, rows []
 
 func articlePhasePipelineCompact(r selection.Report, rows []articleCandidate) string {
 	treeCovered, jevCovered := phaseModelCoverage(r, rows)
-	validation := articlePhaseValidationCompact(r.PhaseValidation)
-	return fmt.Sprintf("初筛 %d/%d → 树 %d/%d、JEV %d/%d → %s。阶段按日线规则定向，模型仅微调置信度。", phaseAnalyzed(rows), r.PoolSize, treeCovered, len(rows), jevCovered, len(rows), validation)
+	return fmt.Sprintf("初筛 %d/%d → 树 %d/%d、JEV %d/%d。阶段按日线规则定向，模型仅微调置信度。", phaseAnalyzed(rows), r.PoolSize, treeCovered, len(rows), jevCovered, len(rows))
 }
 
 func phaseAnalyzed(rows []articleCandidate) int {
@@ -514,10 +514,10 @@ func writeArticlePhaseMetrics(out *strings.Builder, validation *strategy.PhaseVa
 	}
 	out.WriteString(fmt.Sprintf("- **口径**：全池 walk-forward；5 日信号步长；未来 %d 根已保存日线；标签 %s；特征为当前前复权快照。\n", validation.HorizonDays, phaseLabelSourceText(validation.LabelSource)))
 	if validation.Predicted > 0 {
-		out.WriteString(fmt.Sprintf("- **样本**：%d 个预测 / %d 个唯一信号日；股票 %s；阶段判定覆盖率 %.1f%%。\n", validation.Predicted, validation.Dates, articlePhaseStockCoverage(validation), validation.Coverage*100))
-		out.WriteString(fmt.Sprintf("- **总体**：准确率 %.1f%%；多数类基线 %.1f%%；平衡准确率 %.1f%%。\n", validation.Accuracy*100, validation.BaselineAccuracy*100, validation.BalancedAccuracy*100))
+		out.WriteString(articlePhaseSampleLine(validation))
+		out.WriteString(articlePhaseOverallLine(validation))
 	}
-	out.WriteString("- **状态**：" + articlePhaseValidationStatus(validation) + "。\n")
+	out.WriteString("- **结论**：" + articlePhaseValidationStatus(validation) + "。\n")
 	if len(validation.Classes) > 0 {
 		parts := make([]string, 0, len(validation.Classes))
 		for _, class := range validation.Classes {
@@ -531,29 +531,41 @@ func writeArticlePhaseMetrics(out *strings.Builder, validation *strategy.PhaseVa
 	out.WriteString("- **边界**：" + articleValue(validation.Limitation, "全池 walk-forward，股票共享信号日且非独立留出集，不代表收益或成功率") + "。\n\n")
 }
 
-func articlePhaseValidationCompact(validation *strategy.PhaseValidation) string {
+func articlePhaseValidationCompactLine(validation *strategy.PhaseValidation) string {
 	if validation == nil {
-		return "规则阶段验证暂不可用"
+		return "验证：本次报告未保存验证结果。"
 	}
-	switch validation.Status {
-	case "ok":
-		return fmt.Sprintf("规则阶段验证 %d样本/%d日/%s，覆盖%.1f%%，准确%.1f%%，基线%.1f%%，平衡%.1f%%", validation.Predicted, validation.Dates, articlePhaseStockCoverageCompact(validation), validation.Coverage*100, validation.Accuracy*100, validation.BaselineAccuracy*100, validation.BalancedAccuracy*100)
-	case "insufficient":
+	if articlePhaseVerdict(validation) == "insufficient" {
 		minSamples, minStocks, minDates := phaseValidationMinimums(validation)
-		return fmt.Sprintf("规则阶段验证样本不足（%d样本/%d日/%d只；需%d/%d/%d），当前准确%.1f%%", validation.Predicted, validation.Dates, validation.Stocks, minSamples, minDates, minStocks, validation.Accuracy*100)
-	default:
-		return "规则阶段验证暂不可用"
+		return fmt.Sprintf("验证：%d样本/%d日/%d只；样本不足（需%d/%d/%d），仅作观察。", validation.Predicted, validation.Dates, validation.Stocks, minSamples, minDates, minStocks)
 	}
+	if validation.Predicted <= 0 {
+		return "验证：暂不可用。"
+	}
+	verdict := "通过"
+	if articlePhaseVerdict(validation) == "weak" {
+		verdict = "未通过"
+	}
+	return fmt.Sprintf("验证：%d样本/%d日/%s；覆盖%.1f%%；准确%.1f%%，基线%.1f%%，平衡%.1f%%；%s。", validation.Predicted, validation.Dates, articlePhaseStockCoverageCompact(validation), validation.Coverage*100, validation.Accuracy*100, validation.BaselineAccuracy*100, validation.BalancedAccuracy*100, verdict)
+}
+
+func articlePhaseSampleLine(validation *strategy.PhaseValidation) string {
+	return fmt.Sprintf("- **样本**：%d 个预测 / %d 个唯一信号日；股票 %s；阶段判定覆盖率 %.1f%%。\n", validation.Predicted, validation.Dates, articlePhaseStockCoverage(validation), validation.Coverage*100)
+}
+
+func articlePhaseOverallLine(validation *strategy.PhaseValidation) string {
+	return fmt.Sprintf("- **总体**：准确率 %.1f%%；多数类基线 %.1f%%；平衡准确率 %.1f%%。\n", validation.Accuracy*100, validation.BaselineAccuracy*100, validation.BalancedAccuracy*100)
 }
 
 func articlePhaseValidationStatus(validation *strategy.PhaseValidation) string {
 	if validation == nil {
 		return "暂不可用"
 	}
-	switch validation.Status {
-	case "ok":
-		minSamples, minStocks, minDates := phaseValidationMinimums(validation)
-		return fmt.Sprintf("达标（已达到 %d 条/%d 日/%d 只的全池验证门槛）", minSamples, minDates, minStocks)
+	switch articlePhaseVerdict(validation) {
+	case "pass":
+		return fmt.Sprintf("通过（样本门槛达标；准确率 %.1f%% 高于多数类基线 %.1f%%，平衡准确率 %.1f%%）", validation.Accuracy*100, validation.BaselineAccuracy*100, validation.BalancedAccuracy*100)
+	case "weak":
+		return fmt.Sprintf("未通过（样本达标；准确率 %.1f%%、多数类基线 %.1f%%，平衡准确率 %.1f%%；未显示可验证的方向预测优势）", validation.Accuracy*100, validation.BaselineAccuracy*100, validation.BalancedAccuracy*100)
 	case "insufficient":
 		minSamples, minStocks, minDates := phaseValidationMinimums(validation)
 		return fmt.Sprintf("样本不足（当前 %d 样本/%d 日/%d 只；门槛 %d 样本/%d 日/%d 只），以下指标仅作观察", validation.Predicted, validation.Dates, validation.Stocks, minSamples, minDates, minStocks)
@@ -562,6 +574,19 @@ func articlePhaseValidationStatus(validation *strategy.PhaseValidation) string {
 	default:
 		return articleValue(validation.Status, "暂不可用")
 	}
+}
+
+func articlePhaseVerdict(validation *strategy.PhaseValidation) string {
+	if validation == nil {
+		return "unavailable"
+	}
+	if validation.Verdict != "" {
+		return validation.Verdict
+	}
+	if validation.Status != "ok" {
+		return validation.Status
+	}
+	return strategy.PhasePerformanceVerdict(validation.Accuracy, validation.BaselineAccuracy, validation.BalancedAccuracy)
 }
 
 func articlePhaseStockCoverage(validation *strategy.PhaseValidation) string {

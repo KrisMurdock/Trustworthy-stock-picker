@@ -216,6 +216,26 @@ func TestEvaluatePhaseValidationCoversFullPoolAndPriorYear(t *testing.T) {
 	}
 }
 
+func TestPhasePerformanceVerdictSeparatesSampleSizeFromSignal(t *testing.T) {
+	cases := []struct {
+		name                         string
+		accuracy, baseline, balanced float64
+		want                         string
+	}{
+		{name: "beats baseline and random", accuracy: 0.61, baseline: 0.48, balanced: 0.55, want: "pass"},
+		{name: "below majority baseline", accuracy: 0.342, baseline: 0.463, balanced: 0.345, want: "weak"},
+		{name: "above baseline but near random balanced", accuracy: 0.49, baseline: 0.48, balanced: 0.36, want: "weak"},
+		{name: "balanced above threshold but below baseline", accuracy: 0.45, baseline: 0.48, balanced: 0.50, want: "weak"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PhasePerformanceVerdict(tc.accuracy, tc.baseline, tc.balanced); got != tc.want {
+				t.Fatalf("verdict = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestEvaluatePhaseValidationRejectsDuplicateDates(t *testing.T) {
 	bars := phaseSeries(160, .03, .1)
 	bars[80].Date = bars[79].Date
