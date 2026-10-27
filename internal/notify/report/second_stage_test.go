@@ -117,14 +117,16 @@ func TestSecondStageCompactArticleKeepsPhasePipelineAndValidationBoundaries(t *t
 		Status: "ok", HorizonDays: 5, Predicted: 9650, Dates: 50, Stocks: 191, Universe: 191, PoolSize: 193, Evaluated: 11200, Coverage: 0.86,
 		Accuracy: 0.61, BalancedAccuracy: 0.55, BaselineAccuracy: 0.48, LabelSource: "unadjusted_close",
 	}
+	r.PhaseValidation.LabelComparison = articleLabelComparisonFixture()
 	cards, err := FromSelection(r)
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := cards.SecondStage[0].Article.Body
 	for _, want := range []string{
-		"阶段链路：初筛 10/193 → 树 10/10、JEV 0/10。阶段按日线规则定向，模型仅微调置信度。",
+		"链路：初筛10/193→树10/10、JEV0/10；规则定向，模型仅微调置信度。",
 		"验证：9650样本/50日/191/193只；覆盖86.0%；准确61.0%，基线48.0%，平衡55.0%；通过。",
+		"标签(macroF1/平衡)：开发 FTH42.0/43.0、斜率46.0/47.0；留出2200样本 FTH41.0/42.0、斜率45.0/46.0（H10/1.5ATR/R²0.6）；分布(涨/震/跌) FTH 733/733/734，斜率733/733/734；斜率候选优（仅研究）。",
 		"**阶段**：上涨 72/100",
 	} {
 		if !strings.Contains(body, want) {
@@ -239,6 +241,67 @@ func TestArticlePhaseValidationReportsWeakPerformance(t *testing.T) {
 	}
 }
 
+func TestArticlePhaseLabelComparisonShowsDevelopmentHoldoutAndDistribution(t *testing.T) {
+	validation := &strategy.PhaseValidation{
+		Status: "ok", Verdict: "weak", HorizonDays: 5,
+		Predicted: 7400, Dates: 100, Stocks: 191, Universe: 191, PoolSize: 193, Evaluated: 7400, Coverage: 1,
+		Accuracy: 0.43, BalancedAccuracy: 0.42, BaselineAccuracy: 0.46, LabelSource: "unadjusted_close",
+		LabelComparison: articleLabelComparisonFixture(),
+	}
+
+	detailed := articleTestReport(6)
+	detailed.PhaseValidation = validation
+	cards, err := FromSelection(detailed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := cards.SecondStage[0].Article.Body
+	for _, want := range []string{
+		"### 标签口径对比（v5）",
+		"开发 2026-01-20 至 2026-08-28；留出 2026-09-01 至 2026-10-19",
+		"口径 500 根/步长 3 日；purge 20 个交易日",
+		"FTH 基线（H=5，±1.0%）",
+		"5200样本/70日/191只：macroF1 42.0%，平衡 43.0%，准确 44.0%",
+		"斜率候选（H=10，幅度≥1.5×ATR14、|t|≥2.262、R²≥0.6）",
+		"**留出标签分布**：FTH 上涨733/震荡733/下跌734；斜率 上涨733/震荡733/下跌734",
+		"斜率候选在留出集 macroF1 45.0%，高于 FTH 的 41.0%",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("detailed label comparison missing %q:\n%s", want, body)
+		}
+	}
+
+	compact := articleTestReport(10)
+	compact.PhaseValidation = validation
+	cards, err = FromSelection(compact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compactBody := cards.SecondStage[0].Article.Body
+	if want := "标签(macroF1/平衡)：开发 FTH42.0/43.0、斜率46.0/47.0；留出2200样本 FTH41.0/42.0、斜率45.0/46.0（H10/1.5ATR/R²0.6）；分布(涨/震/跌) FTH 733/733/734，斜率733/733/734；斜率候选优（仅研究）。"; !strings.Contains(compactBody, want) {
+		t.Fatalf("compact label comparison missing %q:\n%s", want, compactBody)
+	}
+}
+
+func TestArticlePhaseLabelComparisonKeepsFTHWhenSlopeDoesNotWin(t *testing.T) {
+	comparison := articleLabelComparisonFixture()
+	comparison.Verdict = "retain_baseline"
+	comparison.SlopeVerdict = "retain_baseline"
+	comparison.Slope.Holdout.MacroF1 = 0.40
+	comparison.Slope.Holdout.BalancedAccuracy = 0.41
+	validation := &strategy.PhaseValidation{Status: "ok", Verdict: "weak", LabelComparison: comparison}
+	detailed := articleTestReport(6)
+	detailed.PhaseValidation = validation
+	cards, err := FromSelection(detailed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := cards.SecondStage[0].Article.Body
+	if want := "保留当前 FTH 口径"; !strings.Contains(body, want) {
+		t.Fatalf("retain verdict missing %q:\n%s", want, body)
+	}
+}
+
 func TestArticleDeclinePhaseUsesRiseInvalidation(t *testing.T) {
 	phase := articleTestPhase()
 	phase.Phase = strategy.PhaseDecline
@@ -340,6 +403,12 @@ func TestSecondStageArticleCardsRenderWithinWechatLimit(t *testing.T) {
 
 func TestSixStockDetailedArticleFitsWechatLimit(t *testing.T) {
 	r := articleTestReport(6)
+	r.PhaseValidation = &strategy.PhaseValidation{
+		Status: "ok", Verdict: "weak", HorizonDays: 5,
+		Predicted: 7400, Dates: 100, Stocks: 191, Universe: 191, PoolSize: 193, Evaluated: 7400, Coverage: 1,
+		Accuracy: 0.43, BalancedAccuracy: 0.42, BaselineAccuracy: 0.46, LabelSource: "unadjusted_close",
+		LabelComparison: articleLabelComparisonFixture(),
+	}
 	cards, err := FromSelection(r)
 	if err != nil {
 		t.Fatal(err)
@@ -353,12 +422,29 @@ func TestSixStockDetailedArticleFitsWechatLimit(t *testing.T) {
 	}
 }
 
+func TestArticlePhaseLabelComparisonShowsUnstableDistribution(t *testing.T) {
+	comparison := articleLabelComparisonFixture()
+	comparison.Verdict = "unstable"
+	comparison.SlopeVerdict = "unstable"
+	detailed := articleTestReport(6)
+	detailed.PhaseValidation = &strategy.PhaseValidation{Status: "ok", Verdict: "weak", LabelComparison: comparison}
+	cards, err := FromSelection(detailed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := cards.SecondStage[0].Article.Body
+	if !strings.Contains(body, "标签口径不稳定，保留当前 FTH 口径") {
+		t.Fatalf("unstable label verdict missing:\n%s", body)
+	}
+}
+
 func TestSecondStageArticleWithTenChartsFitsWechatLimit(t *testing.T) {
 	r := articleTestReport(10)
 	r.PhaseValidation = &strategy.PhaseValidation{
 		Status: "ok", HorizonDays: 5, Predicted: 9650, Dates: 50, Stocks: 191, Universe: 191, PoolSize: 193, Evaluated: 11200, Coverage: 0.86,
 		Accuracy: 0.61, BalancedAccuracy: 0.55, BaselineAccuracy: 0.48, LabelSource: "unadjusted_close",
 	}
+	r.PhaseValidation.LabelComparison = articleLabelComparisonFixture()
 	images := make(map[string]wechat.RenderedImage, 10)
 	for index := range r.Ranking {
 		chart := reportChart(r.Ranking[index].Code)
@@ -381,6 +467,38 @@ func TestSecondStageArticleWithTenChartsFitsWechatLimit(t *testing.T) {
 	}
 	if got := strings.Count(rendered, "<img "); got != 10 {
 		t.Fatalf("rendered charts = %d, want 10", got)
+	}
+}
+
+func articleLabelComparisonFixture() *strategy.PhaseLabelComparison {
+	metrics := func(samples, dates, stocks int, accuracy, balanced, macroF1, baseline float64) strategy.PhaseLabelMetrics {
+		return strategy.PhaseLabelMetrics{
+			Status: "ok", Samples: samples, Evaluated: samples, Dates: dates, Stocks: stocks, Coverage: 1,
+			Accuracy: accuracy, BalancedAccuracy: balanced, MacroF1: macroF1, BaselineAccuracy: baseline,
+			Distribution: []strategy.PhaseLabelCount{
+				{Phase: strategy.PhaseAdvance, Label: "上涨", Count: samples / 3, Share: 1.0 / 3},
+				{Phase: strategy.PhaseRange, Label: "震荡", Count: samples / 3, Share: 1.0 / 3},
+				{Phase: strategy.PhaseDecline, Label: "下跌", Count: samples - 2*(samples/3), Share: 1.0 / 3},
+			},
+		}
+	}
+	return &strategy.PhaseLabelComparison{
+		Version: strategy.PhaseLabelComparisonVersion, Method: strategy.PhaseLabelComparisonMethod,
+		Spec:            strategy.PhaseLabelSpec{Horizon: 10, ATRMultiple: 1.5, TCritical: 2.262, R2Minimum: 0.6},
+		DevelopmentFrom: "2026-01-20", DevelopmentThrough: "2026-08-28", HoldoutFrom: "2026-09-01", HoldoutThrough: "2026-10-19",
+		PurgeTradingDays: 20, LookbackBars: 500, SignalStep: 3, Candidates: 48, LabelSource: "unadjusted_close",
+		Baseline: strategy.PhaseLabelEvaluation{
+			Label: "fixed_time_horizon", Spec: strategy.PhaseLabelSpec{Horizon: 5, MovePct: 1},
+			Development: metrics(5200, 70, 191, 0.44, 0.43, 0.42, 0.46),
+			Holdout:     metrics(2200, 30, 191, 0.43, 0.42, 0.41, 0.46),
+		},
+		Slope: strategy.PhaseLabelEvaluation{
+			Label: "slope_log_atr", Spec: strategy.PhaseLabelSpec{Horizon: 10, ATRMultiple: 1.5, TCritical: 2.262, R2Minimum: 0.6},
+			Development: metrics(5200, 70, 191, 0.48, 0.47, 0.46, 0.36),
+			Holdout:     metrics(2200, 30, 191, 0.47, 0.46, 0.45, 0.36),
+		},
+		BaselineVerdict: "weak", SlopeVerdict: "candidate", Verdict: "candidate",
+		Limitation: "标签窗口重叠且共享信号日，不代表收益或成功率",
 	}
 }
 

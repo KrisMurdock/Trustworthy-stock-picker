@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	PhaseValidationVersion             = 4
-	PhaseValidationMethod              = "walk_forward_rule_phase_v4"
+	PhaseValidationVersion             = 5
+	PhaseValidationMethod              = "walk_forward_rule_phase_v5"
 	phaseValidationHorizon             = 5
 	phaseValidationLookback            = 250
 	phaseValidationStep                = 5
@@ -30,6 +30,7 @@ type PhaseClassValidation struct {
 	Support   int     `json:"support"`
 	Precision float64 `json:"precision"`
 	Recall    float64 `json:"recall"`
+	F1        float64 `json:"f1"`
 }
 
 type PhaseConfusion struct {
@@ -68,6 +69,7 @@ type PhaseValidation struct {
 	MinDates         int                    `json:"min_signal_dates"`
 	Classes          []PhaseClassValidation `json:"classes"`
 	Confusion        []PhaseConfusion       `json:"confusion,omitempty"`
+	LabelComparison  *PhaseLabelComparison  `json:"label_comparison,omitempty"`
 	Limitation       string                 `json:"limitation"`
 }
 
@@ -110,6 +112,7 @@ func EvaluatePhaseValidation(ctx context.Context, histories, raw []market.Histor
 	universe := map[string]bool{}
 	signalDates := map[string]bool{}
 	rawLabels, adjustedLabels := 0, 0
+	comparisonSamples := make([]phaseValidationSample, 0)
 	for _, history := range histories {
 		if err := ctx.Err(); err != nil {
 			return report
@@ -126,14 +129,14 @@ func EvaluatePhaseValidation(ctx context.Context, histories, raw []market.Histor
 		if len(bars) < phaseMinBars+phaseValidationHorizon {
 			continue
 		}
-		last := len(bars) - phaseValidationHorizon - 1
-		first := maxInt(phaseMinBars-1, last-phaseValidationLookback)
-		if first > last {
+		baselineLast := len(bars) - phaseValidationHorizon - 1
+		baselineFirst := maxInt(phaseMinBars-1, baselineLast-phaseValidationLookback)
+		if baselineFirst > baselineLast {
 			continue
 		}
 		rawCloses := rawByCode[history.Code]
 		stockPredicted := false
-		for i := first; i <= last; i += phaseValidationStep {
+		for i := baselineFirst; i <= baselineLast; i += phaseValidationStep {
 			if err := ctx.Err(); err != nil {
 				return report
 			}
@@ -179,8 +182,31 @@ func EvaluatePhaseValidation(ctx context.Context, histories, raw []market.Histor
 				report.To = bars[i].Date
 			}
 		}
+		if len(bars) >= phaseMinBars+phaseLabelMaxHorizon {
+			comparisonLast := len(bars) - phaseLabelMaxHorizon - 1
+			comparisonFirst := maxInt(phaseMinBars-1, comparisonLast-phaseLabelLookback)
+			for i := comparisonFirst; i <= comparisonLast; i += phaseLabelStep {
+				if err := ctx.Err(); err != nil {
+					return report
+				}
+				visible := bars[:i+1]
+				features, err := Extract(visible)
+				if err != nil {
+					continue
+				}
+				wave := AnalyzeWave(visible)
+				phase := AnalyzePhase(visible, features, &wave)
+				if phase.Phase == PhaseUnknown {
+					continue
+				}
+				if sample, sampleOK := phaseValidationSampleAt(history.Code, bars, i, rawCloses, phaseATR14Pct(visible), phase.Phase); sampleOK {
+					comparisonSamples = append(comparisonSamples, sample)
+				}
+			}
+		}
 	}
 	report.LabelSource = phaseLabelSource(rawLabels, adjustedLabels)
+	report.LabelComparison = ComparePhaseLabels(comparisonSamples)
 	report.Universe = len(universe)
 	report.Dates = len(signalDates)
 	if report.Evaluated == 0 || report.Predicted == 0 {
@@ -226,6 +252,7 @@ func EvaluatePhaseValidation(ctx context.Context, histories, raw []market.Histor
 		report.Classes = append(report.Classes, PhaseClassValidation{
 			Phase: phase, Label: phaseLabel(phase), Predicted: predictedCounts[phase],
 			Support: actualCounts[phase], Precision: precision, Recall: recall,
+			F1: phaseF1(precision, recall),
 		})
 	}
 	if recallClasses > 0 {

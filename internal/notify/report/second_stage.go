@@ -113,7 +113,11 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 	writeArticleConclusion(&out, r, rows, formal)
 
 	out.WriteString("## 价格区间说明\n\n")
-	out.WriteString(fmt.Sprintf("推荐买区以参考买价为中枢、ATR14 的 %.2g 倍为半宽生成，保留两位小数；信号日实际区间取 %s 的最高价至最低价。明日高点和低点来自已保存的 dayrange 预测，点估计之外分别给出各自的名义边际区间；高、低区间不是联合覆盖，也不是收益承诺。预测缺失时文章会明确标注“暂缺”，不临时编造。\n\n", articleBuyBandATR, articleMonthDay(result.AsOf)))
+	if compactPhase {
+		out.WriteString(fmt.Sprintf("买区=参考价±%.2g×ATR14；明日高低点为 dayrange 点估计及名义区间，非收益承诺；缺失标“暂缺”。\n\n", articleBuyBandATR))
+	} else {
+		out.WriteString(fmt.Sprintf("推荐买区以参考买价为中枢、ATR14 的 %.2g 倍为半宽生成，保留两位小数；信号日实际区间取 %s 的最高价至最低价。明日高点和低点来自已保存的 dayrange 预测，点估计之外分别给出各自的名义边际区间；高、低区间不是联合覆盖，也不是收益承诺。预测缺失时文章会明确标注“暂缺”，不临时编造。\n\n", articleBuyBandATR, articleMonthDay(result.AsOf)))
+	}
 
 	out.WriteString("## 理论与方法边界\n\n")
 	if compactPhase {
@@ -123,16 +127,24 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 	}
 
 	out.WriteString("## 数据与方法\n\n")
-	out.WriteString(fmt.Sprintf("信号日 %s，目标交易日 %s；精排模型 %s，输入 %d 只。", result.AsOf, result.Target, articleValue(result.ModelID, "未记录"), result.InputCount))
-	if result.Degraded {
-		out.WriteString("本次离线模型特征不完整，结果标记为降级，不应与完整模型结果直接比较。")
+	if compactPhase {
+		out.WriteString(fmt.Sprintf("信号日 %s，目标 %s；模型 %s，输入 %d 只；离线模型仅提供分数。", result.AsOf, result.Target, articleValue(result.ModelID, "未记录"), result.InputCount))
 	} else {
-		out.WriteString("离线模型只提供分数，生产进程不启动外部推理服务。")
+		out.WriteString(fmt.Sprintf("信号日 %s，目标交易日 %s；精排模型 %s，输入 %d 只。", result.AsOf, result.Target, articleValue(result.ModelID, "未记录"), result.InputCount))
+		if result.Degraded {
+			out.WriteString("本次离线模型特征不完整，结果标记为降级，不应与完整模型结果直接比较。")
+		} else {
+			out.WriteString("离线模型只提供分数，生产进程不启动外部推理服务。")
+		}
 	}
 	out.WriteString("\n\n")
 
 	out.WriteString("## 风险提示\n\n")
-	out.WriteString("本文仅用于数据研究和信息整理，不构成任何证券买卖建议、收益承诺或成功概率判断。历史统计和模型排序不代表未来表现，市场有风险，决策需独立审慎。\n")
+	if compactPhase {
+		out.WriteString("本文仅用于数据研究，不构成证券买卖建议、收益承诺或成功概率判断；历史表现不代表未来。\n")
+	} else {
+		out.WriteString("本文仅用于数据研究和信息整理，不构成任何证券买卖建议、收益承诺或成功概率判断。历史统计和模型排序不代表未来表现，市场有风险，决策需独立审慎。\n")
+	}
 	return out.String()
 }
 
@@ -213,8 +225,22 @@ func writeArticleBrief(out *strings.Builder, r selection.Report, row articleCand
 	}
 	out.WriteString("- **缠论**：" + articleBriefChan(row.observation) + "。\n")
 	out.WriteString("- **波浪**：" + articleBriefWave(row.observation) + "。\n")
-	out.WriteString(fmt.Sprintf("- **结论**：机会分 %s，延续分 %s；%s\n", articleScore(row.observation), articleContinuation(row.observation), articleRiskParagraph(r, row.observation)))
+	if compactPhase {
+		out.WriteString(fmt.Sprintf("- **结论**：机会分 %s，延续分 %s；%s\n", articleScore(row.observation), articleContinuation(row.observation), articleCompactRiskText(r, row.observation)))
+	} else {
+		out.WriteString(fmt.Sprintf("- **结论**：机会分 %s，延续分 %s；%s\n", articleScore(row.observation), articleContinuation(row.observation), articleRiskParagraph(r, row.observation)))
+	}
 	out.WriteString("\n:::\n\n")
+}
+
+func articleCompactRiskText(r selection.Report, candidate *strategy.Candidate) string {
+	if candidate == nil {
+		return "暂无历史与风险明细，不具备正式推荐条件。"
+	}
+	if candidate.Recommended {
+		return "已进入正式推荐，仍需结合开盘偏离、成交情况和仓位约束。"
+	}
+	return fmt.Sprintf("当前结论为“%s”，不是交易信号。", shortCandidateStatus(r, *candidate))
 }
 
 func articleCardTone(row articleCandidate) string {
@@ -449,8 +475,11 @@ func articleBriefWave(candidate *strategy.Candidate) string {
 
 func writeArticlePhasePipeline(out *strings.Builder, r selection.Report, rows []articleCandidate, compact bool) {
 	if compact {
-		out.WriteString("阶段链路：" + articlePhasePipelineCompact(r, rows) + "\n")
+		out.WriteString("链路：" + articlePhasePipelineCompact(r, rows) + "\n")
 		out.WriteString(articlePhaseValidationCompactLine(r.PhaseValidation) + "\n\n")
+		if line := articlePhaseLabelComparisonCompactLine(r.PhaseValidation); line != "" {
+			out.WriteString(line + "\n\n")
+		}
 		return
 	}
 	treeCovered, jevCovered := phaseModelCoverage(r, rows)
@@ -461,11 +490,12 @@ func writeArticlePhasePipeline(out *strings.Builder, r selection.Report, rows []
 	out.WriteString("- **置信度**：趋势基础分为 48+6×|方向票|+5×强度，震荡为 52+4×(3-|方向票|)+3×(2-强度)；模型同向或冲突最多调整 ±4，缺失模型时上限 65；未做独立概率校准。\n")
 	out.WriteString("- **边界**：阶段由日线规则定向；全池 walk-forward 验证的是规则阶段，特征使用当前前复权快照，股票共享信号日且非独立留出集，不代表收益或成功率。\n\n")
 	writeArticlePhaseMetrics(out, r.PhaseValidation)
+	writeArticlePhaseLabelComparison(out, r.PhaseValidation)
 }
 
 func articlePhasePipelineCompact(r selection.Report, rows []articleCandidate) string {
 	treeCovered, jevCovered := phaseModelCoverage(r, rows)
-	return fmt.Sprintf("初筛 %d/%d → 树 %d/%d、JEV %d/%d。阶段按日线规则定向，模型仅微调置信度。", phaseAnalyzed(rows), r.PoolSize, treeCovered, len(rows), jevCovered, len(rows))
+	return fmt.Sprintf("初筛%d/%d→树%d/%d、JEV%d/%d；规则定向，模型仅微调置信度。", phaseAnalyzed(rows), r.PoolSize, treeCovered, len(rows), jevCovered, len(rows))
 }
 
 func phaseAnalyzed(rows []articleCandidate) int {
@@ -529,6 +559,127 @@ func writeArticlePhaseMetrics(out *strings.Builder, validation *strategy.PhaseVa
 		out.WriteString("- **混淆矩阵**：" + confusion + "。\n")
 	}
 	out.WriteString("- **边界**：" + articleValue(validation.Limitation, "全池 walk-forward，股票共享信号日且非独立留出集，不代表收益或成功率") + "。\n\n")
+}
+
+func writeArticlePhaseLabelComparison(out *strings.Builder, validation *strategy.PhaseValidation) {
+	out.WriteString("### 标签口径对比（v5）\n\n")
+	if validation == nil || validation.LabelComparison == nil {
+		out.WriteString("- **状态**：本次报告未保存标签口径对比。\n\n")
+		return
+	}
+	comparison := validation.LabelComparison
+	out.WriteString(fmt.Sprintf("- **切分**：开发 %s 至 %s；留出 %s 至 %s；口径 %d 根/步长 %d 日；purge %d 个交易日；%d 组候选只在开发集选择，留出集在本次运行只评估一次；标签来源 %s。\n",
+		articleValue(comparison.DevelopmentFrom, "暂缺"), articleValue(comparison.DevelopmentThrough, "暂缺"),
+		articleValue(comparison.HoldoutFrom, "暂缺"), articleValue(comparison.HoldoutThrough, "暂缺"),
+		comparison.LookbackBars, comparison.SignalStep, comparison.PurgeTradingDays,
+		comparison.Candidates, phaseLabelSourceText(comparison.LabelSource)))
+	out.WriteString(fmt.Sprintf("- **FTH 基线（H=%d，±%.1f%%）**：开发 %s；留出 %s。\n",
+		comparison.Baseline.Spec.Horizon, comparison.Baseline.Spec.MovePct,
+		articleLabelMetricsText(comparison.Baseline.Development), articleLabelMetricsText(comparison.Baseline.Holdout)))
+	out.WriteString(fmt.Sprintf("- **斜率候选（H=%d，幅度≥%.1f×ATR14、|t|≥%.3f、R²≥%.1f）**：开发 %s；留出 %s。\n",
+		comparison.Spec.Horizon, comparison.Spec.ATRMultiple, comparison.Spec.TCritical, comparison.Spec.R2Minimum,
+		articleLabelMetricsText(comparison.Slope.Development), articleLabelMetricsText(comparison.Slope.Holdout)))
+	if distribution := articlePhaseLabelDistribution(comparison); distribution != "" {
+		out.WriteString("- **留出标签分布**：" + distribution + "。\n")
+	}
+	out.WriteString("- **结论**：" + articlePhaseLabelComparisonConclusion(comparison) + "\n")
+	out.WriteString("- **边界**：" + articleValue(comparison.Limitation, "标签窗口重叠且共享信号日，不代表收益或成功率") + "。\n\n")
+}
+
+func articlePhaseLabelComparisonCompactLine(validation *strategy.PhaseValidation) string {
+	if validation == nil || validation.LabelComparison == nil {
+		return ""
+	}
+	comparison := validation.LabelComparison
+	if comparison.Verdict == "insufficient" || comparison.Verdict == "unavailable" {
+		return "标签对比：开发或留出样本不足，暂不作口径替换。"
+	}
+	verdict := "保留FTH基线"
+	switch comparison.Verdict {
+	case "candidate":
+		verdict = "斜率候选优（仅研究）"
+	case "unstable":
+		verdict = "分布失衡，保留FTH"
+	}
+	return fmt.Sprintf("标签(macroF1/平衡)：开发 FTH%.1f/%.1f、斜率%.1f/%.1f；留出%d样本 FTH%.1f/%.1f、斜率%.1f/%.1f（H%d/%.1fATR/R²%.1f）；分布(涨/震/跌) FTH %s，斜率%s；%s。",
+		comparison.Baseline.Development.MacroF1*100, comparison.Baseline.Development.BalancedAccuracy*100,
+		comparison.Slope.Development.MacroF1*100, comparison.Slope.Development.BalancedAccuracy*100,
+		comparison.Baseline.Holdout.Samples,
+		comparison.Baseline.Holdout.MacroF1*100, comparison.Baseline.Holdout.BalancedAccuracy*100,
+		comparison.Slope.Holdout.MacroF1*100, comparison.Slope.Holdout.BalancedAccuracy*100,
+		comparison.Spec.Horizon, comparison.Spec.ATRMultiple, comparison.Spec.R2Minimum,
+		articlePhaseLabelDistributionCounts(comparison.Baseline.Holdout.Distribution),
+		articlePhaseLabelDistributionCounts(comparison.Slope.Holdout.Distribution), verdict)
+}
+
+func articlePhaseLabelDistributionCounts(rows []strategy.PhaseLabelCount) string {
+	if len(rows) == 0 {
+		return "暂缺"
+	}
+	byPhase := make(map[string]int, len(rows))
+	for _, row := range rows {
+		byPhase[row.Phase] = row.Count
+	}
+	parts := make([]string, 0, 3)
+	for _, phase := range []string{strategy.PhaseAdvance, strategy.PhaseRange, strategy.PhaseDecline} {
+		parts = append(parts, fmt.Sprintf("%d", byPhase[phase]))
+	}
+	return strings.Join(parts, "/")
+}
+
+func articleLabelMetricsText(metrics strategy.PhaseLabelMetrics) string {
+	if metrics.Status == "unavailable" || metrics.Samples == 0 {
+		return "暂不可用"
+	}
+	return fmt.Sprintf("%d样本/%d日/%d只：macroF1 %.1f%%，平衡 %.1f%%，准确 %.1f%%",
+		metrics.Samples, metrics.Dates, metrics.Stocks, metrics.MacroF1*100, metrics.BalancedAccuracy*100, metrics.Accuracy*100)
+}
+
+func articlePhaseLabelDistribution(comparison *strategy.PhaseLabelComparison) string {
+	if comparison == nil {
+		return ""
+	}
+	parts := make([]string, 0, 2)
+	if distribution := articleLabelDistributionText("FTH", comparison.Baseline.Holdout.Distribution); distribution != "" {
+		parts = append(parts, distribution)
+	}
+	if distribution := articleLabelDistributionText("斜率", comparison.Slope.Holdout.Distribution); distribution != "" {
+		parts = append(parts, distribution)
+	}
+	return strings.Join(parts, "；")
+}
+
+func articleLabelDistributionText(name string, rows []strategy.PhaseLabelCount) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	byPhase := make(map[string]int, len(rows))
+	for _, row := range rows {
+		byPhase[row.Phase] = row.Count
+	}
+	parts := make([]string, 0, 3)
+	for _, phase := range []string{strategy.PhaseAdvance, strategy.PhaseRange, strategy.PhaseDecline} {
+		parts = append(parts, fmt.Sprintf("%s%d", strategy.PhaseLabel(phase), byPhase[phase]))
+	}
+	return name + " " + strings.Join(parts, "/")
+}
+
+func articlePhaseLabelComparisonConclusion(comparison *strategy.PhaseLabelComparison) string {
+	if comparison == nil {
+		return "暂不可用"
+	}
+	switch comparison.Verdict {
+	case "candidate":
+		return fmt.Sprintf("斜率候选在留出集 macroF1 %.1f%%，高于 FTH 的 %.1f%%，且平衡准确率不低于基线；仅作为后续标签实验候选，不自动替换当前阶段规则。", comparison.Slope.Holdout.MacroF1*100, comparison.Baseline.Holdout.MacroF1*100)
+	case "retain_baseline":
+		return fmt.Sprintf("斜率候选未在留出集同时优于 FTH（macroF1 %.1f%% 对 %.1f%%，平衡准确率 %.1f%% 对 %.1f%%），保留当前 FTH 口径。", comparison.Slope.Holdout.MacroF1*100, comparison.Baseline.Holdout.MacroF1*100, comparison.Slope.Holdout.BalancedAccuracy*100, comparison.Baseline.Holdout.BalancedAccuracy*100)
+	case "unstable":
+		return "开发集或留出集缺少三类标签，或单一类别占比低于 10%；标签口径不稳定，保留当前 FTH 口径。"
+	case "insufficient":
+		return "开发集或留出集未达到 300 样本/30 个信号日/30 只股票门槛，暂不据此替换标签口径。"
+	default:
+		return articleValue(comparison.Verdict, "暂不可用")
+	}
 }
 
 func articlePhaseValidationCompactLine(validation *strategy.PhaseValidation) string {
