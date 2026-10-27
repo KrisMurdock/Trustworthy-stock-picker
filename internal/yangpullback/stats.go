@@ -33,25 +33,33 @@ type Stats struct {
 	StatusCounts    map[string]int `json:"status_counts"`
 }
 
-// BootstrapResult contains a date-cluster bootstrap. The interval is for the
-// fixed-horizon win rate; the difference interval pairs pattern and baseline
-// observations on the same signal dates.
+// BootstrapResult contains independent signal-date moving-block bootstraps for
+// the pattern and its control. The difference is descriptive and is not a
+// same-setup paired increment.
 type BootstrapResult struct {
 	Method              string  `json:"method"`
 	Iterations          int     `json:"iterations"`
 	Seed                int64   `json:"seed"`
 	Confidence          float64 `json:"confidence"`
+	BlockLength         int     `json:"block_length"`
 	Available           bool    `json:"available"`
 	WinRate             float64 `json:"win_rate"`
 	WinRateLower        float64 `json:"win_rate_95_lower"`
 	WinRateUpper        float64 `json:"win_rate_95_upper"`
 	Baseline            string  `json:"baseline,omitempty"`
+	BaselineAvailable   bool    `json:"baseline_available"`
 	BaselineWinRate     float64 `json:"baseline_win_rate"`
+	BaselineLower       float64 `json:"baseline_win_rate_95_lower"`
+	BaselineUpper       float64 `json:"baseline_win_rate_95_upper"`
 	Difference          float64 `json:"difference"`
 	DifferenceAvailable bool    `json:"difference_available"`
 	DifferenceLower     float64 `json:"difference_95_lower"`
 	DifferenceUpper     float64 `json:"difference_95_upper"`
-	PairedDates         int     `json:"paired_dates"`
+	IndependentCohorts  bool    `json:"independent_cohorts"`
+	Paired              bool    `json:"paired"`
+	PatternDates        int     `json:"pattern_signal_dates"`
+	BaselineDates       int     `json:"baseline_signal_dates"`
+	ComparisonNote      string  `json:"comparison_note"`
 }
 
 type dateObservation struct {
@@ -186,13 +194,20 @@ func yearOf(date string) string {
 	return ""
 }
 
-func bootstrapComparison(pattern, baseline []Trade, iterations int, seed int64, baselineName string) BootstrapResult {
+func bootstrapComparison(pattern, baseline []Trade, iterations int, seed int64, baselineName string, blockLength int) BootstrapResult {
+	if blockLength < 1 {
+		blockLength = 1
+	}
 	out := BootstrapResult{
-		Method:     "signal_date_cluster_bootstrap",
-		Iterations: iterations,
-		Seed:       seed,
-		Confidence: 0.95,
-		Baseline:   baselineName,
+		Method:             "independent_signal_date_moving_block_bootstrap",
+		Iterations:         iterations,
+		Seed:               seed,
+		Confidence:         0.95,
+		BlockLength:        blockLength,
+		Baseline:           baselineName,
+		IndependentCohorts: true,
+		Paired:             false,
+		ComparisonNote:     "Independent cohorts with different signal timing; descriptive contrast only, not a paired setup increment.",
 	}
 	patternGroups := groupBySignalDate(pattern)
 	if iterations <= 0 || len(patternGroups) == 0 {
@@ -201,12 +216,56 @@ func bootstrapComparison(pattern, baseline []Trade, iterations int, seed int64, 
 
 	patternDates := sortedKeys(patternGroups)
 	out.WinRate = aggregateWinRate(patternGroups, patternDates)
+	out.PatternDates = len(patternDates)
+	patternDraws := bootstrapDateWinRates(patternGroups, patternDates, iterations, blockLength, rand.New(rand.NewSource(seed)))
+	if len(patternDraws) > 0 {
+		sorted := append([]float64(nil), patternDraws...)
+		sort.Float64s(sorted)
+		out.Available = true
+		out.WinRateLower = bootstrapQuantile(sorted, 0.025)
+		out.WinRateUpper = bootstrapQuantile(sorted, 0.975)
+	}
+
+	baselineGroups := groupBySignalDate(baseline)
+	baselineDates := sortedKeys(baselineGroups)
+	if len(baselineDates) > 0 {
+		out.BaselineWinRate = aggregateWinRate(baselineGroups, baselineDates)
+		out.BaselineDates = len(baselineDates)
+	}
+	baselineDraws := bootstrapDateWinRates(baselineGroups, baselineDates, iterations, blockLength, rand.New(rand.NewSource(seed^int64(0x5A17))))
+	if len(baselineDraws) > 0 {
+		sorted := append([]float64(nil), baselineDraws...)
+		sort.Float64s(sorted)
+		out.BaselineAvailable = true
+		out.BaselineLower = bootstrapQuantile(sorted, 0.025)
+		out.BaselineUpper = bootstrapQuantile(sorted, 0.975)
+	}
+	if !out.Available || !out.BaselineAvailable {
+		return out
+	}
+	out.Difference = out.WinRate - out.BaselineWinRate
+	differences := make([]float64, 0, min(len(patternDraws), len(baselineDraws)))
+	for i := 0; i < len(patternDraws) && i < len(baselineDraws); i++ {
+		differences = append(differences, patternDraws[i]-baselineDraws[i])
+	}
+	if len(differences) > 0 {
+		sort.Float64s(differences)
+		out.DifferenceAvailable = true
+		out.DifferenceLower = bootstrapQuantile(differences, 0.025)
+		out.DifferenceUpper = bootstrapQuantile(differences, 0.975)
+	}
+	return out
+}
+
+func bootstrapDateWinRates(groups map[string]dateObservation, dates []string, iterations, blockLength int, random *rand.Rand) []float64 {
+	if iterations <= 0 || len(dates) == 0 {
+		return nil
+	}
 	draws := make([]float64, 0, iterations)
-	random := rand.New(rand.NewSource(seed))
 	for i := 0; i < iterations; i++ {
 		wins, signals := 0, 0
-		for range patternDates {
-			observation := patternGroups[patternDates[random.Intn(len(patternDates))]]
+		for _, index := range movingBlockIndices(len(dates), blockLength, random) {
+			observation := groups[dates[index]]
 			wins += observation.wins
 			signals += observation.signals
 		}
@@ -214,49 +273,16 @@ func bootstrapComparison(pattern, baseline []Trade, iterations int, seed int64, 
 			draws = append(draws, float64(wins)/float64(signals))
 		}
 	}
-	if len(draws) > 0 {
-		sort.Float64s(draws)
-		out.Available = true
-		out.WinRateLower = bootstrapQuantile(draws, 0.025)
-		out.WinRateUpper = bootstrapQuantile(draws, 0.975)
-	}
+	return draws
+}
 
-	baselineGroups := groupBySignalDate(baseline)
-	baselineDates := sortedKeys(baselineGroups)
-	if len(baselineDates) > 0 {
-		out.BaselineWinRate = aggregateWinRate(baselineGroups, baselineDates)
-	}
-	pairedDates := intersectDates(patternDates, baselineDates)
-	out.PairedDates = len(pairedDates)
-	if out.PairedDates == 0 {
-		return out
-	}
-	out.DifferenceAvailable = true
-	out.Difference = aggregateWinRate(patternGroups, pairedDates) - aggregateWinRate(baselineGroups, pairedDates)
-
-	draws = draws[:0]
-	for i := 0; i < iterations; i++ {
-		patternWins, patternSignals := 0, 0
-		baselineWins, baselineSignals := 0, 0
-		for range pairedDates {
-			date := pairedDates[random.Intn(len(pairedDates))]
-			p := patternGroups[date]
-			b := baselineGroups[date]
-			patternWins += p.wins
-			patternSignals += p.signals
-			baselineWins += b.wins
-			baselineSignals += b.signals
+func movingBlockIndices(count, blockLength int, random *rand.Rand) []int {
+	out := make([]int, 0, count)
+	for len(out) < count {
+		start := random.Intn(count)
+		for offset := 0; offset < blockLength && len(out) < count; offset++ {
+			out = append(out, (start+offset)%count)
 		}
-		if patternSignals > 0 && baselineSignals > 0 {
-			draws = append(draws, float64(patternWins)/float64(patternSignals)-float64(baselineWins)/float64(baselineSignals))
-		}
-	}
-	if len(draws) > 0 {
-		sort.Float64s(draws)
-		out.DifferenceLower = bootstrapQuantile(draws, 0.025)
-		out.DifferenceUpper = bootstrapQuantile(draws, 0.975)
-	} else {
-		out.DifferenceAvailable = false
 	}
 	return out
 }
@@ -297,20 +323,6 @@ func aggregateWinRate(groups map[string]dateObservation, dates []string) float64
 		return 0
 	}
 	return float64(wins) / float64(signals)
-}
-
-func intersectDates(left, right []string) []string {
-	rightSet := make(map[string]bool, len(right))
-	for _, date := range right {
-		rightSet[date] = true
-	}
-	out := make([]string, 0, len(left))
-	for _, date := range left {
-		if rightSet[date] {
-			out = append(out, date)
-		}
-	}
-	return out
 }
 
 func bootstrapQuantile(sorted []float64, probability float64) float64 {

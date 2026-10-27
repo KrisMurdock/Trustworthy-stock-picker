@@ -1,7 +1,6 @@
 package yangpullback
 
 import (
-	"fmt"
 	"math"
 	"testing"
 
@@ -11,25 +10,39 @@ import (
 )
 
 func TestSplitTradesPercentAndBoundaryPurge(t *testing.T) {
-	trades := make([]Trade, 0, 10)
-	for day := 1; day <= 10; day++ {
-		date := fmt.Sprintf("2026-01-%02d", day)
+	dates := testWeekdays(10)
+	trades := make([]Trade, 0, len(dates))
+	for _, date := range dates {
 		trades = append(trades, Trade{
 			Signal:   Signal{Code: "sz000001", Date: date},
 			ExitDate: date,
+			Status:   "fixed_hold",
 			Resolved: true,
 		})
 	}
-	trades[1].ExitDate = "2026-01-08"
-	development, holdout, purged, boundary := splitTrades(trades, .70)
-	if boundary != "2026-01-08" {
+	trades[1].ExitDate = dates[0]
+	trades[1].Status = "exit_locked"
+	trades[1].Resolved = false
+	trades[2].ExitDate = dates[0]
+	trades[2].Status = "corporate_action"
+	trades[2].Resolved = false
+	trades[3].ExitDate = dates[0]
+	trades[3].Status = "missing_exit_session"
+	trades[3].Resolved = false
+	trades[4].ExitDate = dates[0]
+
+	development, holdout, purged, boundary := splitTrades(trades, .70, testCalendar(), 5)
+	if boundary != dates[7] {
 		t.Fatalf("boundary = %q", boundary)
 	}
-	if purged != 1 {
+	if purged != 6 {
 		t.Fatalf("purged = %d", purged)
 	}
-	if len(development) != 6 || len(holdout) != 3 {
+	if len(development) != 1 || len(holdout) != 3 {
 		t.Fatalf("split sizes = development %d, holdout %d", len(development), len(holdout))
+	}
+	if development[0].Signal.Date != dates[0] {
+		t.Fatalf("development leaked a crossing label: %+v", development)
 	}
 	for _, trade := range development {
 		if trade.Signal.Date >= boundary {
@@ -40,26 +53,6 @@ func TestSplitTradesPercentAndBoundaryPurge(t *testing.T) {
 		if trade.Signal.Date < boundary {
 			t.Fatalf("holdout leaked development signal: %+v", trade)
 		}
-	}
-	stats := summarizeTrades(development, purged)
-	if stats.Purged != 1 || stats.Signals != 6 {
-		t.Fatalf("stats purge/signals = %+v", stats)
-	}
-}
-
-func TestSplitTradesExitBeforeBoundaryNotPurged(t *testing.T) {
-	trades := []Trade{
-		{Signal: Signal{Code: "sz000001", Date: "2026-01-05"}, ExitDate: "2026-01-06", Resolved: true},
-		{Signal: Signal{Code: "sz000001", Date: "2026-01-06"}, ExitDate: "2026-01-09", Resolved: true},
-		{Signal: Signal{Code: "sz000001", Date: "2026-01-07"}, ExitDate: "2026-01-10", Resolved: true},
-		{Signal: Signal{Code: "sz000001", Date: "2026-01-08"}, ExitDate: "2026-01-12", Resolved: true},
-	}
-	development, holdout, purged, boundary := splitTrades(trades, .70)
-	if boundary != "2026-01-07" || purged != 1 {
-		t.Fatalf("boundary/purged = %q/%d", boundary, purged)
-	}
-	if len(development) != 1 || len(holdout) != 2 {
-		t.Fatalf("split sizes = development %d, holdout %d", len(development), len(holdout))
 	}
 }
 
@@ -125,6 +118,32 @@ func TestFixedHoldTradeLeavesLockedDownExitUnresolved(t *testing.T) {
 	trade := fixedHoldTrade(pair, Signal{Code: "sz000001", Date: "2026-01-05"}, config.DefaultStrategy(), cal, 2)
 	if trade.Resolved || trade.Status != "exit_locked" {
 		t.Fatalf("locked-down exit = %+v", trade)
+	}
+}
+
+func TestFixedHoldTradeMarksPossibleSTLockedEntryUnknown(t *testing.T) {
+	bars := []market.Bar{
+		{Date: "2026-01-05", Open: 9.8, Close: 10, High: 10.1, Low: 9.7, Volume: 1000},
+		{Date: "2026-01-06", Open: 10.5, Close: 10.5, High: 10.5, Low: 10.5, Volume: 1000},
+		{Date: "2026-01-07", Open: 10.6, Close: 10.8, High: 10.9, Low: 10.5, Volume: 1000},
+		{Date: "2026-01-08", Open: 10.8, Close: 11, High: 11.1, Low: 10.7, Volume: 1000},
+	}
+	trade := fixedHoldTrade(testPair("sz000001", bars), Signal{Code: "sz000001", Date: "2026-01-05"}, config.DefaultStrategy(), testCalendar(), 2)
+	if !trade.EntrySkipped || trade.Resolved || trade.Status != "limit_status_unknown" {
+		t.Fatalf("possible ST locked entry = %+v", trade)
+	}
+}
+
+func TestFixedHoldTradeMarksPossibleSTLockedExitUnknown(t *testing.T) {
+	bars := []market.Bar{
+		{Date: "2026-01-05", Open: 9.8, Close: 10, High: 10.1, Low: 9.7, Volume: 1000},
+		{Date: "2026-01-06", Open: 10, Close: 10.2, High: 10.3, Low: 9.9, Volume: 1000},
+		{Date: "2026-01-07", Open: 10.2, Close: 10, High: 10.3, Low: 9.9, Volume: 1000},
+		{Date: "2026-01-08", Open: 9.5, Close: 9.5, High: 9.5, Low: 9.5, Volume: 1000},
+	}
+	trade := fixedHoldTrade(testPair("sz000001", bars), Signal{Code: "sz000001", Date: "2026-01-05"}, config.DefaultStrategy(), testCalendar(), 2)
+	if trade.EntrySkipped || trade.Resolved || trade.Status != "limit_status_unknown" {
+		t.Fatalf("possible ST locked exit = %+v", trade)
 	}
 }
 

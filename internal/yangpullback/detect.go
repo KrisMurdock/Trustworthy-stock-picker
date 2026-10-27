@@ -26,13 +26,21 @@ func Scan(history market.History, opts Options, mode Mode) ([]Signal, error) {
 		return signals, nil
 	}
 
-	seenAnchors := make(map[int]bool)
+	type setupKey struct {
+		high   string
+		anchor string
+	}
+	seenSetups := make(map[setupKey]bool)
 	for i := 59; i < len(history.Bars); i++ {
-		signal, anchor, ok := detectRaw(history.Code, history.Bars, i, opts, mode)
-		if !ok || seenAnchors[anchor] {
+		signal, _, ok := detectRaw(history.Code, history.Bars, i, opts, mode)
+		if !ok {
 			continue
 		}
-		seenAnchors[anchor] = true
+		setup := setupKey{high: signal.HighDate, anchor: signal.AnchorDate}
+		if seenSetups[setup] {
+			continue
+		}
+		seenSetups[setup] = true
 
 		if opts.RequirePhase {
 			phase, confidence, score, passed, err := phaseGate(history.Bars, i, opts.PhaseWindow)
@@ -50,7 +58,6 @@ func Scan(history market.History, opts Options, mode Mode) ([]Signal, error) {
 	}
 	return signals, nil
 }
-
 func validMode(mode Mode) bool {
 	switch mode {
 	case ModePattern, ModePullbackOnly, ModeHoldOnly:
@@ -111,7 +118,7 @@ func detectRaw(code string, bars []market.Bar, i int, opts Options, mode Mode) (
 	}
 
 	anchor := -1
-	for j := highIndex; j >= low; j-- {
+	for j := highIndex; j >= 0; j-- {
 		if bars[j].Close > bars[j].Open {
 			anchor = j
 			break

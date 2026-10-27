@@ -2,6 +2,7 @@ package yangpullback
 
 import (
 	"math"
+	"math/rand"
 	"testing"
 )
 
@@ -93,7 +94,7 @@ func TestSummarizeTradesPriceTouchRate(t *testing.T) {
 	}
 }
 
-func TestBootstrapComparisonDeterministicAndPaired(t *testing.T) {
+func TestBootstrapComparisonDeterministicAndIndependent(t *testing.T) {
 	pattern := []Trade{
 		testTrade("sz000001", "2026-01-05", 1, true, false, 1),
 		testTrade("sz000002", "2026-01-06", 1, true, false, 1),
@@ -104,22 +105,57 @@ func TestBootstrapComparisonDeterministicAndPaired(t *testing.T) {
 		testTrade("sz000002", "2026-01-06", -1, true, false, 0),
 		testTrade("sz000003", "2026-01-07", -1, true, false, 0),
 	}
-	first := bootstrapComparison(pattern, baseline, 250, 17, "hold_only")
-	again := bootstrapComparison(pattern, baseline, 250, 17, "hold_only")
+	first := bootstrapComparison(pattern, baseline, 250, 17, "hold_only", 2)
+	again := bootstrapComparison(pattern, baseline, 250, 17, "hold_only", 2)
 	if first != again {
 		t.Fatalf("bootstrap is not deterministic:\nfirst=%+v\nagain=%+v", first, again)
 	}
 	if !first.Available || first.WinRateLower != 1 || first.WinRateUpper != 1 {
 		t.Fatalf("win-rate interval = %+v", first)
 	}
-	if !first.DifferenceAvailable || first.PairedDates != 3 || first.Difference != 1 || first.DifferenceLower != 1 || first.DifferenceUpper != 1 {
+	if !first.DifferenceAvailable || first.PatternDates != 3 || first.BaselineDates != 3 || first.Difference != 1 || first.DifferenceLower != 1 || first.DifferenceUpper != 1 {
 		t.Fatalf("difference interval = %+v", first)
+	}
+	if !first.IndependentCohorts || first.Paired || first.BlockLength != 2 || first.Method != "independent_signal_date_moving_block_bootstrap" {
+		t.Fatalf("bootstrap comparison metadata = %+v", first)
 	}
 }
 
 func TestBootstrapComparisonEmptyBaseline(t *testing.T) {
-	got := bootstrapComparison([]Trade{testTrade("sz000001", "2026-01-05", 1, true, false, 1)}, nil, 100, 1, "hold_only")
+	got := bootstrapComparison([]Trade{testTrade("sz000001", "2026-01-05", 1, true, false, 1)}, nil, 100, 1, "hold_only", 7)
 	if !got.Available || got.DifferenceAvailable || got.DifferenceLower != 0 || got.DifferenceUpper != 0 {
 		t.Fatalf("unpaired bootstrap = %+v", got)
+	}
+}
+
+func TestBootstrapComparisonAllowsDisjointControlDates(t *testing.T) {
+	pattern := []Trade{
+		testTrade("sz000001", "2026-01-05", 1, true, false, 1),
+		testTrade("sz000002", "2026-01-06", 1, true, false, 1),
+		testTrade("sz000003", "2026-01-07", 1, true, false, 1),
+	}
+	baseline := []Trade{
+		testTrade("sz000004", "2026-02-02", -1, true, false, 0),
+		testTrade("sz000005", "2026-02-03", 1, true, false, 0),
+		testTrade("sz000006", "2026-02-04", -1, true, false, 0),
+	}
+	got := bootstrapComparison(pattern, baseline, 100, 3, "hold_only", 7)
+	if !got.DifferenceAvailable || got.PatternDates != 3 || got.BaselineDates != 3 || got.Paired {
+		t.Fatalf("disjoint cohorts should produce an independent contrast: %+v", got)
+	}
+}
+
+func TestMovingBlockIndicesUseContiguousDateClusters(t *testing.T) {
+	indices := movingBlockIndices(5, 3, rand.New(rand.NewSource(17)))
+	if len(indices) != 5 {
+		t.Fatalf("indices = %v", indices)
+	}
+	for start := 0; start < len(indices); start += 3 {
+		for offset := 1; offset < 3 && start+offset < len(indices); offset++ {
+			want := (indices[start+offset-1] + 1) % 5
+			if indices[start+offset] != want {
+				t.Fatalf("block starting at %d is not contiguous: %v", start, indices)
+			}
+		}
 	}
 }

@@ -99,7 +99,7 @@ func TestScanExpiresAfterMaximumPullback(t *testing.T) {
 	}
 }
 
-func TestScanEmitsOncePerAnchor(t *testing.T) {
+func TestScanEmitsFirstConfirmationPerSetup(t *testing.T) {
 	bars := flatBars(61)
 	setBar(bars, 56, 10, 11.5, 13, 9.8)
 	setBar(bars, 57, 10.5, 10.4, 10.8, 10.1)
@@ -112,7 +112,51 @@ func TestScanEmitsOncePerAnchor(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(signals) != 1 || signals[0].Date != bars[59].Date {
-		t.Fatalf("anchor emitted more than once: %+v", signals)
+		t.Fatalf("setup emitted more than once: %+v", signals)
+	}
+}
+
+func TestScanAllowsDifferentHighSetupsWithSameAnchor(t *testing.T) {
+	bars := flatBars(61)
+	setBar(bars, 54, 10, 11, 11.5, 9.8)
+	setBar(bars, 56, 11.5, 11.2, 12, 11)
+	setBar(bars, 57, 12, 11.8, 12.5, 11.5)
+	setBar(bars, 58, 10.3, 10.6, 10.9, 10.2)
+	setBar(bars, 59, 10.7, 11.2, 11.3, 10.6)
+	setBar(bars, 60, 11.4, 11.8, 11.9, 11.3)
+
+	signals, err := Scan(testHistory(bars), testOptions(bars), ModePattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(signals) != 2 {
+		t.Fatalf("signals = %+v, want two setups", signals)
+	}
+	if signals[0].AnchorDate != bars[54].Date || signals[1].AnchorDate != bars[54].Date {
+		t.Fatalf("test did not preserve the shared anchor: %+v", signals)
+	}
+	if signals[0].HighDate != bars[56].Date || signals[1].HighDate != bars[57].Date {
+		t.Fatalf("same-anchor setups were not kept distinct: %+v", signals)
+	}
+}
+
+func TestScanUsesLastBullishBeforeHighOutsideLookbackWindow(t *testing.T) {
+	bars := flatBars(64)
+	setBar(bars, 50, 10, 11, 11.2, 9.9)
+	setBar(bars, 60, 12.5, 12.2, 13, 12.1)
+	setBar(bars, 61, 10.6, 10.5, 10.8, 10.2)
+	setBar(bars, 62, 10.3, 10.4, 10.7, 10.1)
+	setBar(bars, 63, 10.8, 11.5, 11.6, 10.7)
+
+	signals, err := Scan(testHistory(bars), testOptions(bars), ModePattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(signals) != 1 {
+		t.Fatalf("signals = %+v, want one", signals)
+	}
+	if signals[0].HighDate != bars[60].Date || signals[0].AnchorDate != bars[50].Date {
+		t.Fatalf("anchor was not found outside the high lookback: %+v", signals[0])
 	}
 }
 
