@@ -50,6 +50,18 @@ func TestSecondStageArticleUsesReferenceStyleAndPriceAnnotations(t *testing.T) {
 		"**MACD**：DIF 0.120 / DEA 0.080 / 柱 0.080；红柱扩张",
 		"**BOLL**：上 15.80 / 中 14.90 / 下 14.00；带宽 12.1%；%B 0.89（上轨附近）",
 		"**波动与量能**：ATR14 2.83%；量比 1.32；MA20 斜率 +1.20%；距 MA20 +3.10%",
+		"#### 阶段判断（日线）",
+		"**当前阶段**：上涨（72/100，中；规则定向+模型微调）",
+		"**推理链**：价格位置",
+		"**模型证据**：树模型：预测未来3日最高涨幅 6.82%",
+		"**失效条件**：收盘跌破 14.70 后，当前上涨判断失效",
+		"**边界**：规则化日线阶段分类，不是趋势确认，也不构成买卖建议",
+		"## 阶段判断链路",
+		"- **初筛**：股池 193 只，日线可用 191 只，进入阶段分析 6 只。",
+		"- **精排**：树模型覆盖 6/6，JEV 覆盖 0/6",
+		"- **验证**：暂不可用。",
+		"- **置信度**：趋势基础分为 48+6×|方向票|+5×强度",
+		"- **边界**：阶段由日线规则定向；walk-forward 验证的是规则阶段，特征使用当前前复权快照，重叠标签且非独立留出集，不代表收益或成功率。",
 		"#### 缠论结构",
 		"**日线**：通过；48根K线/42根合并/5个分型/5笔",
 		"**30分钟**：通过；96根K线/80根合并/4个分型/4笔",
@@ -69,6 +81,7 @@ func TestSecondStageArticleUsesReferenceStyleAndPriceAnnotations(t *testing.T) {
 		"## 二、其他进入观察排名的对象",
 		"### 6. HXL（sz000006）",
 		"明日高低预测 暂缺（dayrange 模型未生成目标日预测）",
+		"**阶段**：上涨（72/100，中）；失效位 14.70",
 		"## 三、今天的整体结论",
 		"> 强势观察池，而不是正式推荐池。",
 		"ATR14 的 0.35 倍",
@@ -93,6 +106,71 @@ func TestSecondStageArticleUsesReferenceStyleAndPriceAnnotations(t *testing.T) {
 	expires := time.Date(2026, 10, 22, 9, 30, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
 	if !article.ExpiresAt.Equal(expires) {
 		t.Fatalf("expiry = %s, want %s", article.ExpiresAt, expires)
+	}
+}
+
+func TestSecondStageCompactArticleKeepsPhasePipelineAndValidationBoundaries(t *testing.T) {
+	r := articleTestReport(10)
+	r.PhaseValidation = &strategy.PhaseValidation{
+		Status: "ok", HorizonDays: 5, Predicted: 120, Coverage: 0.8,
+		Accuracy: 0.61, BalancedAccuracy: 0.55, BaselineAccuracy: 0.48, LabelSource: "unadjusted_close",
+	}
+	cards, err := FromSelection(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := cards.SecondStage[0].Article.Body
+	for _, want := range []string{
+		"阶段链路：初筛 10/193 → 树 10/10、JEV 0/10 → 规则阶段验证准确率 61.0%（基线 48.0%）。阶段按日线规则定向，模型仅微调置信度。",
+		"**阶段**：上涨 72/100",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("compact article missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "上涨 72/100（模型支持）") {
+		t.Fatalf("partial model coverage was presented as complete agreement:\n%s", body)
+	}
+}
+
+func TestArticlePhaseValidationNamesRulePhaseAndSupport(t *testing.T) {
+	r := articleTestReport(6)
+	r.PhaseValidation = &strategy.PhaseValidation{
+		Status: "ok", HorizonDays: 5, Predicted: 120, Dates: 7, Evaluated: 150, Coverage: 0.8,
+		Accuracy: 0.61, BalancedAccuracy: 0.55, BaselineAccuracy: 0.48, LabelSource: "unadjusted_close",
+		Classes: []strategy.PhaseClassValidation{
+			{Phase: strategy.PhaseAdvance, Label: "上涨", Predicted: 50, Support: 60, Precision: 0.7, Recall: 0.58},
+		},
+	}
+	cards, err := FromSelection(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := cards.SecondStage[0].Article.Body
+	for _, want := range []string{"规则阶段", "未复权收盘标签", "样本 120/7 个信号日", "多数类基线 48.0%", "上涨精确率 70%/召回率 58%（实际 60）"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("article validation missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestArticleDeclinePhaseUsesRiseInvalidation(t *testing.T) {
+	phase := articleTestPhase()
+	phase.Phase = strategy.PhaseDecline
+	phase.RulePhase = strategy.PhaseDecline
+	phase.Label = "下跌"
+	phase.Invalidation = 15.50
+	lines := strings.Join(articlePhaseLines(&strategy.Candidate{Phase: phase}, false), "\n")
+	if !strings.Contains(lines, "收盘升破 15.50") || strings.Contains(lines, "收盘跌破 15.50") {
+		t.Fatalf("decline invalidation direction is wrong:\n%s", lines)
+	}
+}
+
+func TestPremarketStructureOmitsEmptyPhaseHeading(t *testing.T) {
+	var out strings.Builder
+	writePremarketStructure(&out, &strategy.Candidate{})
+	if strings.Contains(out.String(), "阶段判断（日线）") {
+		t.Fatalf("empty phase left a heading:\n%s", out.String())
 	}
 }
 
@@ -175,8 +253,27 @@ func TestSecondStageArticleCardsRenderWithinWechatLimit(t *testing.T) {
 	}
 }
 
+func TestSixStockDetailedArticleFitsWechatLimit(t *testing.T) {
+	r := articleTestReport(6)
+	cards, err := FromSelection(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := wechat.RenderHTML(cards.SecondStage[0].Article.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len([]rune(rendered)); got >= 20000 {
+		t.Fatalf("detailed six-stock article has %d runes, exceeds WeChat draft limit", got)
+	}
+}
+
 func TestSecondStageArticleWithTenChartsFitsWechatLimit(t *testing.T) {
 	r := articleTestReport(10)
+	r.PhaseValidation = &strategy.PhaseValidation{
+		Status: "ok", HorizonDays: 5, Predicted: 120, Coverage: 0.8,
+		Accuracy: 0.61, BalancedAccuracy: 0.55, BaselineAccuracy: 0.48, LabelSource: "unadjusted_close",
+	}
 	images := make(map[string]wechat.RenderedImage, 10)
 	for index := range r.Ranking {
 		chart := reportChart(r.Ranking[index].Code)
@@ -252,6 +349,7 @@ func articleTestReport(count int) selection.Report {
 			Continuation:   &strategy.ContinuationStats{Status: "ready", Score: 39.7},
 			StructureGuard: &strategy.StructureGuardEvidence{GuardStatus: guardStatus, Reason: reason, DailyZone: &strategy.ChanZoneEvidence{Upper: 15.20, Lower: 14.70, Mid: 14.95}, Levels: levels},
 			Wave:           &strategy.WaveEvidence{Version: 1, Method: "simplified_swing_v1", Stage: "pullback", Label: "上升趋势中的调整（简化）", Status: "confirmed", CompletedStrokes: 5, LastStroke: "down", RetracementPct: 38.2, Support: 15.00, Resistance: 16.20, Invalidation: 14.70, Evidence: "日线完成笔重心仍向上，当前回撤未跌破笔重叠区下沿", Limitation: "仅依据完成笔与回撤的启发式描述，不是严格艾略特浪级计数"},
+			Phase:          articleTestPhase(),
 		})
 		if rank < count {
 			forecasts[codes[i]] = selection.DayRangeForecast{
@@ -317,6 +415,30 @@ func articleTestReport(count int) selection.Report {
 			Degraded:    false,
 			Candidates:  candidates,
 		},
+	}
+}
+
+func articleTestPhase() *strategy.PhaseEvidence {
+	return &strategy.PhaseEvidence{
+		Version: 1, Method: strategy.PhaseMethod, AsOf: "2026-10-21",
+		Phase: strategy.PhaseAdvance, Label: "上涨", Confidence: "medium",
+		ConfidenceScore: 72, BaseConfidenceScore: 72, Score: 4, Strength: 1,
+		RulePhase: strategy.PhaseAdvance, RuleScore: 4, DecisionStage: "rule+model-confidence", ModelAgreement: "supportive",
+		Models:          []strategy.PhaseModelEvidence{{Name: "tree", Status: "ok", Score: 0.40, Weight: 0.6, Detail: "预测未来3日最高涨幅 6.82%"}},
+		MA20DistancePct: 3.1, MA20SlopePct: 1.2,
+		RegressionSlopePct: 0.08, RegressionR2: 0.62, ATRMultiple: 0.8,
+		RangePosition: 0.8, RangeLow: 14.20, RangeHigh: 15.50, Invalidation: 14.70,
+		Steps: []strategy.PhaseStep{
+			{Key: "data", Label: "数据完整性", Value: "160 根日线，满足至少 60 根", Verdict: "充足"},
+			{Key: "price_vs_ma20", Label: "价格位置", Value: "收盘 15.15，MA20 14.90（+1.68%）", Verdict: "偏多", Score: 1},
+			{Key: "ma20_slope", Label: "中期方向", Value: "MA20 五日斜率 +1.20%", Verdict: "向上", Score: 1},
+			{Key: "ma_alignment", Label: "均线排列", Value: "MA5 15.20 / MA10 15.05 / MA20 14.90", Verdict: "多头排列", Score: 1},
+			{Key: "regression", Label: "趋势质量", Value: "20 日回归斜率 +0.08%/日，R² 0.62，约 0.8 ATR", Verdict: "向上且质量可用", Score: 1},
+			{Key: "range_position", Label: "区间位置", Value: "收盘位于 20 日区间 80%（14.20~15.50）", Verdict: "靠上"},
+			{Key: "structure", Label: "缠论/波浪结构", Value: "最后一笔向下；波浪阶段上升趋势中的调整（简化）", Verdict: "上升中的调整"},
+		},
+		Evidence:   "收盘 15.15，MA20 14.90（+1.68%）；MA20 五日斜率 +1.20%；综合得分 +4，判定上涨。",
+		Limitation: "规则化日线阶段分类，不是趋势确认，也不构成买卖建议",
 	}
 }
 

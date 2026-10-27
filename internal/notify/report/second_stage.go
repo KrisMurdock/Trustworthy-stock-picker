@@ -69,7 +69,7 @@ func secondStageArticleText(r selection.Report, result secondstage.Report) strin
 }
 
 func secondStageArticleDigest(result secondstage.Report) string {
-	digest := fmt.Sprintf("%s三日短线观察：精排 %d 只，附参考买区、明日高低预测与缠论/波浪结构图。", articleMonthDay(result.Target), len(result.Candidates))
+	digest := fmt.Sprintf("%s三日短线观察：精排 %d 只，附参考买区、明日高低预测、阶段判断与缠论/波浪结构图。", articleMonthDay(result.Target), len(result.Candidates))
 	if result.Degraded {
 		digest += "本次模型特征降级。"
 	}
@@ -93,17 +93,19 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 	out.WriteString(fmt.Sprintf("今天的筛选结果显示，策略观察池共 %d 只，精排从中输出 %d 只进入本期观察名单。%s。以下内容仅用于研究和观察，不构成交易建议。\n\n",
 		poolCount, len(rows), articleFormalSentence(formal)))
 	out.WriteString("机会分不代表成功概率，也不代表未来收益。\n\n")
+	compactPhase := len(rows) > 6
+	writeArticlePhasePipeline(&out, r, rows, compactPhase)
 
 	out.WriteString("## 一、排名靠前的观察对象\n\n")
 	detailCount := minInt(articleDetailCount, len(rows))
 	for i := 0; i < detailCount; i++ {
-		writeArticleDetail(&out, r, rows[i])
+		writeArticleDetail(&out, r, rows[i], compactPhase)
 	}
 
 	if len(rows) > detailCount {
 		out.WriteString("## 二、其他进入观察排名的对象\n\n")
 		for i := detailCount; i < len(rows); i++ {
-			writeArticleBrief(&out, r, rows[i])
+			writeArticleBrief(&out, r, rows[i], compactPhase)
 		}
 	}
 
@@ -114,7 +116,11 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 	out.WriteString(fmt.Sprintf("推荐买区以参考买价为中枢、ATR14 的 %.2g 倍为半宽生成，保留两位小数；信号日实际区间取 %s 的最高价至最低价。明日高点和低点来自已保存的 dayrange 预测，点估计之外分别给出各自的名义边际区间；高、低区间不是联合覆盖，也不是收益承诺。预测缺失时文章会明确标注“暂缺”，不临时编造。\n\n", articleBuyBandATR, articleMonthDay(result.AsOf)))
 
 	out.WriteString("## 理论与方法边界\n\n")
-	out.WriteString("缠论部分采用包含关系处理、严格分型、完成笔和笔重叠区；笔重叠区只是连续完成笔的公共交集，不冒充严格缠论中枢。波浪部分采用“简化摆动视角”，依据完成笔方向、回撤比例、均线方向和区间位置作启发式描述，不是严格艾略特浪级计数，也不据此单独给出推荐。技术指标只解释当前状态，不把超买、超卖或单个指标交叉当作交易信号。\n\n")
+	if compactPhase {
+		out.WriteString("阶段由日线规则定向，树模型/JEV 只提供短期证据并微调置信度，不翻转阶段；不是趋势确认，缠论、波浪不构成买卖信号。\n\n")
+	} else {
+		out.WriteString("阶段判断先由日线价格相对 MA20、MA20 五日斜率、均线排列、20 日对数回归收益率与 R²、20 日区间位置，以及缠论完成笔和简化波浪阶段给出规则阶段，输出上涨/震荡/下跌/未知。树模型和 JEV 的目标分别是未来三日最高涨幅与组内短期排序，不是三分类阶段模型；因此文章只把它们作为短期上行/排序证据，对同向或冲突做小幅置信度调整，不改变阶段方向。0-100 置信度来自规则得分和趋势质量，缺失任一模型时上限为 65。它是当前状态分类，不是趋势确认，也不构成买卖信号。缠论部分采用包含关系处理、严格分型、完成笔和笔重叠区；笔重叠区只是连续完成笔的公共交集，不冒充严格缠论中枢。波浪部分采用“简化摆动视角”，依据完成笔方向、回撤比例、均线方向和区间位置作启发式描述，不是严格艾略特浪级计数，也不据此单独给出推荐。技术指标只解释当前状态，不把超买、超卖或单个指标交叉当作交易信号。\n\n")
+	}
 
 	out.WriteString("## 数据与方法\n\n")
 	out.WriteString(fmt.Sprintf("信号日 %s，目标交易日 %s；精排模型 %s，输入 %d 只。", result.AsOf, result.Target, articleValue(result.ModelID, "未记录"), result.InputCount))
@@ -146,7 +152,7 @@ func buildArticleCandidates(r selection.Report, result secondstage.Report) []art
 	return rows
 }
 
-func writeArticleDetail(out *strings.Builder, r selection.Report, row articleCandidate) {
+func writeArticleDetail(out *strings.Builder, r selection.Report, row articleCandidate, compactPhase bool) {
 	code := articleValue(row.candidate.Code, "代码未记录")
 	name := articleStockLabel(code, row.candidate.Name)
 	sector := articleValue(row.candidate.Sector, "行业未记录")
@@ -163,6 +169,13 @@ func writeArticleDetail(out *strings.Builder, r selection.Report, row articleCan
 	out.WriteString("\n#### 技术指标\n")
 	for _, line := range articleTechnicalLines(row.observation) {
 		out.WriteString("- " + line + "\n")
+	}
+
+	if phaseLines := articlePhaseLines(row.observation, compactPhase); len(phaseLines) > 0 {
+		out.WriteString("\n#### 阶段判断（日线）\n")
+		for _, line := range phaseLines {
+			out.WriteString("- " + line + "\n")
+		}
 	}
 
 	out.WriteString("\n#### 缠论结构\n")
@@ -185,7 +198,7 @@ func writeArticleDetail(out *strings.Builder, r selection.Report, row articleCan
 	out.WriteString(":::\n\n")
 }
 
-func writeArticleBrief(out *strings.Builder, r selection.Report, row articleCandidate) {
+func writeArticleBrief(out *strings.Builder, r selection.Report, row articleCandidate, compactPhase bool) {
 	code := articleValue(row.candidate.Code, "代码未记录")
 	name := articleStockLabel(code, row.candidate.Name)
 	sector := articleValue(row.candidate.Sector, "行业未记录")
@@ -195,6 +208,9 @@ func writeArticleBrief(out *strings.Builder, r selection.Report, row articleCand
 	writeArticleChart(out, row.observation)
 	out.WriteString("- **价格**：" + strings.Join(articlePriceLineTexts(r, row.observation), "；") + "。\n")
 	out.WriteString("- **指标**：" + strings.Join(articleBriefTechnical(row.observation), "；") + "。\n")
+	if phase := articleBriefPhase(row.observation, compactPhase); phase != "" {
+		out.WriteString("- **阶段**：" + phase + "。\n")
+	}
 	out.WriteString("- **缠论**：" + articleBriefChan(row.observation) + "。\n")
 	out.WriteString("- **波浪**：" + articleBriefWave(row.observation) + "。\n")
 	out.WriteString(fmt.Sprintf("- **结论**：机会分 %s，延续分 %s；%s\n", articleScore(row.observation), articleContinuation(row.observation), articleRiskParagraph(r, row.observation)))
@@ -429,6 +445,284 @@ func articleBriefWave(candidate *strategy.Candidate) string {
 	}
 	parts = append(parts, "非严格浪级计数")
 	return strings.Join(parts, "；")
+}
+
+func writeArticlePhasePipeline(out *strings.Builder, r selection.Report, rows []articleCandidate, compact bool) {
+	if compact {
+		out.WriteString("阶段链路：" + articlePhasePipelineCompact(r, rows) + "\n\n")
+		return
+	}
+	treeCovered, jevCovered := phaseModelCoverage(r, rows)
+	out.WriteString("## 阶段判断链路\n\n")
+	out.WriteString(fmt.Sprintf("- **初筛**：股池 %d 只，日线可用 %d 只，进入阶段分析 %d 只。\n", r.PoolSize, r.Eligible, phaseAnalyzed(rows)))
+	out.WriteString(fmt.Sprintf("- **精排**：树模型覆盖 %d/%d，JEV 覆盖 %d/%d；两者只提供短期上行/排序证据，不翻转阶段，仅微调置信度。\n", treeCovered, len(rows), jevCovered, len(rows)))
+	out.WriteString("- **验证**：" + articlePhaseValidation(r) + "。\n")
+	out.WriteString("- **置信度**：趋势基础分为 48+6×|方向票|+5×强度，震荡为 52+4×(3-|方向票|)+3×(2-强度)；模型同向或冲突最多调整 ±4，缺失模型时上限 65；未做独立概率校准。\n")
+	out.WriteString("- **边界**：阶段由日线规则定向；walk-forward 验证的是规则阶段，特征使用当前前复权快照，重叠标签且非独立留出集，不代表收益或成功率。\n\n")
+}
+
+func articlePhasePipelineCompact(r selection.Report, rows []articleCandidate) string {
+	treeCovered, jevCovered := phaseModelCoverage(r, rows)
+	validation := "规则阶段验证暂不可用"
+	if r.PhaseValidation != nil && r.PhaseValidation.Status == "ok" {
+		validation = fmt.Sprintf("规则阶段验证准确率 %.1f%%（基线 %.1f%%）", r.PhaseValidation.Accuracy*100, r.PhaseValidation.BaselineAccuracy*100)
+	} else if r.PhaseValidation != nil && r.PhaseValidation.Status == "insufficient" {
+		validation = fmt.Sprintf("规则阶段验证样本不足（%d 条/%d 只）", r.PhaseValidation.Predicted, r.PhaseValidation.Stocks)
+	}
+	return fmt.Sprintf("初筛 %d/%d → 树 %d/%d、JEV %d/%d → %s。阶段按日线规则定向，模型仅微调置信度。", phaseAnalyzed(rows), r.PoolSize, treeCovered, len(rows), jevCovered, len(rows), validation)
+}
+
+func phaseAnalyzed(rows []articleCandidate) int {
+	count := 0
+	for _, row := range rows {
+		if row.observation != nil && row.observation.Phase != nil && row.observation.Phase.Phase != strategy.PhaseUnknown {
+			count++
+		}
+	}
+	return count
+}
+
+func phaseModelCoverage(r selection.Report, rows []articleCandidate) (tree, jev int) {
+	if r.SecondStage == nil {
+		return 0, 0
+	}
+	byCode := map[string]secondstage.Candidate{}
+	for _, candidate := range r.SecondStage.Candidates {
+		byCode[candidate.Code] = candidate
+	}
+	for _, row := range rows {
+		candidate, ok := byCode[row.candidate.Code]
+		if !ok {
+			continue
+		}
+		if r.SecondStage.ModelID != "" && treePredictionAvailable(candidate) {
+			tree++
+		}
+		if candidate.JEVPresent && r.SecondStage.JEVStatus == secondstage.JEVStatusOK {
+			jev++
+		}
+	}
+	return tree, jev
+}
+
+func treePredictionAvailable(candidate secondstage.Candidate) bool {
+	value := candidate.PredictedMaxHigh
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func articlePhaseValidation(r selection.Report) string {
+	validation := r.PhaseValidation
+	if validation == nil || validation.Status != "ok" {
+		if validation != nil && validation.Status == "insufficient" {
+			minSamples, minStocks, minDates := validation.MinSamples, validation.MinStocks, validation.MinDates
+			if minSamples <= 0 {
+				minSamples = 20
+			}
+			if minStocks <= 0 {
+				minStocks = 3
+			}
+			if minDates <= 0 {
+				minDates = 5
+			}
+			return fmt.Sprintf("样本不足（%d 条/%d 只/%d 日；至少 %d 条/%d 只/%d 日）", validation.Predicted, validation.Stocks, validation.Dates, minSamples, minStocks, minDates)
+		}
+		return "暂不可用"
+	}
+	labelSource := "未复权收盘标签"
+	switch validation.LabelSource {
+	case "mixed":
+		labelSource = "部分复权快照回退"
+	case "adjusted_close_fallback":
+		labelSource = "复权快照回退"
+	}
+	text := fmt.Sprintf("规则阶段，5 根日线方向标签（%s），样本 %d/%d 个信号日，覆盖 %.1f%%，准确率 %.1f%%，多数类基线 %.1f%%，平衡准确率 %.1f%%",
+		labelSource, validation.Predicted, validation.Dates, validation.Coverage*100, validation.Accuracy*100, validation.BaselineAccuracy*100, validation.BalancedAccuracy*100)
+	if len(validation.Classes) > 0 {
+		parts := make([]string, 0, len(validation.Classes))
+		for _, class := range validation.Classes {
+			parts = append(parts, fmt.Sprintf("%s精确率 %.0f%%/召回率 %.0f%%（实际 %d）", class.Label, class.Precision*100, class.Recall*100, class.Support))
+		}
+		text += "；" + strings.Join(parts, " / ")
+	}
+	return text
+}
+
+func articlePhaseLines(candidate *strategy.Candidate, compact bool) []string {
+	if candidate == nil || candidate.Phase == nil {
+		return nil
+	}
+	phase := candidate.Phase
+	if phase.Phase == strategy.PhaseUnknown {
+		reason := articleValue(phase.Evidence, "数据不足，暂不判定")
+		return []string{
+			"**当前阶段**：未知",
+			"**原因**：" + reason,
+			"**边界**：" + articleValue(phase.Limitation, "规则化阶段分类，不是趋势确认"),
+		}
+	}
+	chain := make([]string, 0, len(phase.Steps))
+	for _, step := range phase.Steps {
+		if step.Key == "data" && step.Verdict == "充足" {
+			continue
+		}
+		chain = append(chain, fmt.Sprintf("%s %s（%s）", step.Label, step.Value, step.Verdict))
+	}
+	stage := strategy.PhaseLabel(phase.Phase)
+	confidence := phase.ConfidenceScore
+	if confidence <= 0 {
+		confidence = 50
+	}
+	if compact {
+		detail := fmt.Sprintf("%s %.0f/100", stage, confidence)
+		if phaseModelsComplete(phase) && (phase.ModelAgreement == "supportive" || phase.ModelAgreement == "conflicting") {
+			detail += "（" + phaseAgreementText(phase.ModelAgreement) + "）"
+		}
+		return []string{"**阶段**：" + detail}
+	}
+	lines := []string{
+		fmt.Sprintf("**当前阶段**：%s（%.0f/100，%s；%s）", stage, confidence, phaseConfidenceText(phase.Confidence), phaseDecisionStageText(phase.DecisionStage)),
+		"**推理链**：" + strings.Join(chain, "；"),
+	}
+	if modelLine := articlePhaseModelLine(phase); modelLine != "" {
+		lines = append(lines, modelLine)
+	}
+	if phase.Invalidation > 0 {
+		direction := "跌破"
+		if phase.Phase == strategy.PhaseDecline {
+			direction = "升破"
+		}
+		lines = append(lines, fmt.Sprintf("**失效条件**：收盘%s %.2f 后，当前%s判断失效", direction, phase.Invalidation, phase.Label))
+	}
+	if phase.Phase == strategy.PhaseRange && phase.RangeLow > 0 && phase.RangeHigh > 0 {
+		lines = append(lines, fmt.Sprintf("**区间边界**：20 日区间 %.2f~%.2f", phase.RangeLow, phase.RangeHigh))
+	}
+	lines = append(lines, "**边界**："+articleValue(phase.Limitation, "规则化阶段分类，不是趋势确认，也不构成买卖建议"))
+	return lines
+}
+
+func articlePhaseModelLine(phase *strategy.PhaseEvidence) string {
+	if phase == nil || len(phase.Models) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(phase.Models))
+	for _, model := range phase.Models {
+		name := map[string]string{"tree": "树模型", "jev": "JEV"}[model.Name]
+		if name == "" {
+			name = model.Name
+		}
+		if model.Status != "ok" {
+			parts = append(parts, name+phaseModelStatusText(model.Status))
+			continue
+		}
+		parts = append(parts, name+"："+model.Detail)
+	}
+	conclusion := phaseAgreementText(phase.ModelAgreement)
+	if !phaseModelsComplete(phase) {
+		conclusion = "模型证据不完整，仅展示短期证据"
+	}
+	return fmt.Sprintf("**模型证据**：%s；结论 %s；置信度 %.0f/100", strings.Join(parts, "；"), conclusion, phase.ConfidenceScore)
+}
+
+func phaseModelStatusText(value string) string {
+	switch value {
+	case "missing":
+		return "缺失"
+	case "invalid":
+		return "无效"
+	case "degraded":
+		return "降级"
+	default:
+		return "不可用"
+	}
+}
+
+func phaseDecisionStageText(value string) string {
+	switch value {
+	case "rule+model-confidence":
+		return "规则定向+模型微调"
+	case "rule":
+		return "规则"
+	default:
+		return "规则"
+	}
+}
+
+func phaseAgreementText(value string) string {
+	switch value {
+	case "supportive":
+		return "模型支持"
+	case "conflicting":
+		return "模型冲突"
+	case "neutral":
+		return "模型中性"
+	case "not_applicable":
+		return "模型不参与震荡定向"
+	default:
+		return "模型缺失"
+	}
+}
+
+func articleBriefPhase(candidate *strategy.Candidate, compact bool) string {
+	if candidate == nil || candidate.Phase == nil {
+		return ""
+	}
+	phase := candidate.Phase
+	if phase.Phase == strategy.PhaseUnknown {
+		return "未知（数据不足）"
+	}
+	confidence := phase.ConfidenceScore
+	if confidence <= 0 {
+		confidence = 50
+	}
+	if compact {
+		return fmt.Sprintf("%s %.0f/100", strategy.PhaseLabel(phase.Phase), confidence)
+	}
+	parts := []string{fmt.Sprintf("%s（%.0f/100，%s）", strategy.PhaseLabel(phase.Phase), confidence, phaseConfidenceText(phase.Confidence))}
+	if phaseModelsComplete(phase) && phase.ModelAgreement != "" {
+		parts = append(parts, phaseAgreementText(phase.ModelAgreement))
+	}
+	if phase.Invalidation > 0 {
+		parts = append(parts, fmt.Sprintf("失效位 %.2f", phase.Invalidation))
+	}
+	return strings.Join(parts, "；")
+}
+
+func phaseModelsComplete(phase *strategy.PhaseEvidence) bool {
+	if phase == nil || len(phase.Models) == 0 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, model := range phase.Models {
+		if model.Status != "ok" || model.Weight <= 0 {
+			return false
+		}
+		seen[model.Name] = true
+	}
+	return seen["tree"] && seen["jev"]
+}
+
+func phaseConfidenceText(value string) string {
+	switch value {
+	case "high":
+		return "高"
+	case "medium":
+		return "中"
+	case "low":
+		return "低"
+	default:
+		return "未知"
+	}
+}
+
+func phaseStrengthText(value int) string {
+	switch value {
+	case 2:
+		return "强"
+	case 1:
+		return "中"
+	default:
+		return "弱"
+	}
 }
 
 func waveRetracementExceeded(wave *strategy.WaveEvidence) bool {

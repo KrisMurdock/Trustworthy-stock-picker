@@ -74,6 +74,7 @@ type Report struct {
 	Filtered          []Excluded                  `json:"filtered"`
 	Ranking           []strategy.Candidate        `json:"ranking,omitempty"`
 	Research          *strategy.Research          `json:"research,omitempty"`
+	PhaseValidation   *strategy.PhaseValidation   `json:"phase_validation,omitempty"`
 	FirstStage        *firststage.Report          `json:"first_stage,omitempty"`
 	SecondStage       *secondstage.Report         `json:"second_stage,omitempty"`
 	DayRangeForecasts map[string]DayRangeForecast `json:"day_range_forecasts,omitempty"`
@@ -242,6 +243,8 @@ func buildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 		"实验软目标：可卖出持仓窗口内最高价扣除成本与滑点后触达2.5%或3%，首次触达越快越好；收盘回落不取消触达，触达不等于实际成交",
 		"机会分结合价量特征和已完成历史交易；不足证据不推荐；参考卖价需按实际买入成本重算",
 	}}
+	phaseValidation := strategy.EvaluatePhaseValidation(ctx, histories, raw, asof)
+	r.PhaseValidation = &phaseValidation
 	for _, stock := range c.Stocks {
 		if reason, ok := result.Excluded[stock.Code]; ok {
 			r.Excluded = append(r.Excluded, Excluded{Code: stock.Code, Reason: reason})
@@ -276,6 +279,7 @@ func buildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 	}
 	attachFirstStage(&r, c, histories, asof, target, now)
 	attachSecondStage(&r, c, models, asof, target, now)
+	attachPhaseDecisions(&r)
 	attachArticleCharts(&r, histories)
 	identity := reportIdentity(r)
 	data, err := json.Marshal(identity)
@@ -350,6 +354,7 @@ func RecomputeSecondStage(report Report, c config.Config, now time.Time) (Report
 	}
 	before := report.SecondStage
 	attachSecondStage(&report, c, nil, report.AsOf, report.Target, now)
+	attachPhaseDecisions(&report)
 	if report.SecondStage == nil {
 		return report, errors.New("second-stage report is unavailable")
 	}

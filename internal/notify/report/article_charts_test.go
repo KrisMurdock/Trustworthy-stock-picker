@@ -30,10 +30,10 @@ func TestSecondStageArticleAttachesChartSpecsAndHidesTokensFromPlainText(t *test
 			t.Fatalf("plain text leaked chart markup %s:\n%s", token, article.PlainText)
 		}
 	}
-	if !strings.Contains(article.Article.Charts[0].Caption, "缠论") || !strings.Contains(article.Article.Charts[0].Caption, "sz300628") {
+	if !strings.Contains(article.Article.Charts[0].Caption, "日K") || !strings.Contains(article.Article.Charts[0].Caption, "sz300628") {
 		t.Fatalf("unexpected caption: %s", article.Article.Charts[0].Caption)
 	}
-	for _, want := range []string{"顶/底分型", "回撤刻度"} {
+	for _, want := range []string{"橙笔", "蓝点", "蓝区", "紫线位"} {
 		if !strings.Contains(article.Article.Charts[0].Caption, want) {
 			t.Fatalf("caption missing %q: %s", want, article.Article.Charts[0].Caption)
 		}
@@ -46,7 +46,7 @@ func TestSecondStageArticleAttachesChartSpecsAndHidesTokensFromPlainText(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(rendered, "<img ") != 2 || strings.Count(rendered, "日K结构图") < 2 {
+	if strings.Count(rendered, "<img ") != 2 || strings.Count(rendered, "日K") < 2 {
 		t.Fatalf("rendered charts are incomplete:\n%s", rendered)
 	}
 }

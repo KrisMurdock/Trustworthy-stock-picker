@@ -264,6 +264,9 @@ func writePremarketBrief(out *strings.Builder, r selection.Report, row premarket
 	out.WriteString("- **高低预测**：" + strings.Join(forecast, "；") + "。\n")
 	if row.observation != nil {
 		out.WriteString("- **指标**：" + strings.Join(articleBriefTechnical(row.observation), "；") + "。\n")
+		if phase := articleBriefPhase(row.observation, false); phase != "" {
+			out.WriteString("- **阶段**：" + phase + "。\n")
+		}
 		out.WriteString("- **缠论**：" + articleBriefChan(row.observation) + "。\n")
 		out.WriteString("- **波浪**：" + articleBriefWave(row.observation) + "。\n")
 	}
@@ -321,6 +324,13 @@ func writePremarketStructure(out *strings.Builder, candidate *strategy.Candidate
 		out.WriteString("- " + line + "\n")
 	}
 	out.WriteString("\n" + articleStructureParagraph(candidate) + "\n\n")
+	if phaseLines := articlePhaseLines(candidate, false); len(phaseLines) > 0 {
+		out.WriteString("#### 阶段判断（日线）\n")
+		for _, line := range phaseLines {
+			out.WriteString("- " + line + "\n")
+		}
+		out.WriteString("\n")
+	}
 	out.WriteString("#### 波浪视角（简化）\n")
 	for _, line := range articleWaveLines(candidate) {
 		out.WriteString("- " + line + "\n")

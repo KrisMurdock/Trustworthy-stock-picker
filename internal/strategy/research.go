@@ -161,6 +161,7 @@ type Candidate struct {
 	Chan                      *ChanEvidence           `json:"chan,omitempty"`
 	StructureGuard            *StructureGuardEvidence `json:"structure_guard,omitempty"`
 	Wave                      *WaveEvidence           `json:"wave,omitempty"`
+	Phase                     *PhaseEvidence          `json:"phase,omitempty"`
 	Chart                     *articlechart.Spec      `json:"article_chart,omitempty"`
 	Continuation              *ContinuationStats      `json:"continuation,omitempty"`
 }
@@ -850,6 +851,8 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 				candidate.DayLow = signal.Low
 				wave := AnalyzeWave(d.Adjusted.Bars)
 				candidate.Wave = &wave
+				phase := AnalyzePhase(d.Adjusted.Bars, x.Features, &wave)
+				candidate.Phase = &phase
 				p, err := NewPlan(s, x.Code, signal.Close*(1+s.SlippageRate))
 				if err != nil {
 					candidate.Recommended = false
