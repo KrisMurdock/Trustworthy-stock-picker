@@ -244,6 +244,7 @@ func buildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 		"机会分结合价量特征和已完成历史交易；不足证据不推荐；参考卖价需按实际买入成本重算",
 	}}
 	phaseValidation := strategy.EvaluatePhaseValidation(ctx, histories, raw, asof)
+	phaseValidation.PoolSize = len(c.Stocks)
 	r.PhaseValidation = &phaseValidation
 	for _, stock := range c.Stocks {
 		if reason, ok := result.Excluded[stock.Code]; ok {

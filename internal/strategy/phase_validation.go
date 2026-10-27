@@ -10,16 +10,16 @@ import (
 )
 
 const (
-	PhaseValidationVersion    = 2
-	PhaseValidationMethod     = "walk_forward_rule_phase_v2"
+	PhaseValidationVersion    = 3
+	PhaseValidationMethod     = "walk_forward_rule_phase_v3"
 	phaseValidationHorizon    = 5
-	phaseValidationLookback   = 60
-	phaseValidationStep       = 10
+	phaseValidationLookback   = 250
+	phaseValidationStep       = 5
 	phaseValidationMovePct    = 1.0
-	phaseValidationMinSamples = 20
-	phaseValidationMinStocks  = 3
-	phaseValidationMinDates   = 5
-	phaseValidationLimitation = "规则阶段的方向合理性检查；特征使用当前前复权快照，公司行为窗口未重建；使用 5 根已保存日线标签、重叠样本，非独立留出集；不代表收益、成功率或交易信号"
+	phaseValidationMinSamples = 300
+	phaseValidationMinStocks  = 30
+	phaseValidationMinDates   = 30
+	phaseValidationLimitation = "规则阶段的方向合理性检查；全池 walk-forward；特征使用当前前复权快照，公司行为窗口未重建；使用未来 5 根已保存日线标签、5 日信号步长（单股收益区间首尾相接不重叠），共享信号日且非独立留出集；不代表收益、成功率或交易信号"
 )
 
 type PhaseClassValidation struct {
@@ -51,6 +51,8 @@ type PhaseValidation struct {
 	From             string                 `json:"from,omitempty"`
 	To               string                 `json:"to,omitempty"`
 	Stocks           int                    `json:"stocks"`
+	Universe         int                    `json:"universe_stocks"`
+	PoolSize         int                    `json:"pool_size,omitempty"`
 	Dates            int                    `json:"signal_dates"`
 	Evaluated        int                    `json:"evaluated"`
 	Predicted        int                    `json:"predicted"`
@@ -103,6 +105,7 @@ func EvaluatePhaseValidation(ctx context.Context, histories, raw []market.Histor
 		confusion[phase] = map[string]int{}
 	}
 	seen := map[string]bool{}
+	universe := map[string]bool{}
 	signalDates := map[string]bool{}
 	rawLabels, adjustedLabels := 0, 0
 	for _, history := range histories {
@@ -114,7 +117,11 @@ func EvaluatePhaseValidation(ctx context.Context, histories, raw []market.Histor
 		}
 		seen[history.Code] = true
 		bars, ok := phaseBarsThrough(history, phaseHistoryCutoff(history, asof))
-		if !ok || len(bars) < phaseMinBars+phaseValidationHorizon {
+		if !ok {
+			continue
+		}
+		universe[history.Code] = true
+		if len(bars) < phaseMinBars+phaseValidationHorizon {
 			continue
 		}
 		last := len(bars) - phaseValidationHorizon - 1
@@ -122,8 +129,8 @@ func EvaluatePhaseValidation(ctx context.Context, histories, raw []market.Histor
 		if first > last {
 			continue
 		}
-		report.Stocks++
 		rawCloses := rawByCode[history.Code]
+		stockPredicted := false
 		for i := first; i <= last; i += phaseValidationStep {
 			if err := ctx.Err(); err != nil {
 				return report
@@ -158,6 +165,10 @@ func EvaluatePhaseValidation(ctx context.Context, histories, raw []market.Histor
 			}
 			confusion[phase.Phase][actual]++
 			report.Predicted++
+			if !stockPredicted {
+				report.Stocks++
+				stockPredicted = true
+			}
 			signalDates[bars[i].Date] = true
 			if report.From == "" || bars[i].Date < report.From {
 				report.From = bars[i].Date
@@ -168,6 +179,7 @@ func EvaluatePhaseValidation(ctx context.Context, histories, raw []market.Histor
 		}
 	}
 	report.LabelSource = phaseLabelSource(rawLabels, adjustedLabels)
+	report.Universe = len(universe)
 	report.Dates = len(signalDates)
 	if report.Evaluated == 0 || report.Predicted == 0 {
 		report.Limitation = "没有足够的已完成日线样本，阶段验证暂不可用；" + phaseValidationLimitation

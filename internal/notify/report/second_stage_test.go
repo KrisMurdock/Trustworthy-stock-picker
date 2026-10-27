@@ -59,9 +59,11 @@ func TestSecondStageArticleUsesReferenceStyleAndPriceAnnotations(t *testing.T) {
 		"## 阶段判断链路",
 		"- **初筛**：股池 193 只，日线可用 191 只，进入阶段分析 6 只。",
 		"- **精排**：树模型覆盖 6/6，JEV 覆盖 0/6",
-		"- **验证**：暂不可用。",
+		"- **验证**：规则阶段 walk-forward，指标见下方。",
+		"### 验证指标（规则阶段）",
+		"- **状态**：本次报告未保存验证结果。",
 		"- **置信度**：趋势基础分为 48+6×|方向票|+5×强度",
-		"- **边界**：阶段由日线规则定向；walk-forward 验证的是规则阶段，特征使用当前前复权快照，重叠标签且非独立留出集，不代表收益或成功率。",
+		"- **边界**：阶段由日线规则定向；全池 walk-forward 验证的是规则阶段，特征使用当前前复权快照，股票共享信号日且非独立留出集，不代表收益或成功率。",
 		"#### 缠论结构",
 		"**日线**：通过；48根K线/42根合并/5个分型/5笔",
 		"**30分钟**：通过；96根K线/80根合并/4个分型/4笔",
@@ -112,7 +114,7 @@ func TestSecondStageArticleUsesReferenceStyleAndPriceAnnotations(t *testing.T) {
 func TestSecondStageCompactArticleKeepsPhasePipelineAndValidationBoundaries(t *testing.T) {
 	r := articleTestReport(10)
 	r.PhaseValidation = &strategy.PhaseValidation{
-		Status: "ok", HorizonDays: 5, Predicted: 120, Coverage: 0.8,
+		Status: "ok", HorizonDays: 5, Predicted: 9650, Dates: 50, Stocks: 191, Universe: 191, PoolSize: 193, Evaluated: 11200, Coverage: 0.86,
 		Accuracy: 0.61, BalancedAccuracy: 0.55, BaselineAccuracy: 0.48, LabelSource: "unadjusted_close",
 	}
 	cards, err := FromSelection(r)
@@ -121,7 +123,7 @@ func TestSecondStageCompactArticleKeepsPhasePipelineAndValidationBoundaries(t *t
 	}
 	body := cards.SecondStage[0].Article.Body
 	for _, want := range []string{
-		"阶段链路：初筛 10/193 → 树 10/10、JEV 0/10 → 规则阶段验证准确率 61.0%（基线 48.0%）。阶段按日线规则定向，模型仅微调置信度。",
+		"阶段链路：初筛 10/193 → 树 10/10、JEV 0/10 → 规则阶段验证 9650样本/50日/191/193只，覆盖86.0%，准确61.0%，基线48.0%，平衡55.0%。阶段按日线规则定向，模型仅微调置信度。",
 		"**阶段**：上涨 72/100",
 	} {
 		if !strings.Contains(body, want) {
@@ -136,20 +138,64 @@ func TestSecondStageCompactArticleKeepsPhasePipelineAndValidationBoundaries(t *t
 func TestArticlePhaseValidationNamesRulePhaseAndSupport(t *testing.T) {
 	r := articleTestReport(6)
 	r.PhaseValidation = &strategy.PhaseValidation{
-		Status: "ok", HorizonDays: 5, Predicted: 120, Dates: 7, Evaluated: 150, Coverage: 0.8,
+		Status: "ok", HorizonDays: 5, Predicted: 9650, Dates: 50, Evaluated: 11200, Coverage: 0.86,
+		Stocks: 191, Universe: 191, PoolSize: 193, MinSamples: 300, MinStocks: 30, MinDates: 30,
 		Accuracy: 0.61, BalancedAccuracy: 0.55, BaselineAccuracy: 0.48, LabelSource: "unadjusted_close",
 		Classes: []strategy.PhaseClassValidation{
 			{Phase: strategy.PhaseAdvance, Label: "上涨", Predicted: 50, Support: 60, Precision: 0.7, Recall: 0.58},
 		},
+		Confusion: []strategy.PhaseConfusion{{Predicted: strategy.PhaseAdvance, Actual: strategy.PhaseAdvance, Count: 35}, {Predicted: strategy.PhaseAdvance, Actual: strategy.PhaseRange, Count: 15}},
 	}
 	cards, err := FromSelection(r)
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := cards.SecondStage[0].Article.Body
-	for _, want := range []string{"规则阶段", "未复权收盘标签", "样本 120/7 个信号日", "多数类基线 48.0%", "上涨精确率 70%/召回率 58%（实际 60）"} {
+	for _, want := range []string{
+		"### 验证指标（规则阶段）", "标签 未复权收盘标签", "9650 个预测", "50 个唯一信号日", "191/193 只",
+		"准确率 61.0%；多数类基线 48.0%；平衡准确率 55.0%", "上涨 预测50/实际60，精确率 70.0%、召回率 58.0%",
+		"预测上涨→上涨35、震荡15",
+	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("article validation missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestArticlePhaseValidationShowsCurrentMetricsWhenSamplesAreInsufficient(t *testing.T) {
+	validation := &strategy.PhaseValidation{
+		Status: "insufficient", HorizonDays: 5, Predicted: 8, Dates: 2, Stocks: 2, Universe: 10, PoolSize: 10, Evaluated: 10, Coverage: 0.8,
+		MinSamples: 300, MinStocks: 30, MinDates: 30,
+		Accuracy: 0.5, BalancedAccuracy: 0.45, BaselineAccuracy: 0.5, LabelSource: "adjusted_close_fallback",
+	}
+	detailed := articleTestReport(6)
+	detailed.PhaseValidation = validation
+	cards, err := FromSelection(detailed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := cards.SecondStage[0].Article.Body
+	for _, want := range []string{
+		"复权快照回退", "8 个预测", "2 个唯一信号日", "2/10 只",
+		"样本不足（当前 8 样本/2 日/2 只；门槛 300 样本/30 日/30 只），以下指标仅作观察",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("insufficient validation article missing %q:\n%s", want, body)
+		}
+	}
+
+	compact := articleTestReport(10)
+	compact.PhaseValidation = validation
+	cards, err = FromSelection(compact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compactBody := cards.SecondStage[0].Article.Body
+	for _, want := range []string{
+		"规则阶段验证样本不足（8样本/2日/2只；需300/30/30），当前准确50.0%",
+	} {
+		if !strings.Contains(compactBody, want) {
+			t.Fatalf("compact insufficient validation article missing %q:\n%s", want, compactBody)
 		}
 	}
 }
@@ -271,7 +317,7 @@ func TestSixStockDetailedArticleFitsWechatLimit(t *testing.T) {
 func TestSecondStageArticleWithTenChartsFitsWechatLimit(t *testing.T) {
 	r := articleTestReport(10)
 	r.PhaseValidation = &strategy.PhaseValidation{
-		Status: "ok", HorizonDays: 5, Predicted: 120, Coverage: 0.8,
+		Status: "ok", HorizonDays: 5, Predicted: 9650, Dates: 50, Stocks: 191, Universe: 191, PoolSize: 193, Evaluated: 11200, Coverage: 0.86,
 		Accuracy: 0.61, BalancedAccuracy: 0.55, BaselineAccuracy: 0.48, LabelSource: "unadjusted_close",
 	}
 	images := make(map[string]wechat.RenderedImage, 10)

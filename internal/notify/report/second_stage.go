@@ -456,19 +456,15 @@ func writeArticlePhasePipeline(out *strings.Builder, r selection.Report, rows []
 	out.WriteString("## 阶段判断链路\n\n")
 	out.WriteString(fmt.Sprintf("- **初筛**：股池 %d 只，日线可用 %d 只，进入阶段分析 %d 只。\n", r.PoolSize, r.Eligible, phaseAnalyzed(rows)))
 	out.WriteString(fmt.Sprintf("- **精排**：树模型覆盖 %d/%d，JEV 覆盖 %d/%d；两者只提供短期上行/排序证据，不翻转阶段，仅微调置信度。\n", treeCovered, len(rows), jevCovered, len(rows)))
-	out.WriteString("- **验证**：" + articlePhaseValidation(r) + "。\n")
+	out.WriteString("- **验证**：规则阶段 walk-forward，指标见下方。\n")
 	out.WriteString("- **置信度**：趋势基础分为 48+6×|方向票|+5×强度，震荡为 52+4×(3-|方向票|)+3×(2-强度)；模型同向或冲突最多调整 ±4，缺失模型时上限 65；未做独立概率校准。\n")
-	out.WriteString("- **边界**：阶段由日线规则定向；walk-forward 验证的是规则阶段，特征使用当前前复权快照，重叠标签且非独立留出集，不代表收益或成功率。\n\n")
+	out.WriteString("- **边界**：阶段由日线规则定向；全池 walk-forward 验证的是规则阶段，特征使用当前前复权快照，股票共享信号日且非独立留出集，不代表收益或成功率。\n\n")
+	writeArticlePhaseMetrics(out, r.PhaseValidation)
 }
 
 func articlePhasePipelineCompact(r selection.Report, rows []articleCandidate) string {
 	treeCovered, jevCovered := phaseModelCoverage(r, rows)
-	validation := "规则阶段验证暂不可用"
-	if r.PhaseValidation != nil && r.PhaseValidation.Status == "ok" {
-		validation = fmt.Sprintf("规则阶段验证准确率 %.1f%%（基线 %.1f%%）", r.PhaseValidation.Accuracy*100, r.PhaseValidation.BaselineAccuracy*100)
-	} else if r.PhaseValidation != nil && r.PhaseValidation.Status == "insufficient" {
-		validation = fmt.Sprintf("规则阶段验证样本不足（%d 条/%d 只）", r.PhaseValidation.Predicted, r.PhaseValidation.Stocks)
-	}
+	validation := articlePhaseValidationCompact(r.PhaseValidation)
 	return fmt.Sprintf("初筛 %d/%d → 树 %d/%d、JEV %d/%d → %s。阶段按日线规则定向，模型仅微调置信度。", phaseAnalyzed(rows), r.PoolSize, treeCovered, len(rows), jevCovered, len(rows), validation)
 }
 
@@ -510,41 +506,151 @@ func treePredictionAvailable(candidate secondstage.Candidate) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
-func articlePhaseValidation(r selection.Report) string {
-	validation := r.PhaseValidation
-	if validation == nil || validation.Status != "ok" {
-		if validation != nil && validation.Status == "insufficient" {
-			minSamples, minStocks, minDates := validation.MinSamples, validation.MinStocks, validation.MinDates
-			if minSamples <= 0 {
-				minSamples = 20
-			}
-			if minStocks <= 0 {
-				minStocks = 3
-			}
-			if minDates <= 0 {
-				minDates = 5
-			}
-			return fmt.Sprintf("样本不足（%d 条/%d 只/%d 日；至少 %d 条/%d 只/%d 日）", validation.Predicted, validation.Stocks, validation.Dates, minSamples, minStocks, minDates)
-		}
-		return "暂不可用"
+func writeArticlePhaseMetrics(out *strings.Builder, validation *strategy.PhaseValidation) {
+	out.WriteString("### 验证指标（规则阶段）\n\n")
+	if validation == nil {
+		out.WriteString("- **状态**：本次报告未保存验证结果。\n\n")
+		return
 	}
-	labelSource := "未复权收盘标签"
-	switch validation.LabelSource {
-	case "mixed":
-		labelSource = "部分复权快照回退"
-	case "adjusted_close_fallback":
-		labelSource = "复权快照回退"
+	out.WriteString(fmt.Sprintf("- **口径**：全池 walk-forward；5 日信号步长；未来 %d 根已保存日线；标签 %s；特征为当前前复权快照。\n", validation.HorizonDays, phaseLabelSourceText(validation.LabelSource)))
+	if validation.Predicted > 0 {
+		out.WriteString(fmt.Sprintf("- **样本**：%d 个预测 / %d 个唯一信号日；股票 %s；阶段判定覆盖率 %.1f%%。\n", validation.Predicted, validation.Dates, articlePhaseStockCoverage(validation), validation.Coverage*100))
+		out.WriteString(fmt.Sprintf("- **总体**：准确率 %.1f%%；多数类基线 %.1f%%；平衡准确率 %.1f%%。\n", validation.Accuracy*100, validation.BaselineAccuracy*100, validation.BalancedAccuracy*100))
 	}
-	text := fmt.Sprintf("规则阶段，5 根日线方向标签（%s），样本 %d/%d 个信号日，覆盖 %.1f%%，准确率 %.1f%%，多数类基线 %.1f%%，平衡准确率 %.1f%%",
-		labelSource, validation.Predicted, validation.Dates, validation.Coverage*100, validation.Accuracy*100, validation.BaselineAccuracy*100, validation.BalancedAccuracy*100)
+	out.WriteString("- **状态**：" + articlePhaseValidationStatus(validation) + "。\n")
 	if len(validation.Classes) > 0 {
 		parts := make([]string, 0, len(validation.Classes))
 		for _, class := range validation.Classes {
-			parts = append(parts, fmt.Sprintf("%s精确率 %.0f%%/召回率 %.0f%%（实际 %d）", class.Label, class.Precision*100, class.Recall*100, class.Support))
+			parts = append(parts, fmt.Sprintf("%s 预测%d/实际%d，精确率 %.1f%%、召回率 %.1f%%", class.Label, class.Predicted, class.Support, class.Precision*100, class.Recall*100))
 		}
-		text += "；" + strings.Join(parts, " / ")
+		out.WriteString("- **分类表现**：" + strings.Join(parts, "；") + "。\n")
 	}
-	return text
+	if confusion := articlePhaseConfusion(validation.Confusion); confusion != "" {
+		out.WriteString("- **混淆矩阵**：" + confusion + "。\n")
+	}
+	out.WriteString("- **边界**：" + articleValue(validation.Limitation, "全池 walk-forward，股票共享信号日且非独立留出集，不代表收益或成功率") + "。\n\n")
+}
+
+func articlePhaseValidationCompact(validation *strategy.PhaseValidation) string {
+	if validation == nil {
+		return "规则阶段验证暂不可用"
+	}
+	switch validation.Status {
+	case "ok":
+		return fmt.Sprintf("规则阶段验证 %d样本/%d日/%s，覆盖%.1f%%，准确%.1f%%，基线%.1f%%，平衡%.1f%%", validation.Predicted, validation.Dates, articlePhaseStockCoverageCompact(validation), validation.Coverage*100, validation.Accuracy*100, validation.BaselineAccuracy*100, validation.BalancedAccuracy*100)
+	case "insufficient":
+		minSamples, minStocks, minDates := phaseValidationMinimums(validation)
+		return fmt.Sprintf("规则阶段验证样本不足（%d样本/%d日/%d只；需%d/%d/%d），当前准确%.1f%%", validation.Predicted, validation.Dates, validation.Stocks, minSamples, minDates, minStocks, validation.Accuracy*100)
+	default:
+		return "规则阶段验证暂不可用"
+	}
+}
+
+func articlePhaseValidationStatus(validation *strategy.PhaseValidation) string {
+	if validation == nil {
+		return "暂不可用"
+	}
+	switch validation.Status {
+	case "ok":
+		minSamples, minStocks, minDates := phaseValidationMinimums(validation)
+		return fmt.Sprintf("达标（已达到 %d 条/%d 日/%d 只的全池验证门槛）", minSamples, minDates, minStocks)
+	case "insufficient":
+		minSamples, minStocks, minDates := phaseValidationMinimums(validation)
+		return fmt.Sprintf("样本不足（当前 %d 样本/%d 日/%d 只；门槛 %d 样本/%d 日/%d 只），以下指标仅作观察", validation.Predicted, validation.Dates, validation.Stocks, minSamples, minDates, minStocks)
+	case "unavailable":
+		return "暂不可用（没有足够的已完成日线样本）"
+	default:
+		return articleValue(validation.Status, "暂不可用")
+	}
+}
+
+func articlePhaseStockCoverage(validation *strategy.PhaseValidation) string {
+	if validation == nil {
+		return "0 只"
+	}
+	total := validation.PoolSize
+	if total <= 0 {
+		total = validation.Universe
+	}
+	if total <= 0 {
+		return fmt.Sprintf("%d 只", validation.Stocks)
+	}
+	covered := validation.Stocks
+	if covered > total {
+		covered = total
+	}
+	return fmt.Sprintf("%d/%d 只", covered, total)
+}
+
+func articlePhaseStockCoverageCompact(validation *strategy.PhaseValidation) string {
+	if validation == nil {
+		return "0只"
+	}
+	total := validation.PoolSize
+	if total <= 0 {
+		total = validation.Universe
+	}
+	if total <= 0 {
+		return fmt.Sprintf("%d只", validation.Stocks)
+	}
+	covered := validation.Stocks
+	if covered > total {
+		covered = total
+	}
+	return fmt.Sprintf("%d/%d只", covered, total)
+}
+
+func phaseValidationMinimums(validation *strategy.PhaseValidation) (samples, stocks, dates int) {
+	samples, stocks, dates = validation.MinSamples, validation.MinStocks, validation.MinDates
+	if samples <= 0 {
+		samples = 300
+	}
+	if stocks <= 0 {
+		stocks = 30
+	}
+	if dates <= 0 {
+		dates = 30
+	}
+	return samples, stocks, dates
+}
+
+func phaseLabelSourceText(value string) string {
+	switch value {
+	case "mixed":
+		return "部分复权快照回退"
+	case "adjusted_close_fallback":
+		return "复权快照回退"
+	default:
+		return "未复权收盘标签"
+	}
+}
+
+func articlePhaseConfusion(rows []strategy.PhaseConfusion) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	counts := map[string]map[string]int{}
+	for _, row := range rows {
+		if counts[row.Predicted] == nil {
+			counts[row.Predicted] = map[string]int{}
+		}
+		counts[row.Predicted][row.Actual] += row.Count
+	}
+	parts := make([]string, 0, 3)
+	for _, predicted := range []string{strategy.PhaseAdvance, strategy.PhaseRange, strategy.PhaseDecline} {
+		actuals := counts[predicted]
+		if len(actuals) == 0 {
+			continue
+		}
+		values := make([]string, 0, 3)
+		for _, actual := range []string{strategy.PhaseAdvance, strategy.PhaseRange, strategy.PhaseDecline} {
+			if actuals[actual] > 0 {
+				values = append(values, fmt.Sprintf("%s%d", strategy.PhaseLabel(actual), actuals[actual]))
+			}
+		}
+		parts = append(parts, fmt.Sprintf("预测%s→%s", strategy.PhaseLabel(predicted), strings.Join(values, "、")))
+	}
+	return strings.Join(parts, "；")
 }
 
 func articlePhaseLines(candidate *strategy.Candidate, compact bool) []string {

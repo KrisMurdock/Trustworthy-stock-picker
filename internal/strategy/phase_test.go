@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"reflect"
 	"testing"
@@ -192,6 +193,26 @@ func TestEvaluatePhaseValidationTruncatesAtAsOf(t *testing.T) {
 	}
 	if report.To > asof || report.From > asof {
 		t.Fatalf("validation used bars after asof: from=%s to=%s asof=%s", report.From, report.To, asof)
+	}
+}
+
+func TestEvaluatePhaseValidationCoversFullPoolAndPriorYear(t *testing.T) {
+	bars := phasePercentSeries(100, .03, .02, 360)
+	histories := make([]market.History, 0, 30)
+	for i := 0; i < 30; i++ {
+		histories = append(histories, market.History{
+			Code: fmt.Sprintf("sz%06d", i), AsOf: bars[len(bars)-1].Date, Bars: bars,
+		})
+	}
+	report := EvaluatePhaseValidation(context.Background(), histories, nil, bars[len(bars)-1].Date)
+	if report.Universe != 30 || report.Stocks != 30 {
+		t.Fatalf("validation did not cover the full pool: universe=%d stocks=%d", report.Universe, report.Stocks)
+	}
+	if report.Predicted < phaseValidationMinSamples || report.Dates < phaseValidationMinDates {
+		t.Fatalf("validation sample is too small to be credible: %+v", report)
+	}
+	if report.Status != "ok" {
+		t.Fatalf("full-pool prior-year validation should pass the gate: %+v", report)
 	}
 }
 
