@@ -38,6 +38,11 @@ func TestSecondStageArticleAttachesChartSpecsAndHidesTokensFromPlainText(t *test
 			t.Fatalf("caption missing %q: %s", want, article.Article.Charts[0].Caption)
 		}
 	}
+	for _, want := range []string{"缠论笔", "顶、底分型", "回撤刻度"} {
+		if !strings.Contains(article.Article.Body, want) {
+			t.Fatalf("legend missing %q from article body:\n%s", want, article.Article.Body)
+		}
+	}
 	images := map[string]wechat.RenderedImage{}
 	for _, chart := range article.Article.Charts {
 		images[chart.ID] = wechat.RenderedImage{URL: "https://mmbiz.qpic.cn/" + chart.ID, Caption: chart.Caption}

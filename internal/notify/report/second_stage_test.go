@@ -396,8 +396,8 @@ func TestSecondStageArticleCardsRenderWithinWechatLimit(t *testing.T) {
 	if len([]rune(rendered)) >= 20000 {
 		t.Fatalf("rendered article has %d runes, exceeds WeChat draft limit", len([]rune(rendered)))
 	}
-	if strings.Count(rendered, "<section style=\"margin:18px 0;") != 10 {
-		t.Fatalf("rendered cards = %d, want 10", strings.Count(rendered, "<section style=\"margin:18px 0;"))
+	if strings.Count(rendered, "<section style=\"margin:20px 0;") != 10 {
+		t.Fatalf("rendered cards = %d, want 10", strings.Count(rendered, "<section style=\"margin:20px 0;"))
 	}
 }
 

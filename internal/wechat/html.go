@@ -9,15 +9,17 @@ import (
 )
 
 const (
-	cardShellOpenStyle   = "margin:18px 0;border-left:4px solid "
-	cardShellStyleSuffix = ";padding:16px;color:#334155;"
-	cardHeading3Style    = "color:#0f172a;font-size:19px;"
+	articleHeading4Style = "margin:16px 0 6px;color:#1e3a8a;font-weight:700;"
+	cardShellOpenStyle   = "margin:20px 0;padding:14px 16px;border-left:4px solid "
+	cardShellStyleSuffix = ";"
+	cardHeading3Style    = "color:#0f172a;"
 	cardHeading4Prefix   = "color:"
 	cardHeading4Suffix   = ";"
-	cardQuoteStylePrefix = "margin:10px 0;padding:8px 12px;border-left:3px solid "
+	cardQuoteStylePrefix = "margin:12px 0;padding:8px 12px;border-left:3px solid "
 	cardQuoteStyleSuffix = ";background:#f8fafc;"
-	cardQuoteTextStyle   = "margin:0;font-size:15px;"
-	articleHeading4Style = "margin:18px 0 8px;color:#1e3a8a;font-size:16px;line-height:1.5;font-weight:700;"
+	cardQuoteTextStyle   = "margin:0;font-size:14px;"
+	imageStyle           = "display:block;width:100%;height:auto;"
+	captionStyle         = "margin:0 0 14px;color:#64748b;font-size:12px;"
 	cardBlueColor        = "#2563eb"
 	cardGreenColor       = "#16a34a"
 	cardAmberColor       = "#d97706"
@@ -183,7 +185,7 @@ func renderLines(out *strings.Builder, lines []string, card *cardTheme, images m
 		case strings.HasPrefix(trimmed, "> "):
 			flushList()
 			if card == nil {
-				out.WriteString("<blockquote><p>")
+				out.WriteString("<blockquote><p style=\"" + cardQuoteTextStyle + "\">")
 				writeInline(out, strings.TrimSpace(trimmed[2:]))
 				out.WriteString("</p></blockquote>")
 			} else {
@@ -236,16 +238,10 @@ func writeImage(out *strings.Builder, image RenderedImage, card *cardTheme) erro
 	out.WriteString(`<p>`)
 	out.WriteString(`<img src="`)
 	out.WriteString(html.EscapeString(image.URL))
-	out.WriteString(`" alt="日K结构图" style="display:block;width:100%;height:auto;" />`)
+	out.WriteString(`" alt="日K结构图" style="` + imageStyle + `" />`)
 	out.WriteString(`</p>`)
 	if caption != "" {
-		out.WriteString(`<p style="color:`)
-		if card != nil {
-			out.WriteString(card.accent)
-		} else {
-			out.WriteString(cardGreyColor)
-		}
-		out.WriteString(`;font-size:12px;">`)
+		out.WriteString(`<p style="` + captionStyle + `">`)
 		out.WriteString(html.EscapeString(caption))
 		out.WriteString(`</p>`)
 	}
@@ -315,9 +311,7 @@ func writeHeading(out *strings.Builder, tag, text, style string) {
 }
 
 func writeListOpen(out *strings.Builder, tag string) {
-	out.WriteString("<")
-	out.WriteString(tag)
-	out.WriteString(">")
+	out.WriteString("<" + tag + ">")
 }
 
 func writeListItem(out *strings.Builder, text string) {

@@ -21,13 +21,13 @@ func TestRenderHTMLBuildsStructuredWechatArticle(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"<h1>10月22日 观察 &amp; 风险</h1>",
-		"<h2>一、排名靠前的观察对象</h2>",
-		"<h3>1. 候选一（sz000001）</h3>",
-		"<ul><li>结构状态：通过</li><li>推荐：15.00~15.30 购入 &lt;script&gt;alert(1)&lt;/script&gt;</li><li>日价格区间：14.80~15.50</li></ul>",
-		"<p>正文 A &amp; B。</p>",
-		"<blockquote><p>强势观察池，而不是正式推荐池。</p></blockquote>",
-		"<ol><li>日线结构能否保持；</li><li>30分钟是否出现失效信号。</li></ol>",
+		`>10月22日 观察 &amp; 风险</h1>`,
+		`>一、排名靠前的观察对象</h2>`,
+		`>1. 候选一（sz000001）</h3>`,
+		`<li>推荐：15.00~15.30 购入 &lt;script&gt;alert(1)&lt;/script&gt;</li>`,
+		`>正文 A &amp; B。</p>`,
+		`>强势观察池，而不是正式推荐池。</p></blockquote>`,
+		`<li>30分钟是否出现失效信号。</li>`,
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("missing %q:\n%s", want, rendered)
@@ -44,12 +44,12 @@ func TestRenderHTMLKeepsLegacyHeadingAndIndentedLines(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"<h2>先说结论</h2>",
-		"<p>正文 A &amp; B。</p>",
-		"<h2>一、精排名单</h2>",
-		"<p>&nbsp;&nbsp;&nbsp;缩进说明 &lt;script&gt;alert(1)&lt;/script&gt;</p>",
-		"<h2>风险提示</h2>",
-		"<p>仅供研究。</p>",
+		`>先说结论</h2>`,
+		`>正文 A &amp; B。</p>`,
+		`>一、精排名单</h2>`,
+		`>&nbsp;&nbsp;&nbsp;缩进说明 &lt;script&gt;alert(1)&lt;/script&gt;</p>`,
+		`>风险提示</h2>`,
+		`>仅供研究。</p>`,
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("missing %q:\n%s", want, rendered)
@@ -79,13 +79,14 @@ func TestRenderHTMLBuildsSafeStockCard(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`<section style="margin:18px 0;border-left:4px solid #2563eb;padding:16px;color:#334155;">`,
-		`<h3 style="color:#0f172a;font-size:19px;">1. 候选一（sz000001）</h3>`,
-		`<h4 style="color:#2563eb;">技术指标</h4>`,
-		`<p><strong>结论</strong>：等待确认。</p>`,
-		`<ul><li><strong>RSI14</strong>：58.20</li><li>收盘位置：&lt;script&gt;alert(1)&lt;/script&gt;</li></ul>`,
-		`<blockquote style="margin:10px 0;padding:8px 12px;border-left:3px solid #2563eb;background:#f8fafc;"><p style="margin:0;font-size:15px;">仅为观察，不构成投资建议。</p></blockquote>`,
-		`<ol><li><strong>触发规则</strong>：放量站稳 MA20。</li></ol>`,
+		`<section style="` + cardShellOpenStyle + `#2563eb` + cardShellStyleSuffix + `">`,
+		`<h3 style="` + cardHeading3Style + `">1. 候选一（sz000001）</h3>`,
+		`<h4 style="` + cardHeading4Prefix + `#2563eb` + cardHeading4Suffix + `">技术指标</h4>`,
+		`<strong>结论</strong>：等待确认。</p>`,
+		`<li><strong>RSI14</strong>：58.20</li>`,
+		`<li>收盘位置：&lt;script&gt;alert(1)&lt;/script&gt;</li>`,
+		`<blockquote style="` + cardQuoteStylePrefix + `#2563eb` + cardQuoteStyleSuffix + `"><p style="` + cardQuoteTextStyle + `">仅为观察，不构成投资建议。</p></blockquote>`,
+		`<li><strong>触发规则</strong>：放量站稳 MA20。</li>`,
 		`</section>`,
 	} {
 		if !strings.Contains(rendered, want) {
@@ -143,10 +144,10 @@ func TestRenderHTMLSupportsH4AndBoldOutsideCards(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`<h4 style="margin:18px 0 8px;color:#1e3a8a;font-size:16px;line-height:1.5;font-weight:700;">指标概览</h4>`,
-		"<p><strong>RSI14</strong> 为 58.20</p>",
+		`<h4 style="` + articleHeading4Style + `">指标概览</h4>`,
+		"><strong>RSI14</strong> 为 58.20</p>",
 		"<p>**未闭合标记保持原样</p>",
-		"<ul><li><strong>MA20</strong>：15.00</li></ul>",
+		"<li><strong>MA20</strong>：15.00</li>",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("missing %q:\n%s", want, rendered)

@@ -12,6 +12,8 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 )
 
+const articleChartLegend = "结构图中，橙线为缠论笔，深色与蓝色点为顶、底分型，蓝色区域为笔重叠区，紫线为波浪支撑、压力与失效位及回撤刻度；K 线红涨绿跌。"
+
 const (
 	articleDetailCount = 5
 	articleBuyBandATR  = 0.35
@@ -123,6 +125,7 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 	if compactPhase {
 		out.WriteString("阶段由日线规则定向，树模型/JEV 只提供短期证据并微调置信度，不翻转阶段；不是趋势确认，缠论、波浪不构成买卖信号。\n\n")
 	} else {
+		out.WriteString(articleChartLegend + "\n\n")
 		out.WriteString("阶段判断先由日线价格相对 MA20、MA20 五日斜率、均线排列、20 日对数回归收益率与 R²、20 日区间位置，以及缠论完成笔和简化波浪阶段给出规则阶段，输出上涨/震荡/下跌/未知。树模型和 JEV 的目标分别是未来三日最高涨幅与组内短期排序，不是三分类阶段模型；因此文章只把它们作为短期上行/排序证据，对同向或冲突做小幅置信度调整，不改变阶段方向。0-100 置信度来自规则得分和趋势质量，缺失任一模型时上限为 65。它是当前状态分类，不是趋势确认，也不构成买卖信号。缠论部分采用包含关系处理、严格分型、完成笔和笔重叠区；笔重叠区只是连续完成笔的公共交集，不冒充严格缠论中枢。波浪部分采用“简化摆动视角”，依据完成笔方向、回撤比例、均线方向和区间位置作启发式描述，不是严格艾略特浪级计数，也不据此单独给出推荐。技术指标只解释当前状态，不把超买、超卖或单个指标交叉当作交易信号。\n\n")
 	}
 

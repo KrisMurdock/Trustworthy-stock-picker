@@ -227,7 +227,8 @@ func premarketArticleBody(input PremarketArticleInput, r selection.Report, rows 
 	out.WriteString("- **执行状态**：只比较已保存的盘前预测与参考计划。可执行要求为正式推荐且预测高低覆盖净目标与止损；观察表示无正式推荐或可能先触止损；放弃表示预测高不足以覆盖净目标。\n")
 	out.WriteString("- **技术指标**：MA、RSI、MACD、BOLL、ATR、量比只描述当前状态，不把单一指标交叉当作交易信号。\n")
 	out.WriteString("- **缠论结构**：采用包含关系处理、严格分型、完成笔和笔重叠区；笔重叠区不是严格缠论中枢。\n")
-	out.WriteString("- **波浪视角**：只依据完成笔方向、回撤比例、均线方向和区间位置作启发式描述，不是严格艾略特浪级计数。\n\n")
+	out.WriteString("- **波浪视角**：只依据完成笔方向、回撤比例、均线方向和区间位置作启发式描述，不是严格艾略特浪级计数。\n")
+	out.WriteString("- **结构图**：" + articleChartLegend + "\n\n")
 	if skipped := premarketSkippedSummary(input.Skipped); skipped != "" {
 		out.WriteString("## 数据说明\n\n" + skipped + "\n\n")
 	}
