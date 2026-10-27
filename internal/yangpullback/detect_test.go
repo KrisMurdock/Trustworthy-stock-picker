@@ -64,6 +64,19 @@ func TestScanRejectsPullbackCloseAboveHigh(t *testing.T) {
 	}
 }
 
+func TestScanHighWindowIncludesTenthPriorBar(t *testing.T) {
+	bars := validPatternBars()
+	setBar(bars, 49, 10, 11, 13, 9.8)
+
+	signals, err := Scan(testHistory(bars), testOptions(bars), ModePattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(signals) != 0 {
+		t.Fatalf("high outside the ten-session window was ignored: %+v", signals)
+	}
+}
+
 func TestScanKeepsAnchorAcrossSmallPullbackYang(t *testing.T) {
 	bars := flatBars(60)
 	setBar(bars, 54, 10, 11, 11.5, 9.8)

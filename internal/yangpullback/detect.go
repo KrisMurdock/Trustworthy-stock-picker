@@ -96,7 +96,7 @@ func validateScanInput(history market.History, asof string) error {
 }
 
 func detectRaw(code string, bars []market.Bar, i int, opts Options, mode Mode) (Signal, int, bool) {
-	low := i - opts.HighWindow + 1
+	low := i - opts.HighWindow
 	highEnd := i - opts.PullbackMin - 1
 	if low < 0 || highEnd < low {
 		return Signal{}, 0, false
