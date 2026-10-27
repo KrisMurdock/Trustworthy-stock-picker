@@ -109,6 +109,10 @@ func (m *Monitor) channelNamesForRoute(route string) []string {
 	if len(configured) == 0 {
 		return m.channelNames()
 	}
+	allowed := make(map[string]bool, len(configured))
+	for _, name := range m.Config.ChannelNamesForRoute(route) {
+		allowed[name] = true
+	}
 	routes := make(map[string]string, len(configured))
 	for _, channel := range configured {
 		routes[channel.Name] = channel.Route
@@ -119,7 +123,7 @@ func (m *Monitor) channelNamesForRoute(route string) []string {
 			continue
 		}
 		channelRoute, known := routes[channel.Name()]
-		if !known || channelRoute == "" || channelRoute == config.NotifyRouteAll || channelRoute == route {
+		if !known || channelRoute == "" || allowed[channel.Name()] {
 			names = append(names, channel.Name())
 		}
 	}

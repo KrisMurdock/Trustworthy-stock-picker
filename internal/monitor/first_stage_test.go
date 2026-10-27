@@ -41,6 +41,26 @@ func TestMonitorChannelNamesUseStageRoutes(t *testing.T) {
 	}
 }
 
+func TestMonitorChannelNamesMatchMultipleStageRoutes(t *testing.T) {
+	c := config.Defaults()
+	c.Notify.Channels = []config.NotifyChannel{
+		{Name: config.WechatDraftChannelName, Type: "wechat", Enabled: true, Route: config.NotifyRouteSecondStage + ", " + config.NotifyRouteWechatPremarket},
+		{Name: "selection-bot", Type: "feishu", Enabled: true, Route: config.NotifyRouteSelection},
+	}
+	m := &Monitor{Config: c, Channels: []notify.Channel{
+		&fakeChannel{name: config.WechatDraftChannelName},
+		&fakeChannel{name: "selection-bot"},
+	}}
+	for _, route := range []string{config.NotifyRouteSecondStage, config.NotifyRouteWechatPremarket} {
+		if got := m.channelNamesForRoute(route); len(got) != 1 || got[0] != config.WechatDraftChannelName {
+			t.Fatalf("%s route = %v", route, got)
+		}
+	}
+	if got := m.channelNamesForRoute(config.NotifyRouteSelection); len(got) != 1 || got[0] != "selection-bot" {
+		t.Fatalf("selection route = %v", got)
+	}
+}
+
 func TestEnqueueCardsRoutesEachStageSeparately(t *testing.T) {
 	now := time.Date(2026, 10, 21, 19, 0, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
 	expires := now.Add(14 * time.Hour)
