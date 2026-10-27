@@ -35,7 +35,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-context|sync-intraday|backfill-minutes|status-backfill|status-refresh|status-audit|preview|research|experiment|plan|run|once|status|retry|train-predictor|predictor-status|predictor-eval|train-dayrange|predict-dayrange|reconcile-dayrange|status-dayrange|replay-dayrange [channel] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-context|sync-intraday|backfill-minutes|status-backfill|status-refresh|status-audit|preview|research|experiment|study-yang-pullback|plan|run|once|status|retry|train-predictor|predictor-status|predictor-eval|train-dayrange|predict-dayrange|reconcile-dayrange|status-dayrange|replay-dayrange [channel] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -44,7 +44,7 @@ func run(args []string) error {
 	}
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
 	revision := f.String("revision", "", "saved report revision (replay only)")
-	asof := f.String("as-of", "", "data date (sync/context/status/preview/research/experiment/predictor-eval/dayrange commands only)")
+	asof := f.String("as-of", "", "data date (sync/context/status/preview/research/experiment/yang-pullback/predictor-eval/dayrange commands only)")
 	code := f.String("code", "", "stock code (plan, predict-dayrange or replay-dayrange only)")
 	parent := f.String("parent", "", "parent experiment ID (experiment only)")
 	holdout := f.Bool("holdout", false, "consume the parent experiment's reserved holdout interval once (experiment only)")
@@ -64,6 +64,8 @@ func run(args []string) error {
 	lossFunction := f.String("loss", string(predictor.LossL2), "training loss: l2 or l1 (predictor-eval only)")
 	closeLossFunction := f.String("close-loss", "", "optional close-target loss override: l1 or l2 (predictor-eval only)")
 	dayRangeOffline := f.Bool("offline", false, "train and evaluate dayrange in a temporary store without writing production data (train-dayrange only)")
+	bootstrap := f.Int("bootstrap", 1000, "date-cluster bootstrap resamples (study-yang-pullback only)")
+	split := f.Float64("split", 0.70, "chronological development split ratio (study-yang-pullback only)")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -74,7 +76,7 @@ func run(args []string) error {
 		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
-	case "check-config", "init", "check", "health", "replay", "sync", "sync-context", "sync-intraday", "backfill-minutes", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "plan", "run", "once", "status", "retry", "train-predictor", "predictor-status", "predictor-eval", "train-dayrange", "predict-dayrange", "reconcile-dayrange", "status-dayrange", "replay-dayrange":
+	case "check-config", "init", "check", "health", "replay", "sync", "sync-context", "sync-intraday", "backfill-minutes", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "study-yang-pullback", "plan", "run", "once", "status", "retry", "train-predictor", "predictor-status", "predictor-eval", "train-dayrange", "predict-dayrange", "reconcile-dayrange", "status-dayrange", "replay-dayrange":
 	default:
 		return errors.New("unknown command")
 	}
@@ -84,8 +86,8 @@ func run(args []string) error {
 	if command != "replay" && *revision != "" {
 		return errors.New("revision requires replay")
 	}
-	if *asof != "" && command != "sync" && command != "sync-context" && command != "backfill-minutes" && command != "status-backfill" && command != "status-refresh" && command != "status-audit" && command != "preview" && command != "research" && command != "experiment" && command != "predictor-eval" && command != "train-dayrange" && command != "predict-dayrange" && command != "reconcile-dayrange" && command != "status-dayrange" && command != "replay-dayrange" {
-		return errors.New("as-of is supported by sync, context sync, minute backfill, status commands, preview, research, experiment, predictor-eval and dayrange commands only")
+	if *asof != "" && command != "sync" && command != "sync-context" && command != "backfill-minutes" && command != "status-backfill" && command != "status-refresh" && command != "status-audit" && command != "preview" && command != "research" && command != "experiment" && command != "study-yang-pullback" && command != "predictor-eval" && command != "train-dayrange" && command != "predict-dayrange" && command != "reconcile-dayrange" && command != "status-dayrange" && command != "replay-dayrange" {
+		return errors.New("as-of is supported by sync, context sync, minute backfill, status commands, preview, research, experiment, yang-pullback, predictor-eval and dayrange commands only")
 	}
 	if command != "predictor-eval" && (*windows != "40,60,120" || *validationDays != 20 || *halfLife != 60) {
 		return errors.New("predictor-eval flags require the predictor-eval command")
@@ -119,6 +121,15 @@ func run(args []string) error {
 	}
 	if command != "backfill-minutes" && (*backfillWorkers != 3 || *backfillProvider != "auto" || *backfillCodes != "" || *importFrom != "" || *referenceDir != "") {
 		return errors.New("minute backfill flags require the backfill-minutes command")
+	}
+	if command != "study-yang-pullback" && (*bootstrap != 1000 || *split != 0.70) {
+		return errors.New("yang-pullback study flags require the study-yang-pullback command")
+	}
+	if command == "study-yang-pullback" && *bootstrap <= 0 {
+		return errors.New("study-yang-pullback -bootstrap must be positive")
+	}
+	if command == "study-yang-pullback" && (*split <= 0 || *split >= 1) {
+		return errors.New("study-yang-pullback -split must be between 0 and 1")
 	}
 	if command == "experiment" && (*from == "") != (*through == "") {
 		return errors.New("experiment -from and -through must be supplied together")
@@ -212,6 +223,9 @@ func run(args []string) error {
 			interval = &strategy.BacktestRange{From: *from, Through: *through}
 		}
 		return runExperiment(ctx, c, *asof, *parent, *policy, log, interval)
+	}
+	if command == "study-yang-pullback" {
+		return runYangPullbackStudy(ctx, c, *asof, *bootstrap, *split)
 	}
 	if command == "run" {
 		rt, err := stockruntime.New(stockruntime.Options{Version: version, Config: &c, Logger: log})

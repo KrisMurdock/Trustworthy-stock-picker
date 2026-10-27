@@ -91,6 +91,8 @@ type Trade struct {
 	Status       string  `json:"status"`
 	MFE          float64 `json:"mfe_pct"`
 	MAE          float64 `json:"mae_pct"`
+	MaxHighPct   float64 `json:"max_high_pct"`
+	PriceTouch   bool    `json:"price_touch"`
 	TargetFirst  bool    `json:"target_first"`
 	StopFirst    bool    `json:"stop_first"`
 	Ambiguous    bool    `json:"ambiguous"`
