@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/chanlun"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 )
 
@@ -57,6 +58,9 @@ func TestAnalyzeWaveStagesAndUnknownEvidence(t *testing.T) {
 	if pullback.Status != waveReady || pullback.Stage != waveStagePullback || pullback.RetracementPct < 10 || pullback.RetracementPct > 61.8 || pullback.CompletedStrokes == 0 {
 		t.Fatalf("obvious retracement was not described as a pullback: %+v", pullback)
 	}
+	if pullback.Support > 0 && pullback.Resistance > 0 && pullback.Support >= pullback.Resistance {
+		t.Fatalf("inverted structural levels: %+v", pullback)
+	}
 	if !strings.Contains(pullback.Evidence, "回撤比例") {
 		t.Fatalf("evidence does not describe the normalized retracement: %+v", pullback)
 	}
@@ -71,20 +75,55 @@ func TestAnalyzeWaveStagesAndUnknownEvidence(t *testing.T) {
 	}
 }
 
-func TestWaveRetracementUsesImpulseRangeAndCapsExtremeValues(t *testing.T) {
+func TestWaveRetracementUsesImpulseRangeAndMarksBreakdown(t *testing.T) {
 	cases := []struct {
 		name                   string
 		high, low, close, want float64
+		wantExceeded           bool
 	}{
 		{name: "half of impulse", high: 20, low: 10, close: 15, want: 50},
 		{name: "close above high", high: 20, low: 10, close: 21, want: 0},
 		{name: "invalid range", high: 10, low: 10, close: 9, want: 0},
-		{name: "deep retracement capped", high: 20, low: 10, close: 5, want: 150},
+		{name: "breakdown below impulse start", high: 20, low: 10, close: 5, want: 100, wantExceeded: true},
 	}
 	for _, tc := range cases {
-		if got := waveRetracement(tc.high, tc.low, tc.close); got != tc.want {
-			t.Fatalf("%s: retracement = %v, want %v", tc.name, got, tc.want)
+		got, exceeded := waveRetracement(tc.high, tc.low, tc.close)
+		if got != tc.want || exceeded != tc.wantExceeded {
+			t.Fatalf("%s: retracement = %v exceeded=%v, want %v exceeded=%v", tc.name, got, exceeded, tc.want, tc.wantExceeded)
 		}
+	}
+}
+
+func TestWaveStructureLevelsUseNearestBoundedCandidates(t *testing.T) {
+	zone := &chanlun.Zone{Lower: 31, Upper: 33}
+	top := &chanlun.Fractal{High: 33.8, Low: 33.2}
+	bottom := &chanlun.Fractal{High: 30.8, Low: 30.5}
+	tests := []struct {
+		name                                     string
+		close, support, resistance, invalidation float64
+	}{
+		{name: "inside zone", close: 32, support: 31, resistance: 33, invalidation: 30.5},
+		{name: "above zone uses nearest upper boundary", close: 33.5, support: 33, resistance: 33.8, invalidation: 30.5},
+		{name: "above all candidates omits resistance", close: 35, support: 33, resistance: 0, invalidation: 30.5},
+		{name: "below zone omits support and uses lower boundary as resistance", close: 29, support: 0, resistance: 31, invalidation: 30.5},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			support, resistance, invalidation := waveStructureLevels(zone, top, bottom, tc.close)
+			if support != tc.support || resistance != tc.resistance || invalidation != tc.invalidation {
+				t.Fatalf("levels = support %v resistance %v invalidation %v; want %v %v %v", support, resistance, invalidation, tc.support, tc.resistance, tc.invalidation)
+			}
+			if support > 0 && resistance > 0 && support >= resistance {
+				t.Fatalf("support %v must be below resistance %v", support, resistance)
+			}
+		})
+	}
+}
+
+func TestClassifyWaveStageTreatsFullRetracementAsWeak(t *testing.T) {
+	stage, label := classifyWaveStage("down", true, 100, 2, 19.35, 20.84, .8, nil)
+	if stage != waveStageWeak || !strings.Contains(label, "上行笔起点") {
+		t.Fatalf("full retracement stage = %s %s", stage, label)
 	}
 }
 

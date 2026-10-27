@@ -27,19 +27,20 @@ const (
 // latest completed swing. It is not an Elliott Wave count and does not claim
 // that an unfinished impulse or correction has been confirmed.
 type WaveEvidence struct {
-	Version          int     `json:"schema_version"`
-	Method           string  `json:"method"`
-	Stage            string  `json:"stage"`
-	Label            string  `json:"label"`
-	Status           string  `json:"status"`
-	CompletedStrokes int     `json:"completed_strokes"`
-	LastStroke       string  `json:"last_finished_stroke,omitempty"`
-	RetracementPct   float64 `json:"retracement_pct,omitempty"`
-	Support          float64 `json:"support,omitempty"`
-	Resistance       float64 `json:"resistance,omitempty"`
-	Invalidation     float64 `json:"invalidation,omitempty"`
-	Evidence         string  `json:"evidence"`
-	Limitation       string  `json:"limitation"`
+	Version             int     `json:"schema_version"`
+	Method              string  `json:"method"`
+	Stage               string  `json:"stage"`
+	Label               string  `json:"label"`
+	Status              string  `json:"status"`
+	CompletedStrokes    int     `json:"completed_strokes"`
+	LastStroke          string  `json:"last_finished_stroke,omitempty"`
+	RetracementPct      float64 `json:"retracement_pct,omitempty"`
+	RetracementExceeded bool    `json:"retracement_exceeded,omitempty"`
+	Support             float64 `json:"support,omitempty"`
+	Resistance          float64 `json:"resistance,omitempty"`
+	Invalidation        float64 `json:"invalidation,omitempty"`
+	Evidence            string  `json:"evidence"`
+	Limitation          string  `json:"limitation"`
 }
 
 // AnalyzeWave describes the latest completed daily swing using only strict
@@ -90,22 +91,7 @@ func AnalyzeWave(bars []market.Bar) WaveEvidence {
 	zone := analysis.LatestZone()
 	top := latestWaveFractal(analysis.Fractals, chanlun.Top)
 	bottom := latestWaveFractal(analysis.Fractals, chanlun.Bottom)
-	if zone != nil {
-		evidence.Support = zone.Lower
-		evidence.Invalidation = zone.Lower
-		evidence.Resistance = zone.Upper
-	}
-	if bottom != nil {
-		if evidence.Support <= 0 {
-			evidence.Support = bottom.Low
-		}
-		if evidence.Invalidation <= 0 {
-			evidence.Invalidation = bottom.Low
-		}
-	}
-	if top != nil {
-		evidence.Resistance = top.High
-	}
+	evidence.Support, evidence.Resistance, evidence.Invalidation = waveStructureLevels(zone, top, bottom, closePrice)
 
 	up := latestWaveStroke(analysis.FinishedStrokes, chanlun.Up)
 	impulseHigh := 0.0
@@ -120,15 +106,55 @@ func AnalyzeWave(bars []market.Bar) WaveEvidence {
 			impulseLow = up.Start.Low
 		}
 	}
-	evidence.RetracementPct = waveRetracement(impulseHigh, impulseLow, closePrice)
+	evidence.RetracementPct, evidence.RetracementExceeded = waveRetracement(impulseHigh, impulseLow, closePrice)
 
 	evidence.Stage, evidence.Label = classifyWaveStage(evidence.LastStroke, up != nil, evidence.RetracementPct, ma20Slope, evidence.Invalidation, closePrice, rangePosition, zone)
 	evidence.Evidence = fmt.Sprintf(
-		"完成笔%d笔，最后一笔%s；最近上行笔高点%s、起点低点%s，当前回撤比例%.1f%%；MA20五日斜率%.2f%%；收盘位于近20日区间%.0f%%；支撑%s，压力%s，失效位%s",
-		evidence.CompletedStrokes, waveDirectionLabel(evidence.LastStroke), wavePrice(impulseHigh), wavePrice(impulseLow), evidence.RetracementPct,
+		"完成笔%d笔，最后一笔%s；最近上行笔高点%s、起点低点%s，当前回撤比例%s；MA20五日斜率%.2f%%；收盘位于近20日区间%.0f%%；支撑%s，压力%s，失效位%s",
+		evidence.CompletedStrokes, waveDirectionLabel(evidence.LastStroke), wavePrice(impulseHigh), wavePrice(impulseLow), waveRetracementText(evidence.RetracementPct, evidence.RetracementExceeded),
 		ma20Slope, rangePosition*100, wavePrice(evidence.Support), wavePrice(evidence.Resistance), wavePrice(evidence.Invalidation),
 	)
 	return evidence
+}
+
+// waveStructureLevels selects the nearest structural support below the close,
+// the nearest structural resistance above it, and the lowest structural level
+// used as the invalidation boundary. Zone edges participate on both sides so a
+// close outside a prior overlap zone still receives a meaningful overhead or
+// underlying boundary instead of an inverted support/resistance pair.
+func waveStructureLevels(zone *chanlun.Zone, top, bottom *chanlun.Fractal, closePrice float64) (support, resistance, invalidation float64) {
+	supports := make([]float64, 0, 3)
+	resistances := make([]float64, 0, 3)
+	if zone != nil {
+		supports = append(supports, zone.Lower, zone.Upper)
+		resistances = append(resistances, zone.Lower, zone.Upper)
+	}
+	if bottom != nil {
+		supports = append(supports, bottom.Low)
+	}
+	if top != nil {
+		resistances = append(resistances, top.High)
+	}
+	for _, price := range supports {
+		if !positivePrice(price) {
+			continue
+		}
+		if invalidation <= 0 || price < invalidation {
+			invalidation = price
+		}
+		if price <= closePrice && (support <= 0 || price > support) {
+			support = price
+		}
+	}
+	for _, price := range resistances {
+		if !positivePrice(price) || price <= closePrice {
+			continue
+		}
+		if resistance <= 0 || price < resistance {
+			resistance = price
+		}
+	}
+	return support, resistance, invalidation
 }
 
 func validWaveBar(bar market.Bar) bool {
@@ -160,12 +186,26 @@ func waveMA20Slope(bars []market.Bar) float64 {
 	return (current/previous - 1) * 100
 }
 
-func waveRetracement(impulseHigh, impulseLow, closePrice float64) float64 {
+func waveRetracement(impulseHigh, impulseLow, closePrice float64) (float64, bool) {
 	if impulseHigh <= 0 || impulseLow <= 0 || impulseHigh <= impulseLow || closePrice >= impulseHigh {
-		return 0
+		return 0, false
 	}
 	retracement := (impulseHigh - closePrice) / (impulseHigh - impulseLow) * 100
-	return math.Max(0, math.Min(150, retracement))
+	if retracement > 100 {
+		return 100, true
+	}
+	return math.Max(0, retracement), false
+}
+
+func waveRetracementText(pct float64, exceeded bool) string {
+	if exceeded {
+		return "超过100%（已跌破最近上行笔起点）"
+	}
+	return fmt.Sprintf("%.1f%%", pct)
+}
+
+func positivePrice(price float64) bool {
+	return price > 0 && !math.IsNaN(price) && !math.IsInf(price, 0)
 }
 
 func waveRangePosition(bars []market.Bar) float64 {
@@ -209,6 +249,8 @@ func classifyWaveStage(lastStroke string, hasUpStroke bool, retracement, ma20Slo
 	switch {
 	case invalidation > 0 && closePrice < invalidation*0.999:
 		return waveStageWeak, "结构偏弱（简化）"
+	case hasUpStroke && retracement >= 100:
+		return waveStageWeak, "结构偏弱（回撤触及或跌破上行笔起点）"
 	case hasUpStroke && retracement <= 1 && ma20Slope > 0:
 		return waveStageAdvance, "上行推进（简化）"
 	case hasUpStroke && retracement >= 2 && retracement <= 61.8 && ma20Slope >= -1:

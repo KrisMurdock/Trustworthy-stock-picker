@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/articlechart"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/wechat"
 )
 
@@ -32,6 +33,11 @@ func TestSecondStageArticleAttachesChartSpecsAndHidesTokensFromPlainText(t *test
 	if !strings.Contains(article.Article.Charts[0].Caption, "缠论") || !strings.Contains(article.Article.Charts[0].Caption, "sz300628") {
 		t.Fatalf("unexpected caption: %s", article.Article.Charts[0].Caption)
 	}
+	for _, want := range []string{"顶/底分型", "回撤刻度"} {
+		if !strings.Contains(article.Article.Charts[0].Caption, want) {
+			t.Fatalf("caption missing %q: %s", want, article.Article.Charts[0].Caption)
+		}
+	}
 	images := map[string]wechat.RenderedImage{}
 	for _, chart := range article.Article.Charts {
 		images[chart.ID] = wechat.RenderedImage{URL: "https://mmbiz.qpic.cn/" + chart.ID, Caption: chart.Caption}
@@ -42,6 +48,40 @@ func TestSecondStageArticleAttachesChartSpecsAndHidesTokensFromPlainText(t *test
 	}
 	if strings.Count(rendered, "<img ") != 2 || strings.Count(rendered, "日K结构图") < 2 {
 		t.Fatalf("rendered charts are incomplete:\n%s", rendered)
+	}
+}
+
+func TestWaveBreakdownTextDoesNotLookLikeOrdinaryPullback(t *testing.T) {
+	lines := articleWaveLines(&strategy.Candidate{Wave: &strategy.WaveEvidence{
+		Stage: "weak", Label: "结构偏弱（简化）", RetracementPct: 100,
+		RetracementExceeded: true, Support: 12, Invalidation: 11.8,
+		Limitation: "仅依据完成笔与回撤的启发式描述，不是严格艾略特浪级计数",
+	}})
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{"超过 100%", "跌破最近上行笔起点", "不是严格艾略特浪级计数"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("breakdown text missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestWaveTextCombinesEqualSupportAndInvalidation(t *testing.T) {
+	lines := articleWaveLines(&strategy.Candidate{Wave: &strategy.WaveEvidence{
+		Stage: "weak", Label: "结构偏弱（简化）", Support: 12, Invalidation: 12,
+	}})
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "支撑/失效位 12.00") || strings.Count(joined, "失效位") != 1 {
+		t.Fatalf("shared support/invalidation was not combined:\n%s", joined)
+	}
+}
+
+func TestWaveTextNormalizesLegacyDeepRetracement(t *testing.T) {
+	lines := articleWaveLines(&strategy.Candidate{Wave: &strategy.WaveEvidence{
+		Stage: "weak", Label: "结构偏弱（简化）", RetracementPct: 150,
+	}})
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "超过 100%") || strings.Contains(joined, "150.0%") {
+		t.Fatalf("legacy deep retracement was not normalized:\n%s", joined)
 	}
 }
 

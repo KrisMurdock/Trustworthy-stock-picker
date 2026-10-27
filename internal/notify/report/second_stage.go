@@ -379,15 +379,22 @@ func articleWaveLines(candidate *strategy.Candidate) []string {
 		}
 		lines = append(lines, line)
 	}
-	if wave.RetracementPct > 0 {
+	if waveRetracementExceeded(wave) {
+		lines = append(lines, "**回撤观察**：已超过 100%，收盘跌破最近上行笔起点；该位置不再视为普通调整")
+	} else if wave.RetracementPct > 0 {
 		lines = append(lines, fmt.Sprintf("**回撤观察**：最近上行段回撤 %.1f%%", wave.RetracementPct))
 	}
 	levels := make([]string, 0, 3)
-	if wave.Support > 0 {
-		levels = append(levels, fmt.Sprintf("支撑 %.2f", wave.Support))
-	}
-	if wave.Invalidation > 0 {
-		levels = append(levels, fmt.Sprintf("失效位 %.2f", wave.Invalidation))
+	sharedSupport := wave.Support > 0 && wave.Invalidation > 0 && math.Abs(wave.Support-wave.Invalidation) < 0.005
+	if sharedSupport {
+		levels = append(levels, fmt.Sprintf("支撑/失效位 %.2f", wave.Support))
+	} else {
+		if wave.Support > 0 {
+			levels = append(levels, fmt.Sprintf("支撑 %.2f", wave.Support))
+		}
+		if wave.Invalidation > 0 {
+			levels = append(levels, fmt.Sprintf("失效位 %.2f", wave.Invalidation))
+		}
 	}
 	if wave.Resistance > 0 {
 		levels = append(levels, fmt.Sprintf("上方参照 %.2f", wave.Resistance))
@@ -412,7 +419,9 @@ func articleBriefWave(candidate *strategy.Candidate) string {
 	}
 	wave := candidate.Wave
 	parts := []string{articleValue(wave.Label, wave.Stage)}
-	if wave.RetracementPct > 0 {
+	if waveRetracementExceeded(wave) {
+		parts = append(parts, "回撤超过100%，跌破上行笔起点")
+	} else if wave.RetracementPct > 0 {
 		parts = append(parts, fmt.Sprintf("回撤 %.1f%%", wave.RetracementPct))
 	}
 	if wave.Invalidation > 0 {
@@ -420,6 +429,10 @@ func articleBriefWave(candidate *strategy.Candidate) string {
 	}
 	parts = append(parts, "非严格浪级计数")
 	return strings.Join(parts, "；")
+}
+
+func waveRetracementExceeded(wave *strategy.WaveEvidence) bool {
+	return wave != nil && (wave.RetracementExceeded || wave.RetracementPct > 100)
 }
 
 func articleShortTime(value string) string {

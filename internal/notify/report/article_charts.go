@@ -41,7 +41,7 @@ func articleChartCaption(spec articlechart.Spec) string {
 	if adjust != "不复权" {
 		note = "；复权价可能与文中参考价不同"
 	}
-	return fmt.Sprintf("%s 日K结构图（%s）；橙线缠论笔，蓝区笔重叠区，紫线波浪价位%s。", spec.Code, adjust, note)
+	return fmt.Sprintf("%s 日K结构图（%s）；橙线缠论笔，深色/蓝色点为顶/底分型，蓝区笔重叠区，紫线波浪支撑/压力/失效位及回撤刻度%s。", spec.Code, adjust, note)
 }
 
 func stripArticleChartTokens(body string) string {

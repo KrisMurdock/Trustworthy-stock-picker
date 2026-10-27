@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"math"
 	"time"
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/articlechart"
@@ -84,14 +85,20 @@ func BuildArticleChart(history market.History, wave *WaveEvidence, fallbackZone 
 	}
 	if wave != nil {
 		spec.Stage = wave.Stage
-		spec.RetracementPct = wave.RetracementPct
+		spec.RetracementPct = math.Min(100, wave.RetracementPct)
+		spec.RetracementExceeded = wave.RetracementExceeded || wave.RetracementPct > 100
+		sharedSupport := wave.Support > 0 && wave.Invalidation > 0 && math.Abs(wave.Invalidation-wave.Support) < 0.005
 		if wave.Support > 0 {
-			spec.Levels = append(spec.Levels, articlechart.Level{Kind: "support", Label: "SUP", Price: wave.Support})
+			label := "SUP"
+			if sharedSupport {
+				label = "SUP/INV"
+			}
+			spec.Levels = append(spec.Levels, articlechart.Level{Kind: "support", Label: label, Price: wave.Support})
 		}
 		if wave.Resistance > 0 {
 			spec.Levels = append(spec.Levels, articlechart.Level{Kind: "resistance", Label: "RES", Price: wave.Resistance})
 		}
-		if wave.Invalidation > 0 {
+		if wave.Invalidation > 0 && !sharedSupport {
 			spec.Levels = append(spec.Levels, articlechart.Level{Kind: "invalidation", Label: "INV", Price: wave.Invalidation})
 		}
 	}

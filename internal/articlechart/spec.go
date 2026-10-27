@@ -24,20 +24,21 @@ var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 // Spec is a compact, serialisable chart description. It contains no image
 // bytes, so a delivery ledger can retain it and re-render after a restart.
 type Spec struct {
-	Version          int      `json:"schema_version"`
-	ID               string   `json:"id"`
-	Code             string   `json:"code"`
-	AsOf             string   `json:"as_of"`
-	Adjust           string   `json:"adjust,omitempty"`
-	Caption          string   `json:"caption,omitempty"`
-	Bars             []Bar    `json:"bars"`
-	Strokes          []Stroke `json:"strokes,omitempty"`
-	Fractals         []Point  `json:"fractals,omitempty"`
-	Zone             *Zone    `json:"zone,omitempty"`
-	Levels           []Level  `json:"levels,omitempty"`
-	Stage            string   `json:"stage,omitempty"`
-	RetracementPct   float64  `json:"retracement_pct,omitempty"`
-	CompletedStrokes int      `json:"completed_strokes,omitempty"`
+	Version             int      `json:"schema_version"`
+	ID                  string   `json:"id"`
+	Code                string   `json:"code"`
+	AsOf                string   `json:"as_of"`
+	Adjust              string   `json:"adjust,omitempty"`
+	Caption             string   `json:"caption,omitempty"`
+	Bars                []Bar    `json:"bars"`
+	Strokes             []Stroke `json:"strokes,omitempty"`
+	Fractals            []Point  `json:"fractals,omitempty"`
+	Zone                *Zone    `json:"zone,omitempty"`
+	Levels              []Level  `json:"levels,omitempty"`
+	Stage               string   `json:"stage,omitempty"`
+	RetracementPct      float64  `json:"retracement_pct,omitempty"`
+	RetracementExceeded bool     `json:"retracement_exceeded,omitempty"`
+	CompletedStrokes    int      `json:"completed_strokes,omitempty"`
 }
 
 type Bar struct {
@@ -131,6 +132,9 @@ func (s Spec) Validate() error {
 	}
 	if math.IsNaN(s.RetracementPct) || math.IsInf(s.RetracementPct, 0) || s.RetracementPct < 0 {
 		return errors.New("chart retracement is invalid")
+	}
+	if s.RetracementExceeded && s.RetracementPct != 100 {
+		return errors.New("chart retracement breakdown must be normalized to 100")
 	}
 	return nil
 }

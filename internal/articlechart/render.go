@@ -26,31 +26,33 @@ const (
 
 var (
 	chartColors = struct {
-		background color.RGBA
-		panel      color.RGBA
-		border     color.RGBA
-		ink        color.RGBA
-		muted      color.RGBA
-		grid       color.RGBA
-		up         color.RGBA
-		down       color.RGBA
-		chanColor  color.RGBA
-		zoneColor  color.RGBA
-		waveColor  color.RGBA
-		ma         color.RGBA
+		background    color.RGBA
+		panel         color.RGBA
+		border        color.RGBA
+		ink           color.RGBA
+		muted         color.RGBA
+		grid          color.RGBA
+		up            color.RGBA
+		down          color.RGBA
+		chanColor     color.RGBA
+		zoneColor     color.RGBA
+		waveColor     color.RGBA
+		fractalBottom color.RGBA
+		ma            color.RGBA
 	}{
-		background: color.RGBA{R: 255, G: 255, B: 255, A: 255},
-		panel:      color.RGBA{R: 248, G: 250, B: 252, A: 255},
-		border:     color.RGBA{R: 219, G: 229, B: 240, A: 255},
-		ink:        color.RGBA{R: 15, G: 23, B: 42, A: 255},
-		muted:      color.RGBA{R: 100, G: 116, B: 139, A: 255},
-		grid:       color.RGBA{R: 226, G: 232, B: 240, A: 255},
-		up:         color.RGBA{R: 220, G: 38, B: 38, A: 255},
-		down:       color.RGBA{R: 22, G: 163, B: 74, A: 255},
-		chanColor:  color.RGBA{R: 245, G: 158, B: 11, A: 255},
-		zoneColor:  color.RGBA{R: 37, G: 99, B: 235, A: 255},
-		waveColor:  color.RGBA{R: 124, G: 58, B: 237, A: 255},
-		ma:         color.RGBA{R: 14, G: 165, B: 233, A: 255},
+		background:    color.RGBA{R: 255, G: 255, B: 255, A: 255},
+		panel:         color.RGBA{R: 248, G: 250, B: 252, A: 255},
+		border:        color.RGBA{R: 219, G: 229, B: 240, A: 255},
+		ink:           color.RGBA{R: 15, G: 23, B: 42, A: 255},
+		muted:         color.RGBA{R: 100, G: 116, B: 139, A: 255},
+		grid:          color.RGBA{R: 226, G: 232, B: 240, A: 255},
+		up:            color.RGBA{R: 220, G: 38, B: 38, A: 255},
+		down:          color.RGBA{R: 22, G: 163, B: 74, A: 255},
+		chanColor:     color.RGBA{R: 245, G: 158, B: 11, A: 255},
+		zoneColor:     color.RGBA{R: 37, G: 99, B: 235, A: 255},
+		waveColor:     color.RGBA{R: 124, G: 58, B: 237, A: 255},
+		fractalBottom: color.RGBA{R: 0, G: 122, B: 204, A: 255},
+		ma:            color.RGBA{R: 14, G: 165, B: 233, A: 255},
 	}
 
 	fontsOnce sync.Once
@@ -98,11 +100,9 @@ func RenderPNG(spec Spec) ([]byte, error) {
 		meta += " / " + strings.ToUpper(spec.Adjust)
 	}
 	drawTextRight(img, fonts.subtitle, canvasWidth-38, 51, chartColors.muted, meta)
-	subtitle := "CHAN STROKES + OVERLAP ZONE  ·  WAVE SUPPORT / RESISTANCE"
-	if spec.Stage != "" {
-		subtitle += "  ·  STAGE " + strings.ToUpper(spec.Stage)
-	}
-	drawText(img, fonts.subtitle, 38, 82, chartColors.muted, subtitle)
+	chanLine, waveLine := evidenceLines(spec)
+	drawText(img, fonts.subtitle, 38, 82, chartColors.muted, chanLine)
+	drawText(img, fonts.label, 38, 103, chartColors.muted, waveLine)
 
 	plot := image.Rect(106, 116, 930, 544)
 	low, high := chartRange(spec)
@@ -110,7 +110,7 @@ func RenderPNG(spec Spec) ([]byte, error) {
 	drawLevels(img, plot, spec, low, high, fonts.label)
 	drawRetracement(img, spec, fonts)
 	drawLegend(img, fonts.axis)
-	drawTextRight(img, fonts.axis, canvasWidth-38, canvasHeight-24, chartColors.muted, "RESEARCH OBSERVATION · NOT INVESTMENT ADVICE")
+	drawTextRight(img, fonts.axis, canvasWidth-38, canvasHeight-14, chartColors.muted, "RESEARCH OBSERVATION · NOT INVESTMENT ADVICE")
 
 	var out bytes.Buffer
 	encoder := png.Encoder{CompressionLevel: png.BestCompression}
@@ -285,7 +285,7 @@ func drawPlot(img *image.RGBA, plot image.Rectangle, spec Spec, low, high float6
 		px, py := xForDate(point.Date), y(point.Price)
 		mark := chartColors.ink
 		if strings.EqualFold(point.Mark, "bottom") {
-			mark = chartColors.up
+			mark = chartColors.fractalBottom
 		}
 		drawCircle(img, px, py, 3, mark)
 	}
@@ -369,7 +369,11 @@ func drawRetracement(img *image.RGBA, spec Spec, fonts renderFonts) {
 	y := 590
 	left, right := 366, 894
 	drawText(img, fonts.label, 38, y+5, chartColors.muted, "WAVE RETRACEMENT")
-	drawText(img, fonts.label, 38, y+27, chartColors.waveColor, fmt.Sprintf("%.1f%%", spec.RetracementPct))
+	label := fmt.Sprintf("%.1f%%", spec.RetracementPct)
+	if retracementBreakdown(spec) {
+		label = ">100% / BREAKDOWN"
+	}
+	drawText(img, fonts.label, 38, y+27, chartColors.waveColor, label)
 	drawLine(img, left, y, right, y, chartColors.grid, 6)
 	for _, tick := range []float64{0, 38.2, 61.8, 100} {
 		px := left + int(math.Round(float64(right-left)*tick/100))
@@ -383,10 +387,16 @@ func drawRetracement(img *image.RGBA, spec Spec, fonts renderFonts) {
 }
 
 func drawLegend(img *image.RGBA, face font.Face) {
-	y := 648
+	y := 636
 	x := 38
 	item := func(color color.RGBA, label string) {
 		drawLine(img, x, y, x+20, y, color, 2)
+		drawText(img, face, x+27, y+5, chartColors.muted, label)
+		x += 27 + int(math.Round(textWidth(face, label))) + 28
+	}
+	itemPair := func(topColor, bottomColor color.RGBA, label string) {
+		drawCircle(img, x+7, y, 3, topColor)
+		drawCircle(img, x+18, y, 3, bottomColor)
 		drawText(img, face, x+27, y+5, chartColors.muted, label)
 		x += 27 + int(math.Round(textWidth(face, label))) + 28
 	}
@@ -395,7 +405,46 @@ func drawLegend(img *image.RGBA, face font.Face) {
 	item(chartColors.chanColor, "CHAN STROKE")
 	item(chartColors.ma, "MA20")
 	item(chartColors.zoneColor, "CHAN ZONE")
+	itemPair(chartColors.ink, chartColors.fractalBottom, "FRACTAL T/B")
 	item(chartColors.waveColor, "WAVE LEVEL")
+}
+
+func evidenceLines(spec Spec) (string, string) {
+	chanParts := []string{
+		fmt.Sprintf("%d FRACTALS", len(spec.Fractals)),
+		fmt.Sprintf("%d DISPLAY STROKES", len(spec.Strokes)),
+	}
+	if spec.CompletedStrokes > 0 {
+		chanParts = append(chanParts, fmt.Sprintf("%d COMPLETED", spec.CompletedStrokes))
+	}
+	if spec.Zone != nil {
+		chanParts = append(chanParts, fmt.Sprintf("ZONE %.2f-%.2f", spec.Zone.Lower, spec.Zone.Upper))
+	} else {
+		chanParts = append(chanParts, "ZONE N/A")
+	}
+
+	stage := "N/A"
+	if spec.Stage != "" {
+		stage = strings.ToUpper(spec.Stage)
+	}
+	waveParts := []string{"STAGE " + stage}
+	switch {
+	case retracementBreakdown(spec):
+		waveParts = append(waveParts, "RETRACE >100% BREAKDOWN")
+	case spec.RetracementPct > 0:
+		waveParts = append(waveParts, fmt.Sprintf("RETRACE %.1f%%", spec.RetracementPct))
+	}
+	for _, level := range spec.Levels {
+		waveParts = append(waveParts, fmt.Sprintf("%s %.2f", strings.ToUpper(level.Label), level.Price))
+	}
+	if len(spec.Levels) == 0 {
+		waveParts = append(waveParts, "LEVELS N/A")
+	}
+	return "CHAN: " + strings.Join(chanParts, " · "), "WAVE: " + strings.Join(waveParts, " · ")
+}
+
+func retracementBreakdown(spec Spec) bool {
+	return spec.RetracementExceeded || spec.RetracementPct > 100
 }
 
 func levelColor(kind string) color.RGBA {
