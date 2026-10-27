@@ -29,6 +29,11 @@ func secondStageArticles(r selection.Report, expires time.Time) []notify.Message
 		return nil
 	}
 	title := secondStageArticleTitle(*result)
+	rows := buildArticleCandidates(r, *result)
+	chartCandidates := make([]*strategy.Candidate, 0, len(rows))
+	for _, row := range rows {
+		chartCandidates = append(chartCandidates, row.observation)
+	}
 	return []notify.Message{{
 		Version:        2,
 		EventID:        r.ID + ":second-stage:article",
@@ -40,6 +45,7 @@ func secondStageArticles(r selection.Report, expires time.Time) []notify.Message
 			Title:  title,
 			Digest: secondStageArticleDigest(*result),
 			Body:   secondStageArticleBody(r, *result),
+			Charts: articleCharts(chartCandidates),
 		},
 		ExpiresAt: expires,
 	}}
@@ -58,12 +64,12 @@ func secondStageArticleText(r selection.Report, result secondstage.Report) strin
 	out.WriteString("【公众号标题】\n")
 	out.WriteString(secondStageArticleTitle(result))
 	out.WriteString("\n\n【公众号正文】\n")
-	out.WriteString(secondStageArticleBody(r, result))
+	out.WriteString(stripArticleChartTokens(secondStageArticleBody(r, result)))
 	return out.String()
 }
 
 func secondStageArticleDigest(result secondstage.Report) string {
-	digest := fmt.Sprintf("%s三日短线观察：精排 %d 只，附参考买区、明日高低预测、技术指标与结构视角。", articleMonthDay(result.Target), len(result.Candidates))
+	digest := fmt.Sprintf("%s三日短线观察：精排 %d 只，附参考买区、明日高低预测与缠论/波浪结构图。", articleMonthDay(result.Target), len(result.Candidates))
 	if result.Degraded {
 		digest += "本次模型特征降级。"
 	}
@@ -148,6 +154,8 @@ func writeArticleDetail(out *strings.Builder, r selection.Report, row articleCan
 	out.WriteString(fmt.Sprintf("### %d. %s（%s）\n\n", row.rank, name, code))
 	out.WriteString("**" + articleRankLabel(row) + " · " + sector + "**\n\n")
 
+	writeArticleChart(out, row.observation)
+
 	out.WriteString("#### 价格与明日区间\n")
 	for _, line := range articlePriceLines(r, row.observation) {
 		out.WriteString("- **" + line.label + "**：" + line.value + "\n")
@@ -184,6 +192,7 @@ func writeArticleBrief(out *strings.Builder, r selection.Report, row articleCand
 	out.WriteString(":::card " + articleCardTone(row) + "\n")
 	out.WriteString(fmt.Sprintf("### %d. %s（%s）\n\n", row.rank, name, code))
 	out.WriteString("**" + articleRankLabel(row) + " · " + sector + "**\n\n")
+	writeArticleChart(out, row.observation)
 	out.WriteString("- **价格**：" + strings.Join(articlePriceLineTexts(r, row.observation), "；") + "。\n")
 	out.WriteString("- **指标**：" + strings.Join(articleBriefTechnical(row.observation), "；") + "。\n")
 	out.WriteString("- **缠论**：" + articleBriefChan(row.observation) + "。\n")

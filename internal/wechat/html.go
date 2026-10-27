@@ -3,6 +3,8 @@ package wechat
 import (
 	"errors"
 	"html"
+	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -39,14 +41,27 @@ var cardThemes = map[string]cardTheme{
 	"gray":    {barColor: cardGreyColor, accent: cardGreyColor},
 }
 
+// RenderedImage is one uploaded chart that can be referenced from the body.
+type RenderedImage struct {
+	URL     string
+	Caption string
+}
+
+var imageTokenPattern = regexp.MustCompile(`^\[\[chart:([a-z0-9][a-z0-9-]{0,63})\]\]$`)
+
 // RenderHTML converts the deterministic article body into the small HTML
-// subset accepted by WeChat drafts. It deliberately emits no images, links,
-// classes, external styles or inline scripts, so the draft cannot depend on
-// blocked or untrusted assets.
+// subset accepted by WeChat drafts. Bodies without chart tokens still emit no
+// images, links, classes, external styles or inline scripts.
 func RenderHTML(body string) (string, error) {
+	return RenderHTMLWithImages(body, nil)
+}
+
+// RenderHTMLWithImages resolves chart placeholders against images uploaded to
+// the WeChat CDN. A referenced but missing image fails closed.
+func RenderHTMLWithImages(body string, images map[string]RenderedImage) (string, error) {
 	body = strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\r", "\n")
 	var out strings.Builder
-	if err := renderLines(&out, strings.Split(body, "\n"), nil); err != nil {
+	if err := renderLines(&out, strings.Split(body, "\n"), nil, images); err != nil {
 		return "", err
 	}
 	if out.Len() == 0 {
@@ -55,7 +70,7 @@ func RenderHTML(body string) (string, error) {
 	return out.String(), nil
 }
 
-func renderLines(out *strings.Builder, lines []string, card *cardTheme) error {
+func renderLines(out *strings.Builder, lines []string, card *cardTheme, images map[string]RenderedImage) error {
 	list := ""
 	flushList := func() {
 		switch list {
@@ -90,7 +105,7 @@ func renderLines(out *strings.Builder, lines []string, card *cardTheme) error {
 
 			theme := cardThemeFor(tone)
 			var inner strings.Builder
-			if err := renderLines(&inner, lines[index+1:end], &theme); err != nil {
+			if err := renderLines(&inner, lines[index+1:end], &theme, images); err != nil {
 				return err
 			}
 			if inner.Len() == 0 {
@@ -117,6 +132,18 @@ func renderLines(out *strings.Builder, lines []string, card *cardTheme) error {
 		if trimmed == ":::" {
 			flushList()
 			return errors.New("unexpected card closing fence")
+		}
+
+		if imageID, ok := parseImageToken(trimmed); ok {
+			flushList()
+			image, exists := images[imageID]
+			if !exists {
+				return errors.New("article chart is unavailable: " + imageID)
+			}
+			if err := writeImage(out, image, card); err != nil {
+				return err
+			}
+			continue
 		}
 
 		switch {
@@ -197,6 +224,41 @@ func renderLines(out *strings.Builder, lines []string, card *cardTheme) error {
 		}
 	}
 	flushList()
+	return nil
+}
+
+func parseImageToken(line string) (string, bool) {
+	match := imageTokenPattern.FindStringSubmatch(line)
+	if len(match) != 2 {
+		return "", false
+	}
+	return match[1], true
+}
+
+func writeImage(out *strings.Builder, image RenderedImage, card *cardTheme) error {
+	parsed, err := url.Parse(image.URL)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.User != nil {
+		return errors.New("article chart URL is invalid")
+	}
+	caption := strings.TrimSpace(image.Caption)
+	out.WriteString(`<section style="margin:14px 0;">`)
+	out.WriteString(`<img src="`)
+	out.WriteString(html.EscapeString(image.URL))
+	out.WriteString(`" alt="`)
+	out.WriteString(html.EscapeString(caption))
+	out.WriteString(`" style="display:block;width:100%;height:auto;border:1px solid #dbe5f0;border-radius:8px;" />`)
+	if caption != "" {
+		out.WriteString(`<p style="margin:7px 0 0;color:`)
+		if card != nil {
+			out.WriteString(card.accent)
+		} else {
+			out.WriteString(cardGreyColor)
+		}
+		out.WriteString(`;font-size:12px;line-height:1.6;">`)
+		out.WriteString(html.EscapeString(caption))
+		out.WriteString(`</p>`)
+	}
+	out.WriteString(`</section>`)
 	return nil
 }
 

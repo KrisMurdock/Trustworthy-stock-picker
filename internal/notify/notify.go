@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/articlechart"
 )
 
 type Message struct {
@@ -28,9 +30,10 @@ type Message struct {
 // Article is the structured form used by article-only channels. PlainText
 // remains the human-readable rendering for chat channels.
 type Article struct {
-	Title  string `json:"title"`
-	Digest string `json:"digest,omitempty"`
-	Body   string `json:"body"`
+	Title  string              `json:"title"`
+	Digest string              `json:"digest,omitempty"`
+	Body   string              `json:"body"`
+	Charts []articlechart.Spec `json:"charts,omitempty"`
 }
 
 type Field struct {

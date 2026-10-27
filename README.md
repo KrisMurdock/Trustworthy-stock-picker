@@ -249,9 +249,9 @@ func main() {
 日报还包含独立的 `first_stage` 高召回初筛：以“未来 3 个交易日最高价相对信号日收盘触及 +1%”为历史标签，将机会分日内中位秩与版本化 logistic 模型分按 Rank-Gauss 融合，默认预算 95 只，推送开启时只展示综合分前 30 名并合并为一张飞书卡片，但第二层精排使用全部候选。3 个交易日窗口结束后，初筛机器人会追加窗口回看卡，分别展示全部候选召回率、Top 30 覆盖率与 Top 30 精确率，并按信号日与窗口结束日稳定去重。回看会从初筛报告还原当时股池，避免后续股池调整污染召回率。初筛只生成第二层精排的候选参考，不改变 `Selected`、`Ranking`、结构门控或风险门槛；初筛失败只写入 `first_stage.status=failed`，不阻断主报告。
 
 第二层精排默认使用 `risk_all20_local035_eta1`：第一层 20%，JEV、Laya official、Laya multilingual、Chinese Decision 各 20%；模型组内百分位按 5 人组计算，经 `0.35` 局部先验校准后融合，再扣除 ATR14 百分位风险惩罚。收盘后由 `scripts/secondstage/generate_daily.py` 并行生成四路 artifact；Go 进程只读取 artifact，不调用 Python。其他同 schema 模型可通过模型权重表加入；参数字段和环境变量见 [算法接入契约](docs/algorithm-interface.md) 与 [环境变量](docs/environment-variables.md)。模型分数只做排序研究，不改变正式推荐、风险门槛或交易建议。
-精排完成后，若 `STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED=true`，系统会把同一份冻结精排结果转写为可直接复制的公众号纯文本稿，包含标题、正文、Top N 名单、逐只技术特征、行业分布、数据口径、降级状态和风险提示。稿件通过命名为 `second_stage` 的飞书路由投递，与初筛卡、正式日报卡使用各自独立的重试账本。启用 `STOCK_WATCHER_WECHAT_ENABLED=true` 时，同一份结构化文章还会通过 `wechat-draft` 写入公众号草稿箱；该通道只创建草稿，不会发布文章或群发粉丝。精排名单仍只是研究观察，不是正式推荐或交易建议。
+精排完成后，若 `STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED=true`，系统会把同一份冻结精排结果转写为可直接复制的公众号纯文本稿，包含标题、正文、Top N 名单、逐只技术特征、行业分布、数据口径、降级状态和风险提示。稿件通过命名为 `second_stage` 的飞书路由投递，与初筛卡、正式日报卡使用各自独立的重试账本。启用 `STOCK_WATCHER_WECHAT_ENABLED=true` 时，同一份结构化文章还会通过 `wechat-draft` 写入公众号草稿箱；每只进入文章的精排候选都会附带一张日 K 结构图，叠加最近 80 个交易日、缠论笔与笔重叠区，以及简化波浪的支撑、阻力和失效位。图表由 Go 进程确定性生成 PNG，经 `media/uploadimg` 上传到微信素材地址后嵌入正文；上传或渲染失败会按通道错误重试，不会退化为无图文章。该通道只创建草稿，不会发布文章或群发粉丝。精排名单仍只是研究观察，不是正式推荐或交易建议。
 
-盘前预测保存后，`wechat_premarket` 路由会生成另一篇公众号草稿：合并精排候选、执行状态、全天高低预测及边际区间，并按 Top 候选展开技术指标、缠论和简化波浪视角；精排队列缺失时降级为已保存预测的观察稿，序号不构成推荐排名。该草稿最晚在 09:30 前有效，与飞书盘前卡片共用同一次冻结预测，但使用独立的文章事件，微信失败不会阻塞飞书投递。
+盘前预测保存后，`wechat_premarket` 路由会生成另一篇公众号草稿：合并精排候选、执行状态、全天高低预测及边际区间，并按 Top 候选展开技术指标、缠论和简化波浪视角，同时附带同一份日 K/缠论/波浪结构图；精排队列缺失时降级为已保存预测的观察稿，序号不构成推荐排名。该草稿最晚在 09:30 前有效，与飞书盘前卡片共用同一次冻结预测，但使用独立的文章事件，微信失败不会阻塞飞书投递。
 
 盘前 `08:45` 预测保存后，系统还会生成一张独立“盘前执行确认卡”，只取同一信号日的精排 Top N，并关联已生成的盘前高低价预测、参考计划和正式推荐状态，标记为“可执行／观察／放弃”。卡片只投递到 `premarket_execution` 路由，账本为 `<data_dir>/state/premarket-execution-delivery.json`；不会推迟精排公众号稿，也不阻塞 `predictor_dayrange` 或正式日报。卡片在 `09:30` 前有效，重复预测或重启不会重复发送；结构影子期、精排降级和预测缺失都会明确降级说明，最终仍需在 `09:25` 后用实际开盘价复核。
 
@@ -409,7 +409,8 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | `internal/dashboard` | 内嵌 HTML/CSS/JavaScript、SVG K 线和只读 API |
 | `internal/notify` | 版本化消息、通道接口和投递账本 |
 | `internal/feishu` | 卡片、签名、HTTP/业务码确认和错误分类 |
-| `internal/wechat` | 公众号稳定 Token、封面素材、安全 HTML 和 `draft/add` 草稿投递 |
+| `internal/articlechart` | 确定性日 K/缠论/波浪结构图规格与纯 Go PNG 渲染 |
+| `internal/wechat` | 公众号稳定 Token、封面/正文图片素材、安全 HTML 和 `draft/add` 草稿投递 |
 | `internal/logging` | 调用位置、脱敏、stdout/滚动文件和文本/JSON 输出 |
 | `tests/` | CLI、容器、行情源、分钟和浏览器冒烟 |
 | `docs/` | 部署、配置、算法契约和用户功能文档 |

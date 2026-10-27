@@ -184,6 +184,7 @@ func buildDaily(c config.Config, histories []market.History, models []secondstag
 	r.Selected = append(r.Selected, ranked[:min(len(ranked), c.Selection.TopN)]...)
 	attachFirstStage(&r, c, histories, asof, target, now)
 	attachSecondStage(&r, c, models, asof, target, now)
+	attachArticleCharts(&r, histories)
 	// ID includes configuration, selected results and data date, not wall-clock generation time.
 	identity := reportIdentity(r)
 	data, _ := json.Marshal(identity)
@@ -275,6 +276,7 @@ func buildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 	}
 	attachFirstStage(&r, c, histories, asof, target, now)
 	attachSecondStage(&r, c, models, asof, target, now)
+	attachArticleCharts(&r, histories)
 	identity := reportIdentity(r)
 	data, err := json.Marshal(identity)
 	if err != nil {

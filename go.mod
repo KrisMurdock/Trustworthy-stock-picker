@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/mozillazg/go-pinyin v0.21.0
 	go.yaml.in/yaml/v3 v3.0.5
+	golang.org/x/image v0.32.0
 	golang.org/x/text v0.43.0
 	modernc.org/sqlite v1.60.1
 )

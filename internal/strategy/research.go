@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/articlechart"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
@@ -160,6 +161,7 @@ type Candidate struct {
 	Chan                      *ChanEvidence           `json:"chan,omitempty"`
 	StructureGuard            *StructureGuardEvidence `json:"structure_guard,omitempty"`
 	Wave                      *WaveEvidence           `json:"wave,omitempty"`
+	Chart                     *articlechart.Spec      `json:"article_chart,omitempty"`
 	Continuation              *ContinuationStats      `json:"continuation,omitempty"`
 }
 

@@ -209,7 +209,7 @@ STOCK_WATCHER_NOTIFY_CHANNELS="first-stage|feishu|true|FEISHU_FIRST_STAGE_WEBHOO
 
 ### 微信公众号草稿
 
-`STOCK_WATCHER_WECHAT_ENABLED=true` 时，系统会通过 `draft/add` 写入两类公众号草稿：收盘后的第二层精排文章，以及盘前 08:45 保存预测后生成的“盘前观察”稿。盘前稿把精排候选、执行状态、预测高/低点、边际区间、技术指标、缠论与波浪视角合并为一篇；精排队列暂缺时按已保存预测降级生成，并明确标注序号不是推荐排名。初筛、正式日报、实时预测和飞书专用执行卡不会进入草稿箱。启用该通道要求第二层精排推送或 dayrange 盘前推送至少有一个开启，否则 `check-config` 会拒绝启动。
+`STOCK_WATCHER_WECHAT_ENABLED=true` 时，系统会通过 `draft/add` 写入两类公众号草稿：收盘后的第二层精排文章，以及盘前 08:45 保存预测后生成的“盘前观察”稿。盘前稿把精排候选、执行状态、预测高/低点、边际区间、技术指标、缠论与波浪视角合并为一篇；每只进入文章的候选还会附带一张最近 80 个交易日的日 K 结构图，叠加缠论笔、笔重叠区和简化波浪关键价位。图表由原生 Go 渲染成 PNG，经 `media/uploadimg` 上传后嵌入草稿正文；单图超过 1 MiB、渲染失败或上传失败都不会降级为无图稿。精排队列暂缺时按已保存预测降级生成，并明确标注序号不是推荐排名。初筛、正式日报、实时预测和飞书专用执行卡不会进入草稿箱。启用该通道要求第二层精排推送或 dayrange 盘前推送至少有一个开启，否则 `check-config` 会拒绝启动。
 
 公众号后台需要提供 AppID 和 AppSecret，可放入 `WECHAT_APP_ID`/`WECHAT_APP_SECRET` 环境变量，或设置 `STOCK_WATCHER_WECHAT_CREDENTIALS_FILE` 指向权限为 `0600` 的私有文件；环境变量优先于文件。凭证文件支持 `AppID` 下一行 `AppSecret` 两段式，也支持 `app_id=...` 配 `app_secret=...` 的形式，单个文件最多读取 64 KiB。`wechat.config` 已被 Git 忽略，不得提交。
 

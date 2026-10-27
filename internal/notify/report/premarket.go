@@ -69,7 +69,11 @@ func BuildPremarketArticle(input PremarketArticleInput) (notify.Message, bool, e
 	}
 	reportCopy := premarketReportCopy(input)
 	title := fmt.Sprintf("盘前观察｜%s 全天高低与执行确认", articleMonthDay(input.TargetDate))
-	digest := fmt.Sprintf("%s盘前：%d只候选附全天高低点、边际区间和执行状态。研究观察，不构成投资建议。", articleMonthDay(input.TargetDate), len(rows))
+	digest := fmt.Sprintf("%s盘前：%d只候选附全天高低点、执行状态与缠论/波浪结构图。研究观察，不构成投资建议。", articleMonthDay(input.TargetDate), len(rows))
+	chartCandidates := make([]*strategy.Candidate, 0, len(rows))
+	for _, row := range rows {
+		chartCandidates = append(chartCandidates, row.observation)
+	}
 	message := notify.Message{
 		Version:        2,
 		EventID:        "dayrange:premarket-article:" + input.TargetDate,
@@ -81,6 +85,7 @@ func BuildPremarketArticle(input PremarketArticleInput) (notify.Message, bool, e
 			Title:  title,
 			Digest: digest,
 			Body:   premarketArticleBody(input, reportCopy, rows),
+			Charts: articleCharts(chartCandidates),
 		},
 		ExpiresAt: time.Date(target.Year(), target.Month(), target.Day(), 9, 30, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60)),
 	}
@@ -183,7 +188,7 @@ func premarketReportCopy(input PremarketArticleInput) selection.Report {
 }
 
 func premarketArticleText(input PremarketArticleInput, rows []premarketArticleRow) string {
-	return "【公众号标题】\n" + fmt.Sprintf("盘前观察｜%s 全天高低与执行确认", articleMonthDay(input.TargetDate)) + "\n\n【公众号正文】\n" + premarketArticleBody(input, premarketReportCopy(input), rows)
+	return "【公众号标题】\n" + fmt.Sprintf("盘前观察｜%s 全天高低与执行确认", articleMonthDay(input.TargetDate)) + "\n\n【公众号正文】\n" + stripArticleChartTokens(premarketArticleBody(input, premarketReportCopy(input), rows))
 }
 
 func premarketArticleBody(input PremarketArticleInput, r selection.Report, rows []premarketArticleRow) string {
@@ -235,6 +240,7 @@ func premarketArticleBody(input PremarketArticleInput, r selection.Report, rows 
 func writePremarketDetail(out *strings.Builder, r selection.Report, row premarketArticleRow) {
 	out.WriteString(":::card " + premarketCardTone(row.status) + "\n")
 	writePremarketHeading(out, row)
+	writeArticleChart(out, row.observation)
 	writePremarketStatus(out, row)
 	out.WriteString("#### 全天高低预测\n")
 	for _, line := range premarketForecastLines(row) {
@@ -249,6 +255,7 @@ func writePremarketDetail(out *strings.Builder, r selection.Report, row premarke
 func writePremarketBrief(out *strings.Builder, r selection.Report, row premarketArticleRow) {
 	out.WriteString(":::card " + premarketCardTone(row.status) + "\n")
 	writePremarketHeading(out, row)
+	writeArticleChart(out, row.observation)
 	writePremarketStatus(out, row)
 	forecast := make([]string, 0, len(premarketForecastLines(row)))
 	for _, line := range premarketForecastLines(row) {
