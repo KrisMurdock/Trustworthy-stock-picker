@@ -1,477 +1,671 @@
 schema_version: 1
+# 行业字段来源：东方财富 F10 行业分类（2026-10-27）
 stocks:
   - code: sh601606
     name: 长城军工
+    sector: 地面兵装Ⅱ
   - code: sh603118
     name: 共进股份
+    sector: 通信设备
   - code: sz002396
     name: 星网锐捷
+    sector: 通信设备
   - code: sz002080
     name: 中材科技
+    sector: 玻璃玻纤
   - code: sh600176
     name: 中国巨石
+    sector: 玻璃玻纤
   - code: sh603256
     name: 宏和科技
+    sector: 玻璃玻纤
   - code: sz000823
     name: 超声电子
+    sector: 元件
   - code: sz002636
     name: 金安国纪
+    sector: 元件
   - code: sh688519
     name: 南亚新材
+    sector: 元件
   - code: sh603186
     name: 华正新材
+    sector: 元件
   - code: sh600183
     name: 生益科技
+    sector: 元件
   - code: sz000034
     name: 神州数码
+    sector: IT服务Ⅱ
   - code: sz000938
     name: 紫光股份
+    sector: IT服务Ⅱ
   - code: sh603019
     name: 中科曙光
+    sector: 计算机设备
   - code: sh601138
     name: 工业富联
+    sector: 消费电子
   - code: sz000977
     name: 浪潮信息
+    sector: 计算机设备
   - code: sh688048
     name: 长光华芯
+    sector: 半导体
   - code: sh688313
     name: 仕佳光子
+    sector: 通信设备
   - code: sz002859
     name: 洁美科技
+    sector: 其他电子Ⅱ
   - code: sh603678
     name: 火炬电子
+    sector: 军工电子Ⅱ
   - code: sz300408
     name: 三环集团
+    sector: 元件
   - code: sz000636
     name: 风华高科
+    sector: 元件
   - code: sz300316
     name: 晶盛机电
+    sector: 光伏设备
   - code: sz002617
     name: 露笑科技
+    sector: 电力
   - code: sh688234
     name: 天岳先进
+    sector: 半导体
   - code: sh688300
     name: 联瑞新材
+    sector: 非金属材料Ⅱ
   - code: sz300475
     name: 香农芯创
+    sector: 其他电子Ⅱ
   - code: sh688535
     name: 华海诚科
+    sector: 半导体
   - code: sz300623
     name: 捷捷微电
+    sector: 半导体
   - code: sh605111
     name: 新洁能
+    sector: 半导体
   - code: sz300373
     name: 扬杰科技
+    sector: 半导体
   - code: sh600460
     name: 士兰微
+    sector: 半导体
   - code: sh688403
     name: 汇成股份
+    sector: 半导体
   - code: sh603005
     name: 晶方科技
+    sector: 半导体
   - code: sz002185
     name: 华天科技
+    sector: 半导体
   - code: sz002409
     name: 雅克科技
+    sector: 半导体
   - code: sz300666
     name: 江丰电子
+    sector: 半导体
   - code: sz300054
     name: 鼎龙股份
+    sector: 电子化学品Ⅱ
   - code: sh688126
     name: 沪硅产业
+    sector: 半导体
   - code: sh688019
     name: 安集科技
+    sector: 电子化学品Ⅱ
   - code: sh688120
     name: 华海清科
+    sector: 半导体
   - code: sh688082
     name: 盛美上海
+    sector: 半导体
   - code: sh688072
     name: 拓荆科技
+    sector: 半导体
   - code: sh688012
     name: 中微公司
+    sector: 半导体
   - code: sz300346
     name: 南大光电
+    sector: 电子化学品Ⅱ
   - code: sz002971
     name: 和远气体
+    sector: 化学制品
   - code: sz002549
     name: 凯美特气
+    sector: 化学制品
   - code: sh688106
     name: 金宏气体
+    sector: 电子化学品Ⅱ
   - code: sh688268
     name: 华特气体
+    sector: 电子化学品Ⅱ
   - code: sz002669
     name: 康达新材
+    sector: 化学制品
   - code: sz301630
     name: 同宇新材
+    sector: 电子化学品Ⅱ
   - code: sh601208
     name: 东材科技
+    sector: 塑料
   - code: sh603002
     name: 宏昌电子
+    sector: 电子化学品Ⅱ
   - code: sh605589
     name: 圣泉集团
+    sector: 塑料
   - code: sh688312
     name: 燕麦科技
+    sector: 专用设备
   - code: sz300410
     name: 正业科技
+    sector: 电池
   - code: sh688700
     name: 东威科技
+    sector: 专用设备
   - code: sz301200
     name: 大族数控
+    sector: 专用设备
   - code: sz300102
     name: 乾照光电
+    sector: 光学光电子
   - code: sz300620
     name: 光库科技
+    sector: 通信设备
   - code: sz002023
     name: 海特高新
+    sector: 航空装备Ⅱ
   - code: sh600703
     name: 三安光电
+    sector: 光学光电子
   - code: sz002428
     name: 云南锗业
+    sector: 小金属
   - code: sz000657
     name: 中钨高新
+    sector: 小金属
   - code: sz002378
     name: 章源钨业
+    sector: 小金属
   - code: sh600549
     name: 厦门钨业
+    sector: 小金属
   - code: sh603228
     name: 景旺电子
+    sector: 元件
   - code: sz002916
     name: 深南电路
+    sector: 元件
   - code: sz002463
     name: 沪电股份
+    sector: 元件
   - code: sz002938
     name: 鹏鼎控股
+    sector: 元件
   - code: sz002491
     name: 通鼎互联
+    sector: 通信设备
   - code: sh600498
     name: 烽火通信
+    sector: 通信设备
   - code: sz301205
     name: 联特科技
+    sector: 通信设备
   - code: sh600522
     name: 中天科技
+    sector: 通信设备
   - code: sh600487
     name: 亨通光电
+    sector: 通信设备
   - code: sz002384
     name: 东山精密
+    sector: 元件
   - code: sh600198
     name: 大唐电信
+    sector: 通信设备
   - code: sh603893
     name: 瑞芯微
+    sector: 半导体
   - code: sz002281
     name: 光迅科技
+    sector: 通信设备
   - code: sh603288
     name: 海天味业
+    sector: 调味发酵品Ⅱ
   - code: sz000333
     name: 美的集团
+    sector: 白色家电
   - code: sh603259
     name: 药明康德
+    sector: 医疗服务
   - code: sh600276
     name: 恒瑞医药
+    sector: 化学制药
   - code: sh688981
     name: 中芯国际
+    sector: 半导体
   - code: sz002415
     name: 海康威视
+    sector: 计算机设备
   - code: sh600036
     name: 招商银行
+    sector: 银行Ⅱ
   - code: sz002475
     name: 立讯精密
+    sector: 消费电子
   - code: sh600900
     name: 长江电力
+    sector: 电力
   - code: sz300394
     name: 天孚通信
+    sector: 通信设备
   - code: sz300476
     name: 胜宏科技
+    sector: 元件
   - code: sz002156
     name: 通富微电
+    sector: 半导体
   - code: sz000988
     name: 华工科技
+    sector: 自动化设备
   - code: sh688256
     name: 寒武纪
+    sector: 半导体
   - code: sz002594
     name: 比亚迪
+    sector: 乘用车
   - code: sh601869
     name: 长飞光纤
+    sector: 通信设备
   - code: sh688825
     name: 长鑫科技
+    sector: 半导体
   - code: sz300750
     name: 宁德时代
+    sector: 电池
   - code: sz300308
     name: 中际旭创
+    sector: 通信设备
   - code: sh600584
     name: 长电科技
+    sector: 半导体
   - code: sz300502
     name: 新易盛
+    sector: 通信设备
   - code: sz002371
     name: 北方华创
+    sector: 半导体
   - code: sh688808
     name: 联讯仪器
+    sector: 通用设备
   - code: sh688733
     name: 壹石通
+    sector: 电池
   - code: sh688802
     name: 沐曦股份
+    sector: 半导体
   - code: sz000831
     name: 中国稀土
+    sector: 小金属
     listed_from: '1998-09-11'
   - code: sh600111
     name: 北方稀土
+    sector: 小金属
     listed_from: '1997-09-24'
   - code: sz300628
     name: 亿联网络
+    sector: 通信设备
     listed_from: '2017-03-17'
   - code: sz000063
     name: 中兴通讯
+    sector: 通信设备
     listed_from: '1997-11-18'
   - code: sh688041
     name: 海光信息
+    sector: 半导体
     listed_from: '2022-08-12'
   - code: sh688008
     name: 澜起科技
+    sector: 半导体
     listed_from: '2019-07-22'
   - code: sh603986
     name: 兆易创新
+    sector: 半导体
     listed_from: '2016-08-18'
   - code: sh603501
     name: 豪威集团
+    sector: 半导体
     listed_from: '2017-05-04'
   - code: sz300124
     name: 汇川技术
+    sector: 自动化设备
     listed_from: '2010-09-28'
   - code: sh688836
     name: 宇树科技-W
+    sector: 自动化设备
     listed_from: '2026-08-19'
   - code: sz002747
     name: 埃斯顿
+    sector: 自动化设备
     listed_from: '2015-03-20'
   - code: sz002527
     name: 新时达
+    sector: 专用设备
     listed_from: '2010-12-24'
   - code: sz300607
     name: 拓斯达
+    sector: 自动化设备
     listed_from: '2017-02-09'
   - code: sh688017
     name: 绿的谐波
+    sector: 自动化设备
     listed_from: '2020-08-28'
   - code: sz002472
     name: 双环传动
+    sector: 汽车零部件
     listed_from: '2010-09-10'
   - code: sz002896
     name: 中大力德
+    sector: 通用设备
     listed_from: '2017-08-29'
   - code: sz002050
     name: 三花智控
+    sector: 家电零部件Ⅱ
     listed_from: '2005-06-07'
   - code: sh601689
     name: 拓普集团
+    sector: 汽车零部件
     listed_from: '2015-03-19'
   - code: sh603728
     name: 鸣志电器
+    sector: 电机Ⅱ
     listed_from: '2017-05-09'
   - code: sz003021
     name: 兆威机电
+    sector: 电机Ⅱ
     listed_from: '2020-12-04'
   - code: sh603662
     name: 柯力传感
+    sector: 通用设备
     listed_from: '2019-08-06'
   - code: sh688322
     name: 奥比中光-W
+    sector: 光学光电子
     listed_from: '2022-07-07'
   - code: sz300580
     name: 贝斯特
+    sector: 汽车零部件
     listed_from: '2017-01-11'
   - code: sh603667
     name: 五洲新春
+    sector: 通用设备
     listed_from: '2016-10-25'
   - code: sh603009
     name: 北特科技
+    sector: 汽车零部件
     listed_from: '2014-07-18'
   - code: sz300274
     name: 阳光电源
+    sector: 光伏设备
     listed_from: '2011-11-02'
   - code: sh600660
     name: 福耀玻璃
+    sector: 汽车零部件
     listed_from: '1993-06-10'
   - code: sh600309
     name: 万华化学
+    sector: 化学制品
     listed_from: '2001-01-05'
   - code: sz000725
     name: 京东方A
+    sector: 光学光电子
     listed_from: '2001-01-12'
   - code: sz002241
     name: 歌尔股份
+    sector: 消费电子
     listed_from: '2008-05-22'
   - code: sh688111
     name: 金山办公
+    sector: 软件开发
     listed_from: '2019-11-18'
   - code: sh600570
     name: 恒生电子
+    sector: 软件开发
     listed_from: '2003-12-16'
   - code: sz300059
     name: 东方财富
+    sector: 证券Ⅱ
     listed_from: '2010-03-19'
   - code: sh600030
     name: 中信证券
+    sector: 证券Ⅱ
     listed_from: '2003-01-06'
   - code: sh601318
     name: 中国平安
+    sector: 保险Ⅱ
     listed_from: '2007-03-01'
   - code: sh600519
     name: 贵州茅台
+    sector: 白酒Ⅱ
     listed_from: '2001-08-27'
   - code: sh600887
     name: 伊利股份
+    sector: 饮料乳品
     listed_from: '1996-03-12'
   - code: sz002714
     name: 牧原股份
+    sector: 养殖业
     listed_from: '2014-01-28'
   - code: sh600031
     name: 三一重工
+    sector: 工程机械
     listed_from: '2003-07-03'
   - code: sh600760
     name: 中航沈飞
+    sector: 航空装备Ⅱ
     listed_from: '1996-10-11'
   - code: sh600893
     name: 航发动力
+    sector: 航空装备Ⅱ
     listed_from: '1996-04-08'
   - code: sh601899
     name: 紫金矿业
+    sector: 工业金属
     listed_from: '2008-04-25'
   - code: sh601088
     name: 中国神华
+    sector: 煤炭开采
     listed_from: '2007-10-09'
   - code: sh600938
     name: 中国海油
+    sector: 油气开采Ⅱ
     listed_from: '2022-04-21'
   - code: sh600150
     name: 中国船舶
+    sector: 航海装备Ⅱ
     listed_from: '1998-05-20'
   - code: sh601919
     name: 中远海控
+    sector: 航运港口
     listed_from: '2007-06-26'
   - code: sz002352
     name: 顺丰控股
+    sector: 物流
     listed_from: '2010-02-05'
   - code: sh601888
     name: 中国中免
+    sector: 旅游零售Ⅱ
     listed_from: '2009-10-15'
   - code: sz002027
     name: 分众传媒
+    sector: 广告营销
     listed_from: '2004-08-04'
   - code: sh600019
     name: 宝钢股份
+    sector: 普钢
     listed_from: '2000-12-12'
   - code: sh600585
     name: 海螺水泥
+    sector: 水泥
     listed_from: '2002-02-07'
   - code: sh601668
     name: 中国建筑
+    sector: 房屋建设Ⅱ
     listed_from: '2009-07-29'
   - code: sh601766
     name: 中国中车
+    sector: 轨交设备Ⅱ
     listed_from: '2008-08-18'
   - code: sz000039
     name: 中集集团
+    sector: 通用设备
     listed_from: '1994-04-08'
   - code: sh603806
     name: 福斯特
+    sector: 光伏设备
     listed_from: '2014-09-05'
   - code: sz002812
     name: 恩捷股份
+    sector: 电池
     listed_from: '2016-09-14'
   - code: sh603799
     name: 华友钴业
+    sector: 能源金属
     listed_from: '2015-01-29'
   - code: sh601012
     name: 隆基绿能
+    sector: 光伏设备
     listed_from: '2012-04-11'
   - code: sh600438
     name: 通威股份
+    sector: 光伏设备
     listed_from: '2004-03-02'
   - code: sz002129
     name: TCL中环
+    sector: 光伏设备
     listed_from: '2007-04-20'
   - code: sh600941
     name: 中国移动
+    sector: 通信服务
     listed_from: '2022-01-05'
   - code: sh600426
     name: 华鲁恒升
+    sector: 农化制品
     listed_from: '2002-06-20'
   - code: sz002648
     name: 卫星化学
+    sector: 化学原料
     listed_from: '2011-12-28'
   - code: sz002601
     name: 龙佰集团
+    sector: 化学原料
     listed_from: '2011-07-15'
   - code: sh601233
     name: 桐昆股份
+    sector: 炼化及贸易
     listed_from: '2011-05-18'
   - code: sh603225
     name: 新凤鸣
+    sector: 化学纤维
     listed_from: '2017-04-18'
   - code: sh600486
     name: 扬农化工
+    sector: 农化制品
     listed_from: '2002-04-25'
   - code: sh600409
     name: 三友化工
+    sector: 化学原料
     listed_from: '2003-06-18'
   - code: sh603993
     name: 洛阳钼业
+    sector: 工业金属
     listed_from: '2012-10-09'
   - code: sh600362
     name: 江西铜业
+    sector: 工业金属
     listed_from: '2002-01-11'
   - code: sh601600
     name: 中国铝业
+    sector: 工业金属
     listed_from: '2007-04-30'
   - code: sz000807
     name: 云铝股份
+    sector: 工业金属
     listed_from: '1998-04-08'
   - code: sz000960
     name: 锡业股份
+    sector: 小金属
     listed_from: '2000-02-21'
   - code: sh600188
     name: 兖矿能源
+    sector: 煤炭开采
     listed_from: '1998-07-01'
   - code: sh601225
     name: 陕西煤业
+    sector: 煤炭开采
     listed_from: '2014-01-28'
   - code: sz000932
     name: 华菱钢铁
+    sector: 普钢
     listed_from: '1999-08-03'
   - code: sh601872
     name: 招商轮船
+    sector: 航运港口
     listed_from: '2006-12-01'
   - code: sh600026
     name: 中远海能
+    sector: 航运港口
     listed_from: '2002-05-23'
   - code: sh601975
     name: 招商南油
+    sector: 航运港口
     listed_from: '2019-01-08'
   - code: sh601111
     name: 中国国航
+    sector: 航空机场
     listed_from: '2006-08-18'
   - code: sh601021
     name: 春秋航空
+    sector: 航空机场
     listed_from: '2015-01-21'
   - code: sz300498
     name: 温氏股份
+    sector: 养殖业
     listed_from: '2015-11-02'
   - code: sh603477
     name: 巨星农牧
+    sector: 养殖业
     listed_from: '2017-12-18'
   - code: sh601100
     name: 恒立液压
+    sector: 工程机械
     listed_from: '2011-10-28'
   - code: sh601636
     name: 旗滨集团
+    sector: 玻璃玻纤
     listed_from: '2011-08-12'
   - code: sz000683
     name: 远兴能源
+    sector: 化学原料
     listed_from: '1997-01-31'
   - code: sz002092
     name: 中泰化学
+    sector: 化学原料
     listed_from: '2006-12-08'
   - code: sh600075
     name: 新疆天业
+    sector: 化学原料
     listed_from: '1997-06-17'
   - code: sz002078
     name: 太阳纸业
+    sector: 造纸
     listed_from: '2006-11-16'
