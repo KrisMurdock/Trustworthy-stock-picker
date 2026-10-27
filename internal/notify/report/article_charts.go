@@ -14,7 +14,6 @@ func writeArticleChart(out *strings.Builder, candidate *strategy.Candidate) {
 	if candidate == nil || candidate.Chart == nil {
 		return
 	}
-	out.WriteString("#### 结构图谱\n")
 	out.WriteString(articleChartTokenPrefix + candidate.Chart.ID + "]]\n\n")
 }
 
@@ -40,9 +39,9 @@ func articleChartCaption(spec articlechart.Spec) string {
 	}
 	note := ""
 	if adjust != "不复权" {
-		note = "；图中价格为复权价，与文中未复权参考价可能有差异"
+		note = "；复权价可能与文中参考价不同"
 	}
-	return fmt.Sprintf("%s 日 K 结构图（%s）：红/绿为涨跌 K 线，橙线为缠论笔，蓝区为最近笔重叠区，紫线为简化波浪支撑、阻力与失效位%s；仅供结构观察。", spec.Code, adjust, note)
+	return fmt.Sprintf("%s 日K结构图（%s）；橙线缠论笔，蓝区笔重叠区，紫线波浪价位%s。", spec.Code, adjust, note)
 }
 
 func stripArticleChartTokens(body string) string {

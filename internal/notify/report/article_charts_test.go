@@ -40,7 +40,7 @@ func TestSecondStageArticleAttachesChartSpecsAndHidesTokensFromPlainText(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(rendered, "<img ") != 2 || strings.Count(rendered, "日 K 结构图") < 2 {
+	if strings.Count(rendered, "<img ") != 2 || strings.Count(rendered, "日K结构图") < 2 {
 		t.Fatalf("rendered charts are incomplete:\n%s", rendered)
 	}
 }

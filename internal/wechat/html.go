@@ -9,13 +9,11 @@ import (
 )
 
 const (
-	cardShellOpenStyle   = "margin:18px 0;border:1px solid #dbe5f0;border-radius:12px;background:#fff;overflow:hidden;"
-	cardBarStylePrefix   = "height:4px;background:"
-	cardBarStyleSuffix   = ";font-size:0;line-height:0;"
-	cardContentOpenStyle = "padding:16px;color:#334155;font-size:15px;line-height:1.7;"
-	cardHeading3Style    = "margin:0 0 10px;color:#0f172a;font-size:19px;line-height:1.4;font-weight:700;"
-	cardHeading4Prefix   = "margin:14px 0 6px;color:"
-	cardHeading4Suffix   = ";font-size:15px;"
+	cardShellOpenStyle   = "margin:18px 0;border-left:4px solid "
+	cardShellStyleSuffix = ";padding:16px;color:#334155;"
+	cardHeading3Style    = "color:#0f172a;font-size:19px;"
+	cardHeading4Prefix   = "color:"
+	cardHeading4Suffix   = ";"
 	cardQuoteStylePrefix = "margin:10px 0;padding:8px 12px;border-left:3px solid "
 	cardQuoteStyleSuffix = ";background:#f8fafc;"
 	cardQuoteTextStyle   = "margin:0;font-size:15px;"
@@ -114,17 +112,11 @@ func renderLines(out *strings.Builder, lines []string, card *cardTheme, images m
 
 			out.WriteString(`<section style="`)
 			out.WriteString(cardShellOpenStyle)
-			out.WriteString(`">`)
-			out.WriteString(`<section style="`)
-			out.WriteString(cardBarStylePrefix)
 			out.WriteString(theme.barColor)
-			out.WriteString(cardBarStyleSuffix)
-			out.WriteString(`"></section>`)
-			out.WriteString(`<section style="`)
-			out.WriteString(cardContentOpenStyle)
+			out.WriteString(cardShellStyleSuffix)
 			out.WriteString(`">`)
 			out.WriteString(inner.String())
-			out.WriteString(`</section></section>`)
+			out.WriteString(`</section>`)
 			index = end
 			continue
 		}
@@ -241,24 +233,22 @@ func writeImage(out *strings.Builder, image RenderedImage, card *cardTheme) erro
 		return errors.New("article chart URL is invalid")
 	}
 	caption := strings.TrimSpace(image.Caption)
-	out.WriteString(`<section style="margin:14px 0;">`)
+	out.WriteString(`<p>`)
 	out.WriteString(`<img src="`)
 	out.WriteString(html.EscapeString(image.URL))
-	out.WriteString(`" alt="`)
-	out.WriteString(html.EscapeString(caption))
-	out.WriteString(`" style="display:block;width:100%;height:auto;border:1px solid #dbe5f0;border-radius:8px;" />`)
+	out.WriteString(`" alt="日K结构图" style="display:block;width:100%;height:auto;" />`)
+	out.WriteString(`</p>`)
 	if caption != "" {
-		out.WriteString(`<p style="margin:7px 0 0;color:`)
+		out.WriteString(`<p style="color:`)
 		if card != nil {
 			out.WriteString(card.accent)
 		} else {
 			out.WriteString(cardGreyColor)
 		}
-		out.WriteString(`;font-size:12px;line-height:1.6;">`)
+		out.WriteString(`;font-size:12px;">`)
 		out.WriteString(html.EscapeString(caption))
 		out.WriteString(`</p>`)
 	}
-	out.WriteString(`</section>`)
 	return nil
 }
 

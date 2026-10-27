@@ -175,6 +175,33 @@ func TestSecondStageArticleCardsRenderWithinWechatLimit(t *testing.T) {
 	}
 }
 
+func TestSecondStageArticleWithTenChartsFitsWechatLimit(t *testing.T) {
+	r := articleTestReport(10)
+	images := make(map[string]wechat.RenderedImage, 10)
+	for index := range r.Ranking {
+		chart := reportChart(r.Ranking[index].Code)
+		r.Ranking[index].Chart = chart
+		images[chart.ID] = wechat.RenderedImage{URL: "https://mmbiz.qpic.cn/mmbiz_png/" + strings.Repeat("a", 160) + "/0?wx_fmt=png", Caption: articleChartCaption(*chart)}
+	}
+	cards, err := FromSelection(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cards.SecondStage) != 1 || cards.SecondStage[0].Article == nil {
+		t.Fatalf("missing second-stage article: %+v", cards.SecondStage)
+	}
+	rendered, err := wechat.RenderHTMLWithImages(cards.SecondStage[0].Article.Body, images)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len([]rune(rendered)); got >= 20000 {
+		t.Fatalf("rendered article has %d runes, exceeds WeChat draft limit", got)
+	}
+	if got := strings.Count(rendered, "<img "); got != 10 {
+		t.Fatalf("rendered charts = %d, want 10", got)
+	}
+}
+
 func articleTestReport(count int) selection.Report {
 	names := []string{"亿联网络", "金山办公", "海螺水泥", "长江电力", "陕西煤业", "候选六", "候选七", "候选八", "候选九", "候选十"}
 	codes := []string{"sz300628", "sh688111", "sh600585", "sh600900", "sh601225", "sz000006", "sz000007", "sz000008", "sz000009", "sz000010"}

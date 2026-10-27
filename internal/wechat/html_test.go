@@ -79,16 +79,14 @@ func TestRenderHTMLBuildsSafeStockCard(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`<section style="margin:18px 0;border:1px solid #dbe5f0;border-radius:12px;background:#fff;overflow:hidden;">`,
-		`<section style="height:4px;background:#2563eb;font-size:0;line-height:0;"></section>`,
-		`<section style="padding:16px;color:#334155;font-size:15px;line-height:1.7;">`,
-		`<h3 style="margin:0 0 10px;color:#0f172a;font-size:19px;line-height:1.4;font-weight:700;">1. 候选一（sz000001）</h3>`,
-		`<h4 style="margin:14px 0 6px;color:#2563eb;font-size:15px;">技术指标</h4>`,
+		`<section style="margin:18px 0;border-left:4px solid #2563eb;padding:16px;color:#334155;">`,
+		`<h3 style="color:#0f172a;font-size:19px;">1. 候选一（sz000001）</h3>`,
+		`<h4 style="color:#2563eb;">技术指标</h4>`,
 		`<p><strong>结论</strong>：等待确认。</p>`,
 		`<ul><li><strong>RSI14</strong>：58.20</li><li>收盘位置：&lt;script&gt;alert(1)&lt;/script&gt;</li></ul>`,
 		`<blockquote style="margin:10px 0;padding:8px 12px;border-left:3px solid #2563eb;background:#f8fafc;"><p style="margin:0;font-size:15px;">仅为观察，不构成投资建议。</p></blockquote>`,
 		`<ol><li><strong>触发规则</strong>：放量站稳 MA20。</li></ol>`,
-		`</section></section>`,
+		`</section>`,
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("missing %q:\n%s", want, rendered)
@@ -118,8 +116,8 @@ func TestRenderHTMLUsesFixedToneColors(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, want := range []string{
-				"height:4px;background:" + test.color + ";",
-				"color:" + test.color + ";font-size:15px;",
+				"border-left:4px solid " + test.color + ";",
+				"color:" + test.color + ";",
 			} {
 				if !strings.Contains(rendered, want) {
 					t.Fatalf("missing fixed tone style %q:\n%s", want, rendered)
@@ -134,7 +132,7 @@ func TestRenderHTMLUnknownToneFallsBackToNeutral(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(rendered, "height:4px;background:#2563eb;") {
+	if !strings.Contains(rendered, "border-left:4px solid #2563eb;") {
 		t.Fatalf("unknown tone did not use neutral color:\n%s", rendered)
 	}
 }

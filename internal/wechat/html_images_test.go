@@ -15,7 +15,7 @@ func TestRenderHTMLWithImagesInsertsUploadedChart(t *testing.T) {
 	}
 	for _, want := range []string{
 		`<img src="https://mmbiz.qpic.cn/chart?x=1&amp;y=2"`,
-		`alt="sz300628 日 K 结构图 &lt;研究&gt;"`,
+		`alt="日K结构图"`,
 		"sz300628 日 K 结构图 &lt;研究&gt;",
 		"display:block;width:100%;height:auto;",
 	} {
