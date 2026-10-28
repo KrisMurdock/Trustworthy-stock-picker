@@ -68,6 +68,7 @@ type Evaluation struct {
 	Baselines   []Baseline     `json:"baselines"`
 	Sensitivity []Sensitivity  `json:"sensitivity"`
 	Variants    []Variant      `json:"variants"`
+	Subgroups   []Subgroup     `json:"subgroups"`
 	Purged      int            `json:"purged"`
 	Verdict     string         `json:"verdict"`
 	Limitations []string       `json:"limitations"`
@@ -130,6 +131,7 @@ func Evaluate(c config.Config, cal *calendar.Calendar, adjusted, raw []market.Hi
 	}
 
 	baselineTrades := map[string][]Trade{}
+	controlTrades := map[Mode][]Trade{}
 	controlSignals := map[Mode][]Signal{}
 	for _, mode := range []Mode{ModePullbackOnly, ModeHoldOnly} {
 		signals, scanErr := scanAll(pairs, scanOptions, mode)
@@ -138,6 +140,7 @@ func Evaluate(c config.Config, cal *calendar.Calendar, adjusted, raw []market.Hi
 		}
 		controlSignals[mode] = signals
 		trades := fixedHoldTrades(pairsByCode, signals, c.Strategy, cal, normalized.Horizon)
+		controlTrades[mode] = trades
 		baselineTrades[string(mode)] = tradesAtOrAfter(trades, boundary)
 	}
 	pool := poolSignals(pairs)
@@ -195,6 +198,7 @@ func Evaluate(c config.Config, cal *calendar.Calendar, adjusted, raw []market.Hi
 	result.Data["variant_candidates"] = VariantCandidateNames(result.Variants)
 	result.Data["variant_scope"] = "pre_registered_exit_rules; exploratory because the primary evaluation already read this holdout"
 	result.Data["variant_control"] = "hold_only with the same exit rule"
+	appendSubgroups(&result, pairs, pairsByCode, patternTrades, controlTrades[ModeHoldOnly], cal, normalized, boundary)
 	result.Limitations = []string{
 		"Phase 0 research only; this is not a production recommendation, a probability of success, or a return promise.",
 		"Primary win means fixed-horizon net return is strictly positive; unresolved and skipped entries count as non-wins.",
@@ -206,6 +210,7 @@ func Evaluate(c config.Config, cal *calendar.Calendar, adjusted, raw []market.Hi
 		"pool_all contains overlapping fixed-hold observations and is descriptive only.",
 		"Execution variants are pre-registered and differ only in holding period, exit thresholds or entry gap cap; the primary fixed_5d verdict is unchanged.",
 		"Variant results reuse the same holdout that the primary evaluation already read, so they are exploratory and cannot serve as a fresh out-of-sample confirmation.",
+		"Subgroups are seven pre-registered single-condition filters; one is selected on the development period and the holdout result is exploratory because that holdout was already read.",
 	}
 	return result, nil
 }
@@ -695,6 +700,11 @@ func splitTrades(trades []Trade, split float64, cal *calendar.Calendar, horizon 
 		index = len(dates) - 1
 	}
 	boundary = dates[index]
+	development, holdout, purged = splitAtBoundary(trades, boundary, cal, horizon)
+	return development, holdout, purged, boundary
+}
+
+func splitAtBoundary(trades []Trade, boundary string, cal *calendar.Calendar, horizon int) (development, holdout []Trade, purged int) {
 	for _, trade := range trades {
 		date := trade.Signal.Date
 		if date == "" {
@@ -711,7 +721,7 @@ func splitTrades(trades []Trade, split float64, cal *calendar.Calendar, horizon 
 			holdout = append(holdout, trade)
 		}
 	}
-	return development, holdout, purged, boundary
+	return development, holdout, purged
 }
 
 func expectedLabelEnd(cal *calendar.Calendar, signalDate string, horizon int) (string, bool) {
