@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
@@ -41,12 +42,11 @@ func runYangPullbackStudy(ctx context.Context, c config.Config, asof string, boo
 	if err != nil {
 		return err
 	}
-	from, through := asof, snapshot.AsOf
-	for _, history := range adjusted {
-		if len(history.Bars) > 0 && history.Bars[0].Date < from {
-			from = history.Bars[0].Date
-		}
+	from, err := studyHistoryStart(asof)
+	if err != nil {
+		return err
 	}
+	through := snapshot.AsOf
 	days, calendarErr := db.CalendarDays(ctx, from, through)
 	if calendarErr != nil {
 		return fmt.Errorf("yang-pullback study requires complete exchange calendar coverage: %w", calendarErr)
@@ -68,4 +68,16 @@ func runYangPullbackStudy(ctx context.Context, c config.Config, asof string, boo
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(evaluation)
+}
+
+func studyHistoryStart(asof string) (string, error) {
+	end, err := time.Parse("2006-01-02", asof)
+	if err != nil {
+		return "", errors.New("yang-pullback study requires a valid as-of date")
+	}
+	start := end.AddDate(-10, 0, 0)
+	if start.Month() != end.Month() {
+		start = start.AddDate(0, 0, -1)
+	}
+	return start.Format("2006-01-02"), nil
 }
