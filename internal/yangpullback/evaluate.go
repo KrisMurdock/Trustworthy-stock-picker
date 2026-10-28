@@ -69,6 +69,7 @@ type Evaluation struct {
 	Sensitivity []Sensitivity  `json:"sensitivity"`
 	Variants    []Variant      `json:"variants"`
 	Subgroups   []Subgroup     `json:"subgroups"`
+	Robustness  Robustness     `json:"robustness"`
 	Purged      int            `json:"purged"`
 	Verdict     string         `json:"verdict"`
 	Limitations []string       `json:"limitations"`
@@ -199,6 +200,7 @@ func Evaluate(c config.Config, cal *calendar.Calendar, adjusted, raw []market.Hi
 	result.Data["variant_scope"] = "pre_registered_exit_rules; exploratory because the primary evaluation already read this holdout"
 	result.Data["variant_control"] = "hold_only with the same exit rule"
 	appendSubgroups(&result, pairs, pairsByCode, patternTrades, controlTrades[ModeHoldOnly], cal, normalized, boundary)
+	appendRobustness(&result, pairsByCode, patternSignals, controlSignals[ModeHoldOnly], patternTrades, controlTrades[ModeHoldOnly], c.Strategy, cal, normalized)
 	result.Limitations = []string{
 		"Phase 0 research only; this is not a production recommendation, a probability of success, or a return promise.",
 		"Primary win means fixed-horizon net return is strictly positive; unresolved and skipped entries count as non-wins.",
@@ -211,6 +213,7 @@ func Evaluate(c config.Config, cal *calendar.Calendar, adjusted, raw []market.Hi
 		"Execution variants are pre-registered and differ only in holding period, exit thresholds or entry gap cap; the primary fixed_5d verdict is unchanged.",
 		"Variant results reuse the same holdout that the primary evaluation already read, so they are exploratory and cannot serve as a fresh out-of-sample confirmation.",
 		"Subgroups are seven pre-registered single-condition filters; one is selected on the development period and the holdout result is exploratory because that holdout was already read.",
+		"Calendar-year and 1..10 day horizon tables are descriptive robustness views over the same data; overlapping trades are not independent observations.",
 	}
 	return result, nil
 }
