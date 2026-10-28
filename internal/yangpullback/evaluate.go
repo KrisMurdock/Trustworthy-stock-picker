@@ -67,6 +67,7 @@ type Evaluation struct {
 	Holdout     Stats          `json:"holdout"`
 	Baselines   []Baseline     `json:"baselines"`
 	Sensitivity []Sensitivity  `json:"sensitivity"`
+	Variants    []Variant      `json:"variants"`
 	Purged      int            `json:"purged"`
 	Verdict     string         `json:"verdict"`
 	Limitations []string       `json:"limitations"`
@@ -187,6 +188,13 @@ func Evaluate(c config.Config, cal *calendar.Calendar, adjusted, raw []market.Hi
 		"bootstrap":                 bootstrap,
 	}
 	result.Verdict, result.Data["gate_failures"] = evaluateVerdict(result.Holdout, holdOnly, bootstrap, yearSpan(dataFrom, dataThrough))
+	if err := appendVariants(&result, pairsByCode, patternSignals, controlSignals[ModeHoldOnly], c.Strategy, cal, normalized, boundary, yearSpan(dataFrom, dataThrough)); err != nil {
+		return Evaluation{}, err
+	}
+	result.Data["variant_count"] = len(result.Variants)
+	result.Data["variant_candidates"] = VariantCandidateNames(result.Variants)
+	result.Data["variant_scope"] = "pre_registered_exit_rules; exploratory because the primary evaluation already read this holdout"
+	result.Data["variant_control"] = "hold_only with the same exit rule"
 	result.Limitations = []string{
 		"Phase 0 research only; this is not a production recommendation, a probability of success, or a return promise.",
 		"Primary win means fixed-horizon net return is strictly positive; unresolved and skipped entries count as non-wins.",
@@ -196,6 +204,8 @@ func Evaluate(c config.Config, cal *calendar.Calendar, adjusted, raw []market.Hi
 		"pullback_only and hold_only signal at H+2 while pattern signals at confirmation. The control cohorts are independent, not paired, and their contrast is descriptive only.",
 		"The moving-block bootstrap resamples signal-date clusters with horizon+2 sessions, so overlapping fixed-horizon labels are not treated as independent observations.",
 		"pool_all contains overlapping fixed-hold observations and is descriptive only.",
+		"Execution variants are pre-registered and differ only in holding period, exit thresholds or entry gap cap; the primary fixed_5d verdict is unchanged.",
+		"Variant results reuse the same holdout that the primary evaluation already read, so they are exploratory and cannot serve as a fresh out-of-sample confirmation.",
 	}
 	return result, nil
 }
@@ -357,50 +367,8 @@ func fixedHoldTrades(pairs map[string]pairedHistory, signals []Signal, s config.
 }
 
 func fixedHoldTrade(pair pairedHistory, signal Signal, s config.Strategy, cal *calendar.Calendar, horizon int) Trade {
-	trade := Trade{Signal: signal, Status: "unresolved"}
-	signalIndex, ok := pair.indexByDate[signal.Date]
+	signalIndex, entryIndex, entry, fill, shares, buyCost, trade, ok := enterPosition(pair, signal, s, cal)
 	if !ok {
-		trade.Status = "missing_signal_session"
-		return trade
-	}
-	entryIndex := signalIndex + 1
-	expectedEntry, err := cal.Next(signal.Date)
-	if err != nil || entryIndex >= len(pair.raw.Bars) || pair.raw.Bars[entryIndex].Date != expectedEntry {
-		trade.Status = "missing_entry_session"
-		return trade
-	}
-	entry := pair.raw.Bars[entryIndex]
-	previous := pair.raw.Bars[signalIndex]
-	if entry.Volume == 0 {
-		trade.EntrySkipped = true
-		trade.Status = "entry_skipped"
-		return trade
-	}
-	if mainBoardSTLockedUp(pair.code, previous.Close, entry) {
-		trade.EntrySkipped = true
-		trade.Status = "limit_status_unknown"
-		return trade
-	}
-	if entry.High-entry.Low < 0.005 {
-		trade.EntrySkipped = true
-		trade.Status = "entry_skipped"
-		return trade
-	}
-	if lockedUp(pair.code, previous.Close, entry) {
-		trade.EntrySkipped = true
-		trade.Status = "entry_skipped"
-		return trade
-	}
-	fill := fixedTickUp(entry.Open * (1 + s.SlippageRate))
-	if fill <= 0 || fill > entry.High+0.005 {
-		trade.EntrySkipped = true
-		trade.Status = "entry_skipped"
-		return trade
-	}
-	shares, buyCost, ok := fixedBuy(s, pair.code, fill)
-	if !ok {
-		trade.EntrySkipped = true
-		trade.Status = "cash_insufficient"
 		return trade
 	}
 
@@ -437,14 +405,71 @@ func fixedHoldTrade(pair pairedHistory, signal Signal, s config.Strategy, cal *c
 	trade.HoldingDays = horizon
 	trade.NetPct = fixedNetPct(s, shares, buyCost, sale)
 	high := entry.High
+	mfe := 0.0
+	mae := math.Min(0, fixedNetPct(s, shares, buyCost, entry.Low))
 	for day := 1; day <= horizon; day++ {
-		high = math.Max(high, pair.raw.Bars[entryIndex+day].High)
+		bar := pair.raw.Bars[entryIndex+day]
+		high = math.Max(high, bar.High)
+		mfe = math.Max(mfe, fixedNetPct(s, shares, buyCost, bar.High))
+		mae = math.Min(mae, fixedNetPct(s, shares, buyCost, bar.Low))
 	}
+	trade.MFE = mfe
+	trade.MAE = mae
 	trade.MaxHighPct = (high/fill - 1) * 100
 	trade.PriceTouch = high > fill
 	trade.Resolved = true
 	trade.Status = "fixed_hold"
 	return trade
+}
+
+func enterPosition(pair pairedHistory, signal Signal, s config.Strategy, cal *calendar.Calendar) (signalIndex, entryIndex int, entry market.Bar, fill float64, shares int, buyCost float64, trade Trade, ok bool) {
+	trade = Trade{Signal: signal, Status: "unresolved"}
+	signalIndex, ok = pair.indexByDate[signal.Date]
+	if !ok {
+		trade.Status = "missing_signal_session"
+		return signalIndex, entryIndex, entry, fill, shares, buyCost, trade, false
+	}
+	entryIndex = signalIndex + 1
+	expectedEntry, err := cal.Next(signal.Date)
+	if err != nil || entryIndex >= len(pair.raw.Bars) || pair.raw.Bars[entryIndex].Date != expectedEntry {
+		trade.Status = "missing_entry_session"
+		return signalIndex, entryIndex, entry, fill, shares, buyCost, trade, false
+	}
+	entry = pair.raw.Bars[entryIndex]
+	previous := pair.raw.Bars[signalIndex]
+	if entry.Volume == 0 {
+		trade.EntrySkipped = true
+		trade.Status = "entry_skipped"
+		return signalIndex, entryIndex, entry, fill, shares, buyCost, trade, false
+	}
+	if mainBoardSTLockedUp(pair.code, previous.Close, entry) {
+		trade.EntrySkipped = true
+		trade.Status = "limit_status_unknown"
+		return signalIndex, entryIndex, entry, fill, shares, buyCost, trade, false
+	}
+	if entry.High-entry.Low < 0.005 {
+		trade.EntrySkipped = true
+		trade.Status = "entry_skipped"
+		return signalIndex, entryIndex, entry, fill, shares, buyCost, trade, false
+	}
+	if lockedUp(pair.code, previous.Close, entry) {
+		trade.EntrySkipped = true
+		trade.Status = "entry_skipped"
+		return signalIndex, entryIndex, entry, fill, shares, buyCost, trade, false
+	}
+	fill = fixedTickUp(entry.Open * (1 + s.SlippageRate))
+	if fill <= 0 || fill > entry.High+0.005 {
+		trade.EntrySkipped = true
+		trade.Status = "entry_skipped"
+		return signalIndex, entryIndex, entry, fill, shares, buyCost, trade, false
+	}
+	shares, buyCost, ok = fixedBuy(s, pair.code, fill)
+	if !ok {
+		trade.EntrySkipped = true
+		trade.Status = "cash_insufficient"
+		return signalIndex, entryIndex, entry, fill, shares, buyCost, trade, false
+	}
+	return signalIndex, entryIndex, entry, fill, shares, buyCost, trade, true
 }
 
 func lockedUp(code string, previousClose float64, bar market.Bar) bool {
@@ -565,8 +590,6 @@ func attachDiagnostics(trades []Trade, pairs map[string]pairedHistory, cal *cale
 		if err != nil {
 			continue
 		}
-		trades[index].MFE = outcome.MFE
-		trades[index].MAE = outcome.MAE
 		trades[index].Ambiguous = outcome.Ambiguous
 		if !outcome.Ambiguous {
 			switch outcome.Status {

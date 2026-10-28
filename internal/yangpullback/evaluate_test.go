@@ -189,3 +189,23 @@ func testPair(code string, bars []market.Bar) pairedHistory {
 		indexByDate: indexes,
 	}
 }
+
+func TestFixedHoldTradeReportsPathMFEAndMAE(t *testing.T) {
+	bars := []market.Bar{
+		{Date: "2026-01-05", Open: 9.8, Close: 10, High: 10.1, Low: 9.7, Volume: 1000},
+		{Date: "2026-01-06", Open: 10, Close: 10.2, High: 10.3, Low: 9.9, Volume: 1000},
+		{Date: "2026-01-07", Open: 10.2, Close: 10.5, High: 10.6, Low: 10.1, Volume: 1000},
+		{Date: "2026-01-08", Open: 10.5, Close: 9.8, High: 10.5, Low: 9.7, Volume: 1000},
+	}
+	pair := testPair("sz000001", bars)
+	trade := fixedHoldTrade(pair, Signal{Code: "sz000001", Date: "2026-01-05"}, zeroCostStrategy(), testCalendar(), 2)
+	if !trade.Resolved {
+		t.Fatalf("trade not resolved: %+v", trade)
+	}
+	if math.Abs(trade.MFE-6) > 1e-9 {
+		t.Fatalf("MFE = %.6f, want 6", trade.MFE)
+	}
+	if math.Abs(trade.MAE-(-3)) > 1e-9 {
+		t.Fatalf("MAE = %.6f, want -3", trade.MAE)
+	}
+}
