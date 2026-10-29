@@ -146,6 +146,7 @@ def check_real_page(context, page, url):
     expect(page.get_by_test_id("market-signal-panel")).to_contain_text("下午")
     expect(page.get_by_test_id("market-signal-panel")).to_contain_text("留出")
     expect(page.get_by_test_id("market-signal-panel")).to_contain_text("高置信")
+    expect(page.get_by_test_id("market-signal-panel")).to_contain_text("校准")
     expect(page.get_by_test_id("market-signal-panel")).to_contain_text("已启用韩国 KOSPI/KOSDAQ")
     expect(page.get_by_test_id("market-context-board-list")).to_contain_text("半导体")
     expect(page.get_by_test_id("market-context-board-list")).to_contain_text("存储芯片")

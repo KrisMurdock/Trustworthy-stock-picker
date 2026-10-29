@@ -106,6 +106,8 @@ type SessionModelInfo struct {
 	FeatureNames            []string `json:"feature_names"`
 	HighConfidenceThreshold float64  `json:"high_confidence_threshold"`
 	TargetAccuracy          float64  `json:"target_accuracy"`
+	CalibrationMethod       string   `json:"calibration_method"`
+	CalibrationMinSamples   int      `json:"calibration_min_samples"`
 	MorningMaxDepth         int      `json:"morning_max_depth"`
 	AfternoonMaxDepth       int      `json:"afternoon_max_depth"`
 	MinLeaf                 int      `json:"min_leaf"`

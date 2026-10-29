@@ -158,6 +158,9 @@ func TestMarketSignalAPIReadsIndexForecast(t *testing.T) {
 			if session.Status != "ok" || session.Validation.Samples != marketforecast.SessionMinValidationSample || len(session.Weekdays) != 5 {
 				t.Fatalf("unexpected session signal: %+v", session)
 			}
+			if session.CalibratedUpProbability <= 0 || session.CalibratedUpProbability >= 1 || session.Validation.Calibration.Status != "ok" {
+				t.Fatalf("session calibration missing: %+v", session)
+			}
 		}
 	}
 	if w := request(t, h, http.MethodGet, "/api/market-signal"); w.Code != http.StatusOK {

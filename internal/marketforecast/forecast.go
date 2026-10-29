@@ -71,7 +71,8 @@ func Build(series []Series, opts Options) (Report, error) {
 		SessionModel: SessionModelInfo{
 			ID: SessionModelID, Version: SessionModelVersion, FeatureVersion: SessionFeatureVersion,
 			FeatureNames: SessionFeatureNames(len(opts.Korea) > 0), HighConfidenceThreshold: SessionHighConfidenceThreshold,
-			TargetAccuracy: SessionTargetAccuracy, MorningMaxDepth: SessionMorningMaxDepth,
+			TargetAccuracy: SessionTargetAccuracy, CalibrationMethod: calibrationMethod, CalibrationMinSamples: calibrationMinSamples,
+			MorningMaxDepth:   SessionMorningMaxDepth,
 			AfternoonMaxDepth: SessionAfternoonMaxDepth, MinLeaf: SessionMinLeaf,
 			MinTrainingSamples: SessionMinTrainingSamples, MinValidationSamples: SessionMinValidationSample,
 			KoreaFeatures: len(opts.Korea) > 0,

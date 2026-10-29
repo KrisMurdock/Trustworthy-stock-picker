@@ -87,11 +87,81 @@ func TestBuildSessionSignalsUsesPriorSessionsAndReportsMetrics(t *testing.T) {
 		if signal.UpProbability <= 0 || signal.UpProbability >= 1 || signal.Direction == "" {
 			t.Fatalf("invalid probability: %+v", signal)
 		}
+		if signal.CalibratedUpProbability <= 0 || signal.CalibratedUpProbability >= 1 {
+			t.Fatalf("invalid calibrated probability: %+v", signal)
+		}
 		if signal.Training.Samples < SessionMinTrainingSamples+SessionMinValidationSample || signal.Validation.Samples != SessionMinValidationSample {
 			t.Fatalf("invalid sample evidence: %+v", signal)
 		}
+		if signal.Validation.Calibration.Status != "ok" || signal.Validation.Calibration.Samples == 0 || signal.Validation.Calibration.EvaluationSamples == 0 {
+			t.Fatalf("calibration evidence missing: %+v", signal.Validation)
+		}
+		if signal.Validation.Calibration.BrierScore < 0 || signal.Validation.Calibration.BrierScore > 1 {
+			t.Fatalf("invalid calibration Brier score: %+v", signal.Validation.Calibration)
+		}
 		if signal.Validation.WalkForwardSamples == 0 || len(signal.Weekdays) != 5 {
 			t.Fatalf("walk-forward or weekday evidence missing: %+v", signal)
+		}
+	}
+}
+
+func TestProbabilityCalibratorShrinksMiscalibratedProbabilities(t *testing.T) {
+	pairs := make([]calibrationPair, 0, 60)
+	for index := 0; index < 60; index++ {
+		pairs = append(pairs, calibrationPair{probability: 0.8, label: index % 2})
+	}
+	calibrator := fitProbabilityCalibrator(pairs)
+	if calibrator.status != "ok" || calibrator.samples != len(pairs) {
+		t.Fatalf("unexpected calibrator: %+v", calibrator)
+	}
+	calibrated := calibrator.apply(0.8)
+	if calibrated < 0.4 || calibrated > 0.6 {
+		t.Fatalf("miscalibrated probability was not shrunk: %.4f", calibrated)
+	}
+	if calibrator.brier >= 0.3 {
+		t.Fatalf("calibrated Brier score did not improve: %.4f", calibrator.brier)
+	}
+	second := fitProbabilityCalibrator(pairs)
+	if second.slope != calibrator.slope || second.intercept != calibrator.intercept || second.brier != calibrator.brier {
+		t.Fatal("calibration is not deterministic")
+	}
+}
+
+func TestProbabilityCalibratorUsesIdentityUntilEnoughOutOfFoldSamples(t *testing.T) {
+	pairs := make([]calibrationPair, calibrationMinSamples-1)
+	for index := range pairs {
+		pairs[index] = calibrationPair{probability: 0.8, label: 0}
+	}
+	calibrator := fitProbabilityCalibrator(pairs)
+	if calibrator.status != "insufficient_history" || calibrator.apply(0.8) != 0.8 {
+		t.Fatalf("unexpected early calibrator: %+v", calibrator)
+	}
+}
+
+func TestSessionHighConfidenceRequiresDirectionAgreement(t *testing.T) {
+	if !sessionHighConfidence(0.8, 0.7) || !sessionHighConfidence(0.2, 0.3) {
+		t.Fatal("agreeing high-confidence direction was rejected")
+	}
+	if sessionHighConfidence(0.8, 0.4) || sessionHighConfidence(0.2, 0.6) {
+		t.Fatal("disagreeing direction was accepted as high confidence")
+	}
+}
+
+func TestSessionHighConfidenceStatusRejectsSmallOrWorseSubsets(t *testing.T) {
+	cases := []struct {
+		name string
+		in   SessionValidation
+		want string
+	}{
+		{"calibration", SessionValidation{Calibration: SessionCalibration{Status: "insufficient_history"}}, "calibration_insufficient"},
+		{"empty", SessionValidation{Calibration: SessionCalibration{Status: "ok"}}, "no_samples"},
+		{"small", SessionValidation{Calibration: SessionCalibration{Status: "ok"}, HighConfidenceSamples: 19, HighConfidenceAccuracy: 0.9}, "insufficient_samples"},
+		{"below raw", SessionValidation{Calibration: SessionCalibration{Status: "ok"}, HighConfidenceSamples: 40, HighConfidenceAccuracy: 0.55, RawHighConfidenceSamples: 100, RawHighConfidenceAccuracy: 0.60}, "below_raw"},
+		{"usable", SessionValidation{Calibration: SessionCalibration{Status: "ok"}, HighConfidenceSamples: 40, HighConfidenceAccuracy: 0.65, RawHighConfidenceSamples: 100, RawHighConfidenceAccuracy: 0.60}, "ok"},
+	}
+	for _, tc := range cases {
+		if got := sessionHighConfidenceStatus(tc.in); got != tc.want {
+			t.Fatalf("%s: status = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }

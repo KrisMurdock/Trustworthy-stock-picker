@@ -103,8 +103,11 @@
     item.append(heading);
     if (session.status === "ok") {
       const verdict = el("div", `market-signal-session-verdict ${session.direction || "unknown"}`);
-      verdict.append(el("strong", "", `${directionLabels[session.direction] || "待定"} ${number(session.up_probability * 100, 1)}%`));
-      if (session.high_confidence) verdict.append(el("em", "", "模型高置信"));
+      const rawProbability = number(session.up_probability * 100, 1);
+      const calibratedProbability = number((session.calibrated_up_probability ?? session.up_probability) * 100, 1);
+      verdict.append(el("strong", "", `${directionLabels[session.direction] || "待定"} ${rawProbability}%`));
+      verdict.append(el("span", "", `树模型方向概率 · 校准 ${calibratedProbability}%`));
+      if (session.high_confidence) verdict.append(el("em", "", "校准高置信"));
       item.append(verdict);
     } else {
       item.append(el("p", "market-signal-session-unavailable", session.reason || "需要更多指数分钟历史"));
@@ -116,7 +119,7 @@
       item.append(evidence);
       if (validation.walk_forward_samples) {
         const walk = el("p", "market-signal-session-evidence");
-        walk.textContent = `滚动验证 ${number(validation.walk_forward_samples)} 天 ${number(validation.walk_forward_accuracy * 100, 1)}% / 多数 ${number(validation.walk_forward_majority_accuracy * 100, 1)}%`;
+        walk.textContent = `滚动验证 ${number(validation.walk_forward_samples)} 天 ${number(validation.walk_forward_accuracy * 100, 1)}% / 多数 ${number(validation.walk_forward_majority_accuracy * 100, 1)}% / 星期 ${number((validation.walk_forward_weekday_accuracy || 0) * 100, 1)}%`;
         item.append(walk);
       }
       if (validation.high_confidence_samples) {
@@ -124,8 +127,27 @@
         const coverage = number((validation.high_confidence_coverage || 0) * 100, 1);
         const low = number((validation.high_confidence_wilson_low || 0) * 100, 1);
         const highBound = number((validation.high_confidence_wilson_high || 0) * 100, 1);
-        high.textContent = `滚动高置信 ${number(validation.high_confidence_samples)} 天（覆盖 ${coverage}%）${number(validation.high_confidence_accuracy * 100, 1)}% · Wilson ${low}–${highBound}%`;
+        const rawHigh = validation.raw_high_confidence_samples
+          ? ` · 原始 ${number(validation.raw_high_confidence_accuracy * 100, 1)}%/${number(validation.raw_high_confidence_samples)} 天`
+          : "";
+        const status = validation.high_confidence_status || "ok";
+        const statusLabels = {
+          calibration_insufficient: "校准样本不足",
+          insufficient_samples: "高置信样本不足",
+          below_raw: "弱于原始高置信",
+          no_samples: "暂无高置信样本",
+        };
+        const prefix = status === "ok" ? "校准高置信" : `高置信不可用（${statusLabels[status] || status}）`;
+        high.textContent = `${prefix} ${number(validation.high_confidence_samples)} 天（覆盖 ${coverage}%）${number(validation.high_confidence_accuracy * 100, 1)}% · Wilson ${low}–${highBound}%${rawHigh}`;
         item.append(high);
+      }
+      if (validation.calibration?.status === "ok") {
+        const calibration = el("p", "market-signal-session-evidence");
+        const evaluation = validation.calibration.evaluation_samples
+          ? ` / 样本外 ${number(validation.calibration.evaluation_samples)} 条`
+          : "";
+        calibration.textContent = `校准 ${number(validation.calibration.samples)} 条样本${evaluation} · Brier ${number(validation.calibration.brier_score, 3)} · ECE ${number(validation.calibration.expected_calibration_error * 100, 1)}%`;
+        item.append(calibration);
       }
       const conclusion = el("p", "market-signal-session-evidence");
       conclusion.textContent = `${sessionConclusionLabels[validation.conclusion] || "待观察"}${validation.target_met ? " · 点估计达到 90% 目标" : ""}`;
@@ -151,7 +173,7 @@
     const koreaNote = report.session_model?.korea_features ? "已启用韩国 KOSPI/KOSDAQ 前一交易日特征。" : "韩国特征未同步，当前仅使用境内特征。";
     byId("market-signal-note").textContent = report.status === "stale"
       ? `指数历史落后于所选日期；方向信号按最新已保存交易日计算，仅用于观察。${koreaNote}`
-      : `日线方向与上午/下午方向均为盘前信号；高置信仅表示模型概率超过阈值，90% 目标需同时看覆盖率与 Wilson 区间。${koreaNote}`;
+      : `日线方向与上午/下午方向均为盘前信号；展示树模型原始概率，校准概率用于判断置信。90% 目标需同时看覆盖率与 Wilson 区间。${koreaNote}`;
     const signals = list(report.signals);
     if (!signals.length) {
       cards.append(el("p", "market-context-inline-empty", "暂无可计算的核心指数方向信号。"));

@@ -11,8 +11,8 @@ const (
 	SessionMorning   = "morning"
 	SessionAfternoon = "afternoon"
 
-	SessionModelID        = "index_session_tree_v2"
-	SessionModelVersion   = 2
+	SessionModelID        = "index_session_tree_v3"
+	SessionModelVersion   = 3
 	SessionFeatureVersion = 2
 
 	SessionMinTrainingSamples  = 30
@@ -27,6 +27,21 @@ const (
 	SessionHighConfidenceThreshold = 0.65
 	SessionTargetAccuracy          = 0.90
 )
+
+// SessionCalibration describes the Platt mapping applied to tree leaf
+// probabilities. Samples is the walk-forward fit set, while Brier and ECE are
+// measured only on later out-of-fold blocks; they describe calibration quality,
+// not a promise about future returns.
+type SessionCalibration struct {
+	Status                   string  `json:"status"`
+	Method                   string  `json:"method,omitempty"`
+	Samples                  int     `json:"samples"`
+	EvaluationSamples        int     `json:"evaluation_samples,omitempty"`
+	Slope                    float64 `json:"slope,omitempty"`
+	Intercept                float64 `json:"intercept,omitempty"`
+	BrierScore               float64 `json:"brier_score,omitempty"`
+	ExpectedCalibrationError float64 `json:"expected_calibration_error,omitempty"`
+}
 
 var sessionFeatureNames = []string{
 	"prev_morning_ret", "prev_afternoon_ret", "morning_5d", "afternoon_5d",
@@ -71,13 +86,19 @@ type SessionValidation struct {
 	WalkForwardSamples          int     `json:"walk_forward_samples,omitempty"`
 	WalkForwardAccuracy         float64 `json:"walk_forward_accuracy,omitempty"`
 	WalkForwardMajorityAccuracy float64 `json:"walk_forward_majority_accuracy,omitempty"`
+	WalkForwardWeekdayAccuracy  float64 `json:"walk_forward_weekday_accuracy,omitempty"`
+	CalibratedAccuracy          float64 `json:"calibrated_accuracy,omitempty"`
 
-	HighConfidenceSamples          int     `json:"high_confidence_samples,omitempty"`
-	HighConfidenceCoverage         float64 `json:"high_confidence_coverage,omitempty"`
-	HighConfidenceAccuracy         float64 `json:"high_confidence_accuracy,omitempty"`
-	HighConfidenceMajorityAccuracy float64 `json:"high_confidence_majority_accuracy,omitempty"`
-	HighConfidenceWilsonLow        float64 `json:"high_confidence_wilson_low,omitempty"`
-	HighConfidenceWilsonHigh       float64 `json:"high_confidence_wilson_high,omitempty"`
+	HighConfidenceSamples          int                `json:"high_confidence_samples,omitempty"`
+	HighConfidenceCoverage         float64            `json:"high_confidence_coverage,omitempty"`
+	HighConfidenceAccuracy         float64            `json:"high_confidence_accuracy,omitempty"`
+	HighConfidenceMajorityAccuracy float64            `json:"high_confidence_majority_accuracy,omitempty"`
+	HighConfidenceWilsonLow        float64            `json:"high_confidence_wilson_low,omitempty"`
+	HighConfidenceWilsonHigh       float64            `json:"high_confidence_wilson_high,omitempty"`
+	RawHighConfidenceSamples       int                `json:"raw_high_confidence_samples,omitempty"`
+	RawHighConfidenceAccuracy      float64            `json:"raw_high_confidence_accuracy,omitempty"`
+	HighConfidenceStatus           string             `json:"high_confidence_status,omitempty"`
+	Calibration                    SessionCalibration `json:"calibration"`
 
 	TargetMet  bool   `json:"target_met"`
 	Conclusion string `json:"conclusion,omitempty"`
@@ -85,18 +106,19 @@ type SessionValidation struct {
 
 // SessionSignal is one pre-open direction forecast for an index session.
 type SessionSignal struct {
-	Session        string            `json:"session"`
-	Label          string            `json:"label"`
-	Mode           string            `json:"mode"`
-	Status         string            `json:"status"`
-	TargetDate     string            `json:"target_date,omitempty"`
-	Direction      string            `json:"direction,omitempty"`
-	UpProbability  float64           `json:"up_probability"`
-	HighConfidence bool              `json:"high_confidence"`
-	Reason         string            `json:"reason,omitempty"`
-	Training       TrainingInfo      `json:"training"`
-	Validation     SessionValidation `json:"validation"`
-	Weekdays       []WeekdayStat     `json:"weekdays"`
+	Session                 string            `json:"session"`
+	Label                   string            `json:"label"`
+	Mode                    string            `json:"mode"`
+	Status                  string            `json:"status"`
+	TargetDate              string            `json:"target_date,omitempty"`
+	Direction               string            `json:"direction,omitempty"`
+	UpProbability           float64           `json:"up_probability"`
+	CalibratedUpProbability float64           `json:"calibrated_up_probability"`
+	HighConfidence          bool              `json:"high_confidence"`
+	Reason                  string            `json:"reason,omitempty"`
+	Training                TrainingInfo      `json:"training"`
+	Validation              SessionValidation `json:"validation"`
+	Weekdays                []WeekdayStat     `json:"weekdays"`
 }
 
 // SessionFeatureNames returns the daily feature order followed by the session
@@ -149,21 +171,24 @@ func buildSessionSignals(bars []Bar, minutes, sessionMinutes []MinuteBar, target
 			out = append(out, signal)
 			continue
 		}
-		signal.Validation = validateSessionTree(item.samples, item.depth)
+		validation, calibrator := validateSessionTree(item.samples, item.depth)
+		signal.Validation = validation
 		model := fitSessionTree(item.samples, item.depth, SessionMinLeaf)
 		probability := model.probability(features)
-		if !finite(probability) {
+		calibrated := calibrator.apply(probability)
+		if !finite(probability) || !finite(calibrated) {
 			signal.Reason = "session model returned an invalid probability"
 			out = append(out, signal)
 			continue
 		}
 		signal.Status = "ok"
 		signal.UpProbability = probability
+		signal.CalibratedUpProbability = calibrated
 		signal.Direction = "down"
 		if probability >= 0.5 {
 			signal.Direction = "up"
 		}
-		signal.HighConfidence = probability >= SessionHighConfidenceThreshold || probability <= 1-SessionHighConfidenceThreshold
+		signal.HighConfidence = validation.HighConfidenceStatus == "ok" && sessionHighConfidence(probability, calibrated)
 		out = append(out, signal)
 	}
 	return out
@@ -455,10 +480,10 @@ func trainingInfoForSession(samples []sessionSample) TrainingInfo {
 	return out
 }
 
-func validateSessionTree(samples []sessionSample, depth int) SessionValidation {
-	out := SessionValidation{Status: "insufficient_history"}
+func validateSessionTree(samples []sessionSample, depth int) (SessionValidation, probabilityCalibrator) {
+	out := SessionValidation{Status: "insufficient_history", Calibration: SessionCalibration{Status: "insufficient_history"}}
 	if len(samples) < SessionMinTrainingSamples+SessionMinValidationSample {
-		return out
+		return out, probabilityCalibrator{slope: 1}
 	}
 	split := len(samples) - SessionMinValidationSample
 	training := samples[:split]
@@ -513,32 +538,51 @@ func validateSessionTree(samples []sessionSample, depth int) SessionValidation {
 	out.MajorityAccuracy = float64(majorityCorrect) / float64(len(validation))
 	out.WeekdayAccuracy = float64(weekdayCorrect) / float64(len(validation))
 
-	walkTotal, walkCorrect, walkMajorityCorrect, walkHighTotal, walkHighCorrect, walkHighUp := 0, 0, 0, 0, 0, 0
+	walkTotal, walkCorrect, walkMajorityCorrect, walkWeekdayCorrect := 0, 0, 0, 0
+	walkCalibratedCorrect := 0
+	walkHighTotal, walkHighCorrect, walkHighUp := 0, 0, 0
+	rawHighTotal, rawHighCorrect, rawHighUp := 0, 0, 0
+	calibrationPairs := make([]calibrationPair, 0, len(samples)-SessionWalkForwardStart)
+	calibratedPairs := make([]calibrationPair, 0, len(samples)-SessionWalkForwardStart)
 	for cut := SessionWalkForwardStart; cut < len(samples); cut += SessionWalkForwardStep {
 		end := cut + SessionWalkForwardStep
 		if end > len(samples) {
 			end = len(samples)
 		}
 		walkModel := fitSessionTree(samples[:cut], depth, SessionMinLeaf)
+		calibrator := fitProbabilityCalibrator(calibrationPairs)
 		cutUp := 0
+		weekdayUp := map[int]int{}
+		weekdayDown := map[int]int{}
 		for _, item := range samples[:cut] {
 			if item.label == 1 {
 				cutUp++
+				weekdayUp[item.weekday]++
+			} else {
+				weekdayDown[item.weekday]++
 			}
 		}
 		cutMajorityUp := cutUp*2 >= cut
+		blockPairs := make([]calibrationPair, 0, end-cut)
 		for _, item := range samples[cut:end] {
 			probability := walkModel.probability(item.features)
+			calibrated := calibrator.apply(probability)
 			predictedUp := probability >= 0.5
 			actualUp := item.label == 1
 			walkTotal++
 			if predictedUp == actualUp {
 				walkCorrect++
 			}
+			if (calibrated >= 0.5) == actualUp {
+				walkCalibratedCorrect++
+			}
 			if cutMajorityUp == actualUp {
 				walkMajorityCorrect++
 			}
-			if probability >= SessionHighConfidenceThreshold || probability <= 1-SessionHighConfidenceThreshold {
+			if (weekdayUp[item.weekday] >= weekdayDown[item.weekday]) == actualUp {
+				walkWeekdayCorrect++
+			}
+			if calibrator.status == "ok" && sessionHighConfidence(probability, calibrated) {
 				walkHighTotal++
 				if actualUp {
 					walkHighUp++
@@ -547,12 +591,38 @@ func validateSessionTree(samples []sessionSample, depth int) SessionValidation {
 					walkHighCorrect++
 				}
 			}
+			if calibrator.status == "ok" {
+				calibratedPairs = append(calibratedPairs, calibrationPair{probability: calibrated, label: item.label})
+			}
+			if probability >= SessionHighConfidenceThreshold || probability <= 1-SessionHighConfidenceThreshold {
+				rawHighTotal++
+				if actualUp {
+					rawHighUp++
+				}
+				if predictedUp == actualUp {
+					rawHighCorrect++
+				}
+			}
+			blockPairs = append(blockPairs, calibrationPair{probability: probability, label: item.label})
 		}
+		calibrationPairs = append(calibrationPairs, blockPairs...)
+	}
+	calibrator := fitProbabilityCalibrator(calibrationPairs)
+	out.Calibration = SessionCalibration{
+		Status: calibrator.status, Method: calibrationMethod, Samples: calibrator.samples, EvaluationSamples: len(calibratedPairs),
+		Slope: calibrator.slope, Intercept: calibrator.intercept,
+		BrierScore: calibrationBrier(calibratedPairs), ExpectedCalibrationError: calibrationECE(calibratedPairs),
 	}
 	if walkTotal > 0 {
 		out.WalkForwardSamples = walkTotal
 		out.WalkForwardAccuracy = float64(walkCorrect) / float64(walkTotal)
 		out.WalkForwardMajorityAccuracy = float64(walkMajorityCorrect) / float64(walkTotal)
+		out.WalkForwardWeekdayAccuracy = float64(walkWeekdayCorrect) / float64(walkTotal)
+		out.CalibratedAccuracy = float64(walkCalibratedCorrect) / float64(walkTotal)
+	}
+	if rawHighTotal > 0 {
+		out.RawHighConfidenceSamples = rawHighTotal
+		out.RawHighConfidenceAccuracy = float64(rawHighCorrect) / float64(rawHighTotal)
 	}
 	if walkHighTotal > 0 {
 		out.HighConfidenceSamples = walkHighTotal
@@ -568,8 +638,9 @@ func validateSessionTree(samples []sessionSample, depth int) SessionValidation {
 		out.HighConfidenceWilsonLow, out.HighConfidenceWilsonHigh = wilson(holdoutHighCorrect, holdoutHighTotal)
 	}
 
-	out.TargetMet = out.HighConfidenceSamples >= 10 && out.HighConfidenceAccuracy >= SessionTargetAccuracy
-	baseline := math.Max(math.Max(out.MajorityAccuracy, out.WeekdayAccuracy), math.Max(out.HighConfidenceMajorityAccuracy, out.WalkForwardMajorityAccuracy))
+	out.HighConfidenceStatus = sessionHighConfidenceStatus(out)
+	out.TargetMet = out.HighConfidenceStatus == "ok" && out.HighConfidenceSamples >= 10 && out.HighConfidenceAccuracy >= SessionTargetAccuracy
+	baseline := math.Max(math.Max(out.MajorityAccuracy, out.WeekdayAccuracy), math.Max(out.HighConfidenceMajorityAccuracy, math.Max(out.WalkForwardMajorityAccuracy, out.WalkForwardWeekdayAccuracy)))
 	switch {
 	case out.TargetMet:
 		out.Conclusion = "high_confidence_above_target"
@@ -582,7 +653,32 @@ func validateSessionTree(samples []sessionSample, depth int) SessionValidation {
 	default:
 		out.Conclusion = "no_clear_edge"
 	}
-	return out
+	return out, calibrator
+}
+
+func sessionHighConfidence(raw, calibrated float64) bool {
+	rawUp := raw >= 0.5
+	calibratedUp := calibrated >= 0.5
+	if rawUp != calibratedUp {
+		return false
+	}
+	return calibrated >= SessionHighConfidenceThreshold || calibrated <= 1-SessionHighConfidenceThreshold
+}
+
+func sessionHighConfidenceStatus(out SessionValidation) string {
+	if out.Calibration.Status != "ok" {
+		return "calibration_insufficient"
+	}
+	if out.HighConfidenceSamples == 0 {
+		return "no_samples"
+	}
+	if out.HighConfidenceSamples < 20 {
+		return "insufficient_samples"
+	}
+	if out.RawHighConfidenceSamples > 0 && out.HighConfidenceAccuracy < out.RawHighConfidenceAccuracy {
+		return "below_raw"
+	}
+	return "ok"
 }
 
 func maxInt(a, b int) int {
