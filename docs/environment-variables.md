@@ -125,6 +125,9 @@
 | STOCK_WATCHER_CONTEXT_EASTMONEY_LIST_ENDPOINT | 东方财富板块列表端点 | 板块发现端点覆盖；仅允许 HTTPS 或回环 HTTP |
 | STOCK_WATCHER_CONTEXT_EASTMONEY_KLINE_ENDPOINT | 东方财富板块日线端点 | 板块日线端点覆盖；额外允许指定的东方财富公开 HTTP 端点 |
 | STOCK_WATCHER_CONTEXT_TENCENT_ENDPOINT | 腾讯指数日线端点 | 核心指数日线端点覆盖；仅允许 HTTPS 或回环 HTTP |
+| STOCK_WATCHER_CONTEXT_KOREA_ENDPOINT | Naver 韩国指数日线端点 | KOSPI/KOSDAQ 日线端点覆盖；仅允许 HTTPS 或回环 HTTP |
+| STOCK_WATCHER_CONTEXT_HANG_SENG_ENDPOINT | 腾讯恒生指数日线端点 | 恒生指数影子特征端点覆盖；仅允许 HTTPS 或回环 HTTP |
+| STOCK_WATCHER_CONTEXT_KOREA_MINUTE_ENDPOINT | Naver 韩国指数分钟端点 | KOSPI/KOSDAQ 前向分钟缓存端点覆盖；仅允许 HTTPS 或回环 HTTP |
 
 ## 分钟行情
 

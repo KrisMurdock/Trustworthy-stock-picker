@@ -167,6 +167,8 @@ market:
 
 默认同步还会并发采集 5 个核心指数（上证指数、深证成指、创业板指、沪深 300、科创 50）和东方财富板块列表可发现的全部行业/概念板块。指数使用腾讯日线；板块代码来自东方财富 `m:90+t:2`（行业）与 `m:90+t:3`（概念）列表，日线使用东方财富板块 K 线。板块代码不是可交易股票代码，只写入独立的 `<data_dir>/context.db`，不会进入股池、选股或推荐。
 
+`/api/market-signal` 和 `stock-watcher market-signal` 只读取该库中的 `sh000001`、`sz399006` 日线、可选 `context_minute` 5 分钟线、`context_minute_30` 30 分钟线、可选 `context_korea` 韩国日线和 `context_hang_seng` 恒生指数日线，按截止日重训方向模型；它们不增加行情源、不写数据库，也不把指数信号混入选股排名。`sync-index-minutes` 使用新浪原生 5/30 分钟线补采指数缓存：5 分钟线通常覆盖最近约 100 个完整交易日，30 分钟线通常覆盖最近约 625 个完整交易日。`sync-korea-context` 使用 Naver 日线接口补采 KOSPI/KOSDAQ；`sync-hang-seng-context` 使用腾讯接口补采恒生指数日线，仅服务于下午影子模型。Naver 分钟接口只保留最近约 4 个交易日，`sync-korea-minutes` 因此只做前向采集并写入 `context_korea_minute`，默认随市场环境同步执行；在积累足够独立交易日之前不进入预测。口径与当前验证结果见[指数方向信号](market-signal.md)。
+
 - 首次发现某个板块时最多回补 `market_context.history_limit` 根日线；后续只请求最后日期附近的增量窗口。
 - 板块可能同时属于行业和概念，`category` 保留为 `industry,concept`，统计时不去重为单一类型。
 - 股票同步与市场环境同步共享同一轮 `sync`/`run` 调用并并发执行；指数或板块失败不会回滚已保存的股票行情和报告，`context_sync` 会记录 `complete/partial/failed` 与错误类别。

@@ -7,12 +7,19 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	_ "modernc.org/sqlite"
 )
 
 const contextDBName = "context.db"
+
+// contextSchemaVersion stays 1 because the minute, thirty-minute and Korean
+// caches are additive: readers tolerate missing tables and daily context
+// remains usable.
 const contextSchemaVersion = 1
 
 // ContextDB stores index and sector-board snapshots. It is intentionally
@@ -199,7 +206,62 @@ func (c *ContextDB) initSchema(create bool) error {
 			PRIMARY KEY (code, trade_date)
 		);
 		CREATE INDEX IF NOT EXISTS context_bar_date_idx ON context_bar(trade_date);
-		CREATE TABLE IF NOT EXISTS context_sync (
+		CREATE TABLE IF NOT EXISTS context_minute (
+			code TEXT NOT NULL REFERENCES context_instrument(code) ON DELETE CASCADE,
+			end_unix INTEGER NOT NULL,
+			open REAL NOT NULL CHECK (open > 0),
+			high REAL NOT NULL CHECK (high >= open),
+			low REAL NOT NULL CHECK (low > 0),
+			close REAL NOT NULL CHECK (close > 0),
+			volume_raw REAL NOT NULL CHECK (volume_raw >= 0),
+			PRIMARY KEY (code, end_unix)
+		);
+		CREATE INDEX IF NOT EXISTS context_minute_date_idx ON context_minute(end_unix);
+		CREATE TABLE IF NOT EXISTS context_minute_30 (
+			code TEXT NOT NULL REFERENCES context_instrument(code) ON DELETE CASCADE,
+			end_unix INTEGER NOT NULL,
+			open REAL NOT NULL CHECK (open > 0),
+			high REAL NOT NULL CHECK (high >= open),
+			low REAL NOT NULL CHECK (low > 0),
+			close REAL NOT NULL CHECK (close > 0),
+			volume_raw REAL NOT NULL CHECK (volume_raw >= 0),
+			PRIMARY KEY (code, end_unix)
+		);
+		CREATE INDEX IF NOT EXISTS context_minute_30_date_idx ON context_minute_30(end_unix);
+		CREATE TABLE IF NOT EXISTS context_korea (
+			code TEXT NOT NULL CHECK (code IN ('KOSPI', 'KOSDAQ')),
+			trade_date TEXT NOT NULL,
+			open REAL NOT NULL CHECK (open > 0),
+			high REAL NOT NULL CHECK (high >= open),
+			low REAL NOT NULL CHECK (low > 0),
+			close REAL NOT NULL CHECK (close > 0),
+			volume_raw REAL NOT NULL CHECK (volume_raw >= 0),
+			PRIMARY KEY (code, trade_date)
+		);
+			CREATE INDEX IF NOT EXISTS context_korea_date_idx ON context_korea(trade_date);
+			CREATE TABLE IF NOT EXISTS context_hang_seng (
+				code TEXT NOT NULL CHECK (code = 'hkHSI'),
+				trade_date TEXT NOT NULL,
+				open REAL NOT NULL CHECK (open > 0),
+				high REAL NOT NULL CHECK (high >= open),
+				low REAL NOT NULL CHECK (low > 0),
+				close REAL NOT NULL CHECK (close > 0),
+				volume_raw REAL NOT NULL CHECK (volume_raw >= 0),
+				PRIMARY KEY (code, trade_date)
+			);
+			CREATE INDEX IF NOT EXISTS context_hang_seng_date_idx ON context_hang_seng(trade_date);
+			CREATE TABLE IF NOT EXISTS context_korea_minute (
+				code TEXT NOT NULL CHECK (code IN ('KOSPI', 'KOSDAQ')),
+				end_unix INTEGER NOT NULL,
+				open REAL NOT NULL CHECK (open > 0),
+				high REAL NOT NULL CHECK (high >= open),
+				low REAL NOT NULL CHECK (low > 0),
+				close REAL NOT NULL CHECK (close > 0),
+				volume_raw REAL NOT NULL CHECK (volume_raw >= 0),
+				PRIMARY KEY (code, end_unix)
+			);
+			CREATE INDEX IF NOT EXISTS context_korea_minute_date_idx ON context_korea_minute(end_unix);
+			CREATE TABLE IF NOT EXISTS context_sync (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			as_of TEXT NOT NULL,
 			started_at TEXT NOT NULL,
@@ -360,6 +422,541 @@ func (c *ContextDB) LoadRecentBars(ctx context.Context, asOf string, limit int) 
 		out[bar.Code] = append(out[bar.Code], bar)
 	}
 	return out, rows.Err()
+}
+
+// LoadBarsThrough returns the complete stored history for the requested
+// instruments through a trading date. It is used by read-only research models
+// that need more than the dashboard's recent-window limit.
+func (c *ContextDB) LoadBarsThrough(ctx context.Context, codes []string, through string) (map[string][]ContextBar, error) {
+	if c == nil || c.db == nil {
+		return nil, fs.ErrNotExist
+	}
+	if len(codes) == 0 || len(codes) > 64 {
+		return nil, errors.New("invalid context bar code count")
+	}
+	if parsed, err := time.Parse("2006-01-02", through); err != nil || parsed.Format("2006-01-02") != through {
+		return nil, errors.New("invalid context bar through date")
+	}
+	seen := make(map[string]bool, len(codes))
+	placeholders := make([]string, 0, len(codes))
+	args := make([]any, 0, len(codes)+1)
+	for _, code := range codes {
+		if code == "" || seen[code] {
+			return nil, errors.New("duplicate or empty context bar code")
+		}
+		seen[code] = true
+		placeholders = append(placeholders, "?")
+		args = append(args, code)
+	}
+	args = append(args, through)
+	rows, err := c.db.QueryContext(ctx, `
+		SELECT code,trade_date,open,close,high,low,volume_raw,amount
+		FROM context_bar
+		WHERE code IN (`+strings.Join(placeholders, ",")+`) AND trade_date <= ?
+		ORDER BY code,trade_date`, args...)
+	if err != nil {
+		return nil, errors.New("cannot read context bar history")
+	}
+	defer rows.Close()
+	out := map[string][]ContextBar{}
+	for rows.Next() {
+		var bar ContextBar
+		if err := rows.Scan(&bar.Code, &bar.Date, &bar.Open, &bar.Close, &bar.High, &bar.Low, &bar.Volume, &bar.Amount); err != nil {
+			return nil, errors.New("cannot read context bar history row")
+		}
+		out[bar.Code] = append(out[bar.Code], bar)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("cannot read context bar history")
+	}
+	return out, nil
+}
+
+// SaveMinutes upserts one index's native five-minute series. Existing bars
+// outside the supplied window are retained; the daily context tables remain
+// independent so a minute backfill cannot change the dashboard's daily
+// snapshot or recommendation inputs.
+func (c *ContextDB) SaveMinutes(ctx context.Context, code string, bars []market.MinuteBar) error {
+	if c == nil || !c.writable {
+		return errors.New("context database is read-only")
+	}
+	if !config.ValidIndexCode(code) || len(bars) == 0 {
+		return errors.New("invalid context minute request")
+	}
+	previous := time.Time{}
+	for _, bar := range bars {
+		if !bar.Final || !bar.End.After(previous) || bar.Open <= 0 || bar.Close <= 0 || bar.Low <= 0 || bar.High < bar.Open || bar.High < bar.Close || bar.Low > bar.Open || bar.Low > bar.Close {
+			return errors.New("invalid context minute bar")
+		}
+		if _, ok := market.MinuteSession(bar.End, 5); !ok {
+			return errors.New("invalid context minute session")
+		}
+		previous = bar.End
+	}
+	if err := (&Store{root: c.root, requireCIFS: c.requireCIFS}).Check(); err != nil {
+		return err
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("cannot begin context minute transaction")
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO context_minute(code,end_unix,open,high,low,close,volume_raw) VALUES(?,?,?,?,?,?,?) ON CONFLICT(code,end_unix) DO UPDATE SET open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close,volume_raw=excluded.volume_raw`)
+	if err != nil {
+		return errors.New("cannot prepare context minutes")
+	}
+	defer stmt.Close()
+	for _, bar := range bars {
+		if _, err := stmt.ExecContext(ctx, code, bar.End.Unix(), bar.Open, bar.High, bar.Low, bar.Close, bar.Volume); err != nil {
+			return errors.New("cannot save context minute")
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("cannot commit context minutes")
+	}
+	return nil
+}
+
+// LoadMinutesThrough returns native five-minute index history through a trading
+// date. Missing minute tables are treated as an empty cache so older context
+// databases keep serving the daily signal.
+func (c *ContextDB) LoadMinutesThrough(ctx context.Context, codes []string, through string) (map[string][]market.MinuteBar, error) {
+	if c == nil || c.db == nil {
+		return nil, fs.ErrNotExist
+	}
+	if len(codes) == 0 || len(codes) > 64 {
+		return nil, errors.New("invalid context minute code count")
+	}
+	parsed, err := time.ParseInLocation("2006-01-02", through, market.Shanghai)
+	if err != nil || parsed.Format("2006-01-02") != through {
+		return nil, errors.New("invalid context minute through date")
+	}
+	var exists int
+	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name='context_minute'`).Scan(&exists); err != nil {
+		return nil, errors.New("cannot inspect context minute table")
+	}
+	if exists == 0 {
+		return map[string][]market.MinuteBar{}, nil
+	}
+	seen := make(map[string]bool, len(codes))
+	placeholders := make([]string, 0, len(codes))
+	args := make([]any, 0, len(codes)+1)
+	for _, code := range codes {
+		if !config.ValidIndexCode(code) || seen[code] {
+			return nil, errors.New("duplicate or invalid context minute code")
+		}
+		seen[code] = true
+		placeholders = append(placeholders, "?")
+		args = append(args, code)
+	}
+	args = append(args, parsed.AddDate(0, 0, 1).Unix())
+	rows, err := c.db.QueryContext(ctx, `
+		SELECT code,end_unix,open,high,low,close,volume_raw
+		FROM context_minute
+		WHERE code IN (`+strings.Join(placeholders, ",")+`) AND end_unix < ?
+		ORDER BY code,end_unix`, args...)
+	if err != nil {
+		return nil, errors.New("cannot read context minute history")
+	}
+	defer rows.Close()
+	out := map[string][]market.MinuteBar{}
+	for rows.Next() {
+		var bar market.MinuteBar
+		var code string
+		var end int64
+		if err := rows.Scan(&code, &end, &bar.Open, &bar.High, &bar.Low, &bar.Close, &bar.Volume); err != nil {
+			return nil, errors.New("cannot read context minute history row")
+		}
+		bar.End = time.Unix(end, 0).In(market.Shanghai)
+		bar.Final = true
+		out[code] = append(out[code], bar)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("cannot read context minute history")
+	}
+	return out, nil
+}
+
+// SaveSessionMinutes upserts one index's native thirty-minute series. It is a
+// separate table from the five-minute cache because the same end timestamp can
+// belong to both granularities.
+func (c *ContextDB) SaveSessionMinutes(ctx context.Context, code string, bars []market.MinuteBar) error {
+	if c == nil || !c.writable {
+		return errors.New("context database is read-only")
+	}
+	if !config.ValidIndexCode(code) || len(bars) == 0 {
+		return errors.New("invalid context session minute request")
+	}
+	previous := time.Time{}
+	for _, bar := range bars {
+		if !bar.Final || !bar.End.After(previous) || bar.Open <= 0 || bar.Close <= 0 || bar.Low <= 0 || bar.High < bar.Open || bar.High < bar.Close || bar.Low > bar.Open || bar.Low > bar.Close {
+			return errors.New("invalid context session minute bar")
+		}
+		if _, ok := market.MinuteSession(bar.End, 30); !ok {
+			return errors.New("invalid context session minute timestamp")
+		}
+		previous = bar.End
+	}
+	if err := (&Store{root: c.root, requireCIFS: c.requireCIFS}).Check(); err != nil {
+		return err
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("cannot begin context session minute transaction")
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO context_minute_30(code,end_unix,open,high,low,close,volume_raw) VALUES(?,?,?,?,?,?,?) ON CONFLICT(code,end_unix) DO UPDATE SET open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close,volume_raw=excluded.volume_raw`)
+	if err != nil {
+		return errors.New("cannot prepare context session minutes")
+	}
+	defer stmt.Close()
+	for _, bar := range bars {
+		if _, err := stmt.ExecContext(ctx, code, bar.End.Unix(), bar.Open, bar.High, bar.Low, bar.Close, bar.Volume); err != nil {
+			return errors.New("cannot save context session minute")
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("cannot commit context session minutes")
+	}
+	return nil
+}
+
+// LoadSessionMinutesThrough returns native thirty-minute index history through
+// a trading date. Missing tables are treated as an empty optional cache.
+func (c *ContextDB) LoadSessionMinutesThrough(ctx context.Context, codes []string, through string) (map[string][]market.MinuteBar, error) {
+	return c.loadMinuteTable(ctx, "context_minute_30", codes, through)
+}
+
+// SaveKoreaBars upserts daily KOSPI or KOSDAQ bars. The series is independent
+// from the Chinese context instruments so a Korean provider outage cannot
+// corrupt or block the domestic index snapshot.
+func (c *ContextDB) SaveKoreaBars(ctx context.Context, code string, bars []market.KoreaBar) error {
+	if c == nil || !c.writable {
+		return errors.New("context database is read-only")
+	}
+	if !market.ValidKoreaCode(code) || len(bars) == 0 || len(bars) > market.KoreaHistoryLimit {
+		return errors.New("invalid context korea request")
+	}
+	previous := ""
+	for _, bar := range bars {
+		if _, err := time.Parse("2006-01-02", bar.Date); err != nil || bar.Date <= previous || bar.Open <= 0 || bar.Close <= 0 || bar.Low <= 0 || bar.High < bar.Open || bar.High < bar.Close || bar.Low > bar.Open || bar.Low > bar.Close || bar.Volume < 0 {
+			return errors.New("invalid context korea bar")
+		}
+		previous = bar.Date
+	}
+	if err := (&Store{root: c.root, requireCIFS: c.requireCIFS}).Check(); err != nil {
+		return err
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("cannot begin context korea transaction")
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO context_korea(code,trade_date,open,high,low,close,volume_raw) VALUES(?,?,?,?,?,?,?) ON CONFLICT(code,trade_date) DO UPDATE SET open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close,volume_raw=excluded.volume_raw`)
+	if err != nil {
+		return errors.New("cannot prepare context korea bars")
+	}
+	defer stmt.Close()
+	for _, bar := range bars {
+		if _, err := stmt.ExecContext(ctx, code, bar.Date, bar.Open, bar.High, bar.Low, bar.Close, bar.Volume); err != nil {
+			return errors.New("cannot save context korea bar")
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("cannot commit context korea bars")
+	}
+	return nil
+}
+
+// LoadKoreaBarsThrough returns stored KOSPI/KOSDAQ daily history through a
+// date. Missing tables or codes are treated as an empty optional cache.
+func (c *ContextDB) LoadKoreaBarsThrough(ctx context.Context, codes []string, through string) (map[string][]market.KoreaBar, error) {
+	if c == nil || c.db == nil {
+		return nil, fs.ErrNotExist
+	}
+	if len(codes) == 0 || len(codes) > 8 {
+		return nil, errors.New("invalid korea code count")
+	}
+	if parsed, err := time.Parse("2006-01-02", through); err != nil || parsed.Format("2006-01-02") != through {
+		return nil, errors.New("invalid korea through date")
+	}
+	var exists int
+	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name='context_korea'`).Scan(&exists); err != nil {
+		return nil, errors.New("cannot inspect korea table")
+	}
+	if exists == 0 {
+		return map[string][]market.KoreaBar{}, nil
+	}
+	seen := make(map[string]bool, len(codes))
+	placeholders := make([]string, 0, len(codes))
+	args := make([]any, 0, len(codes)+1)
+	for _, code := range codes {
+		if !market.ValidKoreaCode(code) || seen[code] {
+			return nil, errors.New("duplicate or invalid korea code")
+		}
+		seen[code] = true
+		placeholders = append(placeholders, "?")
+		args = append(args, code)
+	}
+	args = append(args, through)
+	rows, err := c.db.QueryContext(ctx, `
+		SELECT code,trade_date,open,high,low,close,volume_raw
+		FROM context_korea
+		WHERE code IN (`+strings.Join(placeholders, ",")+`) AND trade_date <= ?
+		ORDER BY code,trade_date`, args...)
+	if err != nil {
+		return nil, errors.New("cannot read korea history")
+	}
+	defer rows.Close()
+	out := map[string][]market.KoreaBar{}
+	for rows.Next() {
+		var bar market.KoreaBar
+		var code string
+		if err := rows.Scan(&code, &bar.Date, &bar.Open, &bar.High, &bar.Low, &bar.Close, &bar.Volume); err != nil {
+			return nil, errors.New("cannot read korea history row")
+		}
+		out[code] = append(out[code], bar)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("cannot read korea history")
+	}
+	return out, nil
+}
+
+// SaveHangSengBars upserts the shadow-only Hang Seng daily series. It remains a
+// separate table so a missing Hong Kong feed cannot alter formal session
+// models or the domestic index snapshot.
+func (c *ContextDB) SaveHangSengBars(ctx context.Context, bars []market.HangSengBar) error {
+	if c == nil || !c.writable {
+		return errors.New("context database is read-only")
+	}
+	if len(bars) == 0 || len(bars) > market.HangSengHistoryLimit {
+		return errors.New("invalid context hang seng request")
+	}
+	previous := ""
+	for _, bar := range bars {
+		if _, err := time.Parse("2006-01-02", bar.Date); err != nil || bar.Date <= previous || bar.Open <= 0 || bar.Close <= 0 || bar.Low <= 0 || bar.High < bar.Open || bar.High < bar.Close || bar.Low > bar.Open || bar.Low > bar.Close || bar.Volume < 0 {
+			return errors.New("invalid context hang seng bar")
+		}
+		previous = bar.Date
+	}
+	if err := (&Store{root: c.root, requireCIFS: c.requireCIFS}).Check(); err != nil {
+		return err
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("cannot begin context hang seng transaction")
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO context_hang_seng(code,trade_date,open,high,low,close,volume_raw) VALUES(?,?,?,?,?,?,?) ON CONFLICT(code,trade_date) DO UPDATE SET open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close,volume_raw=excluded.volume_raw`)
+	if err != nil {
+		return errors.New("cannot prepare context hang seng bars")
+	}
+	defer stmt.Close()
+	for _, bar := range bars {
+		if _, err := stmt.ExecContext(ctx, market.HangSengCode, bar.Date, bar.Open, bar.High, bar.Low, bar.Close, bar.Volume); err != nil {
+			return errors.New("cannot save context hang seng bar")
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("cannot commit context hang seng bars")
+	}
+	return nil
+}
+
+func (c *ContextDB) LoadHangSengBarsThrough(ctx context.Context, through string) ([]market.HangSengBar, error) {
+	if c == nil || c.db == nil {
+		return nil, fs.ErrNotExist
+	}
+	if parsed, err := time.Parse("2006-01-02", through); err != nil || parsed.Format("2006-01-02") != through {
+		return nil, errors.New("invalid hang seng through date")
+	}
+	var exists int
+	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name='context_hang_seng'`).Scan(&exists); err != nil {
+		return nil, errors.New("cannot inspect hang seng table")
+	}
+	if exists == 0 {
+		return []market.HangSengBar{}, nil
+	}
+	rows, err := c.db.QueryContext(ctx, `
+		SELECT trade_date,open,high,low,close,volume_raw FROM context_hang_seng
+		WHERE code=? AND trade_date <= ? ORDER BY trade_date`, market.HangSengCode, through)
+	if err != nil {
+		return nil, errors.New("cannot read hang seng history")
+	}
+	defer rows.Close()
+	out := []market.HangSengBar{}
+	for rows.Next() {
+		var bar market.HangSengBar
+		if err := rows.Scan(&bar.Date, &bar.Open, &bar.High, &bar.Low, &bar.Close, &bar.Volume); err != nil {
+			return nil, errors.New("cannot read hang seng history row")
+		}
+		out = append(out, bar)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("cannot read hang seng history")
+	}
+	return out, nil
+}
+
+// SaveKoreaMinutes stores the forward-only Korean intraday cache. Naver cannot
+// supply enough history for model training, so these rows are evidence for a
+// later evaluation rather than a current predictor input.
+func (c *ContextDB) SaveKoreaMinutes(ctx context.Context, code string, bars []market.KoreaMinuteBar) error {
+	if c == nil || !c.writable {
+		return errors.New("context database is read-only")
+	}
+	if !market.ValidKoreaCode(code) || len(bars) == 0 || len(bars) > 20000 {
+		return errors.New("invalid context korea minute request")
+	}
+	previous := time.Time{}
+	for _, bar := range bars {
+		local := bar.End.In(market.Korea)
+		minute := local.Hour()*60 + local.Minute()
+		if !bar.Final || !bar.End.After(previous) || local.Weekday() == time.Saturday || local.Weekday() == time.Sunday || minute < 9*60 || minute > 15*60+30 ||
+			bar.Open <= 0 || bar.Close <= 0 || bar.Low <= 0 || bar.High < bar.Open || bar.High < bar.Close || bar.Low > bar.Open || bar.Low > bar.Close || bar.Volume < 0 {
+			return errors.New("invalid context korea minute bar")
+		}
+		previous = bar.End
+	}
+	if err := (&Store{root: c.root, requireCIFS: c.requireCIFS}).Check(); err != nil {
+		return err
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("cannot begin context korea minute transaction")
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO context_korea_minute(code,end_unix,open,high,low,close,volume_raw) VALUES(?,?,?,?,?,?,?) ON CONFLICT(code,end_unix) DO UPDATE SET open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close,volume_raw=excluded.volume_raw`)
+	if err != nil {
+		return errors.New("cannot prepare context korea minutes")
+	}
+	defer stmt.Close()
+	for _, bar := range bars {
+		if _, err := stmt.ExecContext(ctx, code, bar.End.Unix(), bar.Open, bar.High, bar.Low, bar.Close, bar.Volume); err != nil {
+			return errors.New("cannot save context korea minute")
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("cannot commit context korea minutes")
+	}
+	return nil
+}
+
+func (c *ContextDB) LoadKoreaMinutesThrough(ctx context.Context, codes []string, through string) (map[string][]market.KoreaMinuteBar, error) {
+	if c == nil || c.db == nil {
+		return nil, fs.ErrNotExist
+	}
+	if len(codes) == 0 || len(codes) > 8 {
+		return nil, errors.New("invalid korea minute code count")
+	}
+	parsed, err := time.ParseInLocation("2006-01-02", through, market.Korea)
+	if err != nil || parsed.Format("2006-01-02") != through {
+		return nil, errors.New("invalid korea minute through date")
+	}
+	var exists int
+	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name='context_korea_minute'`).Scan(&exists); err != nil {
+		return nil, errors.New("cannot inspect korea minute table")
+	}
+	if exists == 0 {
+		return map[string][]market.KoreaMinuteBar{}, nil
+	}
+	seen := make(map[string]bool, len(codes))
+	placeholders := make([]string, 0, len(codes))
+	args := make([]any, 0, len(codes)+1)
+	for _, code := range codes {
+		if !market.ValidKoreaCode(code) || seen[code] {
+			return nil, errors.New("duplicate or invalid korea minute code")
+		}
+		seen[code] = true
+		placeholders = append(placeholders, "?")
+		args = append(args, code)
+	}
+	args = append(args, parsed.AddDate(0, 0, 1).Unix())
+	rows, err := c.db.QueryContext(ctx, `
+		SELECT code,end_unix,open,high,low,close,volume_raw FROM context_korea_minute
+		WHERE code IN (`+strings.Join(placeholders, ",")+`) AND end_unix < ?
+		ORDER BY code,end_unix`, args...)
+	if err != nil {
+		return nil, errors.New("cannot read korea minute history")
+	}
+	defer rows.Close()
+	out := map[string][]market.KoreaMinuteBar{}
+	for rows.Next() {
+		var bar market.KoreaMinuteBar
+		var code string
+		var end int64
+		if err := rows.Scan(&code, &end, &bar.Open, &bar.High, &bar.Low, &bar.Close, &bar.Volume); err != nil {
+			return nil, errors.New("cannot read korea minute history row")
+		}
+		bar.End = time.Unix(end, 0).In(market.Korea)
+		bar.Final = true
+		out[code] = append(out[code], bar)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("cannot read korea minute history")
+	}
+	return out, nil
+}
+
+func (c *ContextDB) loadMinuteTable(ctx context.Context, table string, codes []string, through string) (map[string][]market.MinuteBar, error) {
+	if c == nil || c.db == nil {
+		return nil, fs.ErrNotExist
+	}
+	if table != "context_minute" && table != "context_minute_30" {
+		return nil, errors.New("invalid context minute table")
+	}
+	if len(codes) == 0 || len(codes) > 64 {
+		return nil, errors.New("invalid context minute code count")
+	}
+	parsed, err := time.ParseInLocation("2006-01-02", through, market.Shanghai)
+	if err != nil || parsed.Format("2006-01-02") != through {
+		return nil, errors.New("invalid context minute through date")
+	}
+	var exists int
+	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&exists); err != nil {
+		return nil, errors.New("cannot inspect context minute table")
+	}
+	if exists == 0 {
+		return map[string][]market.MinuteBar{}, nil
+	}
+	seen := make(map[string]bool, len(codes))
+	placeholders := make([]string, 0, len(codes))
+	args := make([]any, 0, len(codes)+1)
+	for _, code := range codes {
+		if !config.ValidIndexCode(code) || seen[code] {
+			return nil, errors.New("duplicate or invalid context minute code")
+		}
+		seen[code] = true
+		placeholders = append(placeholders, "?")
+		args = append(args, code)
+	}
+	args = append(args, parsed.AddDate(0, 0, 1).Unix())
+	rows, err := c.db.QueryContext(ctx, `
+		SELECT code,end_unix,open,high,low,close,volume_raw
+		FROM `+table+`
+		WHERE code IN (`+strings.Join(placeholders, ",")+`) AND end_unix < ?
+		ORDER BY code,end_unix`, args...)
+	if err != nil {
+		return nil, errors.New("cannot read context minute history")
+	}
+	defer rows.Close()
+	out := map[string][]market.MinuteBar{}
+	for rows.Next() {
+		var bar market.MinuteBar
+		var code string
+		var end int64
+		if err := rows.Scan(&code, &end, &bar.Open, &bar.High, &bar.Low, &bar.Close, &bar.Volume); err != nil {
+			return nil, errors.New("cannot read context minute history row")
+		}
+		bar.End = time.Unix(end, 0).In(market.Shanghai)
+		bar.Final = true
+		out[code] = append(out[code], bar)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("cannot read context minute history")
+	}
+	return out, nil
 }
 
 func (c *ContextDB) SaveSyncStatus(ctx context.Context, status ContextSyncStatus) error {

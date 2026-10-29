@@ -16,6 +16,11 @@ CI 与冒烟使用临时目录、关闭通知，不读取根目录私有 `.env`�
 make build
 make check
 make status
+./bin/stock-watcher sync-index-minutes -as-of 2026-10-26 -from 2024-03-01   # 补采指数 5/30 分钟线
+./bin/stock-watcher sync-korea-context -as-of 2026-10-26 -from 2024-01-01  # 可选：补采 KOSPI/KOSDAQ 日线
+./bin/stock-watcher sync-hang-seng-context -as-of 2026-10-26               # 补采恒生指数影子日线
+./bin/stock-watcher sync-korea-minutes -as-of 2026-10-26                   # 前向采集最近数日韩国指数分钟
+./bin/stock-watcher market-signal -as-of 2026-10-26   # 只读指数方向与上午/下午树模型
 make run
 ```
 

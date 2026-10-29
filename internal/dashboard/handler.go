@@ -275,6 +275,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, r, http.StatusOK, explainReport(report))
 	case "/api/market-context":
 		h.serveMarketContext(w, r)
+	case "/api/market-signal":
+		h.serveMarketSignal(w, r)
 	case "/api/review":
 		h.serveReviewDay(w, r)
 	case "/api/review/event":

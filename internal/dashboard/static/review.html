@@ -66,6 +66,17 @@
         <div id="market-context-body" hidden data-testid="market-context-body">
           <div id="market-context-warnings" class="market-context-warnings" hidden></div>
           <div id="market-context-indices" class="market-context-indices" data-testid="market-context-indices"></div>
+          <section id="market-signal-panel" class="market-signal-panel" data-testid="market-signal-panel" aria-labelledby="market-signal-title" hidden>
+            <div class="market-signal-heading">
+              <div>
+                <p class="eyebrow">NEXT-SESSION DIRECTION</p>
+                <h3 id="market-signal-title">下一交易日方向信号（日线 / 上午 / 下午）</h3>
+                <p id="market-signal-note" class="market-signal-note">使用本地指数历史重训模型；概率与周内统计均为观察信号，不是收益承诺。</p>
+              </div>
+              <span id="market-signal-status" class="market-context-badge">计算中</span>
+            </div>
+            <div id="market-signal-cards" class="market-signal-cards" data-testid="market-signal-cards"></div>
+          </section>
           <div class="market-context-summary" data-testid="market-context-summary">
             <div class="market-context-summary-card"><span>行业板块</span><strong id="market-context-industry">—</strong><small>全量同步</small></div>
             <div class="market-context-summary-card"><span>概念板块</span><strong id="market-context-concept">—</strong><small>可重复归类</small></div>

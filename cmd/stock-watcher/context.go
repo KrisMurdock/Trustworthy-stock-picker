@@ -71,5 +71,15 @@ func runContextSync(ctx context.Context, c config.Config, asOf string, log *logg
 		return marketcontext.SyncResult{}, err
 	}
 	defer ctxRuntime.Close()
-	return ctxRuntime.syncer.ForDate(ctx, asOf)
+	result, err := ctxRuntime.syncer.ForDate(ctx, asOf)
+	if err != nil {
+		return result, err
+	}
+	if _, err := syncHangSengContext(ctx, c, ctxRuntime.db, asOf, log); err != nil && ctx.Err() == nil {
+		log.Warn("Hang Seng shadow synchronization failed", "as_of", asOf, "reason", err.Error())
+	}
+	if _, err := syncKoreaMinutes(ctx, c, ctxRuntime.db, asOf, log); err != nil && ctx.Err() == nil {
+		log.Warn("Korean minute synchronization failed", "as_of", asOf, "reason", err.Error())
+	}
+	return result, nil
 }

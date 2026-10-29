@@ -18,6 +18,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/intraday"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/marketcontext"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/monitor"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/predictor"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
@@ -35,7 +36,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-context|sync-intraday|backfill-minutes|status-backfill|status-refresh|status-audit|preview|research|experiment|study-yang-pullback|plan|run|once|status|retry|train-predictor|predictor-status|predictor-eval|train-dayrange|predict-dayrange|reconcile-dayrange|status-dayrange|replay-dayrange [channel] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-context|sync-index-minutes|sync-korea-context|sync-hang-seng-context|sync-korea-minutes|sync-intraday|backfill-minutes|status-backfill|status-refresh|status-audit|preview|research|experiment|study-yang-pullback|plan|run|once|status|retry|train-predictor|predictor-status|predictor-eval|market-signal|train-dayrange|predict-dayrange|reconcile-dayrange|status-dayrange|replay-dayrange [channel] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -49,7 +50,7 @@ func run(args []string) error {
 	parent := f.String("parent", "", "parent experiment ID (experiment only)")
 	holdout := f.Bool("holdout", false, "consume the parent experiment's reserved holdout interval once (experiment only)")
 	policy := f.String("policy", "baseline", "conditional-{entry,rsi,macd,bollinger,confluence,all-three,guard,confluence-guard,chan-5-15-30}, baseline, upper-wick, risk-qualified or next-day-{baseline,upper-wick,low-volatility,pullback,breakout,momentum,volume-recovery,balanced,risk-qualified} (experiment only)")
-	from := f.String("from", "", "inclusive start date (experiment; pair with -through, or backfill-minutes)")
+	from := f.String("from", "", "inclusive start date (experiment; pair with -through, or backfill/index-minute sync)")
 	through := f.String("through", "", "inclusive backtest signal end date (experiment only; pair with -from)")
 	backfillWorkers := f.Int("workers", 3, "concurrent BaoStock workers (backfill-minutes only, 1..8)")
 	backfillProvider := f.String("provider", "auto", "minute history provider: auto, baostock or sina (backfill-minutes only)")
@@ -76,7 +77,7 @@ func run(args []string) error {
 		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
-	case "check-config", "init", "check", "health", "replay", "sync", "sync-context", "sync-intraday", "backfill-minutes", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "study-yang-pullback", "plan", "run", "once", "status", "retry", "train-predictor", "predictor-status", "predictor-eval", "train-dayrange", "predict-dayrange", "reconcile-dayrange", "status-dayrange", "replay-dayrange":
+	case "check-config", "init", "check", "health", "replay", "sync", "sync-context", "sync-index-minutes", "sync-korea-context", "sync-hang-seng-context", "sync-korea-minutes", "sync-intraday", "backfill-minutes", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "study-yang-pullback", "plan", "run", "once", "status", "retry", "train-predictor", "predictor-status", "predictor-eval", "market-signal", "train-dayrange", "predict-dayrange", "reconcile-dayrange", "status-dayrange", "replay-dayrange":
 	default:
 		return errors.New("unknown command")
 	}
@@ -86,8 +87,8 @@ func run(args []string) error {
 	if command != "replay" && *revision != "" {
 		return errors.New("revision requires replay")
 	}
-	if *asof != "" && command != "sync" && command != "sync-context" && command != "backfill-minutes" && command != "status-backfill" && command != "status-refresh" && command != "status-audit" && command != "preview" && command != "research" && command != "experiment" && command != "study-yang-pullback" && command != "predictor-eval" && command != "train-dayrange" && command != "predict-dayrange" && command != "reconcile-dayrange" && command != "status-dayrange" && command != "replay-dayrange" {
-		return errors.New("as-of is supported by sync, context sync, minute backfill, status commands, preview, research, experiment, yang-pullback, predictor-eval and dayrange commands only")
+	if *asof != "" && command != "sync" && command != "sync-context" && command != "sync-index-minutes" && command != "sync-korea-context" && command != "sync-hang-seng-context" && command != "sync-korea-minutes" && command != "backfill-minutes" && command != "status-backfill" && command != "status-refresh" && command != "status-audit" && command != "preview" && command != "research" && command != "experiment" && command != "study-yang-pullback" && command != "predictor-eval" && command != "market-signal" && command != "train-dayrange" && command != "predict-dayrange" && command != "reconcile-dayrange" && command != "status-dayrange" && command != "replay-dayrange" {
+		return errors.New("as-of is supported by sync, context sync, minute backfill, status commands, preview, research, experiment, yang-pullback, predictor-eval, market-signal and dayrange commands only")
 	}
 	if command != "predictor-eval" && (*windows != "40,60,120" || *validationDays != 20 || *halfLife != 60) {
 		return errors.New("predictor-eval flags require the predictor-eval command")
@@ -116,8 +117,8 @@ func run(args []string) error {
 	if command != "experiment" && (*parent != "" || *holdout || *policy != "baseline" || *through != "") {
 		return errors.New("experiment flags require the experiment command")
 	}
-	if command != "experiment" && command != "backfill-minutes" && *from != "" {
-		return errors.New("from requires the experiment or backfill-minutes command")
+	if command != "experiment" && command != "backfill-minutes" && command != "sync-index-minutes" && command != "sync-korea-context" && *from != "" {
+		return errors.New("from requires the experiment, backfill-minutes, sync-index-minutes or sync-korea-context command")
 	}
 	if command != "backfill-minutes" && (*backfillWorkers != 3 || *backfillProvider != "auto" || *backfillCodes != "" || *importFrom != "" || *referenceDir != "") {
 		return errors.New("minute backfill flags require the backfill-minutes command")
@@ -207,6 +208,21 @@ func run(args []string) error {
 	}
 	if command == "predictor-status" {
 		return predictorStatus(c)
+	}
+	if command == "sync-index-minutes" {
+		return runSyncIndexMinutes(ctx, c, *asof, *from, log)
+	}
+	if command == "sync-korea-context" {
+		return runSyncKoreaContext(ctx, c, *asof, *from, log)
+	}
+	if command == "sync-hang-seng-context" {
+		return runSyncHangSengContext(ctx, c, *asof, log)
+	}
+	if command == "sync-korea-minutes" {
+		return runSyncKoreaMinutes(ctx, c, *asof, log)
+	}
+	if command == "market-signal" {
+		return runMarketSignal(ctx, c, *asof)
 	}
 	if command == "train-predictor" {
 		return trainPredictor(ctx, c, log)
@@ -316,7 +332,19 @@ func run(args []string) error {
 			return err
 		}
 		defer ctxRuntime.Close()
-		m.MarketContextSync = ctxRuntime.syncer.ForDate
+		m.MarketContextSync = func(syncCtx context.Context, day string) (marketcontext.SyncResult, error) {
+			result, err := ctxRuntime.syncer.ForDate(syncCtx, day)
+			if err != nil {
+				return result, err
+			}
+			if _, err := syncHangSengContext(syncCtx, c, ctxRuntime.db, day, log); err != nil && syncCtx.Err() == nil {
+				log.Warn("Hang Seng shadow synchronization failed", "as_of", day, "reason", err.Error())
+			}
+			if _, err := syncKoreaMinutes(syncCtx, c, ctxRuntime.db, day, log); err != nil && syncCtx.Err() == nil {
+				log.Warn("Korean minute synchronization failed", "as_of", day, "reason", err.Error())
+			}
+			return result, nil
+		}
 	}
 	cal := calendar.New(c)
 	if _, err := cal.Trading(calendar.Date(time.Now())); err != nil {
