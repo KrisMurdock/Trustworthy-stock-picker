@@ -1,6 +1,6 @@
 # 模块实现方案索引
 
-本目录按当前源码整理可重建规格。每篇采用 STAR：先说明边界，再列出完成条件，随后解释实现，最后给出证据和未验证项。原有同步、初筛、精排和两篇预测文档按 `3e2510b`（2026-10-28）核对；本轮新增八篇及公众号修订按 `33ab655`（2026-10-29）核对。每篇记录实际公式、阈值、错误分类和输入输出；文件路径只是当前落点，重建时可以替换语言和目录，但不能改变外部行为。
+本目录按当前源码整理可重建规格。每篇采用 STAR：先说明边界，再列出完成条件，随后解释实现，最后给出证据和未验证项。原有同步、初筛、精排和两篇预测文档按 `3e2510b`（2026-10-28）核对；本轮新增八篇及公众号修订按 `33ab655`（2026-10-29）核对；收尾接入主干 `efdb2fb` 后，分钟、市场环境和存储三篇另核对了新合入的指数与影子数据链路。每篇记录实际公式、阈值、错误分类和输入输出；文件路径只是当前落点，重建时可以替换语言和目录，但不能改变外部行为。
 
 这些文档描述已经存在的代码契约，不是下一阶段的产品路线图。源码优先；如果文档、测试和部署说明不一致，应先核对源码，再同步文档。模型分数、预测区间和历史统计都不是成功概率、收益承诺或投资建议。
 
@@ -26,10 +26,10 @@
 ## 阅读顺序
 
 - 理解日常产出：数据同步 → 正式推荐与结构门控 → 初筛/精排 → 通知调度 → 公众号。
-- 理解预测输入与结果：分钟采集与回填 → 实时预测/日内高低点预测 → 市场环境。
+- 理解预测输入与结果：分钟采集与回填 → 实时预测/日内高低点预测 → 市场环境 → [指数方向与影子模型](../market-signal.md)。
 - 理解历史复核：存储快照与重放 → 冻结报告复盘 → AI 证据问答；阳线回踩研究独立阅读。
 
-本轮覆盖的是此前识别的八个模块缺口，不代表所有辅助工具都需要独立方案。已有 [算法接口](../algorithm-interface.md)、[策略实验](../experiments.md)、[实验快照](../experiment-result-snapshots.md)、[底部研究](../bottom-signals.md)、[环境变量](../environment-variables.md) 与 [部署排障](../deployment.md) 继续承担对应专题，避免重复维护。不同专题对版本或行为的描述不一致时，以指定基线的源码核对结果为准。
+本轮覆盖的是此前识别的八个模块缺口，不代表所有辅助工具都需要独立方案。新合入的指数方向、多窗口影子集成及韩国/恒生特征由 [指数方向信号](../market-signal.md) 专题承接，不另建重复模型说明。已有 [算法接口](../algorithm-interface.md)、[策略实验](../experiments.md)、[实验快照](../experiment-result-snapshots.md)、[底部研究](../bottom-signals.md)、[环境变量](../environment-variables.md) 与 [部署排障](../deployment.md) 继续承担对应专题，避免重复维护。不同专题对版本或行为的描述不一致时，以指定基线的源码核对结果为准。
 
 ## 最小验证
 
@@ -40,7 +40,7 @@ go test -p 2 ./internal/monitor ./internal/market ./internal/storage ./internal/
 go test -p 2 ./internal/firststage ./internal/secondstage ./internal/selection
 go test -p 2 ./internal/predictor ./internal/dayrange ./internal/wechat ./internal/notify ./internal/notify/report
 go test -p 1 ./internal/review ./internal/advisor ./internal/llm ./internal/yangpullback
-go test -p 1 ./internal/intraday ./internal/marketcontext ./internal/strategy ./internal/chanlun
+go test -p 1 ./internal/intraday ./internal/marketcontext ./internal/marketforecast ./internal/strategy ./internal/chanlun
 go test -p 1 ./internal/dashboard ./cmd/stock-watcher ./runtime
 ```
 
