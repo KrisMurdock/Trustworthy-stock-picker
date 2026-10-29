@@ -44,6 +44,8 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_CONTEXT_EASTMONEY_KLINE_ENDPOINT": &c.MarketContext.EastmoneyKlineEndpoint,
 		"STOCK_WATCHER_CONTEXT_TENCENT_ENDPOINT":         &c.MarketContext.TencentEndpoint,
 		"STOCK_WATCHER_CONTEXT_KOREA_ENDPOINT":           &c.MarketContext.KoreaEndpoint,
+		"STOCK_WATCHER_CONTEXT_HANG_SENG_ENDPOINT":       &c.MarketContext.HangSengEndpoint,
+		"STOCK_WATCHER_CONTEXT_KOREA_MINUTE_ENDPOINT":    &c.MarketContext.KoreaMinuteEndpoint,
 		"STOCK_WATCHER_INTRADAY_POLL_INTERVAL":           &c.Intraday.PollInterval,
 		"STOCK_WATCHER_INTRADAY_REQUEST_INTERVAL":        &c.Intraday.RequestInterval,
 		"STOCK_WATCHER_INTRADAY_CALIBRATION_AT":          &c.Intraday.CalibrationAt,

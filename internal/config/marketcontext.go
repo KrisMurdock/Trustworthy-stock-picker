@@ -19,6 +19,8 @@ type MarketContext struct {
 	EastmoneyKlineEndpoint string `yaml:"eastmoney_kline_endpoint"`
 	TencentEndpoint        string `yaml:"tencent_endpoint"`
 	KoreaEndpoint          string `yaml:"korea_endpoint"`
+	HangSengEndpoint       string `yaml:"hang_seng_endpoint"`
+	KoreaMinuteEndpoint    string `yaml:"korea_minute_endpoint"`
 }
 
 func DefaultMarketContext() MarketContext {
@@ -31,6 +33,8 @@ func DefaultMarketContext() MarketContext {
 		EastmoneyKlineEndpoint: "http://push2his.eastmoney.com/api/qt/stock/kline/get",
 		TencentEndpoint:        "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get",
 		KoreaEndpoint:          "https://api.finance.naver.com/siseJson.naver",
+		HangSengEndpoint:       "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+		KoreaMinuteEndpoint:    "https://api.stock.naver.com/chart/domestic/index",
 	}
 }
 
@@ -49,6 +53,12 @@ func (m MarketContext) Validate() error {
 	}
 	if !validMarketEndpoint(m.KoreaEndpoint) {
 		return errors.New("market_context.korea_endpoint requires HTTPS or loopback HTTP, without credentials or query parameters")
+	}
+	if !validMarketEndpoint(m.HangSengEndpoint) {
+		return errors.New("market_context.hang_seng_endpoint requires HTTPS or loopback HTTP, without credentials or query parameters")
+	}
+	if !validMarketEndpoint(m.KoreaMinuteEndpoint) {
+		return errors.New("market_context.korea_minute_endpoint requires HTTPS or loopback HTTP, without credentials or query parameters")
 	}
 	interval, err := time.ParseDuration(m.RequestInterval)
 	if err != nil || interval < 350*time.Millisecond || interval > time.Minute {

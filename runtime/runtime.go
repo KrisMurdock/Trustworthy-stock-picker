@@ -225,7 +225,19 @@ func New(opts Options) (*Runtime, error) {
 	r.monitor = monitor.NewWithMarketDB(cfg, store, marketDB, sources, noticeChannels, log)
 	r.monitor.BuildVersion = version
 	if r.contextSyncer != nil {
-		r.monitor.MarketContextSync = r.contextSyncer.ForDate
+		r.monitor.MarketContextSync = func(ctx context.Context, day string) (marketcontext.SyncResult, error) {
+			result, err := r.contextSyncer.ForDate(ctx, day)
+			if err != nil {
+				return result, err
+			}
+			if _, err := marketcontext.SyncHangSeng(ctx, cfg, r.contextDB, day, log); err != nil && ctx.Err() == nil {
+				log.Warn("Hang Seng shadow synchronization failed", "as_of", day, "reason", err.Error())
+			}
+			if _, err := marketcontext.SyncKoreaMinutes(ctx, cfg, r.contextDB, day, log); err != nil && ctx.Err() == nil {
+				log.Warn("Korean minute synchronization failed", "as_of", day, "reason", err.Error())
+			}
+			return result, nil
+		}
 	}
 	if cfg.Intraday.Enabled {
 		r.minuteClient = market.NewMinuteClient(cfg)

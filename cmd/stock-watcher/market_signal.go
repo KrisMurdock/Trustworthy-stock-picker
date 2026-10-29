@@ -54,6 +54,10 @@ func runMarketSignal(ctx context.Context, c config.Config, asOf string) error {
 	if err != nil {
 		return err
 	}
+	hangSengBars, err := db.LoadHangSengBarsThrough(ctx, asOf)
+	if err != nil {
+		return err
+	}
 	series := make([]marketforecast.Series, 0, len(indices))
 	for _, index := range indices {
 		bars := make([]marketforecast.Bar, 0, len(stored[index.Code]))
@@ -82,7 +86,11 @@ func runMarketSignal(ctx context.Context, c config.Config, asOf string) error {
 		}
 		korea = append(korea, marketforecast.KoreaSeries{Code: code, Bars: bars})
 	}
-	report, err := marketforecast.Build(series, marketforecast.Options{AsOf: asOf, NextTradingDay: calendar.New(c).Next, Korea: korea})
+	hangSeng := make([]marketforecast.Bar, 0, len(hangSengBars))
+	for _, bar := range hangSengBars {
+		hangSeng = append(hangSeng, marketforecast.Bar{Date: bar.Date, Open: bar.Open, Close: bar.Close, High: bar.High, Low: bar.Low})
+	}
+	report, err := marketforecast.Build(series, marketforecast.Options{AsOf: asOf, NextTradingDay: calendar.New(c).Next, Korea: korea, HangSeng: hangSeng})
 	if err != nil {
 		return err
 	}

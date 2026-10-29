@@ -212,3 +212,48 @@ func TestContextSessionMinutesAndKoreaRoundTrip(t *testing.T) {
 		t.Fatalf("load korea bars: %v %+v", err, loadedKorea)
 	}
 }
+
+func TestContextHangSengAndKoreaMinuteRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	db, err := InitContext(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	hangSeng := []market.HangSengBar{
+		{Date: "2026-10-16", Open: 25800, High: 26000, Low: 25700, Close: 25900, Volume: 1000},
+		{Date: "2026-10-19", Open: 25910, High: 26100, Low: 25800, Close: 26010, Volume: 1200},
+	}
+	if err := db.SaveHangSengBars(ctx, hangSeng); err != nil {
+		t.Fatal(err)
+	}
+	minutes := []market.KoreaMinuteBar{
+		{End: time.Date(2026, 10, 19, 9, 0, 0, 0, market.Korea), Open: 2600, High: 2602, Low: 2599, Close: 2601, Volume: 100, Final: true},
+		{End: time.Date(2026, 10, 19, 9, 1, 0, 0, market.Korea), Open: 2601, High: 2603, Low: 2600, Close: 2602, Volume: 120, Final: true},
+	}
+	if err := db.SaveKoreaMinutes(ctx, market.KoreaKOSPI, minutes); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveKoreaMinutes(ctx, "NIKKEI", minutes); err == nil {
+		t.Fatal("unknown korea minute code was accepted")
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	view, err := OpenContextView(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer view.Close()
+	loadedHangSeng, err := view.LoadHangSengBarsThrough(ctx, "2026-10-19")
+	if err != nil || len(loadedHangSeng) != 2 || loadedHangSeng[1].Close != 26010 {
+		t.Fatalf("load hang seng: %v %+v", err, loadedHangSeng)
+	}
+	if filtered, err := view.LoadHangSengBarsThrough(ctx, "2026-10-16"); err != nil || len(filtered) != 1 {
+		t.Fatalf("filter hang seng: %v %+v", err, filtered)
+	}
+	loadedMinutes, err := view.LoadKoreaMinutesThrough(ctx, []string{market.KoreaKOSPI}, "2026-10-19")
+	if err != nil || len(loadedMinutes[market.KoreaKOSPI]) != 2 || loadedMinutes[market.KoreaKOSPI][1].End.Format("15:04") != "09:01" {
+		t.Fatalf("load korea minutes: %v %+v", err, loadedMinutes)
+	}
+}

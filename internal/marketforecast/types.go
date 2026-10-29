@@ -57,6 +57,7 @@ type Options struct {
 	TrainingSamples   int
 	ValidationSamples int
 	Korea             []KoreaSeries
+	HangSeng          []Bar
 }
 
 type Report struct {
@@ -114,6 +115,9 @@ type SessionModelInfo struct {
 	MinTrainingSamples      int      `json:"min_training_samples"`
 	MinValidationSamples    int      `json:"min_validation_samples"`
 	KoreaFeatures           bool     `json:"korea_features"`
+	HangSengShadow          bool     `json:"hang_seng_shadow"`
+	HangSengFeatureNames    []string `json:"hang_seng_feature_names,omitempty"`
+	ShadowWindows           []int    `json:"shadow_windows,omitempty"`
 }
 
 type TrainingInfo struct {

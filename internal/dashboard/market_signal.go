@@ -94,6 +94,12 @@ func (h *handler) serveMarketSignal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusServiceUnavailable, "market signal is temporarily unavailable")
 		return
 	}
+	hangSengBars, err := db.LoadHangSengBarsThrough(ctx, asOf)
+	if err != nil {
+		h.log.Warn("Market signal hang seng history unavailable")
+		writeError(w, r, http.StatusServiceUnavailable, "market signal is temporarily unavailable")
+		return
+	}
 	series := make([]marketforecast.Series, 0, len(indices))
 	for _, index := range indices {
 		bars := make([]marketforecast.Bar, 0, len(stored[index.Code]))
@@ -122,8 +128,12 @@ func (h *handler) serveMarketSignal(w http.ResponseWriter, r *http.Request) {
 		}
 		korea = append(korea, marketforecast.KoreaSeries{Code: code, Bars: bars})
 	}
+	hangSeng := make([]marketforecast.Bar, 0, len(hangSengBars))
+	for _, bar := range hangSengBars {
+		hangSeng = append(hangSeng, marketforecast.Bar{Date: bar.Date, Open: bar.Open, Close: bar.Close, High: bar.High, Low: bar.Low})
+	}
 	report, err := marketforecast.Build(series, marketforecast.Options{
-		AsOf: asOf, NextTradingDay: calendar.New(h.config).Next, Korea: korea,
+		AsOf: asOf, NextTradingDay: calendar.New(h.config).Next, Korea: korea, HangSeng: hangSeng,
 	})
 	if err != nil {
 		h.log.Warn("Market signal calculation failed", "error", err)

@@ -664,5 +664,20 @@ func seedMarketContext(root string) error {
 			return err
 		}
 	}
+	hangSeng := make([]market.HangSengBar, 0, 260)
+	close := 19000.0
+	for day := at.AddDate(0, 0, -330); !day.After(at); day = day.AddDate(0, 0, 1) {
+		if day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
+			continue
+		}
+		close *= 1 + 0.0025*math.Sin(float64(len(hangSeng))/7)
+		hangSeng = append(hangSeng, market.HangSengBar{
+			Date: day.Format("2006-01-02"), Open: close * .997, Close: close,
+			High: close * 1.008, Low: close * .992, Volume: 1000,
+		})
+	}
+	if err := db.SaveHangSengBars(context.Background(), hangSeng); err != nil {
+		return err
+	}
 	return db.SaveSyncStatus(context.Background(), storage.ContextSyncStatus{AsOf: "2026-10-13", StartedAt: at.Add(-time.Minute), FinishedAt: at, Status: "complete", Total: len(items), Succeeded: len(items)})
 }

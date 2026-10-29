@@ -413,7 +413,10 @@ body.master-open { overflow: hidden; }
 .market-signal-session-unavailable { margin: 5px 0 0; color: var(--muted); font-size: 8px; line-height: 1.5; }
 .market-signal-session-evidence { margin: 4px 0 0; color: var(--muted); font-size: 8px; line-height: 1.45; font-variant-numeric: tabular-nums; }
 .market-signal-session-evidence.is-high { color: var(--jade); }
+.market-signal-session-evidence.is-hang-seng { color: var(--copper); }
 .market-signal-session-weekdays { margin: 4px 0 0; color: var(--muted); font-size: 8px; line-height: 1.45; font-variant-numeric: tabular-nums; }
+.market-signal-shadow { margin-top: 7px; padding: 7px 8px; border: 1px dashed var(--line-strong); border-radius: 6px; background: rgba(255, 255, 255, .018); }
+.market-signal-shadow > strong { display: block; color: var(--copper); font-size: 8px; font-weight: 600; letter-spacing: .02em; }
 .market-context-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-bottom: 1px solid var(--line); }
 .market-context-summary-card { padding: 13px 18px; border-right: 1px solid var(--line); background: var(--surface); }
 .market-context-summary-card:last-child { border-right: 0; }

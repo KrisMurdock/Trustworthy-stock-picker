@@ -76,13 +76,19 @@ func Build(series []Series, opts Options) (Report, error) {
 			AfternoonMaxDepth: SessionAfternoonMaxDepth, MinLeaf: SessionMinLeaf,
 			MinTrainingSamples: SessionMinTrainingSamples, MinValidationSamples: SessionMinValidationSample,
 			KoreaFeatures: len(opts.Korea) > 0,
+			ShadowWindows: append([]int(nil), SessionShadowWindows...),
 		},
 		Signals: []Signal{},
 	}
 	korea, useKorea := newKoreaContext(opts.Korea)
+	hangSeng, useHangSeng := newHangSengContext(opts.HangSeng)
 	if !useKorea {
 		report.SessionModel.KoreaFeatures = false
 		report.SessionModel.FeatureNames = SessionFeatureNames(false)
+	}
+	if useHangSeng {
+		report.SessionModel.HangSengShadow = true
+		report.SessionModel.HangSengFeatureNames = HangSengFeatureNames()
 	}
 	seen := map[string]bool{}
 	for _, item := range series {
@@ -90,7 +96,7 @@ func Build(series []Series, opts Options) (Report, error) {
 			return Report{}, errors.New("market forecast contains a duplicate or empty index code")
 		}
 		seen[item.Index.Code] = true
-		signal, err := buildSignal(item, opts.AsOf, training, validation, opts.NextTradingDay, korea, useKorea)
+		signal, err := buildSignal(item, opts.AsOf, training, validation, opts.NextTradingDay, korea, useKorea, hangSeng, useHangSeng)
 		if err != nil {
 			return Report{}, err
 		}
@@ -119,7 +125,7 @@ func Build(series []Series, opts Options) (Report, error) {
 	return report, nil
 }
 
-func buildSignal(series Series, asOf string, training, validation int, nextTradingDay func(string) (string, error), korea koreaContext, useKorea bool) (Signal, error) {
+func buildSignal(series Series, asOf string, training, validation int, nextTradingDay func(string) (string, error), korea koreaContext, useKorea bool, hangSeng hangSengContext, useHangSeng bool) (Signal, error) {
 	signal := Signal{
 		Code: series.Index.Code, Name: series.Index.Name, Status: "insufficient_history",
 		Weekdays:   make([]WeekdayStat, 0, 5),
@@ -146,7 +152,7 @@ func buildSignal(series Series, asOf string, training, validation int, nextTradi
 	}
 	attachSessions := func() {
 		if target != "" {
-			signal.Sessions = buildSessionSignals(bars, series.Minutes, series.SessionMinutes, target, korea, useKorea)
+			signal.Sessions = buildSessionSignals(bars, series.Minutes, series.SessionMinutes, target, korea, useKorea, hangSeng, useHangSeng)
 		}
 	}
 	if len(bars) < MinHistoryBars {

@@ -94,6 +94,53 @@
     return Number.isNaN(parsed.getTime()) ? 0 : parsed.getUTCDay();
   }
 
+  function shadowPercent(value) {
+    return isNumber(value) ? `${number(value * 100, 1)}%` : "—";
+  }
+
+  function renderShadow(session) {
+    const shadow = session?.shadow;
+    if (!shadow) return null;
+    const box = el("div", "market-signal-shadow");
+    box.dataset.testid = "market-signal-shadow";
+    box.append(el("strong", "", "影子模型 · 不参与正式推荐"));
+    const ensemble = shadow.multi_window;
+    if (ensemble?.status === "ok") {
+      const validation = ensemble.validation || {};
+      const line = el("p", "market-signal-session-evidence");
+      line.textContent = `多窗口 ${directionLabels[ensemble.direction] || "待定"} ${shadowPercent(ensemble.up_probability)} · 覆盖 ${shadowPercent(validation.coverage)} / 准确率 ${shadowPercent(validation.accuracy)} / 多数基线 ${shadowPercent(validation.majority_accuracy)}`;
+      box.append(line);
+      const strong = validation.strong_samples
+        ? `强信号 ${number(validation.strong_samples)} 天（覆盖 ${shadowPercent(validation.strong_coverage)}）${shadowPercent(validation.strong_accuracy)}`
+        : "强信号样本不足";
+      box.append(el("p", "market-signal-session-evidence", strong));
+      if (list(ensemble.by_window).length) {
+        const windows = ensemble.by_window.map((item) => `${item.window || "扩张"}日 ${shadowPercent(item.accuracy)}/${number(item.predictions)}`).join(" · ");
+        box.append(el("p", "market-signal-session-evidence", `分窗口准确率 ${windows}`));
+      }
+      if (list(ensemble.by_year).length) {
+        const years = ensemble.by_year.map((item) => `${item.year} ${shadowPercent(item.accuracy)}（n=${number(item.predictions)}，多数 ${shadowPercent(item.majority_accuracy)}）`).join(" · ");
+        box.append(el("p", "market-signal-session-evidence", `分年度 ${years}`));
+      }
+    } else {
+      const reason = ensemble?.reason || shadow.note || "多窗口影子样本不足";
+      box.append(el("p", "market-signal-session-evidence", reason));
+    }
+    const hangSeng = shadow.hang_seng;
+    if (hangSeng) {
+      if (hangSeng.status === "ok") {
+        const validation = hangSeng.validation || {};
+        const line = el("p", "market-signal-session-evidence is-hang-seng");
+        line.textContent = `恒生下午影子 ${directionLabels[hangSeng.direction] || "待定"} ${shadowPercent(hangSeng.up_probability)} · 覆盖 ${shadowPercent(validation.coverage)} / 准确率 ${shadowPercent(validation.accuracy)} / 多数基线 ${shadowPercent(validation.majority_accuracy)}`;
+        box.append(line);
+      } else {
+        const labels = { stale: "数据滞后", insufficient_history: "样本不足" };
+        box.append(el("p", "market-signal-session-evidence", `恒生下午影子不可用（${labels[hangSeng.status] || hangSeng.status}）：${hangSeng.reason || "等待恒生日线同步"}`));
+      }
+    }
+    return box;
+  }
+
   function renderSession(session) {
     const item = el("div", "market-signal-session");
     item.dataset.testid = "market-signal-session";
@@ -154,6 +201,8 @@
       item.append(conclusion);
     }
     const weekdays = list(session.weekdays);
+    const shadow = renderShadow(session);
+    if (shadow) item.append(shadow);
     if (weekdays.length) {
       const line = el("p", "market-signal-session-weekdays");
       line.textContent = weekdays.map((stat) => `${stat.label} ${number(stat.win_rate * 100, 1)}%`).join(" · ");
@@ -171,9 +220,10 @@
     badge.textContent = signalStatusLabels[report.status] || report.status || "未知";
     badge.dataset.status = report.status || "missing";
     const koreaNote = report.session_model?.korea_features ? "已启用韩国 KOSPI/KOSDAQ 前一交易日特征。" : "韩国特征未同步，当前仅使用境内特征。";
+    const shadowNote = report.session_model?.hang_seng_shadow ? "恒生日线仅用于下午影子模型。" : "恒生影子尚未同步。";
     byId("market-signal-note").textContent = report.status === "stale"
-      ? `指数历史落后于所选日期；方向信号按最新已保存交易日计算，仅用于观察。${koreaNote}`
-      : `日线方向与上午/下午方向均为盘前信号；展示树模型原始概率，校准概率用于判断置信。90% 目标需同时看覆盖率与 Wilson 区间。${koreaNote}`;
+      ? `指数历史落后于所选日期；方向信号按最新已保存交易日计算，仅用于观察。${koreaNote}${shadowNote}`
+      : `日线方向与上午/下午方向均为盘前信号；展示树模型原始概率，校准概率用于判断置信。90% 目标需同时看覆盖率与 Wilson 区间。${koreaNote}${shadowNote}影子结果不进入正式推荐。`;
     const signals = list(report.signals);
     if (!signals.length) {
       cards.append(el("p", "market-context-inline-empty", "暂无可计算的核心指数方向信号。"));

@@ -59,10 +59,11 @@ type MinuteBar struct {
 }
 
 type sessionSample struct {
-	date     string
-	weekday  int
-	label    int
-	features []float64
+	date             string
+	weekday          int
+	label            int
+	features         []float64
+	hangSengFeatures []float64
 }
 
 type sessionDay struct {
@@ -119,6 +120,7 @@ type SessionSignal struct {
 	Training                TrainingInfo      `json:"training"`
 	Validation              SessionValidation `json:"validation"`
 	Weekdays                []WeekdayStat     `json:"weekdays"`
+	Shadow                  *SessionShadow    `json:"shadow,omitempty"`
 }
 
 // SessionFeatureNames returns the daily feature order followed by the session
@@ -132,12 +134,12 @@ func SessionFeatureNames(useKorea bool) []string {
 	return out
 }
 
-func buildSessionSignals(bars []Bar, minutes, sessionMinutes []MinuteBar, target string, korea koreaContext, useKorea bool) []SessionSignal {
+func buildSessionSignals(bars []Bar, minutes, sessionMinutes []MinuteBar, target string, korea koreaContext, useKorea bool, hangSeng hangSengContext, useHangSeng bool) []SessionSignal {
 	if len(bars) < 62 || target == "" {
 		return nil
 	}
 	days := buildSessionDays(bars, minutes, sessionMinutes)
-	morningSamples, afternoonSamples := sessionSamplesFor(bars, days, korea, useKorea)
+	morningSamples, afternoonSamples := sessionSamplesFor(bars, days, korea, useKorea, hangSeng, useHangSeng)
 	out := make([]SessionSignal, 0, 2)
 	for _, item := range []struct {
 		name    string
@@ -171,6 +173,7 @@ func buildSessionSignals(bars []Bar, minutes, sessionMinutes []MinuteBar, target
 			out = append(out, signal)
 			continue
 		}
+		signal.Shadow = buildSessionShadow(item.samples, item.depth, item.name, features, SessionFeatureNames(useKorea), hangSeng, useHangSeng, target)
 		validation, calibrator := validateSessionTree(item.samples, item.depth)
 		signal.Validation = validation
 		model := fitSessionTree(item.samples, item.depth, SessionMinLeaf)
@@ -323,7 +326,7 @@ func buildSessionDaysForPeriod(bars []Bar, minutes []MinuteBar, period int) []se
 	return out
 }
 
-func sessionSamplesFor(bars []Bar, days []sessionDay, korea koreaContext, useKorea bool) ([]sessionSample, []sessionSample) {
+func sessionSamplesFor(bars []Bar, days []sessionDay, korea koreaContext, useKorea bool, hangSeng hangSengContext, useHangSeng bool) ([]sessionSample, []sessionSample) {
 	if len(days) == 0 {
 		return nil, nil
 	}
@@ -376,8 +379,15 @@ func sessionSamplesFor(bars []Bar, days []sessionDay, korea koreaContext, useKor
 			if day.afternoonReturn > 0 {
 				label = 1
 			}
+			var hangSengFeatures []float64
+			if useHangSeng {
+				hangSengFeatures, _ = hangSeng.features(day.date)
+				if hangSengFeatures != nil {
+					hangSengFeatures = append([]float64(nil), hangSengFeatures...)
+				}
+			}
 			afternoon = append(afternoon, sessionSample{
-				date: day.date, weekday: weekday, label: label, features: append([]float64(nil), features...),
+				date: day.date, weekday: weekday, label: label, features: append([]float64(nil), features...), hangSengFeatures: hangSengFeatures,
 			})
 		}
 	}
