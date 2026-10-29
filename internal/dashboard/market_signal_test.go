@@ -47,6 +47,23 @@ func seedMarketSignalHistory(t *testing.T, root, asOf string) {
 		if err := db.SaveMinutes(context.Background(), index.Code, sessionMinutes(bars, offset)); err != nil {
 			t.Fatal(err)
 		}
+		if err := db.SaveSessionMinutes(context.Background(), index.Code, sessionThirtyMinutes(bars, offset)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for offset, code := range []string{market.KoreaKOSPI, market.KoreaKOSDAQ} {
+		bars := make([]market.KoreaBar, 0, len(days))
+		close := 2500.0 + float64(offset)*300
+		for i, day := range days {
+			close *= 1 + 0.0005 + math.Sin(float64(i+offset)/11)*0.001
+			bars = append(bars, market.KoreaBar{
+				Date: day.Format("2006-01-02"), Open: close * 0.998, Close: close,
+				High: close * 1.003, Low: close * 0.997, Volume: 1000,
+			})
+		}
+		if err := db.SaveKoreaBars(context.Background(), code, bars); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := db.SaveSyncStatus(context.Background(), storage.ContextSyncStatus{
 		AsOf: asOf, StartedAt: at.Add(-time.Minute), FinishedAt: at, Status: "complete", Total: 2, Succeeded: 2,
@@ -77,6 +94,31 @@ func sessionMinutes(bars []storage.ContextBar, offset int) []market.MinuteBar {
 	return out
 }
 
+func sessionThirtyMinutes(bars []storage.ContextBar, offset int) []market.MinuteBar {
+	out := make([]market.MinuteBar, 0, len(bars)*8)
+	for index := 1; index < len(bars); index++ {
+		day, _ := time.ParseInLocation("2006-01-02", bars[index].Date, market.Shanghai)
+		prevClose := bars[index-1].Close
+		morningClose := prevClose * (1 + math.Sin(float64(index+offset)/5)*0.002)
+		close := morningClose * (1 + math.Cos(float64(index+offset)/7)*0.002)
+		for _, minute := range []int{600, 630, 660, 690, 810, 840, 870, 900} {
+			end := time.Date(day.Year(), day.Month(), day.Day(), minute/60, minute%60, 0, 0, market.Shanghai)
+			price := prevClose + (morningClose-prevClose)*float64((minute-570)%120)/120
+			if minute >= 780 {
+				price = morningClose + (close-morningClose)*float64(minute-780+30)/150
+			}
+			if minute == 690 {
+				price = morningClose
+			}
+			if minute == 900 {
+				price = close
+			}
+			out = append(out, market.MinuteBar{End: end, Open: price * 0.9995, High: price * 1.0005, Low: price * 0.999, Close: price, Volume: 1000, Final: true})
+		}
+	}
+	return out
+}
+
 func TestMarketSignalAPIReadsIndexForecast(t *testing.T) {
 	root := t.TempDir()
 	asOf := "2026-10-13"
@@ -98,6 +140,9 @@ func TestMarketSignalAPIReadsIndexForecast(t *testing.T) {
 	}
 	if report.SchemaVersion != marketforecast.SchemaVersion || report.AsOf != asOf || report.Status != "ok" || len(report.Signals) != 2 {
 		t.Fatalf("unexpected report: %s", w.Body)
+	}
+	if !report.SessionModel.KoreaFeatures {
+		t.Fatalf("korea features not enabled: %+v", report.SessionModel)
 	}
 	for _, signal := range report.Signals {
 		if signal.Status != "ok" || signal.TargetDate != "2026-10-14" || signal.Direction == "" || len(signal.Weekdays) != 5 {

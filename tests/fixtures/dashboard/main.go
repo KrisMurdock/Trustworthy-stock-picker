@@ -570,6 +570,42 @@ func seedMarketContextMinutes(bars []storage.ContextBar, offset int) []market.Mi
 	return out
 }
 
+func seedMarketContextSessionMinutes(minutes []market.MinuteBar) []market.MinuteBar {
+	out := make([]market.MinuteBar, 0, len(minutes)/6)
+	chunk := make([]market.MinuteBar, 0, 6)
+	flush := func() {
+		if len(chunk) != 6 {
+			return
+		}
+		bar := market.MinuteBar{
+			End: chunk[len(chunk)-1].End, Open: chunk[0].Open, High: chunk[0].High, Low: chunk[0].Low,
+			Close: chunk[len(chunk)-1].Close, Volume: 0, Final: true,
+		}
+		for _, item := range chunk {
+			if item.High > bar.High {
+				bar.High = item.High
+			}
+			if item.Low < bar.Low {
+				bar.Low = item.Low
+			}
+			bar.Volume += item.Volume
+		}
+		out = append(out, bar)
+	}
+	for _, bar := range minutes {
+		if len(chunk) > 0 && (!bar.End.Truncate(24*time.Hour).Equal(chunk[0].End.Truncate(24*time.Hour)) || bar.End.Hour()*60+bar.End.Minute() == 785) {
+			flush()
+			chunk = chunk[:0]
+		}
+		chunk = append(chunk, bar)
+		if len(chunk) == 6 {
+			flush()
+			chunk = chunk[:0]
+		}
+	}
+	return out
+}
+
 func seedMarketContext(root string) error {
 	db, err := storage.InitContext(root, false)
 	if err != nil {
@@ -602,9 +638,30 @@ func seedMarketContext(root string) error {
 			return err
 		}
 		if item.Code == "sh000001" || item.Code == "sz399006" {
-			if err := db.SaveMinutes(context.Background(), item.Code, seedMarketContextMinutes(bars, index)); err != nil {
+			minutes := seedMarketContextMinutes(bars, index)
+			if err := db.SaveMinutes(context.Background(), item.Code, minutes); err != nil {
 				return err
 			}
+			if err := db.SaveSessionMinutes(context.Background(), item.Code, seedMarketContextSessionMinutes(minutes)); err != nil {
+				return err
+			}
+		}
+	}
+	for offset, code := range []string{market.KoreaKOSPI, market.KoreaKOSDAQ} {
+		close := 2500.0 + float64(offset)*300
+		koreaBars := make([]market.KoreaBar, 0, 260)
+		for day := at.AddDate(0, 0, -330); !day.After(at); day = day.AddDate(0, 0, 1) {
+			if day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
+				continue
+			}
+			close *= 1 + 0.003*math.Sin(float64(offset+len(koreaBars))/9)
+			koreaBars = append(koreaBars, market.KoreaBar{
+				Date: day.Format("2006-01-02"), Open: close * .997, Close: close,
+				High: close * 1.008, Low: close * .992, Volume: 1000 + float64(offset*100),
+			})
+		}
+		if err := db.SaveKoreaBars(context.Background(), code, koreaBars); err != nil {
+			return err
 		}
 	}
 	return db.SaveSyncStatus(context.Background(), storage.ContextSyncStatus{AsOf: "2026-10-13", StartedAt: at.Add(-time.Minute), FinishedAt: at, Status: "complete", Total: len(items), Succeeded: len(items)})

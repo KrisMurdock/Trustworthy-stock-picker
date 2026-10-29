@@ -45,11 +45,38 @@ func sessionTestMinutes(bars []Bar) []MinuteBar {
 	return out
 }
 
+func sessionTestThirtyMinutes(bars []Bar) []MinuteBar {
+	out := make([]MinuteBar, 0, len(bars)*8)
+	for index := 1; index < len(bars); index++ {
+		day, _ := time.ParseInLocation("2006-01-02", bars[index].Date, marketShanghai())
+		prevClose := bars[index-1].Close
+		morningReturn := math.Sin(float64(index)/4) * 0.003
+		afternoonReturn := math.Cos(float64(index)/6) * 0.003
+		morningClose := prevClose * (1 + morningReturn)
+		close := morningClose * (1 + afternoonReturn)
+		for _, minute := range []int{600, 630, 660, 690, 810, 840, 870, 900} {
+			end := time.Date(day.Year(), day.Month(), day.Day(), minute/60, minute%60, 0, 0, marketShanghai())
+			price := prevClose + (morningClose-prevClose)*float64((minute-570)%120)/120
+			if minute >= 780 {
+				price = morningClose + (close-morningClose)*float64(minute-780+30)/150
+			}
+			if minute == 690 {
+				price = morningClose
+			}
+			if minute == 900 {
+				price = close
+			}
+			out = append(out, MinuteBar{End: end, Open: price * 0.9995, High: price * 1.0005, Low: price * 0.999, Close: price, Volume: 1000})
+		}
+	}
+	return out
+}
+
 func TestBuildSessionSignalsUsesPriorSessionsAndReportsMetrics(t *testing.T) {
 	bars := sessionTestBars(150)
 	minutes := sessionTestMinutes(bars)
 	target, _ := nextWeekday(bars[len(bars)-1].Date)
-	signals := buildSessionSignals(bars, minutes, target)
+	signals := buildSessionSignals(bars, minutes, nil, target, koreaContext{}, false)
 	if len(signals) != 2 {
 		t.Fatalf("session signals = %+v", signals)
 	}
@@ -73,7 +100,7 @@ func TestBuildSessionSignalsDeterministicAndIgnoresTargetDayMinutes(t *testing.T
 	bars := sessionTestBars(150)
 	minutes := sessionTestMinutes(bars)
 	target, _ := nextWeekday(bars[len(bars)-1].Date)
-	first, _ := json.Marshal(buildSessionSignals(bars, minutes, target))
+	first, _ := json.Marshal(buildSessionSignals(bars, minutes, nil, target, koreaContext{}, false))
 
 	// Target-day minutes are not training features for a pre-open signal.
 	day, _ := time.ParseInLocation("2006-01-02", target, marketShanghai())
@@ -84,7 +111,7 @@ func TestBuildSessionSignalsDeterministicAndIgnoresTargetDayMinutes(t *testing.T
 			extra = append(extra, MinuteBar{End: end, Open: 1, High: 2, Low: 0.5, Close: 1.5, Volume: 1})
 		}
 	}
-	second, _ := json.Marshal(buildSessionSignals(bars, append(append([]MinuteBar(nil), minutes...), extra...), target))
+	second, _ := json.Marshal(buildSessionSignals(bars, append(append([]MinuteBar(nil), minutes...), extra...), nil, target, koreaContext{}, false))
 	if string(first) != string(second) {
 		t.Fatalf("target-day minutes changed the pre-open signal")
 	}
@@ -93,7 +120,7 @@ func TestBuildSessionSignalsDeterministicAndIgnoresTargetDayMinutes(t *testing.T
 func TestBuildSessionSignalsMarksMissingMinutes(t *testing.T) {
 	bars := sessionTestBars(150)
 	target, _ := nextWeekday(bars[len(bars)-1].Date)
-	signals := buildSessionSignals(bars, nil, target)
+	signals := buildSessionSignals(bars, nil, nil, target, koreaContext{}, false)
 	if len(signals) != 2 {
 		t.Fatalf("missing minute signals = %+v", signals)
 	}
@@ -104,11 +131,26 @@ func TestBuildSessionSignalsMarksMissingMinutes(t *testing.T) {
 	}
 }
 
+func TestBuildSessionSignalsUsesThirtyMinuteHistory(t *testing.T) {
+	bars := sessionTestBars(150)
+	minutes := sessionTestThirtyMinutes(bars)
+	target, _ := nextWeekday(bars[len(bars)-1].Date)
+	signals := buildSessionSignals(bars, nil, minutes, target, koreaContext{}, false)
+	if len(signals) != 2 {
+		t.Fatalf("session signals = %+v", signals)
+	}
+	for _, signal := range signals {
+		if signal.Status != "ok" || signal.Training.Samples < SessionMinTrainingSamples+SessionMinValidationSample {
+			t.Fatalf("unexpected thirty-minute signal: %+v", signal)
+		}
+	}
+}
+
 func TestBuildSessionSignalsMarksInsufficientSamples(t *testing.T) {
 	bars := sessionTestBars(90)
 	minutes := sessionTestMinutes(bars)
 	target, _ := nextWeekday(bars[len(bars)-1].Date)
-	signals := buildSessionSignals(bars, minutes, target)
+	signals := buildSessionSignals(bars, minutes, nil, target, koreaContext{}, false)
 	if len(signals) != 2 {
 		t.Fatalf("insufficient session signals = %+v", signals)
 	}

@@ -7,6 +7,9 @@ func TestMarketContextDefaultsAndValidation(t *testing.T) {
 	if !cfg.MarketContext.Enabled || cfg.MarketContext.Workers < 1 || cfg.MarketContext.EastmoneyKlineEndpoint == "" {
 		t.Fatalf("missing market context defaults: %+v", cfg.MarketContext)
 	}
+	if cfg.MarketContext.KoreaEndpoint != "https://api.finance.naver.com/siseJson.naver" {
+		t.Fatalf("unexpected korea endpoint default: %q", cfg.MarketContext.KoreaEndpoint)
+	}
 	if err := cfg.MarketContext.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -19,6 +22,16 @@ func TestMarketContextDefaultsAndValidation(t *testing.T) {
 	bad.RequestInterval = "100ms"
 	if err := bad.Validate(); err == nil {
 		t.Fatal("unsafe request interval accepted")
+	}
+	bad = cfg.MarketContext
+	bad.KoreaEndpoint = "http://example.com/api"
+	if err := bad.Validate(); err == nil {
+		t.Fatal("remote korea HTTP endpoint accepted")
+	}
+	bad = cfg.MarketContext
+	bad.KoreaEndpoint = "https://api.finance.naver.com/siseJson.naver?symbol=KOSPI"
+	if err := bad.Validate(); err == nil {
+		t.Fatal("korea endpoint with query parameters accepted")
 	}
 	bad = cfg.MarketContext
 	bad.Workers = 9

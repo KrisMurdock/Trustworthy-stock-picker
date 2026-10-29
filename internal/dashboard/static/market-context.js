@@ -148,9 +148,10 @@
     const badge = byId("market-signal-status");
     badge.textContent = signalStatusLabels[report.status] || report.status || "未知";
     badge.dataset.status = report.status || "missing";
+    const koreaNote = report.session_model?.korea_features ? "已启用韩国 KOSPI/KOSDAQ 前一交易日特征。" : "韩国特征未同步，当前仅使用境内特征。";
     byId("market-signal-note").textContent = report.status === "stale"
-      ? "指数历史落后于所选日期；方向信号按最新已保存交易日计算，仅用于观察。"
-      : "日线方向与上午/下午方向均为盘前信号；高置信仅表示模型概率超过阈值，90% 目标需同时看覆盖率与 Wilson 区间。";
+      ? `指数历史落后于所选日期；方向信号按最新已保存交易日计算，仅用于观察。${koreaNote}`
+      : `日线方向与上午/下午方向均为盘前信号；高置信仅表示模型概率超过阈值，90% 目标需同时看覆盖率与 Wilson 区间。${koreaNote}`;
     const signals = list(report.signals);
     if (!signals.length) {
       cards.append(el("p", "market-context-inline-empty", "暂无可计算的核心指数方向信号。"));

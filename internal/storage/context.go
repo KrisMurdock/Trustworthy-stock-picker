@@ -17,8 +17,9 @@ import (
 
 const contextDBName = "context.db"
 
-// contextSchemaVersion stays 1 because context_minute is an optional additive
-// cache: readers tolerate a missing table and daily context remains usable.
+// contextSchemaVersion stays 1 because the minute, thirty-minute and Korean
+// caches are additive: readers tolerate missing tables and daily context
+// remains usable.
 const contextSchemaVersion = 1
 
 // ContextDB stores index and sector-board snapshots. It is intentionally
@@ -216,6 +217,28 @@ func (c *ContextDB) initSchema(create bool) error {
 			PRIMARY KEY (code, end_unix)
 		);
 		CREATE INDEX IF NOT EXISTS context_minute_date_idx ON context_minute(end_unix);
+		CREATE TABLE IF NOT EXISTS context_minute_30 (
+			code TEXT NOT NULL REFERENCES context_instrument(code) ON DELETE CASCADE,
+			end_unix INTEGER NOT NULL,
+			open REAL NOT NULL CHECK (open > 0),
+			high REAL NOT NULL CHECK (high >= open),
+			low REAL NOT NULL CHECK (low > 0),
+			close REAL NOT NULL CHECK (close > 0),
+			volume_raw REAL NOT NULL CHECK (volume_raw >= 0),
+			PRIMARY KEY (code, end_unix)
+		);
+		CREATE INDEX IF NOT EXISTS context_minute_30_date_idx ON context_minute_30(end_unix);
+		CREATE TABLE IF NOT EXISTS context_korea (
+			code TEXT NOT NULL CHECK (code IN ('KOSPI', 'KOSDAQ')),
+			trade_date TEXT NOT NULL,
+			open REAL NOT NULL CHECK (open > 0),
+			high REAL NOT NULL CHECK (high >= open),
+			low REAL NOT NULL CHECK (low > 0),
+			close REAL NOT NULL CHECK (close > 0),
+			volume_raw REAL NOT NULL CHECK (volume_raw >= 0),
+			PRIMARY KEY (code, trade_date)
+		);
+		CREATE INDEX IF NOT EXISTS context_korea_date_idx ON context_korea(trade_date);
 		CREATE TABLE IF NOT EXISTS context_sync (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			as_of TEXT NOT NULL,
@@ -508,6 +531,212 @@ func (c *ContextDB) LoadMinutesThrough(ctx context.Context, codes []string, thro
 	rows, err := c.db.QueryContext(ctx, `
 		SELECT code,end_unix,open,high,low,close,volume_raw
 		FROM context_minute
+		WHERE code IN (`+strings.Join(placeholders, ",")+`) AND end_unix < ?
+		ORDER BY code,end_unix`, args...)
+	if err != nil {
+		return nil, errors.New("cannot read context minute history")
+	}
+	defer rows.Close()
+	out := map[string][]market.MinuteBar{}
+	for rows.Next() {
+		var bar market.MinuteBar
+		var code string
+		var end int64
+		if err := rows.Scan(&code, &end, &bar.Open, &bar.High, &bar.Low, &bar.Close, &bar.Volume); err != nil {
+			return nil, errors.New("cannot read context minute history row")
+		}
+		bar.End = time.Unix(end, 0).In(market.Shanghai)
+		bar.Final = true
+		out[code] = append(out[code], bar)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("cannot read context minute history")
+	}
+	return out, nil
+}
+
+// SaveSessionMinutes upserts one index's native thirty-minute series. It is a
+// separate table from the five-minute cache because the same end timestamp can
+// belong to both granularities.
+func (c *ContextDB) SaveSessionMinutes(ctx context.Context, code string, bars []market.MinuteBar) error {
+	if c == nil || !c.writable {
+		return errors.New("context database is read-only")
+	}
+	if !config.ValidIndexCode(code) || len(bars) == 0 {
+		return errors.New("invalid context session minute request")
+	}
+	previous := time.Time{}
+	for _, bar := range bars {
+		if !bar.Final || !bar.End.After(previous) || bar.Open <= 0 || bar.Close <= 0 || bar.Low <= 0 || bar.High < bar.Open || bar.High < bar.Close || bar.Low > bar.Open || bar.Low > bar.Close {
+			return errors.New("invalid context session minute bar")
+		}
+		if _, ok := market.MinuteSession(bar.End, 30); !ok {
+			return errors.New("invalid context session minute timestamp")
+		}
+		previous = bar.End
+	}
+	if err := (&Store{root: c.root, requireCIFS: c.requireCIFS}).Check(); err != nil {
+		return err
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("cannot begin context session minute transaction")
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO context_minute_30(code,end_unix,open,high,low,close,volume_raw) VALUES(?,?,?,?,?,?,?) ON CONFLICT(code,end_unix) DO UPDATE SET open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close,volume_raw=excluded.volume_raw`)
+	if err != nil {
+		return errors.New("cannot prepare context session minutes")
+	}
+	defer stmt.Close()
+	for _, bar := range bars {
+		if _, err := stmt.ExecContext(ctx, code, bar.End.Unix(), bar.Open, bar.High, bar.Low, bar.Close, bar.Volume); err != nil {
+			return errors.New("cannot save context session minute")
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("cannot commit context session minutes")
+	}
+	return nil
+}
+
+// LoadSessionMinutesThrough returns native thirty-minute index history through
+// a trading date. Missing tables are treated as an empty optional cache.
+func (c *ContextDB) LoadSessionMinutesThrough(ctx context.Context, codes []string, through string) (map[string][]market.MinuteBar, error) {
+	return c.loadMinuteTable(ctx, "context_minute_30", codes, through)
+}
+
+// SaveKoreaBars upserts daily KOSPI or KOSDAQ bars. The series is independent
+// from the Chinese context instruments so a Korean provider outage cannot
+// corrupt or block the domestic index snapshot.
+func (c *ContextDB) SaveKoreaBars(ctx context.Context, code string, bars []market.KoreaBar) error {
+	if c == nil || !c.writable {
+		return errors.New("context database is read-only")
+	}
+	if !market.ValidKoreaCode(code) || len(bars) == 0 || len(bars) > market.KoreaHistoryLimit {
+		return errors.New("invalid context korea request")
+	}
+	previous := ""
+	for _, bar := range bars {
+		if _, err := time.Parse("2006-01-02", bar.Date); err != nil || bar.Date <= previous || bar.Open <= 0 || bar.Close <= 0 || bar.Low <= 0 || bar.High < bar.Open || bar.High < bar.Close || bar.Low > bar.Open || bar.Low > bar.Close || bar.Volume < 0 {
+			return errors.New("invalid context korea bar")
+		}
+		previous = bar.Date
+	}
+	if err := (&Store{root: c.root, requireCIFS: c.requireCIFS}).Check(); err != nil {
+		return err
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("cannot begin context korea transaction")
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO context_korea(code,trade_date,open,high,low,close,volume_raw) VALUES(?,?,?,?,?,?,?) ON CONFLICT(code,trade_date) DO UPDATE SET open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close,volume_raw=excluded.volume_raw`)
+	if err != nil {
+		return errors.New("cannot prepare context korea bars")
+	}
+	defer stmt.Close()
+	for _, bar := range bars {
+		if _, err := stmt.ExecContext(ctx, code, bar.Date, bar.Open, bar.High, bar.Low, bar.Close, bar.Volume); err != nil {
+			return errors.New("cannot save context korea bar")
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("cannot commit context korea bars")
+	}
+	return nil
+}
+
+// LoadKoreaBarsThrough returns stored KOSPI/KOSDAQ daily history through a
+// date. Missing tables or codes are treated as an empty optional cache.
+func (c *ContextDB) LoadKoreaBarsThrough(ctx context.Context, codes []string, through string) (map[string][]market.KoreaBar, error) {
+	if c == nil || c.db == nil {
+		return nil, fs.ErrNotExist
+	}
+	if len(codes) == 0 || len(codes) > 8 {
+		return nil, errors.New("invalid korea code count")
+	}
+	if parsed, err := time.Parse("2006-01-02", through); err != nil || parsed.Format("2006-01-02") != through {
+		return nil, errors.New("invalid korea through date")
+	}
+	var exists int
+	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name='context_korea'`).Scan(&exists); err != nil {
+		return nil, errors.New("cannot inspect korea table")
+	}
+	if exists == 0 {
+		return map[string][]market.KoreaBar{}, nil
+	}
+	seen := make(map[string]bool, len(codes))
+	placeholders := make([]string, 0, len(codes))
+	args := make([]any, 0, len(codes)+1)
+	for _, code := range codes {
+		if !market.ValidKoreaCode(code) || seen[code] {
+			return nil, errors.New("duplicate or invalid korea code")
+		}
+		seen[code] = true
+		placeholders = append(placeholders, "?")
+		args = append(args, code)
+	}
+	args = append(args, through)
+	rows, err := c.db.QueryContext(ctx, `
+		SELECT code,trade_date,open,high,low,close,volume_raw
+		FROM context_korea
+		WHERE code IN (`+strings.Join(placeholders, ",")+`) AND trade_date <= ?
+		ORDER BY code,trade_date`, args...)
+	if err != nil {
+		return nil, errors.New("cannot read korea history")
+	}
+	defer rows.Close()
+	out := map[string][]market.KoreaBar{}
+	for rows.Next() {
+		var bar market.KoreaBar
+		var code string
+		if err := rows.Scan(&code, &bar.Date, &bar.Open, &bar.High, &bar.Low, &bar.Close, &bar.Volume); err != nil {
+			return nil, errors.New("cannot read korea history row")
+		}
+		out[code] = append(out[code], bar)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("cannot read korea history")
+	}
+	return out, nil
+}
+
+func (c *ContextDB) loadMinuteTable(ctx context.Context, table string, codes []string, through string) (map[string][]market.MinuteBar, error) {
+	if c == nil || c.db == nil {
+		return nil, fs.ErrNotExist
+	}
+	if table != "context_minute" && table != "context_minute_30" {
+		return nil, errors.New("invalid context minute table")
+	}
+	if len(codes) == 0 || len(codes) > 64 {
+		return nil, errors.New("invalid context minute code count")
+	}
+	parsed, err := time.ParseInLocation("2006-01-02", through, market.Shanghai)
+	if err != nil || parsed.Format("2006-01-02") != through {
+		return nil, errors.New("invalid context minute through date")
+	}
+	var exists int
+	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&exists); err != nil {
+		return nil, errors.New("cannot inspect context minute table")
+	}
+	if exists == 0 {
+		return map[string][]market.MinuteBar{}, nil
+	}
+	seen := make(map[string]bool, len(codes))
+	placeholders := make([]string, 0, len(codes))
+	args := make([]any, 0, len(codes)+1)
+	for _, code := range codes {
+		if !config.ValidIndexCode(code) || seen[code] {
+			return nil, errors.New("duplicate or invalid context minute code")
+		}
+		seen[code] = true
+		placeholders = append(placeholders, "?")
+		args = append(args, code)
+	}
+	args = append(args, parsed.AddDate(0, 0, 1).Unix())
+	rows, err := c.db.QueryContext(ctx, `
+		SELECT code,end_unix,open,high,low,close,volume_raw
+		FROM `+table+`
 		WHERE code IN (`+strings.Join(placeholders, ",")+`) AND end_unix < ?
 		ORDER BY code,end_unix`, args...)
 	if err != nil {

@@ -178,13 +178,14 @@ func main() {
 | `status-audit` | 只读审计交易日、停牌、缺口和可分析状态 | 否 | 否 |
 | `sync` | 同步整池行情、指数与全量板块并生成报告 | 是 | 否 |
 | `sync-context` | 只补跑指数与板块同步，用于排障 | 是 | 否 |
-| `sync-index-minutes` | 补采上证/创业板指数 5 分钟线到 `context.db`，用于上午/下午树模型 | 是 | 否 |
+| `sync-index-minutes` | 补采上证/创业板指数 5/30 分钟线到 `context.db`，用于上午/下午树模型 | 是 | 否 |
+| `sync-korea-context` | 补采 KOSPI/KOSDAQ 日线到 `context.db`，作为可选盘前特征 | 是 | 否 |
 | `sync-intraday` | 手动执行一轮 5 分钟采集 | 是 | 否 |
 | `backfill-minutes` | 用 BaoStock 或新浪补齐历史 5 分钟线，支持 staging 与断点续跑 | 是 | 否 |
 | `train-predictor` | 在停止 `run` 后手动训练下一有效期模型 | 是 | 否 |
 | `predictor-status` | 只读查看预测模型、开关和最近状态 | 否 | 否 |
 | `predictor-eval` | 只读运行多训练窗口滚动评估，输出确定性 JSON | 否 | 否 |
-| `market-signal` | 只读计算上证/创业板下一交易日方向、上午/下午树模型与周内统计 | 否 | 否 |
+| `market-signal` | 只读计算上证/创业板下一交易日方向、上午/下午树模型（可选韩国特征）与周内统计 | 否 | 否 |
 | `train-dayrange [-as-of D] [-offline]` | 审计冻结数据、训练与校准盘前高低价模型；离线模式只写临时库 | 是 | 否 |
 | `predict-dayrange [-as-of D] [-code C]` | 生成并保存下一交易日盘前高低价预测 | 是 | 否 |
 | `reconcile-dayrange [-as-of D]` | 用完整日线核对预测目标日的实际高低价 | 是 | 否 |

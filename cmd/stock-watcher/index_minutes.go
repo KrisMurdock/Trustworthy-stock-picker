@@ -26,6 +26,10 @@ type indexMinuteSyncResult struct {
 	First        string `json:"first,omitempty"`
 	Last         string `json:"last,omitempty"`
 	CoverageDays int    `json:"coverage_days"`
+	SessionBars  int    `json:"session_bars"`
+	SessionFirst string `json:"session_first,omitempty"`
+	SessionLast  string `json:"session_last,omitempty"`
+	SessionDays  int    `json:"session_days"`
 	Status       string `json:"status"`
 }
 
@@ -51,21 +55,19 @@ func runSyncIndexMinutes(ctx context.Context, c config.Config, asOf, from string
 		}
 	}
 	if from == "" {
-		days, err := cal.TradingDays(cal.ValidFrom(), asOf)
-		if err != nil || len(days) == 0 {
-			return errors.New("cannot determine index minute sync range")
+		start, err := time.Parse("2006-01-02", asOf)
+		if err != nil {
+			return errors.New("cannot determine index session sync range")
 		}
-		first := 0
-		if len(days) > 100 {
-			first = len(days) - 100
-		}
-		from = days[first]
+		from = start.AddDate(-3, 0, 0).Format("2006-01-02")
 	} else {
-		days, err := cal.TradingDays(from, asOf)
-		if err != nil || len(days) == 0 {
-			return errors.New("index minute sync range must use configured trading days")
+		start, err := time.Parse("2006-01-02", from)
+		if err != nil || start.Format("2006-01-02") != from {
+			return errors.New("index minute sync range must use valid dates")
 		}
-		from = days[0]
+		if start.Format("2006-01-02") > asOf {
+			return errors.New("index minute sync start must not be after as-of")
+		}
 	}
 	db, err := storage.InitContext(c.DataDir, c.RequireCIFS)
 	if err != nil {
@@ -102,6 +104,13 @@ func runSyncIndexMinutes(ctx context.Context, c config.Config, asOf, from string
 		if err := db.SaveMinutes(ctx, index.Code, archive.Bars); err != nil {
 			return err
 		}
+		sessionArchive, err := client.FetchSessionRange(ctx, config.Stock{Code: index.Code, Name: index.Name}, from, asOf)
+		if err != nil {
+			return fmt.Errorf("fetch %s index session minutes: %w", index.Code, err)
+		}
+		if err := db.SaveSessionMinutes(ctx, index.Code, sessionArchive.Bars); err != nil {
+			return err
+		}
 		days := map[string]int{}
 		for _, bar := range archive.Bars {
 			days[bar.End.In(market.Shanghai).Format("2006-01-02")]++
@@ -112,10 +121,22 @@ func runSyncIndexMinutes(ctx context.Context, c config.Config, asOf, from string
 				completeDays++
 			}
 		}
+		sessionDays := map[string]int{}
+		for _, bar := range sessionArchive.Bars {
+			sessionDays[bar.End.In(market.Shanghai).Format("2006-01-02")]++
+		}
+		completeSessionDays := 0
+		for _, count := range sessionDays {
+			if count == 8 {
+				completeSessionDays++
+			}
+		}
 		results = append(results, indexMinuteSyncResult{
 			Command: "sync-index-minutes", AsOf: asOf, From: from, Code: index.Code, Name: index.Name,
 			Bars: len(archive.Bars), First: archive.Bars[0].End.Format("2006-01-02 15:04"), Last: archive.Bars[len(archive.Bars)-1].End.Format("2006-01-02 15:04"),
-			CoverageDays: completeDays, Status: "ok",
+			CoverageDays: completeDays,
+			SessionBars:  len(sessionArchive.Bars), SessionFirst: sessionArchive.Bars[0].End.Format("2006-01-02 15:04"), SessionLast: sessionArchive.Bars[len(sessionArchive.Bars)-1].End.Format("2006-01-02 15:04"),
+			SessionDays: completeSessionDays, Status: "ok",
 		})
 	}
 	if log != nil {

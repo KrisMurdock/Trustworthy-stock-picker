@@ -154,3 +154,22 @@ func TestSinaMinuteRangeAcceptsIndexCodes(t *testing.T) {
 		}
 	}
 }
+
+func TestSinaSessionRangeReadsThirtyMinuteBars(t *testing.T) {
+	rows := make([]sinaKLineRow, 0, 8)
+	for _, minute := range []int{600, 630, 660, 690, 810, 840, 870, 900} {
+		end := time.Date(2026, 10, 20, minute/60, minute%60, 0, 0, Shanghai)
+		rows = append(rows, sinaKLineRow{Day: end.Format("2006-01-02 15:04:05"), Open: "100", High: "102", Low: "99", Close: "101", Volume: "1000"})
+	}
+	server := sinaKLineServer(t, map[string][]sinaKLineRow{"sh000001": rows})
+	defer server.Close()
+	client := NewSinaKLineClient(time.Second, 0)
+	client.Endpoint = server.URL
+	archive, err := client.FetchSessionRange(context.Background(), config.Stock{Code: "sh000001"}, "2026-10-20", "2026-10-20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archive.Period != 30 || archive.BasePeriod != 30 || len(archive.Bars) != 8 || !archive.Bars[0].End.Equal(time.Date(2026, 10, 20, 10, 0, 0, 0, Shanghai)) {
+		t.Fatalf("unexpected session archive: %+v", archive)
+	}
+}

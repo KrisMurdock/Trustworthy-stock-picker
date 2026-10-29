@@ -37,15 +37,15 @@ type MinuteArchive struct {
 func (h MinuteArchive) Validate() error {
 	first, e1 := time.ParseInLocation("2006-01-02", h.From, Shanghai)
 	last, e2 := time.ParseInLocation("2006-01-02", h.Through, Shanghai)
-	if h.Version != 1 || !config.ValidInstrumentCode(h.Code) || (h.Source != "baostock" && h.Source != "sina") || h.Period != 5 ||
-		h.BasePeriod != 5 || h.Adjust != "none" || (h.VolumeUnit != "shares" && h.VolumeUnit != "provider_raw") || h.FetchedAt.IsZero() ||
+	if h.Version != 1 || !config.ValidInstrumentCode(h.Code) || (h.Source != "baostock" && h.Source != "sina") || (h.Period != 5 && h.Period != 30) ||
+		h.BasePeriod != h.Period || h.Adjust != "none" || (h.VolumeUnit != "shares" && h.VolumeUnit != "provider_raw") || h.FetchedAt.IsZero() ||
 		e1 != nil || e2 != nil || first.After(last) || len(h.Bars) > MinuteArchiveLimit {
 		return errors.New("invalid minute archive metadata")
 	}
 	var previous time.Time
 	for _, b := range h.Bars {
 		day := b.End.In(Shanghai).Format("2006-01-02")
-		if day < h.From || day > h.Through || !b.Final || !b.End.After(previous) || !validArchiveMinuteBar(b) {
+		if day < h.From || day > h.Through || !b.Final || !b.End.After(previous) || !validArchiveMinuteBar(b, h.Period) {
 			return errors.New("invalid minute archive bar")
 		}
 		previous = b.End
@@ -53,8 +53,8 @@ func (h MinuteArchive) Validate() error {
 	return nil
 }
 
-func validArchiveMinuteBar(b MinuteBar) bool {
-	if _, ok := MinuteSession(b.End, 5); !ok || b.End.Weekday() == time.Saturday || b.End.Weekday() == time.Sunday {
+func validArchiveMinuteBar(b MinuteBar, period int) bool {
+	if _, ok := MinuteSession(b.End, period); !ok || b.End.Weekday() == time.Saturday || b.End.Weekday() == time.Sunday {
 		return false
 	}
 	for _, v := range []float64{b.Open, b.High, b.Low, b.Close, b.Volume} {
@@ -236,7 +236,7 @@ func parseBaoMinuteRow(row []string, code, pageStart, pageEnd string) (MinuteBar
 	if _, err := numeric(json.RawMessage(row[8])); err != nil {
 		return MinuteBar{}, err
 	}
-	if !validArchiveMinuteBar(bar) {
+	if !validArchiveMinuteBar(bar, 5) {
 		return MinuteBar{}, &DataError{Reason: "invalid_baostock_minute_ohlc"}
 	}
 	return bar, nil

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/marketforecast"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 )
@@ -81,22 +82,48 @@ func (h *handler) serveMarketSignal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusServiceUnavailable, "market signal is temporarily unavailable")
 		return
 	}
+	sessionMinutes, err := db.LoadSessionMinutesThrough(ctx, codes, asOf)
+	if err != nil {
+		h.log.Warn("Market signal index session minutes unavailable")
+		writeError(w, r, http.StatusServiceUnavailable, "market signal is temporarily unavailable")
+		return
+	}
+	koreaBars, err := db.LoadKoreaBarsThrough(ctx, []string{market.KoreaKOSPI, market.KoreaKOSDAQ}, asOf)
+	if err != nil {
+		h.log.Warn("Market signal korea history unavailable")
+		writeError(w, r, http.StatusServiceUnavailable, "market signal is temporarily unavailable")
+		return
+	}
 	series := make([]marketforecast.Series, 0, len(indices))
 	for _, index := range indices {
 		bars := make([]marketforecast.Bar, 0, len(stored[index.Code]))
 		for _, bar := range stored[index.Code] {
 			bars = append(bars, marketforecast.Bar{Date: bar.Date, Open: bar.Open, Close: bar.Close, High: bar.High, Low: bar.Low})
 		}
-		sessionMinutes := make([]marketforecast.MinuteBar, 0, len(minutes[index.Code]))
+		fiveMinutes := make([]marketforecast.MinuteBar, 0, len(minutes[index.Code]))
 		for _, bar := range minutes[index.Code] {
-			sessionMinutes = append(sessionMinutes, marketforecast.MinuteBar{
+			fiveMinutes = append(fiveMinutes, marketforecast.MinuteBar{
 				End: bar.End, Open: bar.Open, High: bar.High, Low: bar.Low, Close: bar.Close, Volume: bar.Volume,
 			})
 		}
-		series = append(series, marketforecast.Series{Index: index, Bars: bars, Minutes: sessionMinutes})
+		thirtyMinutes := make([]marketforecast.MinuteBar, 0, len(sessionMinutes[index.Code]))
+		for _, bar := range sessionMinutes[index.Code] {
+			thirtyMinutes = append(thirtyMinutes, marketforecast.MinuteBar{
+				End: bar.End, Open: bar.Open, High: bar.High, Low: bar.Low, Close: bar.Close, Volume: bar.Volume,
+			})
+		}
+		series = append(series, marketforecast.Series{Index: index, Bars: bars, Minutes: fiveMinutes, SessionMinutes: thirtyMinutes})
+	}
+	korea := make([]marketforecast.KoreaSeries, 0, 2)
+	for _, code := range []string{market.KoreaKOSPI, market.KoreaKOSDAQ} {
+		bars := make([]marketforecast.Bar, 0, len(koreaBars[code]))
+		for _, bar := range koreaBars[code] {
+			bars = append(bars, marketforecast.Bar{Date: bar.Date, Open: bar.Open, Close: bar.Close, High: bar.High, Low: bar.Low})
+		}
+		korea = append(korea, marketforecast.KoreaSeries{Code: code, Bars: bars})
 	}
 	report, err := marketforecast.Build(series, marketforecast.Options{
-		AsOf: asOf, NextTradingDay: calendar.New(h.config).Next,
+		AsOf: asOf, NextTradingDay: calendar.New(h.config).Next, Korea: korea,
 	})
 	if err != nil {
 		h.log.Warn("Market signal calculation failed", "error", err)

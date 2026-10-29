@@ -49,7 +49,7 @@ func NewSinaKLineClient(timeout, interval time.Duration) *SinaKLineClient {
 func (c *SinaKLineClient) Close() { c.HTTP.CloseIdleConnections() }
 
 func (c *SinaKLineClient) fetchRows(ctx context.Context, symbol string, scale, limit int) ([]sinaKLineRow, error) {
-	if !config.ValidInstrumentCode(symbol) || (scale != 5 && scale != 240) || limit < 1 || limit > sinaKLineLimit {
+	if !config.ValidInstrumentCode(symbol) || (scale != 5 && scale != 30 && scale != 240) || limit < 1 || limit > sinaKLineLimit {
 		return nil, &DataError{Reason: "invalid_sina_kline_request"}
 	}
 	query := url.Values{}
@@ -180,17 +180,28 @@ func (c *SinaKLineClient) FetchStatus(ctx context.Context, stock config.Stock, s
 // public endpoint returns at most 5001 rows, so callers must keep the requested
 // range within roughly 100 complete sessions.
 func (c *SinaKLineClient) FetchMinuteRange(ctx context.Context, stock config.Stock, from, through string) (MinuteArchive, error) {
+	return c.fetchMinuteArchive(ctx, stock, from, through, 5)
+}
+
+// FetchSessionRange downloads native thirty-minute bars. The public endpoint
+// returns at most 5001 rows, so the range can cover roughly 625 complete
+// sessions, which is enough to train a session model on more than one year.
+func (c *SinaKLineClient) FetchSessionRange(ctx context.Context, stock config.Stock, from, through string) (MinuteArchive, error) {
+	return c.fetchMinuteArchive(ctx, stock, from, through, 30)
+}
+
+func (c *SinaKLineClient) fetchMinuteArchive(ctx context.Context, stock config.Stock, from, through string, period int) (MinuteArchive, error) {
 	archive := MinuteArchive{
-		Version: 1, Code: stock.Code, Name: stock.Name, Source: "sina", Period: 5,
-		BasePeriod: 5, Adjust: "none", VolumeUnit: "shares", From: from, Through: through,
+		Version: 1, Code: stock.Code, Name: stock.Name, Source: "sina", Period: period,
+		BasePeriod: period, Adjust: "none", VolumeUnit: "shares", From: from, Through: through,
 		FetchedAt: time.Now().In(Shanghai),
 	}
 	first, e1 := time.ParseInLocation("2006-01-02", from, Shanghai)
 	last, e2 := time.ParseInLocation("2006-01-02", through, Shanghai)
-	if !config.ValidInstrumentCode(stock.Code) || e1 != nil || e2 != nil || first.After(last) || last.Sub(first) > 20*366*24*time.Hour {
+	if !config.ValidInstrumentCode(stock.Code) || (period != 5 && period != 30) || e1 != nil || e2 != nil || first.After(last) || last.Sub(first) > 20*366*24*time.Hour {
 		return MinuteArchive{}, &DataError{Reason: "invalid_sina_minute_range"}
 	}
-	rows, err := c.fetchRows(ctx, stock.Code, 5, sinaKLineLimit)
+	rows, err := c.fetchRows(ctx, stock.Code, period, sinaKLineLimit)
 	if err != nil {
 		return MinuteArchive{}, err
 	}

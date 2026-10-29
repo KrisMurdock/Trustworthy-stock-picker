@@ -11,9 +11,9 @@ const (
 	SessionMorning   = "morning"
 	SessionAfternoon = "afternoon"
 
-	SessionModelID        = "index_session_tree_v1"
-	SessionModelVersion   = 1
-	SessionFeatureVersion = 1
+	SessionModelID        = "index_session_tree_v2"
+	SessionModelVersion   = 2
+	SessionFeatureVersion = 2
 
 	SessionMinTrainingSamples  = 30
 	SessionMinValidationSample = 20
@@ -100,18 +100,22 @@ type SessionSignal struct {
 }
 
 // SessionFeatureNames returns the daily feature order followed by the session
-// feature order.
-func SessionFeatureNames() []string {
+// feature order. Korean features are appended only when their cache is usable.
+func SessionFeatureNames(useKorea bool) []string {
 	out := FeatureNames()
-	return append(out, sessionFeatureNames...)
+	out = append(out, sessionFeatureNames...)
+	if useKorea {
+		out = append(out, koreaFeatureNames...)
+	}
+	return out
 }
 
-func buildSessionSignals(bars []Bar, minutes []MinuteBar, target string) []SessionSignal {
+func buildSessionSignals(bars []Bar, minutes, sessionMinutes []MinuteBar, target string, korea koreaContext, useKorea bool) []SessionSignal {
 	if len(bars) < 62 || target == "" {
 		return nil
 	}
-	days := buildSessionDays(bars, minutes)
-	morningSamples, afternoonSamples := sessionSamplesFor(bars, days)
+	days := buildSessionDays(bars, minutes, sessionMinutes)
+	morningSamples, afternoonSamples := sessionSamplesFor(bars, days, korea, useKorea)
 	out := make([]SessionSignal, 0, 2)
 	for _, item := range []struct {
 		name    string
@@ -139,7 +143,7 @@ func buildSessionSignals(bars []Bar, minutes []MinuteBar, target string) []Sessi
 			out = append(out, signal)
 			continue
 		}
-		features, ok := sessionFeatureValues(bars, days, target)
+		features, ok := sessionFeatureValues(bars, days, target, korea, useKorea)
 		if !ok {
 			signal.Reason = "session features unavailable; minute history may end before the latest index bar"
 			out = append(out, signal)
@@ -165,7 +169,7 @@ func buildSessionSignals(bars []Bar, minutes []MinuteBar, target string) []Sessi
 	return out
 }
 
-func normalizeSessionBars(input []MinuteBar) []MinuteBar {
+func normalizeSessionBars(input []MinuteBar, period int) []MinuteBar {
 	out := make([]MinuteBar, 0, len(input))
 	for _, bar := range input {
 		if bar.End.IsZero() || bar.Close <= 0 || bar.Open <= 0 || bar.Low <= 0 || bar.High < bar.Open || bar.High < bar.Close || bar.Low > bar.Open || bar.Low > bar.Close {
@@ -174,7 +178,7 @@ func normalizeSessionBars(input []MinuteBar) []MinuteBar {
 		if !finite(bar.Volume) || bar.Volume < 0 {
 			continue
 		}
-		if _, ok := minuteSessionTime(bar.End, 5); !ok {
+		if _, ok := minuteSessionTime(bar.End, period); !ok {
 			continue
 		}
 		out = append(out, bar)
@@ -195,20 +199,41 @@ func normalizeSessionBars(input []MinuteBar) []MinuteBar {
 }
 
 func minuteSessionTime(end time.Time, period int) (int, bool) {
+	if period != 5 && period != 30 {
+		return 0, false
+	}
 	t := end.In(marketShanghai())
 	n := t.Hour()*60 + t.Minute()
 	for _, start := range []int{570, 780} {
-		if period == 5 && n > start && n <= start+120 && (n-start)%period == 0 && t.Second() == 0 && t.Nanosecond() == 0 {
+		if n > start && n <= start+120 && (n-start)%period == 0 && t.Second() == 0 && t.Nanosecond() == 0 {
 			return start, true
 		}
 	}
 	return 0, false
 }
 
-func buildSessionDays(bars []Bar, minutes []MinuteBar) []sessionDay {
+func buildSessionDays(bars []Bar, minutes, sessionMinutes []MinuteBar) []sessionDay {
+	byDate := map[string]sessionDay{}
+	for _, day := range buildSessionDaysForPeriod(bars, sessionMinutes, 30) {
+		byDate[day.date] = day
+	}
+	for _, day := range buildSessionDaysForPeriod(bars, minutes, 5) {
+		if _, ok := byDate[day.date]; !ok {
+			byDate[day.date] = day
+		}
+	}
+	out := make([]sessionDay, 0, len(byDate))
+	for _, day := range byDate {
+		out = append(out, day)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].date < out[j].date })
+	return out
+}
+
+func buildSessionDaysForPeriod(bars []Bar, minutes []MinuteBar, period int) []sessionDay {
 	grouped := map[string][]MinuteBar{}
 	tz := marketShanghai()
-	for _, bar := range normalizeSessionBars(minutes) {
+	for _, bar := range normalizeSessionBars(minutes, period) {
 		day := bar.End.In(tz).Format("2006-01-02")
 		grouped[day] = append(grouped[day], bar)
 	}
@@ -224,14 +249,18 @@ func buildSessionDays(bars []Bar, minutes []MinuteBar) []sessionDay {
 	out := make([]sessionDay, 0, len(dates))
 	for _, date := range dates {
 		dayBars := grouped[date]
-		if len(dayBars) != 48 {
+		required, morningRequired, afternoonRequired := 48, 24, 24
+		if period == 30 {
+			required, morningRequired, afternoonRequired = 8, 4, 4
+		}
+		if len(dayBars) != required {
 			continue
 		}
 		morningCount, afternoonCount := 0, 0
 		var morning, closeBar *MinuteBar
 		for index := range dayBars {
 			bar := &dayBars[index]
-			start, ok := minuteSessionTime(bar.End, 5)
+			start, ok := minuteSessionTime(bar.End, period)
 			if !ok {
 				continue
 			}
@@ -249,7 +278,7 @@ func buildSessionDays(bars []Bar, minutes []MinuteBar) []sessionDay {
 				closeBar = bar
 			}
 		}
-		if morning == nil || closeBar == nil || morningCount != 24 || afternoonCount != 24 {
+		if morning == nil || closeBar == nil || morningCount != morningRequired || afternoonCount != afternoonRequired {
 			continue
 		}
 		index, ok := byDate[date]
@@ -269,7 +298,7 @@ func buildSessionDays(bars []Bar, minutes []MinuteBar) []sessionDay {
 	return out
 }
 
-func sessionSamplesFor(bars []Bar, days []sessionDay) ([]sessionSample, []sessionSample) {
+func sessionSamplesFor(bars []Bar, days []sessionDay, korea koreaContext, useKorea bool) ([]sessionSample, []sessionSample) {
 	if len(days) == 0 {
 		return nil, nil
 	}
@@ -300,6 +329,13 @@ func sessionSamplesFor(bars []Bar, days []sessionDay) ([]sessionSample, []sessio
 			afternoon5 += days[j].afternoonReturn
 		}
 		features = append(features, days[k-1].morningReturn, days[k-1].afternoonReturn, morning5/5, afternoon5/5)
+		if useKorea {
+			koreaFeatures, ok := korea.features(day.date)
+			if !ok {
+				continue
+			}
+			features = append(features, koreaFeatures...)
+		}
 		weekday := targetWeekday(day.date)
 		if day.morningReturn != 0 {
 			label := 0
@@ -323,7 +359,7 @@ func sessionSamplesFor(bars []Bar, days []sessionDay) ([]sessionSample, []sessio
 	return morning, afternoon
 }
 
-func sessionFeatureValues(bars []Bar, days []sessionDay, target string) ([]float64, bool) {
+func sessionFeatureValues(bars []Bar, days []sessionDay, target string, korea koreaContext, useKorea bool) ([]float64, bool) {
 	if len(bars) < 62 || len(days) < 5 {
 		return nil, false
 	}
@@ -341,7 +377,15 @@ func sessionFeatureValues(bars []Bar, days []sessionDay, target string) ([]float
 		afternoon5 += days[index].afternoonReturn
 	}
 	lastDay := days[len(days)-1]
-	return append(features, lastDay.morningReturn, lastDay.afternoonReturn, morning5/5, afternoon5/5), true
+	features = append(features, lastDay.morningReturn, lastDay.afternoonReturn, morning5/5, afternoon5/5)
+	if useKorea {
+		koreaFeatures, ok := korea.features(target)
+		if !ok {
+			return nil, false
+		}
+		features = append(features, koreaFeatures...)
+	}
+	return features, true
 }
 
 func sessionWeekdayStats(days []sessionDay, session string) []WeekdayStat {

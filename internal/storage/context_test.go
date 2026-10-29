@@ -158,3 +158,57 @@ func TestContextViewToleratesMissingMinuteTable(t *testing.T) {
 		t.Fatalf("missing minute table was not tolerated: %v %+v", err, minutes)
 	}
 }
+
+func TestContextSessionMinutesAndKoreaRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	db, err := InitContext(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	at := time.Date(2026, 10, 19, 19, 0, 0, 0, time.UTC)
+	if err := db.SaveInstrument(ctx, ContextInstrument{Code: "sh000001", Name: "上证指数", Kind: "index", Category: "index", Source: "sina", UpdatedAt: at}, []ContextBar{
+		{Code: "sh000001", Date: "2026-10-16", Open: 100, Close: 101, High: 102, Low: 99, Volume: 1000},
+		{Code: "sh000001", Date: "2026-10-19", Open: 101, Close: 103, High: 104, Low: 100, Volume: 1200},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var sessions []market.MinuteBar
+	day := time.Date(2026, 10, 19, 0, 0, 0, 0, market.Shanghai)
+	for _, minute := range []int{600, 630, 660, 690, 810, 840, 870, 900} {
+		end := time.Date(day.Year(), day.Month(), day.Day(), minute/60, minute%60, 0, 0, market.Shanghai)
+		sessions = append(sessions, market.MinuteBar{End: end, Open: 100, High: 102, Low: 99, Close: 101, Volume: 1000, Final: true})
+	}
+	if err := db.SaveSessionMinutes(ctx, "sh000001", sessions); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveSessionMinutes(ctx, "BK1036", sessions); err == nil {
+		t.Fatal("board session series was accepted")
+	}
+	korea := []market.KoreaBar{
+		{Date: "2026-10-16", Open: 2600, High: 2620, Low: 2590, Close: 2610, Volume: 1000},
+		{Date: "2026-10-19", Open: 2611, High: 2630, Low: 2600, Close: 2625, Volume: 1200},
+	}
+	if err := db.SaveKoreaBars(ctx, market.KoreaKOSPI, korea); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveKoreaBars(ctx, "NIKKEI", korea); err == nil {
+		t.Fatal("unknown korea code was accepted")
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	view, err := OpenContextView(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer view.Close()
+	loaded, err := view.LoadSessionMinutesThrough(ctx, []string{"sh000001"}, "2026-10-19")
+	if err != nil || len(loaded["sh000001"]) != 8 || loaded["sh000001"][0].End.Format("15:04") != "10:00" {
+		t.Fatalf("load session minutes: %v %+v", err, loaded)
+	}
+	loadedKorea, err := view.LoadKoreaBarsThrough(ctx, []string{market.KoreaKOSPI}, "2026-10-19")
+	if err != nil || len(loadedKorea[market.KoreaKOSPI]) != 2 || loadedKorea[market.KoreaKOSPI][1].Close != 2625 {
+		t.Fatalf("load korea bars: %v %+v", err, loadedKorea)
+	}
+}

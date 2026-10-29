@@ -43,9 +43,10 @@ type Bar struct {
 // Series is one index history. Bars may arrive unsorted; Build normalizes and
 // cuts them at the requested as-of date before fitting anything.
 type Series struct {
-	Index   Index
-	Bars    []Bar
-	Minutes []MinuteBar
+	Index          Index
+	Bars           []Bar
+	Minutes        []MinuteBar
+	SessionMinutes []MinuteBar
 }
 
 // Options controls one deterministic fit. NextTradingDay is supplied by the
@@ -55,6 +56,7 @@ type Options struct {
 	NextTradingDay    func(string) (string, error)
 	TrainingSamples   int
 	ValidationSamples int
+	Korea             []KoreaSeries
 }
 
 type Report struct {
@@ -109,6 +111,7 @@ type SessionModelInfo struct {
 	MinLeaf                 int      `json:"min_leaf"`
 	MinTrainingSamples      int      `json:"min_training_samples"`
 	MinValidationSamples    int      `json:"min_validation_samples"`
+	KoreaFeatures           bool     `json:"korea_features"`
 }
 
 type TrainingInfo struct {
