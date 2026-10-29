@@ -53,6 +53,7 @@ Stock Watcher 是一个用纯 Go 构建的 A 股研究型行情引擎。它从�
 - **严格的数据完整性**：校验交易日历、上市日期、分页、复权口径、成交量单位和历史覆盖；覆盖率不足时不发布推荐。
 - **SQLite 事务存储**：行情、同步状态、报告和投递账本保存在 `<data_dir>/market.db`；盘前高低价模型、预测与核对档案保存在独立 `<data_dir>/dayrange.db`。同一数据目录只允许一个写入进程。
 - **可审计的全天高低价观察**：盘前生成当日最高/最低价点估计、分位数与区间，收盘后核对实际极值；未通过验证门禁时保留历史波幅基线，不进入正式推荐或飞书主卡，独立结果可按目标日和页码幂等推送到“当日预测机器人”。盘前预测保存后还会把精排 Top N 与预测结果关联，向独立执行确认机器人推送“可执行／观察／放弃”清单。
+- **指数方向信号**：读取 `context.db` 的上证指数与创业板指日线，按截止日确定性重训逻辑回归，输出下一交易日上涨概率、40 日样本外对照和周一至周五历史胜率；只读展示，不改排名、不推送、不构成交易建议。
 - **可复核的短线研究**：前复权特征、真实费用与滑点、T+1 成交模拟、滚动验证和独立留出样本。
 - **两层选股**：正式 `short_horizon_v1` 精排之外，另有独立的高召回第一层初筛；初筛结果作为精排候选参考，当前不改变正式推荐。
 - **可维护的龙头股池**：`leaders.yaml` 当前包含 165 只沪深龙头，宇树科技、星网锐捷、亿联网络等已纳入，股池与运行参数分开维护。
@@ -177,11 +178,13 @@ func main() {
 | `status-audit` | 只读审计交易日、停牌、缺口和可分析状态 | 否 | 否 |
 | `sync` | 同步整池行情、指数与全量板块并生成报告 | 是 | 否 |
 | `sync-context` | 只补跑指数与板块同步，用于排障 | 是 | 否 |
+| `sync-index-minutes` | 补采上证/创业板指数 5 分钟线到 `context.db`，用于上午/下午树模型 | 是 | 否 |
 | `sync-intraday` | 手动执行一轮 5 分钟采集 | 是 | 否 |
 | `backfill-minutes` | 用 BaoStock 或新浪补齐历史 5 分钟线，支持 staging 与断点续跑 | 是 | 否 |
 | `train-predictor` | 在停止 `run` 后手动训练下一有效期模型 | 是 | 否 |
 | `predictor-status` | 只读查看预测模型、开关和最近状态 | 否 | 否 |
 | `predictor-eval` | 只读运行多训练窗口滚动评估，输出确定性 JSON | 否 | 否 |
+| `market-signal` | 只读计算上证/创业板下一交易日方向、上午/下午树模型与周内统计 | 否 | 否 |
 | `train-dayrange [-as-of D] [-offline]` | 审计冻结数据、训练与校准盘前高低价模型；离线模式只写临时库 | 是 | 否 |
 | `predict-dayrange [-as-of D] [-code C]` | 生成并保存下一交易日盘前高低价预测 | 是 | 否 |
 | `reconcile-dayrange [-as-of D]` | 用完整日线核对预测目标日的实际高低价 | 是 | 否 |
@@ -282,7 +285,7 @@ func main() {
 | `/review` | 冻结推荐回看、T+1/T+3/T+5 检查点、证据详情和手动 AI 归因 |
 | `/calculator` | 浏览器内仓位、持仓、剩余风险与净止盈价计算 |
 
-行情、报告、复盘、分钟预测和全天高低价预测的读取接口只读，包括 `/healthz`、`/api/dashboard`、`/api/reports?as_of=YYYY-MM-DD`、`/api/history?code=sz000001`、`/api/intraday?code=sz000001&period=5`、`/api/predictions?date=YYYY-MM-DD`、`/api/predictor`、`/api/day-range?date=YYYY-MM-DD`、`/api/day-range/status` 和 `/api/day-range/evaluation?date=YYYY-MM-DD`。写入口仅有受保护的 `PUT /api/predictor/config`（飞书预测推送开关）以及 loopback/同源约束下的 LLM 配置与对话/归因接口；公网匿名模式会拒绝全部非 GET/HEAD 请求。摘要页和股票页每分钟刷新，刷新不会触发行情下载或消息推送。
+行情、报告、复盘、指数方向、分钟预测和全天高低价预测的读取接口只读，包括 `/healthz`、`/api/dashboard`、`/api/reports?as_of=YYYY-MM-DD`、`/api/history?code=sz000001`、`/api/intraday?code=sz000001&period=5`、`/api/market-signal?as_of=YYYY-MM-DD`、`/api/predictions?date=YYYY-MM-DD`、`/api/predictor`、`/api/day-range?date=YYYY-MM-DD`、`/api/day-range/status` 和 `/api/day-range/evaluation?date=YYYY-MM-DD`。写入口仅有受保护的 `PUT /api/predictor/config`（飞书预测推送开关）以及 loopback/同源约束下的 LLM 配置与对话/归因接口；公网匿名模式会拒绝全部非 GET/HEAD 请求。摘要页和股票页每分钟刷新，刷新不会触发行情下载或消息推送。
 
 网页没有内置账号或权限系统，默认仅监听 `127.0.0.1:8080`。远程访问必须使用受控网络或已有认证反向代理；代理应保留根路径、`/api/` 和 `/assets/`。
 
@@ -404,6 +407,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | `internal/strategy` | 前复权特征、成交模拟、排名、滚动验证和留出样本 |
 | `internal/predictor` | 5 分钟 pooled GBDT、特征、卡尔曼趋势、预测库与投递 |
 | `internal/marketcontext` | 指数与行业/概念板块上下文同步和独立 `context.db` |
+| `internal/marketforecast` | 上证/创业板下一交易日方向模型、周内统计和只读信号 |
 | `internal/review` / `internal/advisor` | 冻结推荐复盘投影与基于证据的只读 AI 分析 |
 | `internal/dayrange` | 盘前高低价数据审计、确定性树模型、区间校准、预测/核对与评估 |
 | `internal/dashboard` | 内嵌 HTML/CSS/JavaScript、SVG K 线和只读 API |
@@ -429,6 +433,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | 模型与实验存储 | [模型、特征与评估产物存储](docs/model-storage.md) |
 | 5 分钟预测 | [5 分钟价格预测](docs/minute-predictor.md) · [close L1 损失评估](docs/predictor-l1-loss-evaluation.md) |
 | 全天高低价预测 | [开发路线与当前边界](docs/dayrange-roadmap.md) · [评估指标契约](docs/dayrange-evaluation.md) |
+| 指数方向信号 | [模型口径、周内统计与限制](docs/market-signal.md) |
 | 研究与工具 | [单股价格策略](docs/单股价格策略.md) · [底部形态](docs/bottom-signals.md) |
 | 容器 | [Compose 部署与升级](docker/README.md) |
 
@@ -438,6 +443,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 - 日线来自多个上游，分钟线当前只采集腾讯 5 分钟原始线并派生 15/30/60 分钟；上游窗口和修订规则可能变化。
 - 高召回初筛只用于第二层候选，历史召回率和模型分都不代表未来收益；它不改变正式推荐，初筛失败也不会阻断主报告。
 - 全天最高/最低价预测已接入盘前模型、区间校准、CLI、网页、调度、`predictor_dayrange` 飞书推送和独立 `premarket_execution` 盘前执行确认卡；阶段六盘中剩余时段模型尚未实现，网页不会把盘前结果当作盘中更新。
+- 指数方向信号只读取本地 `context.db`，每次按截止日重训；当前 40 日样本外结果未显示稳定优势，不能把上涨概率当作可执行结论。
 - 内置交易日历当前覆盖 2026 年，过期后必须升级；测试覆盖变量不得用于生产。
 - 网页没有账号或角色体系；本地默认只允许受保护的预测推送开关、LLM 配置和同源/回环 AI 请求写入，公网匿名模式会拒绝全部写请求。远程暴露必须依赖受控网络或已有认证代理。
 - 微信公众号通道只调用 `draft/add`；未认证账号可创建草稿，但 `freepublish/submit` 和群发要求认证，自动发布或群发粉丝仍需在认证后另行实现并在公众号后台确认。投递账本中的 `delivered` 只表示草稿已创建。

@@ -68,7 +68,7 @@ func (h MinuteHistory) ValidateBase() error {
 }
 
 func (h MinuteHistory) validateLimit(limit int) error {
-	if h.Version != 1 || !config.ValidCode(h.Code) || h.Source != "tencent" || !MinutePeriod(h.Period) || h.BasePeriod != 5 ||
+	if h.Version != 1 || !config.ValidInstrumentCode(h.Code) || h.Source != "tencent" || !MinutePeriod(h.Period) || h.BasePeriod != 5 ||
 		h.Adjust != "none" || h.VolumeUnit != "provider_raw" || h.FetchedAt.IsZero() || len(h.Bars) == 0 || len(h.Bars) > limit {
 		return errors.New("invalid minute history metadata")
 	}
@@ -193,7 +193,7 @@ func NewMinuteClient(c config.Config) *MinuteClient {
 func (c *MinuteClient) Close() { c.HTTP.CloseIdleConnections() }
 
 func (c *MinuteClient) FetchMinutes(ctx context.Context, stock config.Stock, count int) (MinuteHistory, error) {
-	if !config.ValidCode(stock.Code) || count < 1 || count > MinuteLimit {
+	if !config.ValidInstrumentCode(stock.Code) || count < 1 || count > MinuteLimit {
 		return MinuteHistory{}, errors.New("invalid minute request")
 	}
 	u, err := url.Parse(c.Endpoint)

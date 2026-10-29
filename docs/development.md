@@ -16,6 +16,8 @@ CI 与冒烟使用临时目录、关闭通知，不读取根目录私有 `.env`�
 make build
 make check
 make status
+./bin/stock-watcher sync-index-minutes -as-of 2026-10-26 -from 2026-06-01   # 补采指数 5 分钟线
+./bin/stock-watcher market-signal -as-of 2026-10-26   # 只读指数方向与上午/下午树模型
 make run
 ```
 

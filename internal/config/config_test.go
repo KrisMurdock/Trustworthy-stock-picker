@@ -594,3 +594,19 @@ func TestPrepareLoadedConfigurationIsIdempotent(t *testing.T) {
 		t.Fatalf("prepared config changed: %+v", prepared)
 	}
 }
+
+func TestIndexInstrumentCodes(t *testing.T) {
+	for _, code := range []string{"sh000001", "sh000300", "sh000688", "sz399001", "sz399006"} {
+		if !ValidIndexCode(code) || !ValidInstrumentCode(code) || ValidCode(code) {
+			t.Fatalf("index code %s validation mismatch", code)
+		}
+	}
+	for _, code := range []string{"sh600519", "sz000001", "sh0000001", "sz3999999", ""} {
+		if ValidIndexCode(code) {
+			t.Fatalf("invalid index code accepted: %s", code)
+		}
+	}
+	if !ValidInstrumentCode("sh600519") || !ValidInstrumentCode("sz300750") {
+		t.Fatal("stock code rejected by instrument validation")
+	}
+}

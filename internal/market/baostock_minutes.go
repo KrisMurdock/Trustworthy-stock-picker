@@ -37,7 +37,7 @@ type MinuteArchive struct {
 func (h MinuteArchive) Validate() error {
 	first, e1 := time.ParseInLocation("2006-01-02", h.From, Shanghai)
 	last, e2 := time.ParseInLocation("2006-01-02", h.Through, Shanghai)
-	if h.Version != 1 || !config.ValidCode(h.Code) || (h.Source != "baostock" && h.Source != "sina") || h.Period != 5 ||
+	if h.Version != 1 || !config.ValidInstrumentCode(h.Code) || (h.Source != "baostock" && h.Source != "sina") || h.Period != 5 ||
 		h.BasePeriod != 5 || h.Adjust != "none" || (h.VolumeUnit != "shares" && h.VolumeUnit != "provider_raw") || h.FetchedAt.IsZero() ||
 		e1 != nil || e2 != nil || first.After(last) || len(h.Bars) > MinuteArchiveLimit {
 		return errors.New("invalid minute archive metadata")
@@ -75,7 +75,7 @@ func (c *BaoStockClient) FetchMinuteRange(ctx context.Context, stock config.Stoc
 		BasePeriod: 5, Adjust: "none", VolumeUnit: "shares", From: from, Through: through,
 		FetchedAt: time.Now().In(Shanghai),
 	}
-	if !config.ValidCode(stock.Code) {
+	if !config.ValidInstrumentCode(stock.Code) {
 		return h, &DataError{Reason: "invalid_minute_archive_stock"}
 	}
 	first, e1 := time.ParseInLocation("2006-01-02", from, Shanghai)

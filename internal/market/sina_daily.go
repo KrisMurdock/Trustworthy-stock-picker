@@ -49,7 +49,7 @@ func NewSinaKLineClient(timeout, interval time.Duration) *SinaKLineClient {
 func (c *SinaKLineClient) Close() { c.HTTP.CloseIdleConnections() }
 
 func (c *SinaKLineClient) fetchRows(ctx context.Context, symbol string, scale, limit int) ([]sinaKLineRow, error) {
-	if (!config.ValidCode(symbol) && symbol != "sh000001") || (scale != 5 && scale != 240) || limit < 1 || limit > sinaKLineLimit {
+	if !config.ValidInstrumentCode(symbol) || (scale != 5 && scale != 240) || limit < 1 || limit > sinaKLineLimit {
 		return nil, &DataError{Reason: "invalid_sina_kline_request"}
 	}
 	query := url.Values{}
@@ -187,7 +187,7 @@ func (c *SinaKLineClient) FetchMinuteRange(ctx context.Context, stock config.Sto
 	}
 	first, e1 := time.ParseInLocation("2006-01-02", from, Shanghai)
 	last, e2 := time.ParseInLocation("2006-01-02", through, Shanghai)
-	if !config.ValidCode(stock.Code) || e1 != nil || e2 != nil || first.After(last) || last.Sub(first) > 20*366*24*time.Hour {
+	if !config.ValidInstrumentCode(stock.Code) || e1 != nil || e2 != nil || first.After(last) || last.Sub(first) > 20*366*24*time.Hour {
 		return MinuteArchive{}, &DataError{Reason: "invalid_sina_minute_range"}
 	}
 	rows, err := c.fetchRows(ctx, stock.Code, 5, sinaKLineLimit)

@@ -548,6 +548,28 @@ func seedMinutes(db *storage.MarketDB, stock config.Stock) error {
 	return db.SaveMinutes(context.Background(), stock, h.Bars[len(h.Bars)-1].End, h.FetchedAt, &h, "ok", "", false)
 }
 
+func seedMarketContextMinutes(bars []storage.ContextBar, offset int) []market.MinuteBar {
+	out := make([]market.MinuteBar, 0, len(bars)*48)
+	for index := 1; index < len(bars); index++ {
+		day, _ := time.ParseInLocation("2006-01-02", bars[index].Date, market.Shanghai)
+		prevClose := bars[index-1].Close
+		morningClose := prevClose * (1 + math.Sin(float64(index+offset)/6)*0.002)
+		close := morningClose * (1 + math.Cos(float64(index+offset)/8)*0.002)
+		for _, start := range []int{570, 780} {
+			for minute := start + 5; minute <= start+120; minute += 5 {
+				end := time.Date(day.Year(), day.Month(), day.Day(), minute/60, minute%60, 0, 0, market.Shanghai)
+				progress := float64(minute-start) / 120
+				price := prevClose + (morningClose-prevClose)*progress
+				if start == 780 {
+					price = morningClose + (close-morningClose)*progress
+				}
+				out = append(out, market.MinuteBar{End: end, Open: price * 0.9995, High: price * 1.0005, Low: price * 0.999, Close: price, Volume: 1000, Final: true})
+			}
+		}
+	}
+	return out
+}
+
 func seedMarketContext(root string) error {
 	db, err := storage.InitContext(root, false)
 	if err != nil {
@@ -568,7 +590,7 @@ func seedMarketContext(root string) error {
 	for index, item := range items {
 		bars := []storage.ContextBar{}
 		close := 1000.0 + float64(index)*137
-		for day := at.AddDate(0, 0, -30); !day.After(at); day = day.AddDate(0, 0, 1) {
+		for day := at.AddDate(0, 0, -330); !day.After(at); day = day.AddDate(0, 0, 1) {
 			if day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
 				continue
 			}
@@ -578,6 +600,11 @@ func seedMarketContext(root string) error {
 		item.UpdatedAt = at
 		if err := db.SaveInstrument(context.Background(), item, bars); err != nil {
 			return err
+		}
+		if item.Code == "sh000001" || item.Code == "sz399006" {
+			if err := db.SaveMinutes(context.Background(), item.Code, seedMarketContextMinutes(bars, index)); err != nil {
+				return err
+			}
 		}
 	}
 	return db.SaveSyncStatus(context.Background(), storage.ContextSyncStatus{AsOf: "2026-10-13", StartedAt: at.Add(-time.Minute), FinishedAt: at, Status: "complete", Total: len(items), Succeeded: len(items)})

@@ -157,8 +157,11 @@ func notifyRouteMatches(configured, route string) bool {
 }
 
 var stockCode = regexp.MustCompile(`^(sh(60|68)[0-9]{4}|sz(00|30)[0-9]{4})$`)
+var indexCode = regexp.MustCompile(`^(sh000[0-9]{3}|sz399[0-9]{3})$`)
 
-func ValidCode(s string) bool { return stockCode.MatchString(s) }
+func ValidCode(s string) bool           { return stockCode.MatchString(s) }
+func ValidIndexCode(s string) bool      { return indexCode.MatchString(s) }
+func ValidInstrumentCode(s string) bool { return ValidCode(s) || ValidIndexCode(s) }
 
 func Defaults() Config {
 	c := Config{Version: 1, DataDir: "data", RequireCIFS: false, PollInterval: "5m", Timeout: "10s"}
