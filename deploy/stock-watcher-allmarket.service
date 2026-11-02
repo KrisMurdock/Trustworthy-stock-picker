@@ -1,5 +1,5 @@
 [Unit]
-Description=Sync full Shanghai/Shenzhen A-share daily history
+Description=Sync full Shanghai/Shenzhen A-share daily history and four-light signals
 Wants=network-online.target mnt-windows_database.automount
 After=network-online.target mnt-windows_database.automount stock-watcher.service
 
@@ -14,8 +14,8 @@ Environment=STOCK_WATCHER_WECHAT_ENABLED=false
 Environment=STOCK_WATCHER_MARKET_REQUEST_INTERVAL=500ms
 Environment=STOCK_WATCHER_LOG_DIR=/root/data/codebase/toys_project/stock_watcher/logs/all-market
 ExecStart=/root/data/codebase/toys_project/stock_watcher/bin/stock-watcher sync-all -workers 3 -timeout 24h
-TimeoutStartSec=25h
+ExecStart=/root/data/codebase/toys_project/stock_watcher/bin/stock-watcher four-light-all -timeout 2h
+TimeoutStartSec=27h
 Nice=10
 UMask=0077
 NoNewPrivileges=true
-

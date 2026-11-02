@@ -294,6 +294,75 @@ def dayrange_checks(page, url, state, args):
     page.goto("about:blank")
 
 
+def four_light_checks(page, url, state, args):
+    page.goto(url + "/four-light", wait_until="networkidle")
+    expect(page).to_have_title("全市场四灯 · 研究信号 · Stock Watcher")
+    assert page.locator('nav.header-nav [aria-current="page"]').inner_text() == "全市场四灯"
+    check_page_assets(page.context, page, url)
+    expect(page.get_by_test_id("four-light-contract")).to_contain_text("这是研究信号，不是买点")
+    expect(page.get_by_test_id("four-light-contract")).to_contain_text("量能红仅表示放量")
+    expect(page.get_by_test_id("four-light-run-meta")).to_contain_text("four_light_approx_v1")
+    expect(page.get_by_test_id("four-light-run-meta")).to_contain_text("未对齐目标软件")
+    expect(page.locator("#four-light-total")).to_have_text("4")
+    expect(page.locator("#four-light-all-red")).to_have_text("2")
+    expect(page.locator("#four-light-first-count")).to_have_text("1")
+    expect(page.locator("#four-light-continuing-count")).to_have_text("1")
+    expect(page.locator("#four-light-exit-count")).to_have_text("1")
+    expect(page.locator("#four-light-unknown-count")).to_have_text("1")
+    first = page.get_by_test_id("four-light-row").filter(has_text="测试银行").first
+    expect(first).to_contain_text("首次全红")
+    expect(first).to_contain_text("趋势红")
+    expect(first).to_contain_text("量能红")
+    expect(first).to_contain_text("2026-10-12")
+    expect(first).to_contain_text("就绪")
+    expect(page.locator("#four-light-continuing-body")).to_contain_text("测试消费")
+    expect(page.locator("#four-light-continuing-body")).to_contain_text("持续全红")
+    expect(page.locator("#four-light-exit-body")).to_contain_text("测试退出")
+    expect(page.locator("#four-light-exit-body")).to_contain_text("退出全红")
+    expect(page.locator("#four-light-unknown-body")).to_contain_text("测试停牌")
+    expect(page.locator("#four-light-unknown-body")).to_contain_text("无法判断")
+    expect(page.locator("#four-light-unknown-body")).to_contain_text("没有已完成日线")
+
+    expect(page.locator("#four-light-history-code")).to_have_value("sz000001")
+    expect(page.locator("#four-light-history-from")).to_have_value("2026-09-13")
+    expect(page.locator("#four-light-history-through")).to_have_value("2026-10-13")
+    page.get_by_test_id("four-light-history-submit").click()
+    expect(page.get_by_test_id("four-light-history-status")).to_contain_text("1 条状态")
+    expect(page.locator("#four-light-history-body")).to_contain_text("首次全红")
+
+    assert page.context.request.get(url + "/api/four-light?as_of=bad").status == 400
+    assert page.context.request.get(url + "/api/four-light/history?code=bad&from=2026-10-01&through=2026-10-13").status == 400
+    assert page.context.request.post(url + "/api/four-light").status == 405
+
+    state["injecting"] = True
+    page.route("**/api/four-light?as_of=*", lambda route: route.fulfill(status=503, content_type="application/json", body='{"error":"four-light data is temporarily unavailable"}'))
+    page.get_by_test_id("four-light-refresh").click()
+    expect(page.get_by_test_id("four-light-error")).to_be_visible()
+    page.unroute("**/api/four-light?as_of=*")
+    state["injecting"] = False
+    page.get_by_test_id("four-light-retry").click()
+    expect(page.get_by_test_id("four-light-content")).to_be_visible()
+    state["injecting"] = True
+    page.route("**/api/four-light?as_of=*", lambda route: route.fulfill(status=404, content_type="application/json", body='{"error":"four-light signals not found"}'))
+    page.locator("#four-light-date").fill("2026-10-10")
+    page.get_by_test_id("four-light-refresh").click()
+    expect(page.get_by_test_id("four-light-empty")).to_be_visible()
+    page.unroute("**/api/four-light?as_of=*")
+    state["injecting"] = False
+    page.locator("#four-light-date").fill("2026-10-13")
+    page.get_by_test_id("four-light-refresh").click()
+    expect(page.get_by_test_id("four-light-content")).to_be_visible()
+
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), "four-light page overflows mobile viewport"
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    screenshots = ROOT / ".scratch" / "dashboard-verification"
+    screenshots.mkdir(parents=True, exist_ok=True)
+    kind = "container" if args.image else "native"
+    page.screenshot(path=str(screenshots / f"{kind}-four-light.png"), full_page=True)
+    page.goto("about:blank")
+
+
 def stock_codes(page):
     return page.get_by_test_id("stock-row").evaluate_all("rows => rows.map(row => row.dataset.code)")
 
@@ -1005,6 +1074,7 @@ def main():
                 populated_checks(context, page, url, args, directory, env)
                 ambient_checks(browser, context, page, url)
                 dayrange_checks(page, url, state, args)
+                four_light_checks(page, url, state, args)
                 chart_checks(page, url, state, args)
                 minute_checks(page, url, state, args)
                 experiment_checks(context, page, url, ROOT, args, state, stalled_endpoint)
@@ -1092,7 +1162,7 @@ def main():
         artifact = hashlib.sha256(Path(args.binary).read_bytes()).hexdigest()
     print(json.dumps({"result": "passed", "mode": "container" if args.image else "native", "artifact": artifact,
                       "identity": "anonymous (no application authentication)",
-                      "checks": "dayrange/coverage/gate/mobile/error-recovery/rule-gate-diagnostics/measured-thresholds/zero-sample-unavailable/legacy-history/mobile/minute-5-15-30-60/forming/calibrated/status/independent-daily/volume-MA/experiments/lineage/comparison/snapshot-evidence/empty/errors/cancel/raw-2700-bars/price-basis-switch/cancel/mismatched-basis/raw-missing/synced-filter/candles/volume/MA/stock-switch/isolation/partial-coverage/snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/ambient-scene/reduced-motion/webgl-fallback/asset-budget/contrast/read-only API/gateway-403/503/timeout/recovery/empty/calculator/initial/add/holdings/net-target/validation/offline/no-account-upload/model-load-failure/SIGTERM"}, ensure_ascii=False))
+                      "checks": "dayrange/four-light/first/continuing/exit/unknown/history/retry/empty-signal/mobile/coverage/gate/mobile/error-recovery/rule-gate-diagnostics/measured-thresholds/zero-sample-unavailable/legacy-history/mobile/minute-5-15-30-60/forming/calibrated/status/independent-daily/volume-MA/experiments/lineage/comparison/snapshot-evidence/empty/errors/cancel/raw-2700-bars/price-basis-switch/cancel/mismatched-basis/raw-missing/synced-filter/candles/volume/MA/stock-switch/isolation/partial-coverage/snapshot/pool/ranking/history/follow-latest/search/filter/sort/mobile/assets/ambient-scene/reduced-motion/webgl-fallback/asset-budget/contrast/read-only API/gateway-403/503/timeout/recovery/empty/calculator/initial/add/holdings/net-target/validation/offline/no-account-upload/model-load-failure/SIGTERM"}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

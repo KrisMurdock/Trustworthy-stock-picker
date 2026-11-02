@@ -52,6 +52,7 @@ Stock Watcher 是一个用纯 Go 构建的 A 股研究型行情引擎。它从�
 - **十年原始日线 + 复权分析窗口**：长期留存不复权价格，分析使用独立刷新的前复权窗口，不跨来源或跨轮拼接。
 - **严格的数据完整性**：校验交易日历、上市日期、分页、复权口径、成交量单位和历史覆盖；覆盖率不足时不发布推荐。
 - **SQLite 事务存储**：行情、同步状态、报告和投递账本保存在 `<data_dir>/market.db`；盘前高低价模型、预测与核对档案保存在独立 `<data_dir>/dayrange.db`。同一数据目录只允许一个写入进程。
+- **独立全市场四灯归档**：`sync-all` 把全市场前复权日线写入 `<data_dir>/all-market.db`，随后可独立计算近似四灯，保存每日灯色、首次/持续/退出全红和无法判断原因；不依赖候选排名，也不改正式推荐或通知。
 - **可审计的全天高低价观察**：盘前生成当日最高/最低价点估计、分位数与区间，收盘后核对实际极值；未通过验证门禁时保留历史波幅基线，不进入正式推荐或飞书主卡，独立结果可按目标日和页码幂等推送到“当日预测机器人”。盘前预测保存后还会把精排 Top N 与预测结果关联，向独立执行确认机器人推送“可执行／观察／放弃”清单。
 - **指数方向信号**：读取 `context.db` 的上证指数与创业板指日线，按截止日确定性重训逻辑回归，输出下一交易日上涨概率、40 日样本外对照和周一至周五历史胜率；只读展示，不改排名、不推送、不构成交易建议。
 - **可复核的短线研究**：前复权特征、真实费用与滑点、T+1 成交模拟、滚动验证和独立留出样本。
@@ -185,6 +186,7 @@ func main() {
 | `fair-value -code C` | 用本地 PIT 财务与不复权收盘价计算 v3 研究区间；默认严格 observed，可选显式 vendor_backfill | 否 | 否 |
 | `sync-hk-connect` | 独立同步当前港股通股票日线到 `hk-market.db` | 是（独立库） | 否 |
 | `sync-hk-minutes` | 采集或补采港股通 5 分钟线到 `hk-market.db`，默认关闭 | 是（独立库） | 否 |
+| `four-light-all` | 从 `all-market.db` 独立计算并归档全市场近似四灯状态 | 是（独立库） | 否 |
 | `sync-context` | 只补跑指数与板块同步，用于排障 | 是 | 否 |
 | `sync-index-minutes` | 补采上证/创业板指数 5/30 分钟线到 `context.db`，用于上午/下午树模型 | 是 | 否 |
 | `sync-korea-context` | 补采 KOSPI/KOSDAQ 日线到 `context.db`，作为可选盘前特征 | 是 | 否 |
@@ -215,6 +217,8 @@ func main() {
 `sync-hk-connect` 使用当前港股通股票快照，通过新浪 `hgt_hk`/`sgt_hk` 港通板块发现证券，再用腾讯行情类型剔除 ETF/产品，只保留 `GP` 股票（当前约 667 只），并以东方财富港股通股票行情页作为回退；只接受 `hk` 前缀的五位代码。每只股票保存最近十个自然年的不复权日线和 `daily.history_days` 前复权窗口，港股交易日由恒生指数日线推导，默认截止最近一个 16:00 后已完成的港股交易日。数据写入独立 `<data_dir>/hk-market.db`，使用独立 `.hk-market.lock`，不读取或写入 `market.db`。完整同步后会按同一套 A 股日线趋势规则独立复算港股通观察名单，保存到 `hk-market.db` 的 `recommendation` 表；常驻 `run` 或 `once` 在下一轮调度中读取最新快照，生成单独的《港股通精选》公众号稿，并与 A 股文章一起进入 `hk_connect` 投递路由。港股稿不复用 A 股初筛、精排模型或成交模拟，也不模拟港股 T+0 和无涨跌停制度。列表是当前成分快照，已移出港股通的股票不会被重新加入，但已保存历史仍保留。
 
 港股通分钟采集独立于日线同步，设置 `STOCK_WATCHER_HK_INTRADAY_ENABLED=true` 后由 `run` 按港股时段轮询，也可运行 `sync-hk-minutes -from YYYY-MM-DD -through YYYY-MM-DD -codes hk00700` 补采。东方财富原生不复权 5 分钟线保存在 `hk-market.db`，15/30/60 分钟从同一序列派生；`/api/hk-intraday?code=hk00700&period=5` 只读返回最近最多 640 根和缺口状态，当前没有港股图表页面。来源历史深度、生产限流和全股池覆盖尚需验证，未采集 1 分钟线，不能宣称多年历史完整或所有可获得粒度均已落地。日线和分钟写入共用 `.hk-market.lock`；升级、回滚和补采边界见[行情来源与回退](docs/data-sources.md#港股通分钟数据sync-hk-minutes)。
+
+`four-light-all [-as-of YYYY-MM-DD]` 只读取 `all-market.db` 已保存的前复权日线，按冻结的 `four_light_approx_v1` 为全市场每只活跃股票保存 `red/green/unknown` 灯色和 `first_all_red/continuing_all_red/exit_all_red/non_all_red/unknown` 生命周期。它不会创建空库，不读取候选报告，不改变正式排名、结构门控或飞书；行情不足、上一交易日缺失或数据陈旧会明确记为 `unknown/partial`，数据库读取失败则整轮回滚，不会被解释成“退出全红”。同一日期和规则成功重跑会事务替换当日快照，失败重跑只记录失败状态并保留上次成功归档。systemd 定时任务先执行 `sync-all`，仅在同步成功后才执行 `four-light-all`。
 
 ## 工作原理
 
@@ -297,12 +301,13 @@ func main() {
 | `/stocks` | 全股池搜索、行业/数据状态筛选与排序 |
 | `/chart` | 日 K、成交量、MA5/10/20、前复权/不复权切换和分钟周期 |
 | `/rankings` | 当前及历史日推排名、5 分钟实验预测与本地推送开关 |
+| `/four-light` | 全市场近似四灯当日汇总、首次/持续/退出全红、无法判断原因与个股历史 |
 | `/day-range` | 盘前全天高低价预测、区间、模型与核对状态；阶段六盘中更新明确标注未实现 |
 | `/experiments` | 策略实验室、父子实验、样本对比和固定数据快照 |
 | `/review` | 冻结推荐回看、T+1/T+3/T+5 检查点、证据详情和手动 AI 归因 |
 | `/calculator` | 浏览器内仓位、持仓、剩余风险与净止盈价计算 |
 
-行情、报告、复盘、指数方向、分钟预测和全天高低价预测的读取接口只读，包括 `/healthz`、`/api/dashboard`、`/api/reports?as_of=YYYY-MM-DD`、`/api/history?code=sz000001`、`/api/intraday?code=sz000001&period=5`、`/api/hk-intraday?code=hk00700&period=5`、`/api/market-signal?as_of=YYYY-MM-DD`、`/api/predictions?date=YYYY-MM-DD`、`/api/predictor`、`/api/day-range?date=YYYY-MM-DD`、`/api/day-range/status` 和 `/api/day-range/evaluation?date=YYYY-MM-DD`。写入口仅有受保护的 `PUT /api/predictor/config`（飞书预测推送开关）以及 loopback/同源约束下的 LLM 配置与对话/归因接口；公网匿名模式会拒绝全部非 GET/HEAD 请求。摘要页和股票页每分钟刷新，刷新不会触发行情下载或消息推送。
+行情、报告、复盘、指数方向、分钟预测、全市场四灯和全天高低价预测的读取接口只读，包括 `/healthz`、`/api/dashboard`、`/api/reports?as_of=YYYY-MM-DD`、`/api/history?code=sz000001`、`/api/intraday?code=sz000001&period=5`、`/api/hk-intraday?code=hk00700&period=5`、`/api/four-light?as_of=YYYY-MM-DD`、`/api/four-light/history?code=sz000001&from=YYYY-MM-DD&through=YYYY-MM-DD`、`/api/market-signal?as_of=YYYY-MM-DD`、`/api/predictions?date=YYYY-MM-DD`、`/api/predictor`、`/api/day-range?date=YYYY-MM-DD`、`/api/day-range/status` 和 `/api/day-range/evaluation?date=YYYY-MM-DD`。写入口仅有受保护的 `PUT /api/predictor/config`（飞书预测推送开关）以及 loopback/同源约束下的 LLM 配置与对话/归因接口；公网匿名模式会拒绝全部非 GET/HEAD 请求。摘要页和股票页每分钟刷新，刷新不会触发行情下载或消息推送。
 
 网页没有内置账号或权限系统，默认仅监听 `127.0.0.1:8080`。远程访问必须使用受控网络或已有认证反向代理；代理应保留根路径、`/api/` 和 `/assets/`。
 
@@ -380,7 +385,7 @@ sudo systemctl enable --now stock-watcher-hk-market.timer
 sudo systemctl status stock-watcher.service
 ```
 
-服务模板读取 `/etc/stock-watcher.env`，工作目录和二进制路径按实际安装位置调整。`stock-watcher-allmarket.timer` 在交易日 `18:40` 调用 `sync-all`，把全市场沪深 A 股日线写入独立的 `all-market.db`，并在完整同步后生成低估值快照；启用交集时还会生成低估值低套牢快照。`stock-watcher-hk-market.timer` 在交易日 `18:50` 调用 `sync-hk-connect`，把当前港股通股票日线写入独立的 `hk-market.db`，并在完整同步后生成港股通观察快照；推送仍由主 `stock-watcher.service` 的 `run` 循环负责，因此升级后必须替换并重启主服务，只运行 timer 不会发送文章。全市场 `sync-all` 不参与股池排名，两篇观察稿分别使用独立 `low_valuation`、`value_trapped` 路由。完整准备、SELinux、升级、回滚和排障步骤见[部署与排障](docs/deployment.md)。
+服务模板读取 `/etc/stock-watcher.env`，工作目录和二进制路径按实际安装位置调整。`stock-watcher-allmarket.timer` 在交易日 `18:40` 先调用 `sync-all`，成功后再执行 `four-light-all` 归档近似四灯；`sync-all` 把全市场沪深 A 股日线写入独立的 `all-market.db`，并在完整同步后生成低估值快照；启用交集时还会生成低估值低套牢快照。`stock-watcher-hk-market.timer` 在交易日 `18:50` 调用 `sync-hk-connect`，把当前港股通股票日线写入独立的 `hk-market.db`，并在完整同步后生成港股通观察快照；推送仍由主 `stock-watcher.service` 的 `run` 循环负责，因此升级后必须替换并重启主服务，只运行 timer 不会发送文章。四灯归档仅供观察；全市场 `sync-all` 不参与股池排名，两篇观察稿分别使用独立 `low_valuation`、`value_trapped` 路由。完整准备、SELinux、升级、回滚和排障步骤见[部署与排障](docs/deployment.md)。
 
 ### Docker Compose
 
@@ -431,6 +436,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | `internal/storage` | 本地/CIFS 存储策略、SQLite、原子状态与只读看板查询 |
 | `internal/fundamentals` | PIT 年度财务事实、observed/vendor 可见性裁剪、抓取批次与 5-10 年标准化盈利/ROE/派息 |
 | `internal/fairvalue` | v1/v2/v3 研究估值、区间情景与滚动校准原语 |
+| `internal/allmarket` | 全市场日线发现、增量同步、断点续跑和独立四灯信号归档 |
 | `internal/monitor` | 整池同步、启动刷新、调度、重试和账本迁移 |
 | `internal/selection` | 趋势筛选与报告事件组装 |
 | `internal/firststage` | 高召回第一层初筛、版本化 logistic 模型和初筛报告 |

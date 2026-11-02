@@ -1,5 +1,5 @@
 [Unit]
-Description=Trigger daily full-market A-share daily sync after close
+Description=Trigger daily full-market A-share sync and four-light archive after close
 
 [Timer]
 OnCalendar=Mon..Fri *-*-* 18:40:00

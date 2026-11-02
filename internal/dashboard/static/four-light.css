@@ -1,0 +1,31 @@
+.four-light-page .page-heading { align-items: flex-start; }
+.four-light-contract { margin-bottom: 22px; }
+.four-light-contract code { color: var(--jade); font-family: var(--sans); }
+.four-light-run-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 0 2px 18px; color: var(--muted); font-size: 11px; }
+.four-light-summary { margin-bottom: 22px; }
+.four-light-summary .summary-card { min-height: 128px; }
+.four-light-table td { vertical-align: top; }
+.four-light-table .stock-code { display: block; margin-top: 3px; }
+.four-light-lights { display: flex; flex-wrap: wrap; gap: 5px; min-width: 150px; }
+.light-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.light-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+.light-chip.red { color: #ffd2cf; border-color: rgba(240, 104, 107, .38); background: rgba(240, 104, 107, .08); }
+.light-chip.red::before { background: var(--rise); }
+.light-chip.green { color: #c9f4e2; border-color: rgba(60, 185, 140, .36); background: rgba(60, 185, 140, .08); }
+.light-chip.green::before { background: var(--fall); }
+.light-chip.unknown { color: var(--muted); border-style: dashed; }
+.four-light-reason { max-width: 430px; color: var(--muted); font-size: 11px; line-height: 1.65; }
+.four-light-history-form { display: grid; grid-template-columns: minmax(130px, 1fr) repeat(2, minmax(150px, 1fr)) auto; gap: 12px; align-items: end; padding: 0 24px 20px; }
+.four-light-history-form label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; }
+.four-light-history-status { min-height: 20px; padding: 0 24px 12px; color: var(--muted); font-size: 12px; }
+.four-light-history-status.error { color: var(--rise); }
+.four-light-empty-row td { color: var(--muted); text-align: center; padding: 22px; }
+@media (max-width: 860px) {
+  .four-light-history-form { grid-template-columns: 1fr 1fr; }
+  .four-light-history-form label:first-child, .four-light-history-form button { grid-column: 1 / -1; }
+}
+@media (max-width: 560px) {
+  .four-light-summary { grid-template-columns: 1fr 1fr; }
+  .four-light-history-form { grid-template-columns: 1fr; }
+  .four-light-history-form label:first-child, .four-light-history-form button { grid-column: auto; }
+}

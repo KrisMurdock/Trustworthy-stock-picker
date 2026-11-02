@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/allmarket"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/bottomstudy"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/dayrange"
@@ -35,6 +36,10 @@ func main() {
 		os.Exit(1)
 	}
 	if !*empty {
+		if err := seedAllMarketFourLight(*root); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		if err := seedExperiments(*root); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -52,6 +57,75 @@ func main() {
 			}
 		}
 	}
+}
+
+func seedAllMarketFourLight(root string) error {
+	db, err := storage.OpenAllMarket(root, false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	ctx := context.Background()
+	asOf := "2026-10-13"
+	stocks := []config.Stock{
+		{Code: "sz000001", Name: "测试银行", ListedFrom: "1991-04-03"},
+		{Code: "sh600519", Name: "测试消费", ListedFrom: "2001-08-27"},
+		{Code: "sz000002", Name: "测试退出", ListedFrom: "1991-01-29"},
+		{Code: "sz000004", Name: "测试停牌"},
+	}
+	for index, stock := range stocks[:3] {
+		h := allMarketFixtureHistory(stock, asOf)
+		switch index {
+		case 0:
+			h.Bars[len(h.Bars)-1].Volume = 2000
+		case 1:
+			h.Bars[len(h.Bars)-2].Volume = 2000
+			h.Bars[len(h.Bars)-1].Volume = 2000
+		case 2:
+			h.Bars[len(h.Bars)-2].Volume = 2000
+			previous := h.Bars[len(h.Bars)-2].Close
+			last := &h.Bars[len(h.Bars)-1]
+			last.Open, last.High, last.Low, last.Close, last.Volume = previous*0.6, previous*0.62, previous*0.55, previous*0.6, 2000
+		}
+		if err := db.SaveHistory(ctx, stock, h, true); err != nil {
+			return err
+		}
+	}
+	if err := db.RecordStatus(ctx, stocks[3], "qfq", asOf, "failed", "fixture_missing"); err != nil {
+		return err
+	}
+	c := config.Defaults()
+	c.DataDir, c.RequireCIFS = root, false
+	c.Calendar.ValidFrom, c.Calendar.ValidThrough = "2020-01-01", "2099-12-31"
+	c.Calendar.Holidays, c.Calendar.TradingDays = nil, nil
+	runner := allmarket.NewFourLight(c, db, nil)
+	runner.Now = func() time.Time { return time.Date(2026, 10, 13, 18, 40, 0, 0, market.Shanghai) }
+	result, err := runner.Run(ctx, allmarket.FourLightOptions{AsOf: asOf})
+	if err != nil {
+		return err
+	}
+	if result.Total != 4 || result.AllRed != 2 || result.FirstAllRed != 1 || result.ContinuingAllRed != 1 || result.ExitAllRed != 1 || result.Unknown != 1 {
+		return fmt.Errorf("unexpected four-light fixture result: %+v", result)
+	}
+	return nil
+}
+
+func allMarketFixtureHistory(stock config.Stock, asOf string) market.History {
+	end, _ := time.ParseInLocation("2006-01-02", asOf, market.Shanghai)
+	dates := []string{}
+	for day := end; len(dates) < 80; day = day.AddDate(0, 0, -1) {
+		if day.Weekday() != time.Saturday && day.Weekday() != time.Sunday {
+			dates = append(dates, day.Format("2006-01-02"))
+		}
+	}
+	h := market.History{Version: 1, Code: stock.Code, Name: stock.Name, Source: "tencent", Adjust: "qfq",
+		DataField: "qfqday", VolumeUnit: "provider_raw", AsOf: asOf,
+		FetchedAt: time.Date(2026, 10, 13, 18, 40, 0, 0, market.Shanghai)}
+	for index := len(dates) - 1; index >= 0; index-- {
+		close := 10 + float64(len(dates)-1-index)*0.1
+		h.Bars = append(h.Bars, market.Bar{Date: dates[index], Open: close - 0.05, High: close + 0.1, Low: close - 0.1, Close: close, Volume: 1000})
+	}
+	return h
 }
 
 func seedDayRange(root string) error {

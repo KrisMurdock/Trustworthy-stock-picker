@@ -37,7 +37,7 @@ journalctl -u stock-watcher.service -n 50 --no-pager
 
 模板默认目录 `/root/data/codebase/toys_project/stock_watcher`，读取 `/etc/stock-watcher.env`，等待网络与已有 `mnt-windows_database.automount`。主服务在 15:00 收盘后同步行情；精排服务由 timer 在 15:00、15:05、15:10、15:15、15:20 触发，等待当日冻结初筛报告并生成四模型 artifact。到 `15:28` 仍未齐时 Go 进程会按中性分降级发布，不阻塞主报告。SELinux Enforcing 环境需配置适当的程序路径策略；本服务器原生路径已有 `bin_t` 策略，替换二进制后运行 `sudo restorecon -v /root/data/codebase/toys_project/stock_watcher/bin/stock-watcher` 再重启。
 
-全市场日线由 `stock-watcher-allmarket.timer` 在交易日 `18:40` 触发 `sync-all`，写入独立 `<data_dir>/all-market.db`，使用独立 `.all-market.lock`，可与主服务并行，不参与股池排名或直接通知。完整且未使用 `-codes` 的同步会在 `low_valuation.enabled=true` 时继续扫描全市场财务研究区间，只保留现价低于区间下沿的股票并按距下沿折价升序保存为 `recommendation` 快照；启用 `value_trapped.enabled=true` 时再只对低估值候选抓取换手率，保存上方套牢量不超过 `max_trapped_ratio` 的交集快照。主服务在下一轮 Cycle 读取并分别投递《全市场低估值股》和《低估值且低套牢》公众号稿。该 unit 固定 `STOCK_WATCHER_DATA_DIR=/mnt/windows_database`、`STOCK_WATCHER_REQUIRE_CIFS=true`、`STOCK_WATCHER_MARKET_REQUEST_INTERVAL=500ms` 和独立日志目录 `logs/all-market/`，避免与主服务共用日志文件；如公共行情源限流，可把请求间隔改回 `1s`。财务扫描逐只请求新浪，受该间隔限速通常需要数十分钟；交集扫描只对低估值候选请求搜狐换手率，耗时取决于交集候选数。任务超时由 `-timeout`（默认 24h）覆盖，不能用高频轮询替代。定时器只在周一至周五触发，节假日会按最后一个已完成交易日执行并在已同步时快速跳过。
+全市场日线由 `stock-watcher-allmarket.timer` 在交易日 `18:40` 先触发 `sync-all`，成功后再运行 `four-light-all` 归档近似四灯；`sync-all` 写入独立 `<data_dir>/all-market.db`，使用独立 `.all-market.lock`，可与主服务并行，不参与股池排名或直接通知。完整且未使用 `-codes` 的同步会在 `low_valuation.enabled=true` 时继续扫描全市场财务研究区间，只保留现价低于区间下沿的股票并按距下沿折价升序保存为 `recommendation` 快照；启用 `value_trapped.enabled=true` 时再只对低估值候选抓取换手率，保存上方套牢量不超过 `max_trapped_ratio` 的交集快照。主服务在下一轮 Cycle 读取并分别投递《全市场低估值股》和《低估值且低套牢》公众号稿。该 unit 固定 `STOCK_WATCHER_DATA_DIR=/mnt/windows_database`、`STOCK_WATCHER_REQUIRE_CIFS=true`、`STOCK_WATCHER_MARKET_REQUEST_INTERVAL=500ms` 和独立日志目录 `logs/all-market/`，避免与主服务共用日志文件；如公共行情源限流，可把请求间隔改回 `1s`。财务扫描逐只请求新浪，受该间隔限速通常需要数十分钟；交集扫描只对低估值候选请求搜狐换手率，耗时取决于交集候选数。任务超时由 `-timeout`（默认 24h）覆盖，不能用高频轮询替代。定时器只在周一至周五触发，节假日会按最后一个已完成交易日执行并在已同步时快速跳过。
 
 全市场线上验收至少检查：`systemctl list-timers stock-watcher-allmarket.timer` 显示下一次触发时间；`journalctl -u stock-watcher-allmarket.service -n 80 --no-pager` 最后一行 JSON 为 `status=complete`，启用低估值时包含 `low_valuation` 摘要且日志出现 `Low valuation recommendation generated`；启用交集时包含 `value_trapped` 摘要且日志出现 `Value-trapped recommendation generated`。`all-market.db` 的 `sync_run` 最新记录 `as_of` 等于最近已完成交易日且 `failed=partial=0`，`recommendation` 表存在 `market='low_valuation'` 和 `market='value_trapped'` 的最新快照，`target` 均为下一交易日；主服务 `stock-watcher.service` 仍保持 active，日志出现 `Low valuation recommendation queued` 与 `Value-trapped recommendation queued`，`state/delivery.json` 或公众号草稿箱存在对应 `"<推荐ID>:low_valuation"` 和 `"<推荐ID>:value_trapped"`。若 JSON 只有 `low_valuation_error`，检查新浪财务接口、Tushare Token/行业权限和估值覆盖率，修复后用 `scan-low-valuation` 重跑；若只有 `value_trapped_error`，检查搜狐换手率接口、套牢历史完整性和 `max_trapped_ratio`，修复后用 `scan-value-trapped` 重跑。不要手工补造区间或套牢量。若服务以 `cannot persist all-market stock metadata` 或共享盘错误退出，先检查 CIFS 与 `busy_timeout`，不要通过改成本地目录绕过。
 
@@ -64,6 +64,18 @@ PY
 ```
 
 若 `sync-hk-connect` 报 `request_failed_status` 或 `missing_or_invalid_hk_daily_rows`，先确认腾讯日线端点和类型端点可用，再原命令续跑；`stock_sync` 失败记录会重试，已完成股票会跳过。若报 `history_start_incomplete`，必须核对上市日期或上游实际历史，不能把请求了十年当成已验证十年完整性。若当前尚未安装 timer，只能写“CLI/本地验证通过，部署后未验证”，不能宣称线上已按日更新。
+
+四灯计算失败不会回滚已保存行情或覆盖上次成功归档。验收还需确认 `four_light_run` 最新记录为 `complete`，当天 `four_light_daily` 数量与活跃股票数一致。可用只读 SQL 抽查：
+
+```sql
+SELECT as_of, status, total, ready, all_red, first_all_red, continuing_all_red, exit_all_red, unknown
+FROM four_light_run ORDER BY started_at DESC LIMIT 3;
+SELECT lifecycle, COUNT(*) FROM four_light_daily
+WHERE as_of = (SELECT MAX(as_of) FROM four_light_daily)
+GROUP BY lifecycle ORDER BY lifecycle;
+```
+
+若服务以 `cannot persist all-market stock metadata` 或共享盘错误退出，先检查 CIFS 与 `busy_timeout`，不要通过改成本地目录绕过。若同步成功但 `four-light-all` 失败，保留 `sync_run` 成功记录，排查 `four_light_run.error_kind`、日志和数据库 schema 2；修复后可在停止该 timer 的情况下手动重跑同一 `four-light-all`，成功重跑会事务替换当日快照。
 
 精排线上验收至少检查：`systemctl list-timers stock-watcher-secondstage.timer`、当日 `state/secondstage/<model>/<as_of>.json` 四份文件均存在、`/api/reports?as_of=<date>` 中 `second_stage.degraded=false`、精排稿只在初筛/主报告之后发送。若 `journalctl -u stock-watcher-secondstage.service` 显示模型目录、Python 依赖或 CIFS 挂载错误，先修复离线生成链；不要把缺失 artifact 误判为 Go 精排算法失败。
 
@@ -133,6 +145,6 @@ curl --fail http://127.0.0.1:8080/api/status
 
 整池采集时，每只股票只有完整通过校验后才进入检查点；尚未完成的批次不能发布推荐。重启后同日期、同参数任务复用已完成股票，覆盖失败会重新尝试隔离股票。行情发布和分析分离，分析失败可基于已采集窗口重试。成功任务之后的新启动仍刷新全池。默认整轮期限 90 分钟、分析期限 10 分钟，每 30 秒更新心跳；算法须遵守 context 取消，框架不在进程内强杀任意 Go 函数。
 
-备份必须覆盖 `market.db`、`fundamentals.db`、`all-market.db`、`hk-market.db`、`context.db`、`experiments.db`、`calendar.db`、`dayrange.db`（启用时）、`predictions.db`、`models/intraday/`、`state/`、上市信息缓存及私有配置，保留权限；本地模式备份到指定备份盘，共享盘模式在 Windows 端完整复制，不复制到服务器行情目录。财务写命令使用独立 `.fundamentals.lock`，但备份仍应在停止所有写入进程后完成。安全的最小流程是停止所有 systemd／容器／CLI 写入进程，确认数据库连接关闭，再完整复制数据目录，记录构建 SHA、库版本和校验和。不要在线仅复制一个 SQLite 主文件或删除 journal 文件。恢复先到隔离目录，在通知关闭、独占锁、匹配构建的环境执行 `init/check/health`，抽查 `replay` 与 K 线，再走 `predictor-status`、`status-dayrange` 和 `replay-dayrange` 及一次只读网页检查，再停服务替换生产目录并恢复挂载。Windows 断线／重挂载和真实备份恢复需在部署环境演练；本地 mock 不能证明网络文件系统锁和 fsync 可靠。
+备份必须覆盖 `market.db`、`fundamentals.db`、`all-market.db`、`hk-market.db`、`context.db`、`experiments.db`、`calendar.db`、`dayrange.db`（启用时）、`predictions.db`、`models/intraday/`、`state/`、上市信息缓存及私有配置，保留权限；本地模式备份到指定备份盘，共享盘模式在 Windows 端完整复制，不复制到服务器行情目录。财务写命令使用独立 `.fundamentals.lock`，但备份仍应在停止所有写入进程后完成。安全的最小流程是停止所有 systemd／容器／CLI 写入进程，确认数据库连接关闭，再完整复制数据目录，记录构建 SHA、库版本和校验和。不要在线仅复制一个 SQLite 主文件或删除 journal 文件。恢复先到隔离目录，在通知关闭、独占锁、匹配构建的环境执行 `init/check/health`，抽查 `replay`、K 线与四灯历史，再走 `predictor-status`、`status-dayrange` 和 `replay-dayrange` 及一次只读网页检查，再停服务替换生产目录并恢复挂载。Windows 断线／重挂载和真实备份恢复需在部署环境演练；本地 mock 不能证明网络文件系统锁和 fsync 可靠。
 
 不可变窗口会增加磁盘占用；目前不自动删除历史修订，运维需监测容量并制定归档策略。不要在 CIFS 上开启 WAL，也不要在共享故障时退回服务器本地数据目录。

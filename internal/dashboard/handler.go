@@ -57,12 +57,20 @@ type DayRangeReader interface {
 	Evaluation(context.Context, string) (dayrange.Evaluation, error)
 }
 
+// FourLightReader reads the frozen full-market four-light archive. It must not
+// trigger synchronization or mutate any signal state.
+type FourLightReader interface {
+	LatestFourLightSummary(context.Context, string, string) (storage.FourLightSummary, error)
+	FourLightHistory(context.Context, string, string, string, string) ([]storage.FourLightRecord, error)
+}
+
 type handler struct {
 	health         func(context.Context) (health.Status, error)
 	experiments    experimentReader
 	review         reviewReader
 	predictor      PredictorController
 	dayRange       DayRangeReader
+	fourLight      FourLightReader
 	config         config.Config
 	llm            *config.LLMRuntime
 	publicReadOnly bool
@@ -90,6 +98,12 @@ func NewHandlerWithDayRange(c config.Config, db *storage.MarketDB, log *logging.
 	return newHandlerWithDayRange(c, db, log, predictor, reader)
 }
 
+// NewHandlerWithFourLight attaches the optional full-market four-light archive
+// while preserving the older constructors for hosts that do not enable it.
+func NewHandlerWithFourLight(c config.Config, db *storage.MarketDB, log *logging.Logger, predictor PredictorController, dayRange DayRangeReader, fourLight FourLightReader) http.Handler {
+	return newHandlerWithFourLight(c, db, log, predictor, dayRange, fourLight)
+}
+
 func newHandler(c config.Config, db snapshotReader, log *logging.Logger) http.Handler {
 	return newHandlerWithPredictor(c, db, log, nil)
 }
@@ -99,10 +113,14 @@ func newHandlerWithPredictor(c config.Config, db snapshotReader, log *logging.Lo
 }
 
 func newHandlerWithDayRange(c config.Config, db snapshotReader, log *logging.Logger, predictorController PredictorController, dayRangeReader DayRangeReader) http.Handler {
+	return newHandlerWithFourLight(c, db, log, predictorController, dayRangeReader, nil)
+}
+
+func newHandlerWithFourLight(c config.Config, db snapshotReader, log *logging.Logger, predictorController PredictorController, dayRangeReader DayRangeReader, fourLightReader FourLightReader) http.Handler {
 	if log == nil {
 		log = logging.Nop()
 	}
-	h := &handler{experiments: storage.ExperimentView{Root: c.DataDir, RequireCIFS: c.RequireCIFS}, predictor: predictorController, dayRange: dayRangeReader, config: c, llm: config.NewLLMRuntime(c.LLM), publicReadOnly: c.Web.PublicReadOnly, stocks: append([]config.Stock(nil), c.Stocks...), adjust: c.Daily.Adjust, db: db, log: log}
+	h := &handler{experiments: storage.ExperimentView{Root: c.DataDir, RequireCIFS: c.RequireCIFS}, predictor: predictorController, dayRange: dayRangeReader, fourLight: fourLightReader, config: c, llm: config.NewLLMRuntime(c.LLM), publicReadOnly: c.Web.PublicReadOnly, stocks: append([]config.Stock(nil), c.Stocks...), adjust: c.Daily.Adjust, db: db, log: log}
 	if marketDB, ok := db.(*storage.MarketDB); ok {
 		h.health = func(ctx context.Context) (health.Status, error) { return health.Read(ctx, c, marketDB, time.Now()) }
 		h.review = review.New(newReviewLoader(c, marketDB))
@@ -175,6 +193,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveDayRangeStatus(w, r)
 	case "/api/day-range/evaluation":
 		h.serveDayRangeEvaluation(w, r)
+	case "/api/four-light":
+		h.serveFourLight(w, r)
+	case "/api/four-light/history":
+		h.serveFourLightHistory(w, r)
 	case "/api/predictions":
 		h.servePredictions(w, r)
 	case "/api/predictor":
@@ -307,12 +329,20 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.reviewAsset(w, r)
 	case "/day-range":
 		h.asset(w, r, "day-range.html", "text/html; charset=utf-8")
+	case "/four-light":
+		h.asset(w, r, "four-light.html", "text/html; charset=utf-8")
 	case "/assets/day-range.js":
 		w.Header().Set("Cache-Control", "no-cache")
 		h.asset(w, r, "day-range.js", "text/javascript; charset=utf-8")
 	case "/assets/day-range.css":
 		w.Header().Set("Cache-Control", "no-cache")
 		h.asset(w, r, "day-range.css", "text/css; charset=utf-8")
+	case "/assets/four-light.js":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "four-light.js", "text/javascript; charset=utf-8")
+	case "/assets/four-light.css":
+		w.Header().Set("Cache-Control", "no-cache")
+		h.asset(w, r, "four-light.css", "text/css; charset=utf-8")
 	case "/assets/experiments.js":
 		w.Header().Set("Cache-Control", "no-cache")
 		h.asset(w, r, "experiments.js", "text/javascript; charset=utf-8")

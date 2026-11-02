@@ -10,7 +10,7 @@
 
 实验性 `rebound_signal`（`strategy.EvaluateReboundSignal`）只实现 `watch/armed/confirmed/failed/expired` 状态机，使用日线 qfq 区间、同一冻结快照中的不复权 30m/5m 完成 K 线，并按信号日 qfq/raw 收盘比显式换算价格尺度。它不接管正式推荐，也不得表述为第一、二、三类买点；当前尚未接入 experiment 的逐笔报告与回放，只是策略包内的实验原语，接入前必须补齐快照冻结、逐笔证据和独立样本设计。
 
-`strategy.AnalyzeFourLight` 提供 `four_light_approx_v1` 的纯计算证据：只使用信号日已完成前复权日线，四盏价量近似灯为 `red/green/unknown`，未知不参与共振。当前近似不依赖额外资金流字段；目标公式若核实为依赖资金数据，必须单独扩展数据契约后再计算。该证据只附加到候选和实验逐笔记录，属于 shadow 研究信号，不改变正式推荐、排名、机会分、结构门控或消息投递。网页只能展示“研究信号 / 近似四灯状态 / 未对齐目标软件 / 数据不足”，不得显示为确定买点。
+`strategy.AnalyzeFourLight` 提供 `four_light_approx_v1` 的纯计算证据：只使用信号日已完成前复权日线，四盏价量近似灯为 `red/green/unknown`，未知不参与共振。`internal/allmarket.FourLightRunner` 独立读取 `all-market.db` 的全市场前复权日线并为活跃股票归档每日灯色、`first_all_red/continuing_all_red/exit_all_red/non_all_red/unknown` 生命周期和失败原因；计算不依赖候选排名，也没有复制第二套公式。当前近似不依赖额外资金流字段；目标公式若核实为依赖资金数据，必须单独扩展数据契约后再计算。候选和实验逐笔证据、全市场归档都属于 shadow 研究信号，不改变正式推荐、排名、机会分、结构门控或消息投递。网页只能展示“研究信号 / 近似四灯状态 / 未对齐目标软件 / 数据不足”，不得显示为确定买点；`unknown` 不能解释为退出共振或通过。
 
 `cmd/four-light-align` 与 `internal/fourlightalign` 只读已完成前复权日线和目标软件连续灯色 CSV，报告逐灯一致率、全红状态一致率、首次全红/退出全红漏报误报及转换提前或滞后根数；转换事件先同日配对，再在 ±3 根内按时间顺序做一对一最优配对。它不修改四灯公式、不写行情或实验记录，也不以收益回测代替对齐验收；没有目标软件版本和连续样本时，状态必须保持“未对齐”。样本格式和运行方式见[近似四灯与目标软件对齐验收](four-light-alignment.md)。
 

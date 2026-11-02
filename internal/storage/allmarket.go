@@ -90,25 +90,30 @@ type RecommendationArtifact struct {
 }
 
 func OpenAllMarket(root string, requireCIFS bool) (*AllMarketDB, error) {
-	return openAllMarket(root, requireCIFS, true, allMarketDBName, allMarketLockName, "all-market")
+	return openAllMarket(root, requireCIFS, true, true, allMarketDBName, allMarketLockName, "all-market")
 }
 
 func OpenAllMarketView(root string, requireCIFS bool) (*AllMarketDB, error) {
-	return openAllMarket(root, requireCIFS, false, allMarketDBName, allMarketLockName, "all-market")
+	return openAllMarket(root, requireCIFS, false, false, allMarketDBName, allMarketLockName, "all-market")
 }
 
 // OpenHKMarket opens the Stock Connect daily store. It intentionally shares the
 // full-market schema but uses a separate database and writer lock so a Hong
 // Kong sync can run beside the A-share full-market sync.
 func OpenHKMarket(root string, requireCIFS bool) (*AllMarketDB, error) {
-	return openAllMarket(root, requireCIFS, true, hkMarketDBName, hkMarketLockName, "HK market")
+	return openAllMarket(root, requireCIFS, true, true, hkMarketDBName, hkMarketLockName, "HK market")
 }
 
 func OpenHKMarketView(root string, requireCIFS bool) (*AllMarketDB, error) {
-	return openAllMarket(root, requireCIFS, false, hkMarketDBName, hkMarketLockName, "HK market")
+	return openAllMarket(root, requireCIFS, false, false, hkMarketDBName, hkMarketLockName, "HK market")
 }
 
-func openAllMarket(root string, requireCIFS, writable bool, dbName, lockName, kind string) (*AllMarketDB, error) {
+// OpenAllMarketExisting opens an existing writable store without creating an empty universe.
+func OpenAllMarketExisting(root string, requireCIFS bool) (*AllMarketDB, error) {
+	return openAllMarket(root, requireCIFS, true, false, allMarketDBName, allMarketLockName, "all-market")
+}
+
+func openAllMarket(root string, requireCIFS, writable, create bool, dbName, lockName, kind string) (*AllMarketDB, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -118,7 +123,7 @@ func openAllMarket(root string, requireCIFS, writable bool, dbName, lockName, ki
 		return nil, err
 	}
 	path := filepath.Join(root, dbName)
-	if !writable {
+	if !create {
 		if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 			return nil, errors.New(kind + " database is not initialized")
 		}
@@ -137,7 +142,10 @@ func openAllMarket(root string, requireCIFS, writable bool, dbName, lockName, ki
 	}
 	mode := "ro"
 	if writable {
-		mode = "rwc"
+		mode = "rw"
+		if create {
+			mode = "rwc"
+		}
 	}
 	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode="+mode)
 	if err != nil {
@@ -263,6 +271,11 @@ func (m *AllMarketDB) initSchema() error {
 	if m.dbName == hkMarketDBName {
 		if _, err := tx.Exec(hkMinuteSchema); err != nil {
 			return errors.New("cannot initialize HK minute schema")
+		}
+	}
+	if m.dbName == allMarketDBName {
+		if _, err := tx.Exec(allMarketFourLightSchema); err != nil {
+			return errors.New("cannot initialize four-light archive schema")
 		}
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {

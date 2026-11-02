@@ -43,6 +43,10 @@ STOCK_WATCHER_DATA_DIR=/mnt/windows_database \
 # 日线已同步后，重跑低估值与低套牢交集观察
 STOCK_WATCHER_DATA_DIR=/mnt/windows_database \
 ./bin/stock-watcher scan-value-trapped -workers 3 -timeout 6h
+
+# 从已保存的全市场日线生成当天近似四灯归档
+STOCK_WATCHER_DATA_DIR=/mnt/windows_database \
+./bin/stock-watcher four-light-all -timeout 2h
 ```
 
 发现使用新浪 `sh_a`/`sz_a` 并排除 ST、名称含“退”的退市股票、北交所和 B 股；写入独立 `<data_dir>/all-market.db` 与 `.all-market.lock`。每只股票保存 10 年不复权窗口和 `daily.history_days` 前复权窗口；同日已完成的股票重跑时跳过，`-full` 强制刷新。全市场约 5,000 只股票，首次同步通常需要数小时，数据量按实际历史为几 GB 到十余 GB。完整且未使用 `-codes` 的同步会在启用 `low_valuation` 时自动拉取新浪 TTM 财务快照、计算财务研究区间并保存低估值快照；启用 `value_trapped` 时只对低估值候选复用套牢 V3 并保存交集快照。单独扫描只读取已保存日线，不重新下载行情；`scan-value-trapped` 会先重算低估值，再只为低估值候选请求换手率。`sync-all`、`scan-low-valuation` 和 `scan-value-trapped` 都不直接发送通知，主 `run`/`once` 读取快照后投递公众号稿。新浪列表不提供上市日期，实际历史起点受上市日期和上游可用数据限制；全市场财务请求受 `market.request_interval` 限速，通常需要数十分钟。
@@ -72,6 +76,8 @@ STOCK_WATCHER_HK_INTRADAY_ENABLED=true \
 `-from`、`-through` 必须成对且相差不超过 62 个自然日，不能超出配置的港股半日市覆盖；不指定日期时自动选择窗口。输出 `partial` 或 `failed` 时命令非零退出，检查 `hk-market.db` 的 `intraday_sync`，不要把已有旧线当作补采成功。历史缺口超过单次请求时从缺口边缘分段重跑。港股日线和分钟共用写锁，手工补采前应停止可能竞争的常驻分钟采集及港股日线任务；采集失败保留已保存数据。正常启动服务后可通过 `GET /api/hk-intraday?code=hk00700&period=5` 读取，当前没有港股图表。配置、时段和来源限制见[港股通分钟数据](data-sources.md#港股通分钟数据sync-hk-minutes)。
 
 `make hk-intraday-smoke` 和 `make docker-hk-intraday-smoke` 使用临时数据、本地行情 mock、单个 Chromium 与模拟网关验证迁移、补采、缺口、异常、只读 API、身份拒绝和退出；它们不验证真实上游、CIFS、生产账号或部署 URL。
+
+`four-light-all` 不访问行情源，只读取 `all-market.db` 中信号日及之前的前复权日线，按冻结的 `four_light_approx_v1` 为每只活跃股票归档 `red/green/unknown` 灯色、数据状态和生命周期。它要求数据库已存在且 schema 为 2，不会先创建空库；非交易日、未完成交易日、少于 60 根日线、信号日无行情、上一交易日无行情或行情陈旧都会明确记录为无法判断。成功重跑会在同一事务中替换该日期和规则的全部日记录与事件，失败重跑保留上次成功快照。输出 JSON 中的 `status=complete` 只表示计算与落库完成，不表示选股有效或与任何商业软件对齐。
 
 首次部署完成 `sync` 后，用 `make minute-backfill`（默认 6 并发、最近 200 个交易日）补齐历史 5 分钟线；可用 `MINUTE_ARGS` 覆盖 `-from`、`-as-of`、`-codes`、`-workers`、`-provider`。`-provider auto` 对最近 104 个完整交易日优先使用新浪，更长窗口使用 BaoStock。已有生产实例运行时不要直接写生产库，先按 [行情来源与回退](data-sources.md#分钟数据) 的 staging 流程抓取，再停止 `run` 执行 `-import-from`。
 

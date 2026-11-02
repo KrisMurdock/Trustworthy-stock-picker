@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#07090B">
+    <meta name="description" content="查看全市场近似四灯状态、首次共振、退出共振和缺失原因。">
+    <title>全市场四灯 · 研究信号 · Stock Watcher</title>
+    <link rel="icon" href="data:,">
+    <link rel="preload" href="/assets/fonts/plex-serif-600.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/assets/style.css">
+    <link rel="stylesheet" href="/assets/four-light.css">
+    <script src="/assets/common.js" defer></script>
+    <script src="/assets/four-light.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳转至四灯内容</a>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="/" aria-label="Stock Watcher 股池观察首页">
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M6 24V15m10 9V8m10 16V4"/><path d="m5 12 10-7 8 5 5-7"/></svg></span>
+          <span><strong>STOCK WATCHER</strong><span class="brand-caption">把信号状态，看得更清楚</span></span>
+        </a>
+        <nav class="header-nav" aria-label="主导航"><a href="/">摘要快照</a><a href="/stocks">全部股票</a><a href="/chart">个股 K 线</a><a href="/rankings">日推排名</a><a href="/four-light" aria-current="page">全市场四灯</a><a href="/day-range">全天区间</a><a href="/review">复盘回看</a><a href="/experiments">策略实验室</a><a href="/calculator">仓位计算</a></nav>
+        <span class="market-label">全市场 · 研究原型</span>
+      </div>
+    </header>
+    <main id="main-content" class="page four-light-page">
+      <section class="page-heading" aria-labelledby="four-light-title">
+        <div>
+          <p class="eyebrow">FULL-MARKET FOUR-LIGHT ARCHIVE</p>
+          <h1 id="four-light-title" data-testid="four-light-title">全市场四灯<span class="heading-dot">.</span></h1>
+          <p class="intro">只看自定义价量状态与生命周期，不依赖候选排名，也不改变正式推荐。</p>
+        </div>
+        <div class="refresh-area">
+          <div class="date-control">
+            <label for="four-light-date">信号日期</label>
+            <input id="four-light-date" data-testid="four-light-date" type="date" inputmode="numeric">
+          </div>
+          <button id="four-light-refresh" class="button button-primary" type="button" data-testid="four-light-refresh">读取当日归档</button>
+          <p>默认显示最近一次完整计算</p>
+        </div>
+      </section>
+
+      <div class="notice notice-info four-light-contract" data-testid="four-light-contract">
+        <div><strong>这是研究信号，不是买点</strong><p>当前 <code>four_light_approx_v1</code> 是四条自定义价量条件：趋势=收盘高于 MA20，量能=放量，中期=收盘高于 MA60，短期=收盘高于 MA5 且五日涨幅为正。量能红仅表示放量，放量下跌也可能是红；公式未对齐商业软件，选股价值尚未验证。</p></div>
+      </div>
+
+      <div id="four-light-loading" class="loading-state" role="status" data-testid="four-light-loading"><span class="spinner" aria-hidden="true"></span><div><strong>正在读取全市场四灯归档</strong><p>校验规则版本、数据状态与生命周期…</p></div></div>
+      <div id="four-light-error" class="notice notice-error" role="alert" data-testid="four-light-error" hidden><div><strong>四灯归档读取失败</strong><p id="four-light-error-message"></p></div><button id="four-light-retry" class="button button-secondary" type="button" data-testid="four-light-retry">重新加载</button></div>
+      <div id="four-light-empty" class="section-empty" data-testid="four-light-empty" hidden><span class="empty-symbol" aria-hidden="true">◇</span><strong>所选日期暂无四灯归档</strong><p id="four-light-empty-message">先同步全市场行情，再运行 four-light-all。</p></div>
+
+      <div id="four-light-content" data-testid="four-light-content" hidden>
+        <div id="four-light-run-meta" class="four-light-run-meta" data-testid="four-light-run-meta"></div>
+        <section class="summary-grid four-light-summary" aria-label="全市场四灯汇总" data-testid="four-light-summary">
+          <article class="summary-card"><span class="card-label">活跃股票</span><p class="card-value"><span id="four-light-total">—</span><small>支</small></p><p class="card-note">本次完整计算覆盖</p></article>
+          <article class="summary-card"><span class="card-label">四灯全红</span><p class="card-value"><span id="four-light-all-red">—</span><small>支</small></p><p class="card-note">四条条件同时成立</p></article>
+          <article class="summary-card summary-coverage"><span class="card-label">首次全红</span><p class="card-value"><span id="four-light-first-count">—</span><small>支</small></p><p class="card-note">上一有效交易日非全红</p></article>
+          <article class="summary-card"><span class="card-label">持续全红</span><p class="card-value"><span id="four-light-continuing-count">—</span><small>支</small></p><p class="card-note">上一有效交易日也是全红</p></article>
+          <article class="summary-card"><span class="card-label">退出全红</span><p class="card-value"><span id="four-light-exit-count">—</span><small>支</small></p><p class="card-note">从全红转为非全红</p></article>
+          <article class="summary-card"><span class="card-label">无法判断</span><p class="card-value"><span id="four-light-unknown-count">—</span><small>支</small></p><p class="card-note">缺失不等于退出共振</p></article>
+        </section>
+
+        <section class="panel" aria-labelledby="four-light-first-title">
+          <div class="panel-heading"><div><p class="eyebrow">NEW RESONANCE</p><h2 id="four-light-first-title">当日首次全红 <span id="four-light-first-tag" class="count-tag">—</span></h2><p class="section-description">仅表示从上一有效交易日的非全红转为今日全红；不是买入指令。</p></div></div>
+          <div class="table-scroll" role="region" aria-label="首次全红列表，可横向滚动" tabindex="0"><table class="ranking-table four-light-table"><thead><tr><th scope="col">股票</th><th scope="col">四灯</th><th scope="col">生命周期</th><th scope="col">上一交易日</th><th scope="col">数据状态</th><th scope="col">依据</th></tr></thead><tbody id="four-light-first-body"></tbody></table></div>
+        </section>
+
+        <section class="panel" aria-labelledby="four-light-continuing-title">
+          <div class="panel-heading"><div><p class="eyebrow">CONTINUING</p><h2 id="four-light-continuing-title">持续全红 <span id="four-light-continuing-tag" class="count-tag">—</span></h2><p class="section-description">连续状态不重复算作新的首次事件。</p></div></div>
+          <div class="table-scroll" role="region" aria-label="持续全红列表，可横向滚动" tabindex="0"><table class="ranking-table four-light-table"><thead><tr><th scope="col">股票</th><th scope="col">四灯</th><th scope="col">生命周期</th><th scope="col">上一交易日</th><th scope="col">数据状态</th><th scope="col">依据</th></tr></thead><tbody id="four-light-continuing-body"></tbody></table></div>
+        </section>
+
+        <section class="panel" aria-labelledby="four-light-exit-title">
+          <div class="panel-heading"><div><p class="eyebrow">RESONANCE ENDED</p><h2 id="four-light-exit-title">退出全红 <span id="four-light-exit-tag" class="count-tag">—</span></h2><p class="section-description">只有上一交易日状态已知且当日日线完整时才判定退出。</p></div></div>
+          <div class="table-scroll" role="region" aria-label="退出全红列表，可横向滚动" tabindex="0"><table class="ranking-table four-light-table"><thead><tr><th scope="col">股票</th><th scope="col">四灯</th><th scope="col">生命周期</th><th scope="col">上一交易日</th><th scope="col">数据状态</th><th scope="col">依据</th></tr></thead><tbody id="four-light-exit-body"></tbody></table></div>
+        </section>
+
+        <section class="panel" aria-labelledby="four-light-unknown-title">
+          <div class="panel-heading"><div><p class="eyebrow">UNKNOWN DATA</p><h2 id="four-light-unknown-title">无法判断 <span id="four-light-unknown-tag" class="count-tag">—</span></h2><p class="section-description">停牌、缺日线、历史不足或数据异常会保留为 unknown，不会被解释为退出共振。</p></div></div>
+          <div class="table-scroll" role="region" aria-label="无法判断列表，可横向滚动" tabindex="0"><table class="ranking-table four-light-table"><thead><tr><th scope="col">股票</th><th scope="col">四灯</th><th scope="col">生命周期</th><th scope="col">上一交易日</th><th scope="col">数据状态</th><th scope="col">原因</th></tr></thead><tbody id="four-light-unknown-body"></tbody></table></div>
+        </section>
+
+        <section class="panel" aria-labelledby="four-light-history-title">
+          <div class="panel-heading"><div><p class="eyebrow">STOCK HISTORY</p><h2 id="four-light-history-title">个股四灯历史</h2><p class="section-description">按股票、日期和规则版本查询已归档状态；最多查询五年。</p></div></div>
+          <form id="four-light-history-form" class="four-light-history-form" data-testid="four-light-history-form">
+            <label for="four-light-history-code">股票代码<input id="four-light-history-code" name="code" type="text" placeholder="sz000001" pattern="(sh|sz)[0-9]{6}" required></label>
+            <label for="four-light-history-from">开始日期<input id="four-light-history-from" name="from" type="date" required></label>
+            <label for="four-light-history-through">结束日期<input id="four-light-history-through" name="through" type="date" required></label>
+            <button class="button button-primary" type="submit" data-testid="four-light-history-submit">查询历史</button>
+          </form>
+          <div id="four-light-history-status" class="four-light-history-status" role="status" data-testid="four-light-history-status"></div>
+          <div class="table-scroll" role="region" aria-label="个股四灯历史表，可横向滚动" tabindex="0"><table class="ranking-table four-light-table"><thead><tr><th scope="col">日期</th><th scope="col">股票</th><th scope="col">四灯</th><th scope="col">状态</th><th scope="col">生命周期</th><th scope="col">上一交易日</th><th scope="col">依据</th></tr></thead><tbody id="four-light-history-body"></tbody></table></div>
+        </section>
+      </div>
+      <footer class="site-footer"><span>STOCK WATCHER <span class="footer-separator">/</span> 全市场信号归档</span><span>只读研究 · 不构成投资建议</span></footer>
+    </main>
+  </body>
+</html>
