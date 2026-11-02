@@ -15,8 +15,9 @@ import (
 const articleChartLegend = "结构图中，橙线为缠论笔，深色与蓝色点为顶、底分型，蓝色区域为笔重叠区，紫线为波浪支撑、压力与失效位及回撤刻度；K 线红涨绿跌。"
 
 const (
-	articleDetailCount = 5
-	articleBuyBandATR  = 0.35
+	articleDetailCount        = 5
+	articleCompactDetailCount = 4
+	articleBuyBandATR         = 0.35
 )
 
 type articleCandidate struct {
@@ -95,12 +96,14 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 	out.WriteString(fmt.Sprintf("今天的筛选结果显示，策略观察池共 %d 只，精排从中输出 %d 只进入本期观察名单。%s。以下内容仅用于研究和观察，不构成交易建议。\n\n",
 		poolCount, len(rows), articleFormalSentence(formal)))
 	out.WriteString("机会分不代表成功概率，也不代表未来收益。\n\n")
-	writeArticleTrappedSummary(&out, rows)
 	compactPhase := len(rows) > 6
 	writeArticlePhasePipeline(&out, r, rows, compactPhase)
 
 	out.WriteString("## 一、排名靠前的观察对象\n\n")
 	detailCount := minInt(articleDetailCount, len(rows))
+	if compactPhase {
+		detailCount = minInt(articleCompactDetailCount, len(rows))
+	}
 	for i := 0; i < detailCount; i++ {
 		writeArticleDetail(&out, r, rows[i], compactPhase)
 	}
@@ -117,9 +120,11 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 
 	out.WriteString("## 价格区间说明\n\n")
 	if compactPhase {
-		out.WriteString(fmt.Sprintf("买区=参考价±%.2g×ATR14；明日高低点为 dayrange 点估计及名义区间，非收益承诺；缺失标“暂缺”。\n\n", articleBuyBandATR))
+		out.WriteString(fmt.Sprintf("买区=参考价±%.2g×ATR14；明日高低点为 dayrange 点估计及名义区间，非收益承诺；缺失标“暂缺”。套牢=近%d日量价代理；触发≥30%%/2%%，观察≥20%%/1%%，非信号。\n\n", articleBuyBandATR, strategy.TrappedLookbackSessions))
 	} else {
 		out.WriteString(fmt.Sprintf("推荐买区以参考买价为中枢、ATR14 的 %.2g 倍为半宽生成，保留两位小数；信号日实际区间取 %s 的最高价至最低价。明日高点和低点来自已保存的 dayrange 预测，点估计之外分别给出各自的名义边际区间；高、低区间不是联合覆盖，也不是收益承诺。预测缺失时文章会明确标注“暂缺”，不临时编造。\n\n", articleBuyBandATR, articleMonthDay(result.AsOf)))
+		out.WriteString("## 套牢盘诊断说明\n\n")
+		out.WriteString(fmt.Sprintf("套牢盘按近 %d 个交易日典型价和成交量估算：上方套牢量=典型价高于信号日收盘的成交量占比；触发=套牢量≥30%%且加权成本高于现价≥2%%，观察=≥20%%且≥1%%，无明显=未达观察阈值，数据不足=有效样本少于%d个。成本带为上方成交量20%%~80%%加权分位。该指标只描述上方成交压力，成交量不等同真实持仓成本，不构成交易信号，也不改变排名或推荐。\n\n", strategy.TrappedLookbackSessions, strategy.TrappedMinimumSessions))
 	}
 
 	out.WriteString("## 理论与方法边界\n\n")
@@ -179,8 +184,19 @@ func writeArticleDetail(out *strings.Builder, r selection.Report, row articleCan
 	writeArticleChart(out, row.observation)
 
 	out.WriteString("#### 价格与明日区间\n")
-	for _, line := range articlePriceLines(r, row.observation) {
-		out.WriteString("- **" + line.label + "**：" + line.value + "\n")
+	priceLines := articlePriceLines(r, row.observation)
+	for index, line := range priceLines {
+		value := line.value
+		if compactPhase && index == len(priceLines)-1 {
+			value += "；套牢：" + articleBriefTrapped(row.observation)
+		}
+		out.WriteString("- **" + line.label + "**：" + value + "\n")
+	}
+	if !compactPhase {
+		out.WriteString("\n#### 套牢盘诊断\n")
+		for _, line := range articleTrappedLines(row.observation) {
+			out.WriteString("- " + line + "\n")
+		}
 	}
 	out.WriteString("\n#### 技术指标\n")
 	for _, line := range articleTechnicalLines(row.observation) {
@@ -222,7 +238,7 @@ func writeArticleBrief(out *strings.Builder, r selection.Report, row articleCand
 	out.WriteString(fmt.Sprintf("### %d. %s（%s）\n\n", row.rank, name, code))
 	out.WriteString("**" + articleRankLabel(row) + " · " + sector + "**\n\n")
 	writeArticleChart(out, row.observation)
-	out.WriteString("- **价格**：" + strings.Join(articlePriceLineTexts(r, row.observation), "；") + "。\n")
+	out.WriteString("- **价格**：" + strings.Join(articlePriceLineTexts(r, row.observation), "；") + "；套牢：" + articleBriefTrapped(row.observation) + "。\n")
 	out.WriteString("- **指标**：" + strings.Join(articleBriefTechnical(row.observation), "；") + "。\n")
 	if phase := articleBriefPhase(row.observation, compactPhase); phase != "" {
 		out.WriteString("- **阶段**：" + phase + "。\n")
@@ -1262,33 +1278,118 @@ func articleBriefTechnical(candidate *strategy.Candidate) []string {
 	return out
 }
 
-func writeArticleTrappedSummary(out *strings.Builder, rows []articleCandidate) {
-	tokens := make([]string, 0, len(rows))
-	for _, row := range rows {
-		tokens = append(tokens, articleTrappedToken(row))
+func articleTrappedLines(candidate *strategy.Candidate) []string {
+	if candidate == nil || candidate.Trapped == nil {
+		return []string{"**状态**：本次报告未保存套牢盘信号；重新生成报告后展示"}
 	}
-	out.WriteString(fmt.Sprintf("套牢盘诊断（%d日量价；@后为加权成本，无=无明显，缺=数据不足）：%s。触发=量≥30%%且成本距现价≥2%%，观察=量≥20%%且≥1%%；仅提示上方成交压力，非交易信号。\n\n",
-		strategy.TrappedLookbackSessions, strings.Join(tokens, " ")))
+	signal := candidate.Trapped
+	status := articleTrappedStatusLabel(signal.Status)
+	if signal.Status == strategy.TrappedStatusUnknown {
+		return []string{fmt.Sprintf("**状态**：数据不足；有效样本 %d/%d 个", signal.Sessions, strategy.TrappedMinimumSessions)}
+	}
+	lines := []string{fmt.Sprintf("**套牢信号**：%s；上方套牢量 %.1f%%", status, signal.TrappedVolumeRatio*100)}
+	if signal.OverheadCost > 0 {
+		zoneLabel := articleTrappedZoneLabel(signal.CurrentZone)
+		if len(signal.Zones) == 0 {
+			zoneLabel = "未保存"
+		}
+		lines = append(lines, fmt.Sprintf("**当前套牢区**：%s；加权成本 %.2f，距现价 %+.1f%%；成本带 %.2f~%.2f",
+			zoneLabel, signal.OverheadCost, signal.OverheadDistancePct, signal.OverheadLow, signal.OverheadHigh))
+	}
+	if len(signal.Zones) > 0 {
+		lines = append(lines, "**套牢区区间**（占上方套牢量）："+articleTrappedZoneText(signal, false))
+	}
+	if signal.RecentHigh > 0 && signal.CurrentPrice > 0 {
+		lines = append(lines, fmt.Sprintf("**区间回撤**：现价距近 %d 日高点 %+.1f%%", signal.LookbackSessions, signal.DrawdownFromHighPct))
+	}
+	return lines
 }
 
-func articleTrappedToken(row articleCandidate) string {
-	rank := row.rank
-	if rank <= 0 {
-		rank = 1
+func articleBriefTrapped(candidate *strategy.Candidate) string {
+	if candidate == nil || candidate.Trapped == nil {
+		return "未保存"
 	}
-	if row.observation == nil || row.observation.Trapped == nil {
-		return fmt.Sprintf("%d缺", rank)
+	signal := candidate.Trapped
+	status := articleTrappedStatusLabel(signal.Status)
+	if signal.Status == strategy.TrappedStatusUnknown {
+		return "数据不足"
 	}
-	signal := row.observation.Trapped
-	switch signal.Status {
-	case strategy.TrappedStatusTriggered:
-		return fmt.Sprintf("%d触发%.0f%%@%.2f", rank, signal.TrappedVolumeRatio*100, signal.OverheadCost)
-	case strategy.TrappedStatusWatch:
-		return fmt.Sprintf("%d观察%.0f%%@%.2f", rank, signal.TrappedVolumeRatio*100, signal.OverheadCost)
-	case strategy.TrappedStatusNone:
-		return fmt.Sprintf("%d无", rank)
+	parts := []string{status + fmt.Sprintf("%.0f%%", signal.TrappedVolumeRatio*100)}
+	if signal.OverheadCost <= 0 {
+		return strings.Join(append(parts, "无套牢区"), "｜")
+	}
+	if len(signal.Zones) == 0 {
+		return strings.Join(append(parts, "分区未保存"), "｜")
+	}
+	parts = append(parts, fmt.Sprintf("当前%s@%.2f", articleTrappedZoneLabel(signal.CurrentZone), signal.OverheadCost))
+	parts = append(parts, articleTrappedZoneText(signal, true))
+	return strings.Join(parts, "｜")
+}
+
+func articleTrappedZoneText(signal *strategy.TrappedSignal, compact bool) string {
+	if signal == nil || len(signal.Zones) == 0 {
+		return "无"
+	}
+	parts := make([]string, 0, len(signal.Zones))
+	for _, zone := range signal.Zones {
+		label := zone.Label
+		if label == "" {
+			label = articleTrappedZoneLabel(zone.Level)
+		}
+		if compact {
+			label = articleTrappedZoneShortLabel(zone.Level)
+		}
+		if zone.Low <= 0 || zone.High <= 0 {
+			parts = append(parts, label+"无")
+			continue
+		}
+		if compact {
+			parts = append(parts, fmt.Sprintf("%s%.2f~%.2f", label, zone.Low, zone.High))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s %.2f~%.2f（%.0f%%）", label, zone.Low, zone.High, zone.VolumeShare*100))
+	}
+	return strings.Join(parts, " ")
+}
+
+func articleTrappedZoneLabel(level string) string {
+	switch level {
+	case strategy.TrappedZoneShallow:
+		return "浅度"
+	case strategy.TrappedZoneModerate:
+		return "中度"
+	case strategy.TrappedZoneDeep:
+		return "深度"
 	default:
-		return fmt.Sprintf("%d缺", rank)
+		return "无明显"
+	}
+}
+
+func articleTrappedZoneShortLabel(level string) string {
+	switch level {
+	case strategy.TrappedZoneShallow:
+		return "浅"
+	case strategy.TrappedZoneModerate:
+		return "中"
+	case strategy.TrappedZoneDeep:
+		return "深"
+	default:
+		return "无"
+	}
+}
+
+func articleTrappedStatusLabel(status string) string {
+	switch status {
+	case strategy.TrappedStatusTriggered:
+		return "触发"
+	case strategy.TrappedStatusWatch:
+		return "观察"
+	case strategy.TrappedStatusNone:
+		return "无明显"
+	case strategy.TrappedStatusUnknown:
+		return "数据不足"
+	default:
+		return "未知"
 	}
 }
 

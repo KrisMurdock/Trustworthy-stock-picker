@@ -144,11 +144,23 @@ func TestSecondStageArticleIncludesTrappedSignalForEveryCandidate(t *testing.T) 
 		Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusTriggered,
 		LookbackSessions: 120, Sessions: 120, CurrentPrice: 15.15, RecentHigh: 16.50, DrawdownFromHighPct: -8.18,
 		TrappedVolumeRatio: 0.36, OverheadCost: 16.10, OverheadLow: 15.90, OverheadHigh: 16.30, OverheadDistancePct: 6.27,
+		CurrentZone: strategy.TrappedZoneModerate,
+		Zones: []strategy.TrappedZone{
+			{Level: strategy.TrappedZoneShallow, Label: "浅度", Low: 15.20, High: 15.50, VolumeShare: 0.10},
+			{Level: strategy.TrappedZoneModerate, Label: "中度", Low: 15.90, High: 16.30, VolumeShare: 0.60},
+			{Level: strategy.TrappedZoneDeep, Label: "深度", Low: 17.00, High: 17.80, VolumeShare: 0.30},
+		},
 	}
 	r.Ranking[1].Trapped = &strategy.TrappedSignal{
 		Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusWatch,
 		LookbackSessions: 120, Sessions: 120, CurrentPrice: 15.15, TrappedVolumeRatio: 0.24,
 		OverheadCost: 15.60, OverheadLow: 15.50, OverheadHigh: 15.70, OverheadDistancePct: 2.97,
+		CurrentZone: strategy.TrappedZoneShallow,
+		Zones: []strategy.TrappedZone{
+			{Level: strategy.TrappedZoneShallow, Label: "浅度", Low: 15.20, High: 15.70, VolumeShare: 0.60},
+			{Level: strategy.TrappedZoneModerate, Label: "中度", Low: 16.00, High: 16.40, VolumeShare: 0.30},
+			{Level: strategy.TrappedZoneDeep, Label: "深度", Low: 16.80, High: 17.20, VolumeShare: 0.10},
+		},
 	}
 	r.Ranking[2].Trapped = &strategy.TrappedSignal{
 		Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusNone,
@@ -163,12 +175,20 @@ func TestSecondStageArticleIncludesTrappedSignalForEveryCandidate(t *testing.T) 
 	}
 	body := cards.SecondStage[0].Article.Body
 	for _, want := range []string{
-		"套牢盘诊断（120日量价；@后为加权成本，无=无明显，缺=数据不足）：1触发36%@16.10 2观察24%@15.60 3无 4缺 5缺 6缺。触发=量≥30%且成本距现价≥2%，观察=量≥20%且≥1%；仅提示上方成交压力，非交易信号。",
+		"#### 套牢盘诊断\n- **套牢信号**：触发；上方套牢量 36.0%\n- **当前套牢区**：中度；加权成本 16.10，距现价 +6.3%；成本带 15.90~16.30\n- **套牢区区间**（占上方套牢量）：浅度 15.20~15.50（10%） 中度 15.90~16.30（60%） 深度 17.00~17.80（30%）\n- **区间回撤**：现价距近 120 日高点 -8.2%",
+		"#### 套牢盘诊断\n- **套牢信号**：观察；上方套牢量 24.0%\n- **当前套牢区**：浅度；加权成本 15.60，距现价 +3.0%；成本带 15.50~15.70\n- **套牢区区间**（占上方套牢量）：浅度 15.20~15.70（60%） 中度 16.00~16.40（30%） 深度 16.80~17.20（10%）",
+		"#### 套牢盘诊断\n- **套牢信号**：无明显；上方套牢量 5.0%",
+		"**状态**：本次报告未保存套牢盘信号；重新生成报告后展示",
+		"；套牢：未保存。",
+		"## 套牢盘诊断说明",
 		"部分对象触发上方套牢盘信号",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("article missing trapped text %q:\n%s", want, body)
 		}
+	}
+	if got, want := strings.Count(body, "#### 套牢盘诊断"), 5; got != want {
+		t.Fatalf("detailed trapped sections = %d, want %d:\n%s", got, want, body)
 	}
 	if !strings.Contains(cards.SecondStage[0].PlainText, "套牢盘诊断") {
 		t.Fatalf("plain text missing trapped summary: %s", cards.SecondStage[0].PlainText)
@@ -493,6 +513,12 @@ func TestSecondStageArticleWithTenChartsFitsWechatLimit(t *testing.T) {
 			Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusTriggered,
 			LookbackSessions: 120, Sessions: 120, CurrentPrice: 15.15, TrappedVolumeRatio: 1,
 			OverheadCost: 1234.56, OverheadLow: 1200, OverheadHigh: 1300, OverheadDistancePct: 8048.91,
+			CurrentZone: strategy.TrappedZoneDeep,
+			Zones: []strategy.TrappedZone{
+				{Level: strategy.TrappedZoneShallow, Label: "浅度"},
+				{Level: strategy.TrappedZoneModerate, Label: "中度"},
+				{Level: strategy.TrappedZoneDeep, Label: "深度", Low: 1200, High: 1300, VolumeShare: 1},
+			},
 		}
 		images[chart.ID] = wechat.RenderedImage{URL: "https://mmbiz.qpic.cn/mmbiz_png/" + strings.Repeat("a", 160) + "/0?wx_fmt=png", Caption: articleChartCaption(*chart)}
 	}
@@ -512,6 +538,12 @@ func TestSecondStageArticleWithTenChartsFitsWechatLimit(t *testing.T) {
 	}
 	if got := strings.Count(rendered, "<img "); got != 10 {
 		t.Fatalf("rendered charts = %d, want 10", got)
+	}
+	if got := strings.Count(rendered, "套牢："); got != 10 {
+		t.Fatalf("rendered per-stock trapped labels = %d, want 10", got)
+	}
+	if !strings.Contains(rendered, "当前深度@1234.56") || !strings.Contains(rendered, "深1200.00~1300.00") {
+		t.Fatalf("compact trapped zone ranges missing:\n%s", rendered)
 	}
 }
 

@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	TrappedSignalVersion = 1
-	TrappedSignalMethod  = "volume_weighted_overhead_v1"
+	TrappedSignalVersion = 2
+	TrappedSignalMethod  = "volume_weighted_overhead_v2"
 
 	TrappedLookbackSessions = 120
 	TrappedMinimumSessions  = 60
@@ -18,6 +18,8 @@ const (
 	TrappedTriggerVolumeRatio         = 0.30
 	TrappedObserveOverheadDistancePct = 1.0
 	TrappedTriggerOverheadDistancePct = 2.0
+	TrappedShallowMaxDistancePct      = 5.0
+	TrappedModerateMaxDistancePct     = 15.0
 	trappedEpsilon                    = 1e-9
 )
 
@@ -28,29 +30,49 @@ const (
 	TrappedStatusTriggered = "triggered"
 )
 
+const (
+	TrappedZoneShallow  = "shallow"
+	TrappedZoneModerate = "moderate"
+	TrappedZoneDeep     = "deep"
+)
+
+// TrappedZone describes one distance band above the signal-day close. Volume
+// share is relative to all overhead volume in the lookback window.
+type TrappedZone struct {
+	Level       string  `json:"level"`
+	Label       string  `json:"label"`
+	Low         float64 `json:"low,omitempty"`
+	High        float64 `json:"high,omitempty"`
+	VolumeShare float64 `json:"volume_share"`
+}
+
 // TrappedSignal estimates overhead supply from the volume-weighted prices of
 // recent daily bars above the latest close. It is a diagnostic, not a trading
 // signal: volume is a proxy for turnover, not a record of actual holdings.
 type TrappedSignal struct {
-	Version                    int      `json:"schema_version"`
-	Method                     string   `json:"method"`
-	Status                     string   `json:"status"`
-	LookbackSessions           int      `json:"lookback_sessions"`
-	Sessions                   int      `json:"sessions"`
-	CurrentPrice               float64  `json:"current_price,omitempty"`
-	RecentHigh                 float64  `json:"recent_high,omitempty"`
-	DrawdownFromHighPct        float64  `json:"drawdown_from_high_pct,omitempty"`
-	TrappedVolumeRatio         float64  `json:"trapped_volume_ratio"`
-	OverheadCost               float64  `json:"overhead_cost,omitempty"`
-	OverheadLow                float64  `json:"overhead_low,omitempty"`
-	OverheadHigh               float64  `json:"overhead_high,omitempty"`
-	OverheadDistancePct        float64  `json:"overhead_distance_pct,omitempty"`
-	ObserveVolumeRatio         float64  `json:"observe_volume_ratio"`
-	TriggerVolumeRatio         float64  `json:"trigger_volume_ratio"`
-	ObserveOverheadDistancePct float64  `json:"observe_overhead_distance_pct"`
-	TriggerOverheadDistancePct float64  `json:"trigger_overhead_distance_pct"`
-	Reasons                    []string `json:"reasons,omitempty"`
-	Limitation                 string   `json:"limitation,omitempty"`
+	Version                    int           `json:"schema_version"`
+	Method                     string        `json:"method"`
+	Status                     string        `json:"status"`
+	LookbackSessions           int           `json:"lookback_sessions"`
+	Sessions                   int           `json:"sessions"`
+	CurrentPrice               float64       `json:"current_price,omitempty"`
+	RecentHigh                 float64       `json:"recent_high,omitempty"`
+	DrawdownFromHighPct        float64       `json:"drawdown_from_high_pct,omitempty"`
+	TrappedVolumeRatio         float64       `json:"trapped_volume_ratio"`
+	OverheadCost               float64       `json:"overhead_cost,omitempty"`
+	OverheadLow                float64       `json:"overhead_low,omitempty"`
+	OverheadHigh               float64       `json:"overhead_high,omitempty"`
+	OverheadDistancePct        float64       `json:"overhead_distance_pct,omitempty"`
+	CurrentZone                string        `json:"current_zone,omitempty"`
+	Zones                      []TrappedZone `json:"zones,omitempty"`
+	ObserveVolumeRatio         float64       `json:"observe_volume_ratio"`
+	TriggerVolumeRatio         float64       `json:"trigger_volume_ratio"`
+	ObserveOverheadDistancePct float64       `json:"observe_overhead_distance_pct"`
+	TriggerOverheadDistancePct float64       `json:"trigger_overhead_distance_pct"`
+	ShallowMaxDistancePct      float64       `json:"shallow_max_distance_pct"`
+	ModerateMaxDistancePct     float64       `json:"moderate_max_distance_pct"`
+	Reasons                    []string      `json:"reasons,omitempty"`
+	Limitation                 string        `json:"limitation,omitempty"`
 }
 
 type trappedPricedVolume struct {
@@ -71,6 +93,8 @@ func AnalyzeTrappedSignal(bars []market.Bar) *TrappedSignal {
 		TriggerVolumeRatio:         TrappedTriggerVolumeRatio,
 		ObserveOverheadDistancePct: TrappedObserveOverheadDistancePct,
 		TriggerOverheadDistancePct: TrappedTriggerOverheadDistancePct,
+		ShallowMaxDistancePct:      TrappedShallowMaxDistancePct,
+		ModerateMaxDistancePct:     TrappedModerateMaxDistancePct,
 		Limitation:                 "按近120个交易日成交量与典型价估算上方成交密集区；成交量不等同于真实持仓成本，未考虑换手和股东结构，不构成交易信号。",
 	}
 	if len(bars) == 0 {
@@ -141,6 +165,8 @@ func AnalyzeTrappedSignal(bars []market.Bar) *TrappedSignal {
 	})
 	signal.OverheadLow = weightedQuantile(trapped, trappedVolume, 0.20)
 	signal.OverheadHigh = weightedQuantile(trapped, trappedVolume, 0.80)
+	signal.Zones = buildTrappedZones(trapped, currentPrice, trappedVolume)
+	signal.CurrentZone = trappedZoneForDistance(signal.OverheadDistancePct)
 
 	switch {
 	case signal.TrappedVolumeRatio >= TrappedTriggerVolumeRatio && signal.OverheadDistancePct >= TrappedTriggerOverheadDistancePct:
@@ -154,6 +180,49 @@ func AnalyzeTrappedSignal(bars []market.Bar) *TrappedSignal {
 		signal.Reasons = []string{"below_observation_threshold"}
 	}
 	return signal
+}
+
+func buildTrappedZones(observations []trappedPricedVolume, currentPrice, trappedVolume float64) []TrappedZone {
+	zones := []TrappedZone{
+		{Level: TrappedZoneShallow, Label: "浅度"},
+		{Level: TrappedZoneModerate, Label: "中度"},
+		{Level: TrappedZoneDeep, Label: "深度"},
+	}
+	if currentPrice <= 0 || trappedVolume <= 0 {
+		return zones
+	}
+	for _, observation := range observations {
+		distance := (observation.price/currentPrice - 1) * 100
+		index := 0
+		switch {
+		case distance > TrappedModerateMaxDistancePct:
+			index = 2
+		case distance > TrappedShallowMaxDistancePct:
+			index = 1
+		}
+		zone := &zones[index]
+		if zone.Low <= 0 || observation.price < zone.Low {
+			zone.Low = observation.price
+		}
+		if observation.price > zone.High {
+			zone.High = observation.price
+		}
+		zone.VolumeShare += observation.volume / trappedVolume
+	}
+	return zones
+}
+
+func trappedZoneForDistance(distancePct float64) string {
+	switch {
+	case distancePct <= 0:
+		return ""
+	case distancePct <= TrappedShallowMaxDistancePct:
+		return TrappedZoneShallow
+	case distancePct <= TrappedModerateMaxDistancePct:
+		return TrappedZoneModerate
+	default:
+		return TrappedZoneDeep
+	}
 }
 
 func validTrappedBar(bar market.Bar) bool {

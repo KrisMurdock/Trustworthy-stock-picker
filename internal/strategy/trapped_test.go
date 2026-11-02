@@ -43,11 +43,61 @@ func TestAnalyzeTrappedSignalClassifiesOverheadSupply(t *testing.T) {
 				if math.Abs(signal.OverheadDistancePct-test.wantDistance) > 1e-9 {
 					t.Fatalf("overhead distance = %.4f, want %.4f", signal.OverheadDistancePct, test.wantDistance)
 				}
+				if signal.CurrentZone != TrappedZoneDeep {
+					t.Fatalf("current zone = %q, want deep", signal.CurrentZone)
+				}
+				if len(signal.Zones) != 3 || signal.Zones[2].Low != test.wantCost || signal.Zones[2].High != test.wantCost || math.Abs(signal.Zones[2].VolumeShare-1) > 1e-9 {
+					t.Fatalf("zones = %+v", signal.Zones)
+				}
 			}
 			if bars[0] != before {
 				t.Fatal("analyzer mutated input bars")
 			}
 		})
+	}
+}
+
+func TestBuildTrappedZonesSplitsByDistance(t *testing.T) {
+	observations := []trappedPricedVolume{
+		{price: 10.2, volume: 1},
+		{price: 11.0, volume: 2},
+		{price: 14.0, volume: 3},
+	}
+	zones := buildTrappedZones(observations, 10, 6)
+	if len(zones) != 3 {
+		t.Fatalf("zones = %+v", zones)
+	}
+	for index, want := range []struct {
+		level string
+		low   float64
+		high  float64
+		share float64
+	}{
+		{level: TrappedZoneShallow, low: 10.2, high: 10.2, share: 1.0 / 6.0},
+		{level: TrappedZoneModerate, low: 11, high: 11, share: 2.0 / 6.0},
+		{level: TrappedZoneDeep, low: 14, high: 14, share: 3.0 / 6.0},
+	} {
+		got := zones[index]
+		if got.Level != want.level || got.Low != want.low || got.High != want.high || math.Abs(got.VolumeShare-want.share) > 1e-9 {
+			t.Fatalf("zone %d = %+v, want %+v", index, got, want)
+		}
+	}
+}
+
+func TestTrappedZoneForDistanceUsesDocumentedBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		distance float64
+		want     string
+	}{
+		{distance: 0, want: ""},
+		{distance: 5, want: TrappedZoneShallow},
+		{distance: 5.01, want: TrappedZoneModerate},
+		{distance: 15, want: TrappedZoneModerate},
+		{distance: 15.01, want: TrappedZoneDeep},
+	} {
+		if got := trappedZoneForDistance(test.distance); got != test.want {
+			t.Fatalf("distance %.2f -> %q, want %q", test.distance, got, test.want)
+		}
 	}
 }
 
