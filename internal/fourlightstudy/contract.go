@@ -16,13 +16,19 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 )
 
-const Engine = "four_light_market_wave_v1"
+const (
+	Engine        = "four_light_market_wave_v1"
+	EngineV2      = "four_light_market_wave_v2"
+	PairingPolicy = strategy.WavePricePairPolicy
+)
 
 // Manifest is frozen alongside a SQLite backup, never a live database path.
 // ObservationThrough is inclusive; ReservedFrom is exclusive. No data loader
 // or evaluator may read prices on or after ReservedFrom.
 type Manifest struct {
 	Version               int                 `json:"schema_version"`
+	WaveModel             string              `json:"wave_model,omitempty"`
+	PairingPolicy         string              `json:"pairing_policy,omitempty"`
 	DatabaseSHA256        string              `json:"database_sha256"`
 	AsOf                  string              `json:"as_of"`
 	From                  string              `json:"from"`
@@ -46,8 +52,12 @@ func (m Manifest) Config() config.Config {
 }
 
 func (m Manifest) Validate() error {
-	if m.Version != 1 || m.UniversePolicy != "current_active_sh_sz" {
+	if (m.Version != 1 && m.Version != 2) || m.UniversePolicy != "current_active_sh_sz" {
 		return errors.New("unsupported market-study manifest version or universe policy")
+	}
+	if (m.Version == 1 && (m.WaveModel != "" || m.PairingPolicy != "")) ||
+		(m.Version == 2 && (m.WaveModel != strategy.UpwardWaveNoDrawdownModel || m.PairingPolicy != PairingPolicy)) {
+		return errors.New("manifest wave model and pairing policy do not match schema version")
 	}
 	digest, err := hex.DecodeString(m.DatabaseSHA256)
 	if err != nil || len(digest) != 32 || m.DatabaseSHA256 != strings.ToLower(m.DatabaseSHA256) {
@@ -87,9 +97,22 @@ func (m Manifest) Validate() error {
 	return nil
 }
 
+func (m Manifest) waveModel() string {
+	if m.Version == 2 {
+		return m.WaveModel
+	}
+	return strategy.UpwardWaveModel
+}
+
 type Pair struct {
 	Adjusted []market.Bar
 	Raw      []market.Bar
+	// Shares parallel the source-volume bars. V2 uses these only for pairing and
+	// execution; four-light arithmetic retains its original provider units.
+	AdjustedShares []float64
+	RawShares      []float64
+	AdjustedSource string
+	RawSource      string
 	// A stock-level provenance issue remains auditable, rather than silently
 	// dropping the stock. Storage errors/cancellation use the error return.
 	Problem string
@@ -103,10 +126,12 @@ type Source interface {
 // Event contains only one code/date. Groups overlap intentionally (flip_all is
 // a subset of first_all_red); reports must never add these rows as disjoint sets.
 type Event struct {
-	Code      string                     `json:"code"`
-	Name      string                     `json:"name"`
-	Date      string                     `json:"date"`
-	Groups    []string                   `json:"groups"`
-	FourLight strategy.FourLightEvidence `json:"four_light"`
-	Wave      *strategy.UpwardWave       `json:"upward_wave"`
+	Code        string                     `json:"code"`
+	Name        string                     `json:"name"`
+	Date        string                     `json:"date"`
+	Groups      []string                   `json:"groups"`
+	Board       string                     `json:"board,omitempty"`
+	VolumeRatio *float64                   `json:"volume_ratio,omitempty"`
+	FourLight   strategy.FourLightEvidence `json:"four_light"`
+	Wave        *strategy.UpwardWave       `json:"upward_wave"`
 }

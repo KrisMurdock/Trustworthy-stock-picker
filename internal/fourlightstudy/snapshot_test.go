@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,6 +68,9 @@ func snapshotTestDatabase(t *testing.T, version int, edits string) (string, Mani
 		}
 	}
 	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("ALTER TABLE daily_bar ADD COLUMN volume_shares INTEGER; UPDATE daily_bar SET volume_shares=CAST(volume_raw*100 AS INTEGER)"); err != nil {
 		t.Fatal(err)
 	}
 	if edits != "" {
@@ -256,5 +260,61 @@ func TestSnapshotHoldsOneConsistentTransaction(t *testing.T) {
 	stocks, err := source.Stocks(context.Background())
 	if err != nil || stocks[0].Name != "Fixture" {
 		t.Fatalf("inconsistent universe: %+v %v", stocks, err)
+	}
+}
+
+func TestSnapshotV2CrossProviderNormalizationAndLocalDefects(t *testing.T) {
+	for _, tc := range []struct {
+		name, edit, reason string
+		raw                int
+	}{
+		{"cross provider valid", "UPDATE daily_bar SET source='sina', volume_raw=volume_shares WHERE adjust='none'", "", 4},
+		{"cross provider unequal shares retained for event validation", "UPDATE daily_bar SET source='sina', volume_raw=volume_shares+200, volume_shares=volume_shares+200 WHERE adjust='none'", "", 4},
+		{"bad normalized shares", "UPDATE daily_bar SET volume_shares=12 WHERE adjust='none' AND trade_date='2026-02-03'", "invalid_volume_shares_none:sz000001:2026-02-03", 4},
+		{"qfq shares preserve signal", "UPDATE daily_bar SET volume_shares=12 WHERE adjust='qfq' AND trade_date='2026-02-03'", "invalid_volume_shares_qfq:sz000001:2026-02-03", 4},
+		{"reserved defect ignored", "UPDATE daily_bar SET volume_shares=-1 WHERE trade_date>='2026-02-05'", "", 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path, m := snapshotTestDatabase(t, 1, tc.edit)
+			enableV2(&m)
+			s, err := OpenSnapshot(context.Background(), path, m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			pair, err := s.Load(context.Background(), config.Stock{Code: "sz000001"})
+			if err != nil || pair.Problem != tc.reason || len(pair.Adjusted) != 4 || len(pair.Raw) != tc.raw || len(pair.RawShares) != tc.raw {
+				t.Fatalf("pair=%+v err=%v", pair, err)
+			}
+			if pair.Adjusted[0].Volume != 1200 || pair.AdjustedShares[0] != 120000 {
+				t.Fatal("signal volume modified or shares lost")
+			}
+			if tc.name == "qfq shares preserve signal" && (!math.IsNaN(pair.AdjustedShares[2]) || pair.Adjusted[2].Volume != 1200 || pair.AdjustedShares[3] != 120000) {
+				t.Fatal("bad shares erased signal or contaminated later independent row")
+			}
+			if tc.name == "cross provider valid" && (pair.RawSource != "sina" || pair.Raw[0].Volume != 120000 || pair.RawShares[0] != 120000) {
+				t.Fatal("unit normalization lost")
+			}
+		})
+	}
+}
+
+func TestNormalizedVolumeUsesStorageIntegerConversion(t *testing.T) {
+	for _, tc := range []struct {
+		code, source string
+		raw, shares  float64
+		valid        bool
+	}{
+		{"sz000001", "tencent", 12.345, 1234, true},
+		{"sh688001", "tencent", 12.345, 12, true},
+		{"sz000001", "sina", 1200, 1200, true},
+		{"sz000001", "baostock", 1200, 1200, true},
+		{"sh600000", "tushare", 12.345, 1234, true},
+		{"sh600000", "eastmoney", 12.345, 1234, true},
+		{"sz000001", "sina", 1200, 120000, false},
+	} {
+		if got := validNormalizedVolume(tc.code, tc.source, tc.raw, tc.shares); got != tc.valid {
+			t.Fatal(tc, got)
+		}
 	}
 }

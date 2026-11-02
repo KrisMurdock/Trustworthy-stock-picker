@@ -12,20 +12,24 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 )
 
-const UpwardWaveModel = "upward_wave_v0"
+const (
+	UpwardWaveModel           = "upward_wave_v0"
+	UpwardWaveNoDrawdownModel = "upward_wave_no_drawdown_v1"
+)
 
 // UpwardWave is an ex-post path label, never an entry feature or an exit rule.
 // Entry is the existing opening-price simulation's fill. Legacy exits do not
 // truncate this path. All percentages use percentage points, ratios use [0,1].
 type UpwardWave struct {
-	Model       string             `json:"model"`
-	EntryStatus string             `json:"entry_status"` // entered / not_entered / unknown
-	EntryReason string             `json:"entry_reason,omitempty"`
-	EntryDate   string             `json:"entry_date,omitempty"`
-	EntryPrice  float64            `json:"entry_price,omitempty"`
-	ATR14Pct    float64            `json:"signal_atr14_pct"`
-	Days        []UpwardWaveDay    `json:"days"`
-	Windows     []UpwardWaveWindow `json:"windows"`
+	Model              string                  `json:"model"`
+	EntryStatus        string                  `json:"entry_status"` // entered / not_entered / unknown
+	EntryReason        string                  `json:"entry_reason,omitempty"`
+	EntryDate          string                  `json:"entry_date,omitempty"`
+	EntryPrice         float64                 `json:"entry_price,omitempty"`
+	ATR14Pct           float64                 `json:"signal_atr14_pct"`
+	Days               []UpwardWaveDay         `json:"days"`
+	Windows            []UpwardWaveWindow      `json:"windows"`
+	PricePairReference *WavePricePairReference `json:"price_pair_reference,omitempty"`
 }
 
 type UpwardWaveDay struct {
@@ -109,16 +113,32 @@ func EvaluateOpeningUpwardWave(ctx context.Context, c config.Config, code, signa
 type OpeningWaveEvaluator struct {
 	parameters config.Strategy
 	calendar   *calendar.Calendar
+	model      string
 }
 
 func NewOpeningWaveEvaluator(c config.Config) (*OpeningWaveEvaluator, error) {
+	return NewOpeningWaveEvaluatorForModel(c, UpwardWaveModel)
+}
+
+// NewOpeningWaveEvaluatorForModel selects an explicit, versioned path label.
+// The legacy model retains its factor and risk checks. The no-drawdown model
+// validates price pairs against a signal-prefix reference and reports risk
+// measurements without using them as success gates.
+func NewOpeningWaveEvaluatorForModel(c config.Config, model string) (*OpeningWaveEvaluator, error) {
+	if !validUpwardWaveModel(model) {
+		return nil, errors.New("unsupported upward-wave model")
+	}
 	if err := c.Strategy.Validate(); err != nil {
 		return nil, err
 	}
 	if c.Daily.Adjust != "qfq" {
 		return nil, errors.New("upward-wave features require qfq prices")
 	}
-	return &OpeningWaveEvaluator{parameters: c.Strategy, calendar: calendar.New(c)}, nil
+	return &OpeningWaveEvaluator{parameters: c.Strategy, calendar: calendar.New(c), model: model}, nil
+}
+
+func validUpwardWaveModel(model string) bool {
+	return model == UpwardWaveModel || model == UpwardWaveNoDrawdownModel
 }
 
 func (e *OpeningWaveEvaluator) Evaluate(ctx context.Context, code, signalDate string, adjusted, raw []market.Bar, boundary, asof string) (*UpwardWave, error) {
@@ -127,6 +147,12 @@ func (e *OpeningWaveEvaluator) Evaluate(ctx context.Context, code, signalDate st
 	}
 	if e == nil || e.calendar == nil {
 		return nil, errors.New("opening wave evaluator is unavailable")
+	}
+	var pairReference *WavePricePairReference
+	unknown := func(reason string) *UpwardWave {
+		w := unknownOpeningWaveForModel(reason, e.model)
+		w.PricePairReference = pairReference
+		return w
 	}
 	if !config.ValidCode(code) {
 		return nil, errors.New("invalid stock code for upward-wave observation")
@@ -150,30 +176,41 @@ func (e *OpeningWaveEvaluator) Evaluate(ctx context.Context, code, signalDate st
 	}
 	ai := sort.Search(len(adjusted), func(i int) bool { return adjusted[i].Date >= signalDate })
 	ri := sort.Search(len(raw), func(i int) bool { return raw[i].Date >= signalDate })
-	if ai >= len(adjusted) || adjusted[ai].Date != signalDate || ai < 59 || !validWaveBar(adjusted[ai]) || ri >= len(raw) || raw[ri].Date != signalDate || !validWaveBar(raw[ri]) {
-		return unknownOpeningWave("signal_data_missing"), nil
+	validFeatureBar := validWaveBar
+	if e.model == UpwardWaveNoDrawdownModel {
+		validFeatureBar = validWavePriceBar
+	}
+	if ai >= len(adjusted) || adjusted[ai].Date != signalDate || ai < 59 || !validFeatureBar(adjusted[ai]) || ri >= len(raw) || raw[ri].Date != signalDate || !validFeatureBar(raw[ri]) {
+		return unknown("signal_data_missing"), nil
 	}
 	for _, bar := range adjusted[ai-14 : ai+1] {
-		if !validWaveBar(bar) {
-			return unknownOpeningWave("atr_unknown"), nil
+		if !validFeatureBar(bar) {
+			return unknown("atr_unknown"), nil
 		}
 	}
 	atr := signalATR14Pct(adjusted[:ai+1])
+	if e.model == UpwardWaveNoDrawdownModel {
+		reference, reason := NewWavePricePairReference(adjusted[:ai+1], raw[:ri+1])
+		if reason != "" {
+			return unknown(reason), nil
+		}
+		pairReference = &reference
+	}
 	next, err := cal.Next(signalDate)
 	if err != nil {
-		return unknownOpeningWave("calendar_missing"), nil
+		return unknown("calendar_missing"), nil
 	}
 	if boundary != "" && next >= boundary {
-		return unknownOpeningWave("reserved_boundary"), nil
+		return unknown("reserved_boundary"), nil
 	}
 	if next > asof {
-		return unknownOpeningWave("future_window_incomplete"), nil
+		return unknown("future_window_incomplete"), nil
 	}
 	if ri+1 >= len(raw) || raw[ri+1].Date != next {
-		return unknownOpeningWave("session_missing"), nil
+		return unknown("session_missing"), nil
 	}
 	if !validWaveBar(raw[ri+1]) {
-		return unknownOpeningWave("bar_invalid_or_suspended"), nil
+		return unknown("bar_invalid_or_suspended"), nil
 	}
 	// Passing only D1 lets the existing simulator establish its actual opening
 	// fill and cost, then stop with an unresolved legacy exit. No D2 price is
@@ -184,11 +221,15 @@ func (e *OpeningWaveEvaluator) Evaluate(ctx context.Context, code, signalDate st
 	}
 	t := ExperimentTrade{Code: code, Date: signalDate, Selected: true, Features: Features{ATR14Pct: atr}, Outcome: outcome}
 	d := Dataset{Adjusted: market.History{Bars: adjusted}, Raw: market.History{Bars: raw}}
-	return labelUpwardWave(e.parameters, cal, t, d, boundary, asof), nil
+	return labelUpwardWaveForModel(e.parameters, cal, t, d, boundary, asof, e.model, pairReference), nil
 }
 
 func unknownOpeningWave(reason string) *UpwardWave {
-	w := &UpwardWave{Model: UpwardWaveModel, EntryStatus: "unknown", EntryReason: reason, Days: []UpwardWaveDay{}, Windows: []UpwardWaveWindow{}}
+	return unknownOpeningWaveForModel(reason, UpwardWaveModel)
+}
+
+func unknownOpeningWaveForModel(reason, model string) *UpwardWave {
+	w := &UpwardWave{Model: model, EntryStatus: "unknown", EntryReason: reason, Days: []UpwardWaveDay{}, Windows: []UpwardWaveWindow{}}
 	for _, days := range []int{5, 10} {
 		w.Windows = append(w.Windows, UpwardWaveWindow{Days: days, Status: "unknown", Reason: reason})
 	}
@@ -220,7 +261,11 @@ func attachUpwardWaves(ctx context.Context, c config.Config, data []Dataset, res
 }
 
 func labelUpwardWave(s config.Strategy, cal *calendar.Calendar, t ExperimentTrade, d Dataset, boundary, asof string) *UpwardWave {
-	w := &UpwardWave{Model: UpwardWaveModel, EntryStatus: "unknown", ATR14Pct: t.Features.ATR14Pct, Days: []UpwardWaveDay{}, Windows: []UpwardWaveWindow{}}
+	return labelUpwardWaveForModel(s, cal, t, d, boundary, asof, UpwardWaveModel, nil)
+}
+
+func labelUpwardWaveForModel(s config.Strategy, cal *calendar.Calendar, t ExperimentTrade, d Dataset, boundary, asof, model string, pairReference *WavePricePairReference) *UpwardWave {
+	w := &UpwardWave{Model: model, EntryStatus: "unknown", ATR14Pct: t.Features.ATR14Pct, Days: []UpwardWaveDay{}, Windows: []UpwardWaveWindow{}, PricePairReference: pairReference}
 	entry := t.Outcome.EntryDay
 	if entry == nil || entry.Mode != "opening_price" || entry.Version != 1 || !positiveFinite(entry.Fill) || !positiveFinite(entry.BuyCost) || entry.Shares <= 0 || t.Outcome.EntryDate == "" {
 		w.EntryReason = "entry_evidence_missing"
@@ -276,8 +321,16 @@ func labelUpwardWave(s config.Strategy, cal *calendar.Calendar, t ExperimentTrad
 				reason = "entry_date_mismatch"
 				break
 			}
-			// Same conservative adjustment-factor tolerance as legacy research.
-			if math.Abs((a.Close/b.Close)/factor-1) > .002 {
+			if model == UpwardWaveNoDrawdownModel {
+				if pairReference == nil {
+					reason = "price_pair_reference_missing"
+					break
+				}
+				if reason = pairReference.Validate(a, b); reason != "" {
+					break
+				}
+			} else if math.Abs((a.Close/b.Close)/factor-1) > .002 {
+				// The legacy model keeps its historical factor tolerance and label.
 				reason = "corporate_action"
 				break
 			}
@@ -288,7 +341,7 @@ func labelUpwardWave(s config.Strategy, cal *calendar.Calendar, t ExperimentTrad
 	for _, n := range []int{5, 10} {
 		x := UpwardWaveWindow{Days: n, Status: "unknown", Reason: reason}
 		if len(w.Days) >= n {
-			x = evaluateUpwardWindow(w.Days[:n], w.EntryPrice, w.ATR14Pct)
+			x = evaluateUpwardWindowForModel(w.Days[:n], w.EntryPrice, w.ATR14Pct, model)
 		}
 		w.Windows = append(w.Windows, x)
 	}
@@ -297,7 +350,18 @@ func labelUpwardWave(s config.Strategy, cal *calendar.Calendar, t ExperimentTrad
 
 func positiveFinite(v float64) bool { return v > 0 && !math.IsInf(v, 0) && !math.IsNaN(v) }
 
+// Normalized volume is pairing evidence, not an ATR input. In the new model,
+// only the bounded pairing prefix should reject unusable historical shares.
+func validWavePriceBar(bar market.Bar) bool {
+	bar.Volume = 0
+	return validWaveBar(bar)
+}
+
 func evaluateUpwardWindow(days []UpwardWaveDay, entry, atr float64) UpwardWaveWindow {
+	return evaluateUpwardWindowForModel(days, entry, atr, UpwardWaveModel)
+}
+
+func evaluateUpwardWindowForModel(days []UpwardWaveDay, entry, atr float64, model string) UpwardWaveWindow {
 	full := upwardMetrics(days, entry, 1, len(days))
 	peak := days[0].CloseNetPct
 	for _, d := range days {
@@ -313,7 +377,8 @@ func evaluateUpwardWindow(days []UpwardWaveDay, entry, atr float64) UpwardWaveWi
 				continue
 			}
 			m := upwardMetrics(days, entry, start, end)
-			if m.UpDays >= 3 && m.UpRatio >= .75 && m.LongestUp >= 2 && m.EndNetPct+1e-9 >= atr && m.MaxLossPct <= .5*atr+1e-9 && m.CloseDrawdownPct <= .5*atr+1e-9 {
+			riskPassed := model == UpwardWaveNoDrawdownModel || (m.MaxLossPct <= .5*atr+1e-9 && m.CloseDrawdownPct <= .5*atr+1e-9)
+			if m.UpDays >= 3 && m.UpRatio >= .75 && m.LongestUp >= 2 && m.EndNetPct+1e-9 >= atr && riskPassed {
 				w.Status, w.Segment = "success", &m
 				return w
 			}

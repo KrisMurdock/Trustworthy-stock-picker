@@ -21,6 +21,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/experiment"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/fourlightstudy"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 )
 
 func cliFixture(t *testing.T, schema int, empty bool) (string, string, fourlightstudy.Manifest) {
@@ -71,6 +72,9 @@ func cliFixture(t *testing.T, schema int, empty bool) (string, string, fourlight
 			t.Fatal(err)
 		}
 	}
+	if _, err := db.Exec("ALTER TABLE daily_bar ADD COLUMN volume_shares INTEGER; UPDATE daily_bar SET volume_shares=CAST(volume_raw*100 AS INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +93,58 @@ func cliFixture(t *testing.T, schema int, empty bool) (string, string, fourlight
 	manifest.Calendar.Digest = history.Digest
 	writeCLIManifest(t, manifestPath, manifest)
 	return manifestPath, databasePath, manifest
+}
+
+func TestRunV2ExplicitModelCrossSourceAndCandidate(t *testing.T) {
+	manifestPath, databasePath, manifest := cliFixture(t, 3, false)
+	db, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Broaden price evidence independently of labels, and use provider-normalized
+	// shares from a different raw source. Source-name inequality must not erase it.
+	if _, err := db.Exec("UPDATE daily_bar SET high_micros=high_micros+200000, low_micros=low_micros-200000; UPDATE daily_bar SET source='sina', volume_raw=volume_shares WHERE adjust='none'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(databasePath)
+	digest := sha256.Sum256(data)
+	manifest.DatabaseSHA256 = hex.EncodeToString(digest[:])
+	manifest.Version, manifest.WaveModel, manifest.PairingPolicy = 2, strategy.UpwardWaveNoDrawdownModel, fourlightstudy.PairingPolicy
+	writeCLIManifest(t, manifestPath, manifest)
+	var stdout bytes.Buffer
+	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+	if err := run(context.Background(), []string{"-manifest", manifestPath, "-database", databasePath, "-events", eventsPath}, &stdout, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var result output
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Report.Version != 2 || result.Report.Engine != fourlightstudy.EngineV2 || len(result.Report.CandidateComparisons) != 4 || len(result.Report.Boards) == 0 {
+		t.Fatal("missing v2 contract")
+	}
+	for _, row := range result.Report.Groups {
+		if row.Wave.Model != strategy.UpwardWaveNoDrawdownModel {
+			t.Fatal("incorrect model")
+		}
+		if row.Name == "first_all_red" && (row.Wave.Windows[0].Selected != 1 || row.Wave.Windows[0].Known != 1) {
+			t.Fatalf("cross source wrongly excluded %+v", row.Wave)
+		}
+	}
+	data, err = os.ReadFile(eventsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var e fourlightstudy.Event
+	if err := json.Unmarshal(bytes.Split(bytes.TrimSpace(data), []byte("\n"))[0], &e); err != nil {
+		t.Fatal(err)
+	}
+	if e.Wave.PricePairReference == nil || e.VolumeRatio == nil || e.Board != "sz_main" {
+		t.Fatal("missing event evidence")
+	}
 }
 
 func writeCLIManifest(t *testing.T, path string, manifest fourlightstudy.Manifest) {

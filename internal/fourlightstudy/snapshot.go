@@ -213,12 +213,12 @@ func (s *SnapshotSource) Load(ctx context.Context, stock config.Stock) (Pair, er
 	var pair Pair
 	var adjustedSource, rawSource, problem string
 	var err error
-	pair.Adjusted, adjustedSource, problem, err = s.loadBars(ctx, stock.Code, "qfq")
+	pair.Adjusted, pair.AdjustedShares, adjustedSource, problem, err = s.loadBars(ctx, stock.Code, "qfq")
 	if err != nil {
 		return Pair{}, err
 	}
 	pair.Problem = problem
-	pair.Raw, rawSource, problem, err = s.loadBars(ctx, stock.Code, "none")
+	pair.Raw, pair.RawShares, rawSource, problem, err = s.loadBars(ctx, stock.Code, "none")
 	if err != nil {
 		return Pair{}, err
 	}
@@ -228,7 +228,8 @@ func (s *SnapshotSource) Load(ctx context.Context, stock config.Stock) (Pair, er
 		}
 		pair.Problem += problem
 	}
-	if len(pair.Adjusted) > 0 && len(pair.Raw) > 0 && adjustedSource != rawSource {
+	pair.AdjustedSource, pair.RawSource = adjustedSource, rawSource
+	if s.manifest.Version == 1 && len(pair.Adjusted) > 0 && len(pair.Raw) > 0 && adjustedSource != rawSource {
 		if pair.Problem != "" {
 			pair.Problem += ";"
 		}
@@ -238,25 +239,31 @@ func (s *SnapshotSource) Load(ctx context.Context, stock config.Stock) (Pair, er
 	return pair, nil
 }
 
-func (s *SnapshotSource) loadBars(ctx context.Context, code, adjust string) ([]market.Bar, string, string, error) {
+func (s *SnapshotSource) loadBars(ctx context.Context, code, adjust string) ([]market.Bar, []float64, string, string, error) {
 	// The primary key (code, adjust, trade_date) bounds each lookup. In particular
 	// no reserved prices are loaded, even if the backup contains later sessions.
+	volumeColumn := "volume_raw"
+	if s.manifest.Version == 2 {
+		volumeColumn = "volume_shares"
+	}
 	rows, err := s.tx.QueryContext(ctx, `SELECT trade_date, open_micros, close_micros, high_micros, low_micros,
-		volume_raw, source, data_field FROM daily_bar
+		volume_raw, `+volumeColumn+`, source, data_field FROM daily_bar
 		WHERE code=? AND adjust=? AND trade_date>=? AND trade_date<=? ORDER BY trade_date`,
 		code, adjust, s.manifest.Calendar.From, s.manifest.ObservationThrough)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("read snapshot bars %s/%s: %w", code, adjust, err)
+		return nil, nil, "", "", fmt.Errorf("read snapshot bars %s/%s: %w", code, adjust, err)
 	}
 	defer rows.Close()
 	bars := []market.Bar{}
-	var previous, firstSource, firstField, problem string
+	shares := []float64{}
+	var previous, firstSource, firstField, problem, normalizationProblem string
 	for rows.Next() {
 		var bar market.Bar
 		var open, close, high, low int64
+		var volumeShares float64
 		var source, field string
-		if err := rows.Scan(&bar.Date, &open, &close, &high, &low, &bar.Volume, &source, &field); err != nil {
-			return nil, "", "", fmt.Errorf("decode snapshot bars %s/%s: %w", code, adjust, err)
+		if err := rows.Scan(&bar.Date, &open, &close, &high, &low, &bar.Volume, &volumeShares, &source, &field); err != nil {
+			return nil, nil, "", "", fmt.Errorf("decode snapshot bars %s/%s: %w", code, adjust, err)
 		}
 		bar.Open, bar.Close, bar.High, bar.Low = float64(open)/1e6, float64(close)/1e6, float64(high)/1e6, float64(low)/1e6
 		if len(bars) == 0 {
@@ -282,19 +289,35 @@ func (s *SnapshotSource) loadBars(ctx context.Context, code, adjust string) ([]m
 			problem += ":" + code + ":" + bar.Date
 			break
 		}
+		if s.manifest.Version == 2 && !validNormalizedVolume(code, source, bar.Volume, volumeShares) {
+			// Share metadata cannot erase a valid raw-volume four-light signal.
+			// Poison only the evaluator's volume at this date, preserving other
+			// observations and the signal denominator.
+			volumeShares = math.NaN()
+			if normalizationProblem == "" {
+				normalizationProblem = "invalid_volume_shares_" + adjust + ":" + code + ":" + bar.Date
+			}
+		}
 		previous = bar.Date
 		bars = append(bars, bar)
+		shares = append(shares, volumeShares)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", "", fmt.Errorf("read snapshot bars %s/%s: %w", code, adjust, err)
+		return nil, nil, "", "", fmt.Errorf("read snapshot bars %s/%s: %w", code, adjust, err)
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, "", "", err
+		return nil, nil, "", "", err
 	}
 	if len(bars) == 0 && problem == "" {
 		problem = "missing_bars_" + adjust + ":" + code
 	}
-	return bars, firstSource, problem, nil
+	if normalizationProblem != "" {
+		if problem != "" {
+			problem += ";"
+		}
+		problem += normalizationProblem
+	}
+	return bars, shares, firstSource, problem, nil
 }
 
 func snapshotDateValid(value string) bool {
@@ -309,4 +332,14 @@ func snapshotProviderValid(value string) bool {
 	default:
 		return false
 	}
+}
+
+// Stored shares must agree with provider units, independently of cross-provider
+// rounding (handled by the event validator). Never silently repair bad storage.
+func validNormalizedVolume(code, source string, raw, shares float64) bool {
+	if math.IsNaN(shares) || math.IsInf(shares, 0) || shares < 0 {
+		return false
+	}
+	expected := math.Trunc(market.ProviderVolumeShares(source, code, raw))
+	return !math.IsInf(expected, 0) && shares == expected
 }

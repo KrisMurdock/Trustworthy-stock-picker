@@ -48,6 +48,7 @@ type GroupStats struct {
 	Name  string                      `json:"name"`
 	Date  string                      `json:"date,omitempty"`
 	Month string                      `json:"month,omitempty"`
+	Board string                      `json:"board,omitempty"`
 	Wave  *strategy.UpwardWaveSummary `json:"upward_wave"`
 }
 
@@ -55,6 +56,7 @@ type GroupStats struct {
 // rates. Differences and interval endpoints are ratios, not percentage points.
 type Comparison struct {
 	Group                string   `json:"group"`
+	Reference            string   `json:"reference,omitempty"`
 	Days                 int      `json:"days"`
 	PairedDates          int      `json:"paired_dates"`
 	UnpairedDates        int      `json:"unpaired_dates"`
@@ -69,24 +71,28 @@ type Comparison struct {
 }
 
 type Report struct {
-	Version     int          `json:"schema_version"`
-	Engine      string       `json:"engine"`
-	Status      string       `json:"status"`
-	Manifest    Manifest     `json:"manifest"`
-	Audit       Audit        `json:"audit"`
-	Groups      []GroupStats `json:"groups"`
-	Daily       []GroupStats `json:"daily"`
-	Monthly     []GroupStats `json:"monthly"`
-	Comparisons []Comparison `json:"comparisons"`
-	Limitations []string     `json:"limitations"`
+	Version              int                  `json:"schema_version"`
+	Engine               string               `json:"engine"`
+	Status               string               `json:"status"`
+	Manifest             Manifest             `json:"manifest"`
+	Audit                Audit                `json:"audit"`
+	Groups               []GroupStats         `json:"groups"`
+	Daily                []GroupStats         `json:"daily"`
+	Monthly              []GroupStats         `json:"monthly"`
+	Comparisons          []Comparison         `json:"comparisons"`
+	Limitations          []string             `json:"limitations"`
+	Boards               []GroupStats         `json:"boards,omitempty"`
+	PairSources          []PairSourceAudit    `json:"pair_sources,omitempty"`
+	CandidateRetention   []CandidateRetention `json:"candidate_retention,omitempty"`
+	CandidateComparisons []Comparison         `json:"candidate_comparisons,omitempty"`
 }
 
 type groupAccumulators map[string]*strategy.UpwardWaveAccumulator
 
-func newGroupAccumulators() groupAccumulators {
+func newGroupAccumulators(names []string, model string) groupAccumulators {
 	result := groupAccumulators{}
-	for _, group := range groupNames {
-		result[group] = &strategy.UpwardWaveAccumulator{}
+	for _, group := range names {
+		result[group], _ = strategy.NewUpwardWaveAccumulator(model)
 	}
 	return result
 }
@@ -97,9 +103,9 @@ func (groups groupAccumulators) add(date string, names []string, wave *strategy.
 	}
 }
 
-func (groups groupAccumulators) summarize(date, month string) []GroupStats {
-	rows := make([]GroupStats, 0, len(groupNames))
-	for _, name := range groupNames {
+func (groups groupAccumulators) summarize(names []string, date, month string) []GroupStats {
+	rows := make([]GroupStats, 0, len(names))
+	for _, name := range names {
 		rows = append(rows, GroupStats{Name: name, Date: date, Month: month, Wave: groups[name].Summary()})
 	}
 	return rows
@@ -120,7 +126,7 @@ func Analyze(ctx context.Context, manifest Manifest, source Source, emit func(Ev
 	}
 	c := manifest.Config()
 	cal := calendar.New(c)
-	evaluator, err := strategy.NewOpeningWaveEvaluator(c)
+	evaluator, err := strategy.NewOpeningWaveEvaluatorForModel(c, manifest.waveModel())
 	if err != nil {
 		return Report{}, err
 	}
@@ -151,12 +157,23 @@ func Analyze(ctx context.Context, manifest Manifest, source Source, emit func(Ev
 			"固定十交易日移动块重采样区间仅为描述性不确定性；没有做多重比较校正，不构成独立验证或策略晋级。",
 			"观察范围截止于预留区间之前；不足未来窗口仍保留分母，预留区间未消费。",
 		}}
-	total := newGroupAccumulators()
+	names := append([]string(nil), groupNames...)
+	if manifest.Version == 2 {
+		report.Version, report.Engine = 2, EngineV2
+		names = append(names, moderateVolumeGroup, highVolumeGroup)
+		report.Limitations = append(report.Limitations,
+			"新波段模型不以盘中先跌或收盘回撤否决；两项仍保留描述。价格变换校验是数值一致性证据，不能证明公司行为或历史数据版本。",
+			"量比候选来自已反复观察的开发期；过滤组是首次全红的子集，同日比较不是独立验证。")
+	}
+	newGroups := func() groupAccumulators { return newGroupAccumulators(names, manifest.waveModel()) }
+	total := newGroups()
+	boards := map[string]groupAccumulators{}
+	sourceAudit := map[string]*PairSourceAudit{}
 	daily, monthly := map[string]groupAccumulators{}, map[string]groupAccumulators{}
 	for _, date := range dates {
-		daily[date] = newGroupAccumulators()
+		daily[date] = newGroups()
 		if monthly[date[:7]] == nil {
-			monthly[date[:7]] = newGroupAccumulators()
+			monthly[date[:7]] = newGroups()
 		}
 	}
 	for _, stock := range stocks {
@@ -175,6 +192,18 @@ func Analyze(ctx context.Context, manifest Manifest, source Source, emit func(Ev
 		}
 		if pair.Problem != "" {
 			report.Audit.StockProblems = append(report.Audit.StockProblems, StockProblem{Code: stock.Code, Reason: pair.Problem})
+		}
+		evalAdjusted, evalRaw := pair.Adjusted, pair.Raw
+		board := boardForCode(stock.Code)
+		if manifest.Version == 2 {
+			if boards[board] == nil {
+				boards[board] = newGroups()
+			}
+			recordPairSource(sourceAudit, board, pair)
+			evalAdjusted, evalRaw, err = normalizedPair(pair)
+			if err != nil {
+				return Report{}, fmt.Errorf("study stock %s: %w", stock.Code, err)
+			}
 		}
 		index := sort.Search(len(pair.Adjusted), func(i int) bool { return pair.Adjusted[i].Date >= manifest.From })
 		for _, date := range dates {
@@ -210,26 +239,38 @@ func Analyze(ctx context.Context, manifest Manifest, source Source, emit func(Ev
 				report.Audit.TransitionUnknown++
 			}
 			groups := classify(evidence)
-			wave, err := evaluator.Evaluate(ctx, stock.Code, date, pair.Adjusted, pair.Raw, manifest.ReservedFrom, manifest.AsOf)
+			var volumeRatio *float64
+			if manifest.Version == 2 {
+				volumeRatio = signalVolumeRatio(pair.Adjusted[:index+1])
+				groups = classifyVolume(groups, volumeRatio)
+			}
+			wave, err := evaluator.Evaluate(ctx, stock.Code, date, evalAdjusted, evalRaw, manifest.ReservedFrom, manifest.AsOf)
 			if err != nil {
 				return Report{}, fmt.Errorf("evaluate study stock %s at %s: %w", stock.Code, date, err)
 			}
 			total.add(date, groups, wave)
 			daily[date].add(date, groups, wave)
 			monthly[date[:7]].add(date, groups, wave)
+			if manifest.Version == 2 {
+				boards[board].add(date, groups, wave)
+			}
 			if evidence.AllRed {
 				report.Audit.AllRedEventRows++
 				if emit != nil {
-					if err := emit(Event{Code: stock.Code, Name: stock.Name, Date: date, Groups: groups, FourLight: evidence, Wave: wave}); err != nil {
+					event := Event{Code: stock.Code, Name: stock.Name, Date: date, Groups: groups, FourLight: evidence, Wave: wave}
+					if manifest.Version == 2 {
+						event.Board, event.VolumeRatio = board, volumeRatio
+					}
+					if err := emit(event); err != nil {
 						return Report{}, fmt.Errorf("write study event %s at %s: %w", stock.Code, date, err)
 					}
 				}
 			}
 		}
 	}
-	report.Groups = total.summarize("", "")
+	report.Groups = total.summarize(names, "", "")
 	for _, date := range dates {
-		report.Daily = append(report.Daily, daily[date].summarize(date, "")...)
+		report.Daily = append(report.Daily, daily[date].summarize(names, date, "")...)
 	}
 	months := make([]string, 0, len(monthly))
 	for month := range monthly {
@@ -237,14 +278,30 @@ func Analyze(ctx context.Context, manifest Manifest, source Source, emit func(Ev
 	}
 	sort.Strings(months)
 	for _, month := range months {
-		report.Monthly = append(report.Monthly, monthly[month].summarize("", month)...)
+		report.Monthly = append(report.Monthly, monthly[month].summarize(names, "", month)...)
 	}
-	report.Comparisons, err = compareGroups(ctx, dates, report.Daily)
+	report.Comparisons, err = compareNamedGroups(ctx, dates, report.Daily, names, "baseline")
 	if err != nil {
 		return Report{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
+	}
+	if manifest.Version == 2 {
+		for _, board := range boardNames {
+			if acc := boards[board]; acc != nil {
+				for _, row := range acc.summarize(names, "", "") {
+					row.Board = board
+					report.Boards = append(report.Boards, row)
+				}
+			}
+		}
+		report.PairSources = sortedPairSources(sourceAudit)
+		report.CandidateRetention = candidateRetentions(report.Groups)
+		report.CandidateComparisons, err = compareNamedGroups(ctx, dates, report.Daily, []string{moderateVolumeGroup, highVolumeGroup}, "first_all_red")
+		if err != nil {
+			return Report{}, err
+		}
 	}
 	report.Status = "complete"
 	return report, nil

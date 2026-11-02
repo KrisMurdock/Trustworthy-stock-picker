@@ -10,6 +10,10 @@ import (
 )
 
 func compareGroups(ctx context.Context, dates []string, daily []GroupStats) ([]Comparison, error) {
+	return compareNamedGroups(ctx, dates, daily, groupNames, "baseline")
+}
+
+func compareNamedGroups(ctx context.Context, dates []string, daily []GroupStats, names []string, reference string) ([]Comparison, error) {
 	byDate := make(map[string]map[string]*strategy.UpwardWaveSummary, len(dates))
 	for _, row := range daily {
 		if byDate[row.Date] == nil {
@@ -17,9 +21,9 @@ func compareGroups(ctx context.Context, dates []string, daily []GroupStats) ([]C
 		}
 		byDate[row.Date][row.Name] = row.Wave
 	}
-	comparisons := make([]Comparison, 0, 2*(len(groupNames)-1))
-	for _, group := range groupNames {
-		if group == "baseline" {
+	comparisons := make([]Comparison, 0, 2*(len(names)))
+	for _, group := range names {
+		if group == reference {
 			continue
 		}
 		for _, days := range []int{5, 10} {
@@ -27,10 +31,13 @@ func compareGroups(ctx context.Context, dates []string, daily []GroupStats) ([]C
 				return nil, err
 			}
 			x := Comparison{Group: group, Days: days, BootstrapBlockDays: bootstrapBlock, BootstrapRepetitions: bootstrapRepetitions, BootstrapSeed: bootstrapSeed}
+			if reference != "baseline" {
+				x.Reference = reference
+			}
 			deltas := make([]*float64, len(dates))
 			sum := 0.0
 			for i, date := range dates {
-				base, candidate := comparableWindow(byDate[date]["baseline"], days), comparableWindow(byDate[date][group], days)
+				base, candidate := comparableWindow(byDate[date][reference], days), comparableWindow(byDate[date][group], days)
 				if base == nil || candidate == nil {
 					x.UnpairedDates++
 					continue

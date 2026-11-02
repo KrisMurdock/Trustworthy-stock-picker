@@ -1,12 +1,32 @@
 package strategy
 
-import "math"
+import (
+	"errors"
+	"math"
+)
 
 // UpwardWaveAccumulator is a bounded-memory, event-weighted summary shared by
 // ranked experiments and unranked market studies. The zero value is ready to
 // use; Add retains no wave paths. Each input is one selected stock/date event.
 type UpwardWaveAccumulator struct {
 	windows [2]upwardWindowAccumulator
+	model   string
+}
+
+// NewUpwardWaveAccumulator explicitly selects a model. A zero-value
+// accumulator continues to summarize only the legacy upward_wave_v0 model.
+func NewUpwardWaveAccumulator(model string) (*UpwardWaveAccumulator, error) {
+	if !validUpwardWaveModel(model) {
+		return nil, errors.New("unsupported upward-wave model")
+	}
+	return &UpwardWaveAccumulator{model: model}, nil
+}
+
+func (a *UpwardWaveAccumulator) modelName() string {
+	if a.model == "" {
+		return UpwardWaveModel
+	}
+	return a.model
 }
 
 type upwardWindowAccumulator struct {
@@ -27,11 +47,14 @@ func (a *UpwardWaveAccumulator) Add(date string, wave *UpwardWave) {
 		}
 		s.Selected++
 		acc.dates[date] = true
-		if wave == nil || wave.Model != UpwardWaveModel || len(wave.Windows) != 2 || wave.EntryStatus == "unknown" {
+		if wave == nil || wave.Model != a.modelName() || len(wave.Windows) != 2 || wave.EntryStatus == "unknown" {
 			s.EntryUnknown++
 			reason := "entry_evidence_missing"
 			if wave != nil && wave.EntryReason != "" {
 				reason = wave.EntryReason
+			}
+			if wave != nil && wave.Model != a.modelName() {
+				reason = "wave_model_mismatch"
 			}
 			s.UnknownReasons[reason]++
 			continue
@@ -71,7 +94,7 @@ func (a *UpwardWaveAccumulator) Add(date string, wave *UpwardWave) {
 // Summary returns a detached value, so later Add calls cannot revise an
 // already archived summary. Empty denominators stay nil rather than zero.
 func (a *UpwardWaveAccumulator) Summary() *UpwardWaveSummary {
-	summary := &UpwardWaveSummary{Model: UpwardWaveModel, Windows: []UpwardWaveStats{}}
+	summary := &UpwardWaveSummary{Model: a.modelName(), Windows: []UpwardWaveStats{}}
 	for index, days := range []int{5, 10} {
 		acc := a.windows[index]
 		s := acc.stats
