@@ -4,8 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"sort"
+	"time"
+
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkrecommend"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/marketcontext"
@@ -13,9 +18,6 @@ import (
 	reportmessage "github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify/report"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
-	"io/fs"
-	"sort"
-	"time"
 )
 
 type Source = market.Source
@@ -56,6 +58,7 @@ type Monitor struct {
 	// report publication; the context database records its own partial status.
 	MarketContextSync  func(context.Context, string) (marketcontext.SyncResult, error)
 	DayRangeForecasts  func(context.Context, string, []string) (map[string]selection.DayRangeForecast, error)
+	HKRecommendations  func(context.Context) (hkrecommend.Recommendation, error)
 	Channels           []notify.Channel
 	Log                *logging.Logger
 	Calendar           *calendar.Calendar
@@ -1074,12 +1077,20 @@ func (m *Monitor) Cycle(ctx context.Context) error {
 		return err
 	}
 	deliveryErr := m.flushState(ctx, &state)
+	hkQueued, hkErr := m.enqueueHKConnect(ctx, &state)
+	if hkErr != nil {
+		m.Log.Warn("HK Connect recommendation enqueue failed", "reason", hkErr.Error())
+		deliveryErr = errors.Join(deliveryErr, hkErr)
+	}
 	now := m.Now()
 	asof, target, due, dueErr := m.Calendar.Due(now, m.Config.Daily.RunAt)
 	if dueErr != nil {
 		return errors.Join(deliveryErr, dueErr)
 	}
 	if !due {
+		if hkQueued {
+			deliveryErr = errors.Join(deliveryErr, m.flushState(ctx, &state))
+		}
 		return deliveryErr
 	}
 	report, reportErr := m.readReport(ctx, asof)

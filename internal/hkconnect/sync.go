@@ -78,21 +78,24 @@ type StockError struct {
 }
 
 type Result struct {
-	Version        int          `json:"schema_version"`
-	Market         string       `json:"market"`
-	AsOf           string       `json:"as_of"`
-	StartedAt      time.Time    `json:"started_at"`
-	FinishedAt     time.Time    `json:"finished_at"`
-	Status         string       `json:"status"`
-	UniverseTotal  int          `json:"universe_total"`
-	UniverseSource string       `json:"universe_source,omitempty"`
-	Eligible       int          `json:"eligible"`
-	ExcludedOther  int          `json:"excluded_other"`
-	Succeeded      int          `json:"succeeded"`
-	Partial        int          `json:"partial"`
-	Failed         int          `json:"failed"`
-	Skipped        int          `json:"skipped"`
-	Errors         []StockError `json:"errors,omitempty"`
+	Version                  int          `json:"schema_version"`
+	Market                   string       `json:"market"`
+	AsOf                     string       `json:"as_of"`
+	StartedAt                time.Time    `json:"started_at"`
+	FinishedAt               time.Time    `json:"finished_at"`
+	Status                   string       `json:"status"`
+	UniverseTotal            int          `json:"universe_total"`
+	UniverseSource           string       `json:"universe_source,omitempty"`
+	Eligible                 int          `json:"eligible"`
+	ExcludedOther            int          `json:"excluded_other"`
+	Succeeded                int          `json:"succeeded"`
+	Partial                  int          `json:"partial"`
+	Failed                   int          `json:"failed"`
+	Skipped                  int          `json:"skipped"`
+	Errors                   []StockError `json:"errors,omitempty"`
+	RecommendationID         string       `json:"recommendation_id,omitempty"`
+	RecommendationTarget     string       `json:"recommendation_target,omitempty"`
+	RecommendationCandidates int          `json:"recommendation_candidates,omitempty"`
 }
 
 type Syncer struct {

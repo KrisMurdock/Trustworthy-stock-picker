@@ -48,7 +48,7 @@ STOCK_WATCHER_REQUIRE_CIFS=false \
 ./bin/stock-watcher sync-hk-connect -codes hk00700 -workers 1 -timeout 1h
 ```
 
-证券发现默认走新浪 `hgt_hk`/`sgt_hk`，再用腾讯行情类型剔除 ETF/产品，只保留 `GP` 股票；东方财富港股通股票行情页作为回退；日线主端点为 `https://ifzq.gtimg.cn`，备用端点为 `https://proxy.finance.qq.com/ifzqgtimg`，遇到 429/5xx 时轮换并指数退避。写入独立 `<data_dir>/hk-market.db` 与 `.hk-market.lock`，平均每只股票保存 10 年不复权日线和 `daily.history_days` 前复权日线。只有 raw 与 QFQ 的最新日线都到达 `as-of` 才跳过；若盘中或收盘后过早执行导致状态成功但日线未更新，后续命令仍会补刷新。默认截止日由恒生指数交易日确定，当前股票快照约 667 只；首次同步通常需要数分钟到数十分钟。该命令不生成报告、不发送通知，也不采集港股历史分钟线。
+证券发现默认走新浪 `hgt_hk`/`sgt_hk`，再用腾讯行情类型剔除 ETF/产品，只保留 `GP` 股票；东方财富港股通股票行情页作为回退；日线主端点为 `https://ifzq.gtimg.cn`，备用端点为 `https://proxy.finance.qq.com/ifzqgtimg`，遇到 429/5xx 时轮换并指数退避。写入独立 `<data_dir>/hk-market.db` 与 `.hk-market.lock`，平均每只股票保存 10 年不复权日线和 `daily.history_days` 前复权日线。只有 raw 与 QFQ 的最新日线都到达 `as-of` 才跳过；若盘中或收盘后过早执行导致状态成功但日线未更新，后续命令仍会补刷新。默认截止日由恒生指数交易日确定，当前股票快照约 667 只；首次同步通常需要数分钟到数十分钟。完整同步后会生成港股通日线规则观察快照（`recommendation` 表），不会直接发送通知，也不采集港股历史分钟线；常驻 `run` 或 `once` 读取快照后才会投递独立公众号稿。
 
 首次部署完成 `sync` 后，用 `make minute-backfill`（默认 6 并发、最近 200 个交易日）补齐历史 5 分钟线；可用 `MINUTE_ARGS` 覆盖 `-from`、`-as-of`、`-codes`、`-workers`、`-provider`。`-provider auto` 对最近 104 个完整交易日优先使用新浪，更长窗口使用 BaoStock。已有生产实例运行时不要直接写生产库，先按 [行情来源与回退](data-sources.md#分钟数据) 的 staging 流程抓取，再停止 `run` 执行 `-import-from`。
 

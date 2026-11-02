@@ -84,3 +84,99 @@ func TestHKMarketHistoryAcceptsTencentHKSource(t *testing.T) {
 		t.Fatalf("Tencent HK source rejected: %v", err)
 	}
 }
+
+func TestHKMarketSchemaMigrationAddsRecommendationAndPreservesBars(t *testing.T) {
+	root := t.TempDir()
+	db, err := OpenHKMarket(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stock := config.Stock{Code: "hk00700", Name: "腾讯控股"}
+	history := allMarketHistoryTest(stock.Code, "qfq", "2026-10-28", "2026-10-29", "2026-10-30")
+	history.Name = stock.Name
+	history.Source = "tencent_hk"
+	history.DataField = "qfqday"
+	if err := db.SaveHistory(context.Background(), stock, history, true); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec("DROP TABLE recommendation"); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec("PRAGMA user_version=1"); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := OpenHKMarket(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	var version int
+	if err := reopened.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
+		t.Fatalf("schema version = %d, err=%v", version, err)
+	}
+	if _, err := reopened.db.Exec("SELECT market FROM recommendation LIMIT 1"); err != nil {
+		t.Fatalf("recommendation table was not created: %v", err)
+	}
+	bars, err := reopened.LoadBars(context.Background(), stock.Code, "qfq", "2026-10-01", "2026-10-31")
+	if err != nil || len(bars) != 3 || bars[2].Date != "2026-10-30" {
+		t.Fatalf("migration lost bars: %+v %v", bars, err)
+	}
+}
+
+func TestHKMarketRecommendationRoundTripAndSuccessfulHistoryFilter(t *testing.T) {
+	db, err := OpenHKMarket(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	okStock := config.Stock{Code: "hk00700", Name: "腾讯控股"}
+	failedStock := config.Stock{Code: "hk00005", Name: "汇丰控股"}
+	for _, stock := range []config.Stock{okStock, failedStock} {
+		history := allMarketHistoryTest(stock.Code, "qfq", "2026-10-28", "2026-10-29", "2026-10-30")
+		history.Name = stock.Name
+		history.Source = "tencent_hk"
+		history.DataField = "qfqday"
+		if err := db.SaveHistory(ctx, stock, history, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.db.Exec("UPDATE stock_sync SET status='failed', reason='forced' WHERE code=? AND adjust='qfq' AND as_of='2026-10-30'", failedStock.Code); err != nil {
+		t.Fatal(err)
+	}
+	stocks, histories, err := db.LoadAdjustedHistories(ctx, "2026-10-30", "2026-10-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stocks) != 1 || stocks[0].Code != okStock.Code || len(histories) != 1 || histories[0].Adjust != "qfq" || histories[0].AsOf != "2026-10-30" || len(histories[0].Bars) != 3 {
+		t.Fatalf("loaded recommendation histories = %+v %+v", stocks, histories)
+	}
+
+	artifact := RecommendationArtifact{Market: "hk_connect", AsOf: "2026-10-30", ID: "rec-1", Target: "2026-11-02",
+		BuiltAt: time.Date(2026, 10, 30, 18, 50, 0, 0, market.Shanghai), Payload: []byte(`{"schema_version":1}`)}
+	if err := db.SaveRecommendation(ctx, artifact); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.LatestRecommendation(ctx, "hk_connect")
+	if err != nil || got.ID != artifact.ID || got.AsOf != artifact.AsOf || got.Target != artifact.Target || string(got.Payload) != string(artifact.Payload) {
+		t.Fatalf("recommendation artifact = %+v, err=%v", got, err)
+	}
+	artifact.Target = "2026-11-03"
+	if err := db.SaveRecommendation(ctx, artifact); err != nil {
+		t.Fatal(err)
+	}
+	got, err = db.LatestRecommendation(ctx, "hk_connect")
+	if err != nil || got.Target != "2026-11-03" {
+		t.Fatalf("recommendation was not updated: %+v %v", got, err)
+	}
+	if _, err := db.LatestRecommendation(ctx, "missing"); err == nil {
+		t.Fatal("missing recommendation market unexpectedly returned an artifact")
+	}
+}

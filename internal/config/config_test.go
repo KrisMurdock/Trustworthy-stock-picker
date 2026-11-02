@@ -514,12 +514,15 @@ second_stage:
 		t.Fatalf("wechat environment not applied: %+v", c.Wechat)
 	}
 	channels := c.NotificationChannels()
-	wantRoute := NotifyRouteSecondStage + "," + NotifyRouteWechatPremarket
+	wantRoute := NotifyRouteSecondStage + "," + NotifyRouteHKConnect + "," + NotifyRouteWechatPremarket
 	if len(channels) != 1 || channels[0].Name != WechatDraftChannelName || channels[0].Type != "wechat" || channels[0].Route != wantRoute {
 		t.Fatalf("unexpected wechat channel: %+v", channels)
 	}
 	if got := c.ChannelNamesForRoute(NotifyRouteSecondStage); len(got) != 1 || got[0] != WechatDraftChannelName {
 		t.Fatalf("second-stage route = %v", got)
+	}
+	if got := c.ChannelNamesForRoute(NotifyRouteHKConnect); len(got) != 1 || got[0] != WechatDraftChannelName {
+		t.Fatalf("HK Connect article route = %v", got)
 	}
 	if got := c.ChannelNamesForRoute(NotifyRouteWechatPremarket); len(got) != 1 || got[0] != WechatDraftChannelName {
 		t.Fatalf("premarket article route = %v", got)
@@ -549,6 +552,9 @@ func TestWechatDraftAllowsPremarketOnlyPush(t *testing.T) {
 	c, err := Load(p)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := c.ChannelNamesForRoute(NotifyRouteHKConnect); len(got) != 1 || got[0] != WechatDraftChannelName {
+		t.Fatalf("HK Connect article route = %v", got)
 	}
 	if got := c.ChannelNamesForRoute(NotifyRouteWechatPremarket); len(got) != 1 || got[0] != WechatDraftChannelName {
 		t.Fatalf("premarket article route = %v", got)

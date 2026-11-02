@@ -206,7 +206,7 @@ func main() {
 
 `sync-all` 是独立的全市场日线链路：通过新浪 `sh_a` + `sz_a` 节点发现当前沪深 A 股，排除 ST、名称含“退”的退市股票、北交所和 B 股，只保存 10 年不复权日线与分析窗口前复权日线到 `<data_dir>/all-market.db`。它使用独立 `.all-market.lock`，可与常驻 `run` 并行，不读取或写入 `market.db`，不参与选股、报告和通知。首次运行会全量抓取，之后同日已完成股票自动跳过；`-full` 强制全量刷新，`-codes` 用于小范围冒烟，`-workers` 控制 1～8 并发。新浪列表不提供上市日期，因此实际历史起点仍受上市日期和上游可用数据限制，不能把“请求了 10 年”表述为“已验证十年完整性”。
 
-`sync-hk-connect` 使用当前港股通股票快照，通过新浪 `hgt_hk`/`sgt_hk` 港通板块发现证券，再用腾讯行情类型剔除 ETF/产品，只保留 `GP` 股票（当前约 667 只），并以东方财富港股通股票行情页作为回退；只接受 `hk` 前缀的五位代码。每只股票保存最近十个自然年的不复权日线和 `daily.history_days` 前复权窗口，港股交易日由恒生指数日线推导，默认截止最近一个 16:00 后已完成的港股交易日。数据写入独立 `<data_dir>/hk-market.db`，使用独立 `.hk-market.lock`，不读取或写入 `market.db`，不参与选股、报告和通知；当前不做港股历史分钟线，因此不能宣称与 A 股的多年分钟粒度等价。列表是当前成分快照，已移出港股通的股票不会被重新加入，但已保存历史仍保留。
+`sync-hk-connect` 使用当前港股通股票快照，通过新浪 `hgt_hk`/`sgt_hk` 港通板块发现证券，再用腾讯行情类型剔除 ETF/产品，只保留 `GP` 股票（当前约 667 只），并以东方财富港股通股票行情页作为回退；只接受 `hk` 前缀的五位代码。每只股票保存最近十个自然年的不复权日线和 `daily.history_days` 前复权窗口，港股交易日由恒生指数日线推导，默认截止最近一个 16:00 后已完成的港股交易日。数据写入独立 `<data_dir>/hk-market.db`，使用独立 `.hk-market.lock`，不读取或写入 `market.db`。完整同步后会按同一套 A 股日线趋势规则独立复算港股通观察名单，保存到 `hk-market.db` 的 `recommendation` 表；常驻 `run` 或 `once` 在下一轮调度中读取最新快照，生成单独的《港股通精选》公众号稿，并与 A 股文章一起进入 `hk_connect` 投递路由。港股稿不复用 A 股初筛、精排模型或成交模拟，也不模拟港股 T+0 和无涨跌停制度；当前不做港股历史分钟线，因此不能宣称与 A 股的多年分钟粒度等价。列表是当前成分快照，已移出港股通的股票不会被重新加入，但已保存历史仍保留。
 
 ## 工作原理
 
@@ -371,7 +371,7 @@ sudo systemctl enable --now stock-watcher-hk-market.timer
 sudo systemctl status stock-watcher.service
 ```
 
-服务模板读取 `/etc/stock-watcher.env`，工作目录和二进制路径按实际安装位置调整。`stock-watcher-allmarket.timer` 在交易日 `18:40` 调用 `sync-all`，把全市场沪深 A 股日线写入独立的 `all-market.db`；`stock-watcher-hk-market.timer` 在交易日 `18:50` 调用 `sync-hk-connect`，把当前港股通股票日线写入独立的 `hk-market.db`。两者都不参与股池报告和通知。完整准备、SELinux、升级、回滚和排障步骤见[部署与排障](docs/deployment.md)。
+服务模板读取 `/etc/stock-watcher.env`，工作目录和二进制路径按实际安装位置调整。`stock-watcher-allmarket.timer` 在交易日 `18:40` 调用 `sync-all`，把全市场沪深 A 股日线写入独立的 `all-market.db`；`stock-watcher-hk-market.timer` 在交易日 `18:50` 调用 `sync-hk-connect`，把当前港股通股票日线写入独立的 `hk-market.db`，并在完整同步后生成港股通观察快照；推送仍由主 `stock-watcher.service` 的 `run` 循环负责，因此升级后必须替换并重启主服务，只运行 timer 不会发送港股稿。全市场 `sync-all` 不参与股池报告和通知。完整准备、SELinux、升级、回滚和排障步骤见[部署与排障](docs/deployment.md)。
 
 ### Docker Compose
 

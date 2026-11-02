@@ -15,6 +15,8 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/channels"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/health"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkconnect"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkrecommend"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/intraday"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
@@ -343,6 +345,11 @@ func run(args []string) error {
 	log.RegisterSecret(c.Wechat.AppSecret)
 	m := monitor.NewWithMarketDB(c, store, marketDB, source, noticeChannels, log)
 	m.BuildVersion = version
+	if c.HKConnect.Enabled && c.HKConnect.PushEnabled {
+		m.HKRecommendations = func(loadCtx context.Context) (hkrecommend.Recommendation, error) {
+			return hkconnect.LoadLatestRecommendation(loadCtx, c.DataDir, c.RequireCIFS)
+		}
+	}
 	if (command == "sync" || command == "once") && c.MarketContext.Enabled {
 		ctxRuntime, err := openMarketContextRuntime(c, log)
 		if err != nil {

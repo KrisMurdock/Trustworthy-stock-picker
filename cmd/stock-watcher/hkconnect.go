@@ -37,11 +37,25 @@ func runSyncHKConnect(ctx context.Context, c config.Config, log *logging.Logger,
 	if err != nil {
 		return err
 	}
+	if result.Status != "complete" {
+		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+			return err
+		}
+		return errors.New("HK Connect synchronization is incomplete; rerun sync-hk-connect to resume")
+	}
+	if c.HKConnect.Enabled {
+		recommendation, err := hkconnect.GenerateRecommendation(ctx, c, db, dailyClient, result.AsOf, time.Now())
+		if err != nil {
+			log.Warn("HK Connect recommendation generation failed", "as_of", result.AsOf, "reason", err.Error())
+		} else {
+			result.RecommendationID = recommendation.ID
+			result.RecommendationTarget = recommendation.Target
+			result.RecommendationCandidates = recommendation.Selected
+			log.Info("HK Connect recommendation generated", "as_of", recommendation.AsOf, "target", recommendation.Target, "id", recommendation.ID, "eligible", recommendation.Eligible, "passed", recommendation.Passed, "selected", recommendation.Selected)
+		}
+	}
 	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
 		return err
-	}
-	if result.Status != "complete" {
-		return errors.New("HK Connect synchronization is incomplete; rerun sync-hk-connect to resume")
 	}
 	return nil
 }

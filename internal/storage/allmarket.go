@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,12 +21,14 @@ const (
 	allMarketLockName      = ".all-market.lock"
 	hkMarketDBName         = "hk-market.db"
 	hkMarketLockName       = ".hk-market.lock"
-	allMarketSchemaVersion = 1
+	allMarketSchemaVersion = 2
+	maxRecommendationBytes = 16 << 20
 )
 
-// AllMarketDB is a deliberately separate store for the full current
-// Shanghai/Shenzhen A-share universe. It never participates in selection,
-// reports or notification delivery.
+// AllMarketDB is a deliberately separate store. The A-share instance holds the
+// current Shanghai/Shenzhen universe and never participates in selection,
+// reports or notification delivery. The same implementation also backs the
+// independent HK Connect database, including its recommendation snapshots.
 type AllMarketDB struct {
 	db          *sql.DB
 	root        string
@@ -62,6 +65,15 @@ type AllMarketRun struct {
 	Failed     int       `json:"failed"`
 	Skipped    int       `json:"skipped"`
 	ErrorKind  string    `json:"error_kind,omitempty"`
+}
+
+type RecommendationArtifact struct {
+	Market  string    `json:"market"`
+	AsOf    string    `json:"as_of"`
+	ID      string    `json:"id"`
+	Target  string    `json:"target"`
+	BuiltAt time.Time `json:"built_at"`
+	Payload []byte    `json:"-"`
 }
 
 func OpenAllMarket(root string, requireCIFS bool) (*AllMarketDB, error) {
@@ -162,7 +174,7 @@ func (m *AllMarketDB) initSchema() error {
 	if err := m.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return errors.New("cannot read " + m.kind + " database version")
 	}
-	if version != 0 && version != allMarketSchemaVersion {
+	if version != 0 && version != 1 && version != allMarketSchemaVersion {
 		return errors.New("unsupported " + m.kind + " database version")
 	}
 	_, err := m.db.Exec(`
@@ -213,7 +225,16 @@ func (m *AllMarketDB) initSchema() error {
 			skipped INTEGER NOT NULL DEFAULT 0,
 			error_kind TEXT NOT NULL DEFAULT ''
 		);
-		PRAGMA user_version=1;
+		CREATE TABLE IF NOT EXISTS recommendation (
+			market TEXT NOT NULL,
+			as_of TEXT NOT NULL,
+			id TEXT NOT NULL,
+			target TEXT NOT NULL,
+			built_at TEXT NOT NULL,
+			payload BLOB NOT NULL CHECK (length(payload) > 0),
+			PRIMARY KEY (market, as_of)
+		);
+		PRAGMA user_version=2;
 	`)
 	if err != nil {
 		return errors.New("cannot initialize " + m.kind + " database schema")
@@ -453,6 +474,123 @@ func (m *AllMarketDB) LoadBars(ctx context.Context, code, adjust, from, through 
 			High: float64(high) / 1_000_000, Low: float64(low) / 1_000_000, Volume: volume})
 	}
 	return out, rows.Err()
+}
+
+// LoadAdjustedHistories reconstructs the persisted daily histories used by
+// independent rule-based reports. It only includes stocks whose QFQ snapshot
+// for the requested as-of date completed successfully.
+func (m *AllMarketDB) LoadAdjustedHistories(ctx context.Context, asOf, from string) ([]config.Stock, []market.History, error) {
+	if m == nil || m.db == nil {
+		return nil, nil, fs.ErrNotExist
+	}
+	if _, err := time.Parse("2006-01-02", asOf); err != nil {
+		return nil, nil, errors.New("invalid recommendation as-of date")
+	}
+	if _, err := time.Parse("2006-01-02", from); err != nil || from > asOf {
+		return nil, nil, errors.New("invalid recommendation history start")
+	}
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT st.code, st.name, st.listed_from, ss.source, ss.data_field, ss.fetched_at,
+			d.trade_date, d.open_micros, d.close_micros, d.high_micros, d.low_micros, d.volume_raw
+		FROM stock st
+		JOIN stock_sync ss ON ss.code=st.code AND ss.adjust='qfq' AND ss.as_of=? AND ss.status='ok'
+		JOIN daily_bar d ON d.code=st.code AND d.adjust='qfq' AND d.trade_date>=? AND d.trade_date<=?
+		ORDER BY st.code, d.trade_date
+	`, asOf, from, asOf)
+	if err != nil {
+		return nil, nil, errors.New("cannot read recommendation histories")
+	}
+	defer rows.Close()
+	type stockState struct {
+		stock     config.Stock
+		source    string
+		dataField string
+		fetchedAt time.Time
+		bars      []market.Bar
+	}
+	states := map[string]*stockState{}
+	order := []string{}
+	for rows.Next() {
+		var code, name, listedFrom, source, dataField, fetched, date string
+		var open, close, high, low int64
+		var volume float64
+		if err := rows.Scan(&code, &name, &listedFrom, &source, &dataField, &fetched,
+			&date, &open, &close, &high, &low, &volume); err != nil {
+			return nil, nil, errors.New("cannot decode recommendation histories")
+		}
+		state := states[code]
+		if state == nil {
+			fetchedAt, err := time.Parse(time.RFC3339Nano, fetched)
+			if err != nil {
+				return nil, nil, errors.New("invalid recommendation history timestamp")
+			}
+			state = &stockState{stock: config.Stock{Code: code, Name: name, ListedFrom: listedFrom}, source: source, dataField: dataField, fetchedAt: fetchedAt}
+			states[code] = state
+			order = append(order, code)
+		}
+		state.bars = append(state.bars, market.Bar{Date: date, Open: float64(open) / 1_000_000, Close: float64(close) / 1_000_000,
+			High: float64(high) / 1_000_000, Low: float64(low) / 1_000_000, Volume: volume})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, errors.New("cannot read recommendation histories")
+	}
+	stocks := make([]config.Stock, 0, len(order))
+	histories := make([]market.History, 0, len(order))
+	for _, code := range order {
+		state := states[code]
+		stocks = append(stocks, state.stock)
+		histories = append(histories, market.History{Version: 1, Code: code, Name: state.stock.Name,
+			Source: state.source, DataField: state.dataField, Adjust: "qfq", VolumeUnit: "provider_raw",
+			AsOf: asOf, FetchedAt: state.fetchedAt, Bars: state.bars})
+	}
+	return stocks, histories, nil
+}
+
+func (m *AllMarketDB) SaveRecommendation(ctx context.Context, artifact RecommendationArtifact) error {
+	if err := m.checkWriter(ctx); err != nil {
+		return err
+	}
+	if strings.TrimSpace(artifact.Market) == "" || strings.TrimSpace(artifact.ID) == "" || len(artifact.Payload) == 0 || len(artifact.Payload) > maxRecommendationBytes {
+		return errors.New("invalid recommendation artifact")
+	}
+	for _, date := range []string{artifact.AsOf, artifact.Target} {
+		if _, err := time.Parse("2006-01-02", date); err != nil {
+			return errors.New("invalid recommendation artifact date")
+		}
+	}
+	if artifact.BuiltAt.IsZero() {
+		return errors.New("recommendation artifact requires built_at")
+	}
+	_, err := m.db.ExecContext(ctx, `
+		INSERT INTO recommendation(market, as_of, id, target, built_at, payload)
+		VALUES(?, ?, ?, ?, ?, ?)
+		ON CONFLICT(market, as_of) DO UPDATE SET id=excluded.id, target=excluded.target,
+			built_at=excluded.built_at, payload=excluded.payload
+	`, artifact.Market, artifact.AsOf, artifact.ID, artifact.Target, artifact.BuiltAt.UTC().Format(time.RFC3339Nano), artifact.Payload)
+	if err != nil {
+		return errors.New("cannot save recommendation artifact")
+	}
+	return nil
+}
+
+func (m *AllMarketDB) LatestRecommendation(ctx context.Context, marketName string) (RecommendationArtifact, error) {
+	var out RecommendationArtifact
+	if m == nil || m.db == nil {
+		return out, fs.ErrNotExist
+	}
+	var built string
+	err := m.db.QueryRowContext(ctx, `
+		SELECT market, as_of, id, target, built_at, payload
+		FROM recommendation WHERE market=? ORDER BY as_of DESC LIMIT 1
+	`, marketName).Scan(&out.Market, &out.AsOf, &out.ID, &out.Target, &built, &out.Payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return out, fs.ErrNotExist
+	}
+	if err != nil {
+		return out, errors.New("cannot read recommendation artifact")
+	}
+	out.BuiltAt, _ = time.Parse(time.RFC3339Nano, built)
+	return out, nil
 }
 
 func (m *AllMarketDB) StartRun(ctx context.Context, run AllMarketRun) error {
