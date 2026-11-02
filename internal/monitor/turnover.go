@@ -54,14 +54,15 @@ func (m *Monitor) refreshTurnoverMetrics(ctx context.Context, items []storage.Sy
 	cache := m.loadTurnoverCache()
 	changed := false
 	for _, item := range items {
-		if item.Raw == nil || len(item.Raw.Bars) == 0 {
+		raw := effectiveRawHistory(item)
+		if raw == nil || len(raw.Bars) == 0 {
 			continue
 		}
-		start, lastPositive := turnoverWindow(item.Raw)
+		start, lastPositive, required := turnoverWindow(raw)
 		if start == "" || lastPositive == "" {
 			continue
 		}
-		if cached, ok := cache.Histories[item.Stock.Code]; ok && turnoverCacheUsable(cached, item.Stock.Code, start, lastPositive) {
+		if cached, ok := cache.Histories[item.Stock.Code]; ok && turnoverCacheUsable(cached, item.Stock.Code, required) {
 			continue
 		}
 		if m.TurnoverSource == nil {
@@ -79,6 +80,10 @@ func (m *Monitor) refreshTurnoverMetrics(ctx context.Context, items []storage.Sy
 			m.Log.Warn("Turnover metric history is invalid", "code", item.Stock.Code, "error", err.Error())
 			continue
 		}
+		if !turnoverCacheUsable(history, item.Stock.Code, required) {
+			m.Log.Warn("Turnover metric history is incomplete", "code", item.Stock.Code, "start", start, "end", lastPositive)
+			continue
+		}
 		cache.Histories[item.Stock.Code] = history
 		changed = true
 	}
@@ -91,11 +96,24 @@ func (m *Monitor) refreshTurnoverMetrics(ctx context.Context, items []storage.Sy
 	}
 	codes := make(map[string]bool, len(items))
 	for _, item := range items {
-		if item.Raw != nil {
+		if effectiveRawHistory(item) != nil {
 			codes[item.Stock.Code] = true
 		}
 	}
 	return currentTurnoverMetrics(cache, codes)
+}
+
+// effectiveRawHistory returns the unadjusted prices used by the trapped
+// diagnostic. When the analysis window itself is unadjusted, callers do not
+// need to fetch the same history twice; the adjusted side is already raw.
+func effectiveRawHistory(item storage.SyncItem) *market.History {
+	if item.Raw != nil {
+		return item.Raw
+	}
+	if item.Adjusted != nil && item.Adjusted.Adjust == "none" {
+		return item.Adjusted
+	}
+	return nil
 }
 
 func currentTurnoverMetrics(cache turnoverCache, codes map[string]bool) map[string]market.DailyMetricHistory {
@@ -108,31 +126,44 @@ func currentTurnoverMetrics(cache turnoverCache, codes map[string]bool) map[stri
 	return out
 }
 
-func turnoverWindow(history *market.History) (string, string) {
+func turnoverWindow(history *market.History) (string, string, []string) {
 	if history == nil || len(history.Bars) == 0 {
-		return "", ""
+		return "", "", nil
 	}
 	start := len(history.Bars) - strategy.TrappedLookbackSessions
 	if start < 0 {
 		start = 0
 	}
-	first := history.Bars[start].Date
-	lastPositive := ""
+	required := make([]string, 0, strategy.TrappedLookbackSessions)
 	for _, bar := range history.Bars[start:] {
-		if bar.Volume > 0 && bar.Date > lastPositive {
-			lastPositive = bar.Date
+		if bar.Volume > 0 {
+			required = append(required, bar.Date)
 		}
 	}
-	return first, lastPositive
+	if len(required) == 0 {
+		return "", "", nil
+	}
+	sort.Strings(required)
+	deduped := required[:0]
+	for _, date := range required {
+		if len(deduped) == 0 || deduped[len(deduped)-1] != date {
+			deduped = append(deduped, date)
+		}
+	}
+	return deduped[0], deduped[len(deduped)-1], deduped
 }
 
-func turnoverCacheUsable(history market.DailyMetricHistory, code, start, end string) bool {
-	if history.Validate() != nil || history.Code != code || len(history.Metrics) == 0 {
+func turnoverCacheUsable(history market.DailyMetricHistory, code string, required []string) bool {
+	if history.Validate() != nil || history.Code != code || len(required) == 0 {
 		return false
 	}
-	first := history.Metrics[0].Date
-	last := history.Metrics[len(history.Metrics)-1].Date
-	return first <= start && last >= end
+	for _, date := range required {
+		index := sort.Search(len(history.Metrics), func(i int) bool { return history.Metrics[i].Date >= date })
+		if index == len(history.Metrics) || history.Metrics[index].Date != date {
+			return false
+		}
+	}
+	return true
 }
 
 // sortedTurnoverDates is used by tests and keeps metric provenance stable.

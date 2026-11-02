@@ -83,7 +83,7 @@ type Report struct {
 func Score(bars []market.Bar) (Metrics, error) { return indicators.Score(bars) }
 
 func Build(c config.Config, histories []market.History, asof, target string, now time.Time) (Report, error) {
-	return buildDaily(c, histories, nil, nil, asof, target, now)
+	return buildDaily(c, histories, nil, nil, nil, asof, target, now)
 }
 
 // BuildWithJEV lets legacy tests and offline replays supply a frozen JEV
@@ -97,10 +97,10 @@ func BuildWithJEV(c config.Config, histories []market.History, jev *secondstage.
 		}
 		models = []secondstage.ModelInput{input}
 	}
-	return buildDaily(c, histories, nil, models, asof, target, now)
+	return buildDaily(c, histories, nil, nil, models, asof, target, now)
 }
 
-func buildDaily(c config.Config, histories []market.History, turnover map[string]market.DailyMetricHistory, models []secondstage.ModelInput, asof, target string, now time.Time) (Report, error) {
+func buildDaily(c config.Config, histories, trappedRaw []market.History, turnover map[string]market.DailyMetricHistory, models []secondstage.ModelInput, asof, target string, now time.Time) (Report, error) {
 	if c.Strategy.Enabled {
 		return Report{}, errors.New("short-horizon strategy requires raw execution histories")
 	}
@@ -185,7 +185,7 @@ func buildDaily(c config.Config, histories []market.History, turnover map[string
 	r.Selected = append(r.Selected, ranked[:min(len(ranked), c.Selection.TopN)]...)
 	attachFirstStage(&r, c, histories, asof, target, now)
 	attachSecondStage(&r, c, models, asof, target, now)
-	attachTrappedSignals(&r, histories, nil, turnover)
+	attachTrappedSignals(&r, histories, nil, trappedRaw, turnover)
 	attachArticleCharts(&r, histories)
 	// ID includes configuration, selected results and data date, not wall-clock generation time.
 	identity := reportIdentity(r)
@@ -205,19 +205,19 @@ func lastDate(h market.History) string {
 // BuildWithExecution keeps legacy configuration and persisted v1 reports readable.
 // Short-horizon reports have their own v2 contract; histories remain v1.
 func BuildWithExecution(ctx context.Context, c config.Config, histories, raw []market.History, asof, target string, now time.Time) (Report, error) {
-	return buildWithExecution(ctx, c, histories, raw, nil, nil, nil, asof, target, now)
+	return buildWithExecution(ctx, c, histories, raw, nil, nil, nil, nil, asof, target, now)
 }
 
 // BuildWithExecutionMinutes adds the Chan gate when saved 5-minute histories
 // are available. A nil or empty slice preserves the daily-only behavior used
 // by callers without an intraday store.
 func BuildWithExecutionMinutes(ctx context.Context, c config.Config, histories, raw []market.History, minutes []market.MinuteHistory, asof, target string, now time.Time) (Report, error) {
-	return buildWithExecution(ctx, c, histories, raw, minutes, nil, nil, asof, target, now)
+	return buildWithExecution(ctx, c, histories, raw, nil, minutes, nil, nil, asof, target, now)
 }
 
-func buildWithExecution(ctx context.Context, c config.Config, histories, raw []market.History, minutes []market.MinuteHistory, turnover map[string]market.DailyMetricHistory, models []secondstage.ModelInput, asof, target string, now time.Time) (Report, error) {
+func buildWithExecution(ctx context.Context, c config.Config, histories, raw, trappedRaw []market.History, minutes []market.MinuteHistory, turnover map[string]market.DailyMetricHistory, models []secondstage.ModelInput, asof, target string, now time.Time) (Report, error) {
 	if !c.Strategy.Enabled {
-		return buildDaily(c, histories, turnover, models, asof, target, now)
+		return buildDaily(c, histories, trappedRaw, turnover, models, asof, target, now)
 	}
 	var result strategy.Result
 	var err error
@@ -282,7 +282,7 @@ func buildWithExecution(ctx context.Context, c config.Config, histories, raw []m
 	attachFirstStage(&r, c, histories, asof, target, now)
 	attachSecondStage(&r, c, models, asof, target, now)
 	attachPhaseDecisions(&r)
-	attachTrappedSignals(&r, histories, raw, turnover)
+	attachTrappedSignals(&r, histories, raw, trappedRaw, turnover)
 	attachArticleCharts(&r, histories)
 	identity := reportIdentity(r)
 	data, err := json.Marshal(identity)

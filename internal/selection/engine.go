@@ -35,7 +35,10 @@ type Input struct {
 	Config    config.Config // SafeConfig only; no paths, credentials or network clients.
 	Histories []market.History
 	Raw       []market.History
-	Minutes   []market.MinuteHistory
+	// TrappedRaw freezes unadjusted histories used only for trapped-cost
+	// diagnostics. Its window may differ from Raw and Histories in length.
+	TrappedRaw []market.History
+	Minutes    []market.MinuteHistory
 	// TurnoverMetrics freezes daily turnover observations used by the v3
 	// trapped-supply decay. Missing entries yield an explicit unknown signal.
 	TurnoverMetrics map[string]market.DailyMetricHistory
@@ -77,7 +80,7 @@ type builtinEngine struct{ descriptor EngineDescriptor }
 
 func (e builtinEngine) Descriptor() EngineDescriptor { return e.descriptor }
 func (e builtinEngine) Analyze(ctx context.Context, in Input) (Report, error) {
-	return buildWithExecution(ctx, in.Config, in.Histories, in.Raw, in.Minutes, in.TurnoverMetrics, in.SecondStageModels, in.AsOf, in.Target, in.Now)
+	return buildWithExecution(ctx, in.Config, in.Histories, in.Raw, in.TrappedRaw, in.Minutes, in.TurnoverMetrics, in.SecondStageModels, in.AsOf, in.Target, in.Now)
 }
 func DefaultEngine(c config.Config) (Engine, error) {
 	id := "leader_daily_v1"
@@ -141,7 +144,7 @@ func Execute(ctx context.Context, e Engine, in Input, build string) (Report, err
 	for _, s := range in.Config.Stocks {
 		allowed[s.Code] = true
 	}
-	available, execution := map[string]bool{}, map[string]bool{}
+	available, execution, trapped := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, h := range frozen.Histories {
 		if !allowed[h.Code] || available[h.Code] || h.Adjust != d.Adjust {
 			return Report{}, errors.New("algorithm history identity mismatch")
@@ -154,6 +157,12 @@ func Execute(ctx context.Context, e Engine, in Input, build string) (Report, err
 		}
 		execution[h.Code] = true
 	}
+	for _, h := range frozen.TrappedRaw {
+		if !allowed[h.Code] || trapped[h.Code] || h.Adjust != "none" {
+			return Report{}, errors.New("algorithm trapped raw history identity mismatch")
+		}
+		trapped[h.Code] = true
+	}
 	if d.RawRequired {
 		for code := range available {
 			if !execution[code] {
@@ -161,13 +170,14 @@ func Execute(ctx context.Context, e Engine, in Input, build string) (Report, err
 			}
 		}
 	}
-	for _, h := range append(append([]market.History{}, frozen.Histories...), frozen.Raw...) {
+	allHistory := append(append(append([]market.History{}, frozen.Histories...), frozen.Raw...), frozen.TrappedRaw...)
+	for _, h := range allHistory {
 		if h.AsOf != in.AsOf || h.Validate() != nil {
 			return Report{}, errors.New("invalid algorithm input history")
 		}
 	}
 	for code, metric := range frozen.TurnoverMetrics {
-		if !allowed[code] || !execution[code] || metric.Validate() != nil || metric.Code != code {
+		if !allowed[code] || (!execution[code] && !trapped[code]) || metric.Validate() != nil || metric.Code != code {
 			return Report{}, errors.New("invalid algorithm turnover metrics")
 		}
 	}

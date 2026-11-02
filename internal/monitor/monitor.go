@@ -18,6 +18,7 @@ import (
 	reportmessage "github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify/report"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 )
 
 type Source = market.Source
@@ -955,7 +956,7 @@ func (m *Monitor) Preview(asof string) (selection.Report, error) {
 }
 func (m *Monitor) PreviewContext(ctx context.Context, asof string) (selection.Report, error) {
 	if m.Market != nil && m.Market.HasDatabase() {
-		histories, raw, err := m.Market.LoadHistoriesPair(ctx, m.Config.Stocks, asof, m.Config.Daily.Adjust, m.Config.Strategy.Enabled)
+		histories, raw, err := m.Market.LoadHistoriesPair(ctx, m.Config.Stocks, asof, m.Config.Daily.Adjust, true)
 		if err == nil {
 			return m.buildReport(ctx, histories, raw, asof, mustNext(m.Calendar, asof))
 		}
@@ -972,12 +973,14 @@ func (m *Monitor) PreviewContext(ctx context.Context, asof string) (selection.Re
 			return selection.Report{}, err
 		}
 		histories = append(histories, h)
-		if m.Config.Strategy.Enabled {
+		if m.Config.Daily.Adjust != "none" {
 			var r market.History
 			if err := m.Store.Read("execution/"+asof+"/"+s.Code+".json", &r); err != nil {
-				return selection.Report{}, fmt.Errorf("raw execution history unavailable for %s; sync with strategy enabled", s.Code)
+				return selection.Report{}, fmt.Errorf("raw execution history unavailable for %s", s.Code)
 			}
 			raw = append(raw, r)
+		} else {
+			raw = append(raw, h)
 		}
 	}
 	target, err := m.Calendar.Next(asof)
@@ -992,11 +995,24 @@ func (m *Monitor) buildReport(ctx context.Context, histories, raw []market.Histo
 	if err != nil {
 		return selection.Report{}, err
 	}
-	codes := make(map[string]bool, len(raw))
+	codes := turnoverCodes(histories, raw)
+	return m.buildReportWithMinutes(ctx, histories, raw, minutes, currentTurnoverMetrics(m.loadTurnoverCache(), codes), asof, target)
+}
+
+// turnoverCodes mirrors the trapped diagnostic's raw-history preference. When
+// the analysis itself is unadjusted, persisted histories are also valid raw
+// input and must keep their cached turnover observations in the report.
+func turnoverCodes(histories, raw []market.History) map[string]bool {
+	codes := make(map[string]bool, len(raw)+len(histories))
 	for _, history := range raw {
 		codes[history.Code] = true
 	}
-	return m.buildReportWithMinutes(ctx, histories, raw, minutes, currentTurnoverMetrics(m.loadTurnoverCache(), codes), asof, target)
+	for _, history := range histories {
+		if history.Adjust == "none" {
+			codes[history.Code] = true
+		}
+	}
+	return codes
 }
 
 // reportMinutes preserves the existing bounded Chan input, excluding forming
@@ -1051,6 +1067,7 @@ func (m *Monitor) buildReportWithMinutes(ctx context.Context, histories, raw []m
 		return selection.Report{}, err
 	}
 	start := end.AddDate(0, 0, -m.Config.Daily.HistoryDays).Format("2006-01-02")
+	trappedRaw := trappedRawWindow(histories, raw)
 	// Raw archival history is longer than the adjusted analysis window. Clip
 	// copies for analysis so strategy alignment and persisted data stay intact.
 	window := func(histories []market.History) []market.History {
@@ -1062,6 +1079,8 @@ func (m *Monitor) buildReportWithMinutes(ctx context.Context, histories, raw []m
 		}
 		return out
 	}
+	histories = window(histories)
+	raw = window(raw)
 	engine := m.Engine
 	if engine == nil {
 		engine, err = selection.DefaultEngine(m.Config)
@@ -1075,7 +1094,33 @@ func (m *Monitor) buildReportWithMinutes(ctx context.Context, histories, raw []m
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return selection.Execute(ctx, engine, selection.Input{Config: m.Config, Histories: window(histories), Raw: window(raw), Minutes: minutes, TurnoverMetrics: turnover, AsOf: asof, Target: target, Now: m.Now()}, m.BuildVersion)
+	return selection.Execute(ctx, engine, selection.Input{Config: m.Config, Histories: histories, Raw: raw, TrappedRaw: trappedRaw, Minutes: minutes, TurnoverMetrics: turnover, AsOf: asof, Target: target, Now: m.Now()}, m.BuildVersion)
+}
+
+// trappedRawWindow keeps the diagnostic's 120-session horizon independent of
+// the shorter strategy execution window. Raw histories are preferred; when no
+// separate raw archive exists, unadjusted analysis histories are already the
+// required prices.
+func trappedRawWindow(histories, raw []market.History) []market.History {
+	source := raw
+	if len(source) == 0 {
+		source = make([]market.History, 0, len(histories))
+		for _, history := range histories {
+			if history.Adjust == "none" {
+				source = append(source, history)
+			}
+		}
+	}
+	out := make([]market.History, 0, len(source))
+	for _, history := range source {
+		first := len(history.Bars) - strategy.TrappedLookbackSessions
+		if first < 0 {
+			first = 0
+		}
+		history.Bars = append([]market.Bar(nil), history.Bars[first:]...)
+		out = append(out, history)
+	}
+	return out
 }
 
 func mustNext(cal *calendar.Calendar, asof string) string {

@@ -188,30 +188,33 @@ func AnalyzeTrappedSignalV3(history market.History, metrics *market.DailyMetricH
 	}
 	signal.OverheadLow = weightedQuantile(trapped, 0.20)
 	signal.OverheadHigh = weightedQuantile(trapped, 0.80)
+	if signal.OverheadLow > signal.OverheadHigh {
+		signal.OverheadLow, signal.OverheadHigh = signal.OverheadHigh, signal.OverheadLow
+	}
 	signal.Zones, signal.NearTermShare, signal.DominantZone = buildTrappedZones(trapped, signal.CurrentPrice)
 	signal.CurrentZone = trappedZoneForDistance(signal.OverheadDistancePct)
 
-	triggered := signal.TrappedVolumeRatio >= TrappedTriggerVolumeRatio &&
-		signal.OverheadDistancePct >= TrappedTriggerOverheadDistancePct &&
-		signal.NearTermShare >= TrappedTriggerNearTermShare
-	watch := signal.TrappedVolumeRatio >= TrappedObserveVolumeRatio &&
-		signal.OverheadDistancePct >= TrappedObserveOverheadDistancePct &&
-		signal.NearTermShare >= TrappedObserveNearTermShare
+	signal.Status, signal.Reasons = trappedStatus(signal.TrappedVolumeRatio, signal.OverheadDistancePct, signal.NearTermShare)
+	return signal
+}
+
+func trappedStatus(trappedVolumeRatio, overheadDistancePct, nearTermShare float64) (string, []string) {
+	triggered := trappedVolumeRatio >= TrappedTriggerVolumeRatio &&
+		overheadDistancePct >= TrappedTriggerOverheadDistancePct &&
+		nearTermShare >= TrappedTriggerNearTermShare
+	watch := trappedVolumeRatio >= TrappedObserveVolumeRatio &&
+		overheadDistancePct >= TrappedObserveOverheadDistancePct &&
+		nearTermShare >= TrappedObserveNearTermShare
 	switch {
 	case triggered:
-		signal.Status = TrappedStatusTriggered
-		signal.Reasons = []string{"trapped_volume_ratio_ge_30pct", "overhead_distance_ge_2pct", "near_term_share_ge_50pct"}
+		return TrappedStatusTriggered, []string{"trapped_volume_ratio_ge_30pct", "overhead_distance_ge_2pct", "near_term_share_ge_50pct"}
 	case watch:
-		signal.Status = TrappedStatusWatch
-		signal.Reasons = []string{"trapped_volume_ratio_ge_20pct", "overhead_distance_ge_1pct", "near_term_share_ge_40pct"}
-	case signal.TrappedVolumeRatio >= TrappedObserveVolumeRatio && signal.OverheadDistancePct >= TrappedObserveOverheadDistancePct && signal.NearTermShare < TrappedObserveNearTermShare:
-		signal.Status = TrappedStatusNone
-		signal.Reasons = []string{"near_term_share_below_threshold"}
+		return TrappedStatusWatch, []string{"trapped_volume_ratio_ge_20pct", "overhead_distance_ge_1pct", "near_term_share_ge_40pct"}
+	case trappedVolumeRatio >= TrappedObserveVolumeRatio && overheadDistancePct >= TrappedObserveOverheadDistancePct && nearTermShare < TrappedObserveNearTermShare:
+		return TrappedStatusNone, []string{"near_term_share_below_threshold"}
 	default:
-		signal.Status = TrappedStatusNone
-		signal.Reasons = []string{"below_observation_threshold"}
+		return TrappedStatusNone, []string{"below_observation_threshold"}
 	}
-	return signal
 }
 
 // TrappedSignalUnavailable returns a v3 unknown signal when the caller cannot
@@ -597,26 +600,30 @@ func weightedQuantile(observations []trappedPricedVolume, quantile float64) floa
 	if len(observations) == 0 {
 		return 0
 	}
+	sorted := append([]trappedPricedVolume(nil), observations...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return sorted[i].price < sorted[j].price
+	})
+	if quantile <= 0 {
+		return sorted[0].price
+	}
+	if quantile >= 1 {
+		return sorted[len(sorted)-1].price
+	}
 	var total float64
-	for _, observation := range observations {
+	for _, observation := range sorted {
 		total += observation.volume
 	}
 	if total <= 0 {
 		return 0
 	}
-	if quantile <= 0 {
-		return observations[0].price
-	}
-	if quantile >= 1 {
-		return observations[len(observations)-1].price
-	}
 	target := total * quantile
 	var cumulative float64
-	for _, observation := range observations {
+	for _, observation := range sorted {
 		cumulative += observation.volume
 		if cumulative+trappedEpsilon >= target {
 			return observation.price
 		}
 	}
-	return observations[len(observations)-1].price
+	return sorted[len(sorted)-1].price
 }

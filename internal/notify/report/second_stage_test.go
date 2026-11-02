@@ -201,6 +201,129 @@ func TestSecondStageArticleIncludesTrappedSignalForEveryCandidate(t *testing.T) 
 	}
 }
 
+func TestArticleTrappedLegacyUsesWeightedCostAndNormalizesVolumeShares(t *testing.T) {
+	r := articleTestReport(1)
+	signal := &strategy.TrappedSignal{
+		Version: 2, Method: "volume_weighted_overhead_v2", Status: strategy.TrappedStatusWatch,
+		LookbackSessions: 120, Sessions: 120, CurrentPrice: 15.15, TrappedVolumeRatio: 0.24,
+		OverheadCost: 15.60, OverheadLow: 15.50, OverheadHigh: 15.70, OverheadDistancePct: 2.97,
+		CurrentZone: strategy.TrappedZoneShallow,
+		Zones: []strategy.TrappedZone{
+			{Level: strategy.TrappedZoneShallow, Label: "浅度", Low: 15.20, High: 15.70, VolumeShare: 0.333},
+			{Level: strategy.TrappedZoneModerate, Label: "中度", Low: 16.00, High: 16.40, VolumeShare: 0.333},
+			{Level: strategy.TrappedZoneDeep, Label: "深度", Low: 16.80, High: 17.20, VolumeShare: 0.334},
+		},
+	}
+	r.Ranking[0].Trapped = signal
+	cards, err := FromSelection(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := cards.SecondStage[0].Article.Body
+	for _, want := range []string{
+		"**当前套牢区**：浅度；加权成本 15.60，距现价 +3.0%；成本带 15.50~15.70",
+		"浅度 15.20~15.70（33%） 中度 16.00~16.40（33%） 深度 16.80~17.20（34%）",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("legacy trapped article missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "衰减后加权成本") {
+		t.Fatalf("legacy trapped article claimed turnover decay:\n%s", body)
+	}
+	for index, zone := range signal.Zones {
+		if zone.SharePct != 0 {
+			t.Fatalf("legacy display wrote SharePct[%d] = %d", index, zone.SharePct)
+		}
+	}
+	if signal.Zones[0].VolumeShare != 0.333 || signal.Zones[2].VolumeShare != 0.334 {
+		t.Fatalf("legacy display mutated VolumeShare: %+v", signal.Zones)
+	}
+	if _, err := wechat.RenderHTML(body); err != nil {
+		t.Fatalf("legacy trapped article does not render: %v", err)
+	}
+}
+
+func TestArticleTrappedEmptyZonesOmitIntervalRowAndBriefShowsNoZone(t *testing.T) {
+	r := articleTestReport(6)
+	signal := &strategy.TrappedSignal{
+		Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusNone,
+		LookbackSessions: 120, Sessions: 120, VolumeSessions: 120, CurrentPrice: 15.15,
+		TrappedVolumeRatio: 0, BaselineTrappedVolumeRatio: 0,
+		TurnoverSessions: 120, TurnoverCoveragePct: 100, TurnoverSource: "sohu", DecayApplied: true,
+		Zones: []strategy.TrappedZone{
+			{Level: strategy.TrappedZoneShallow, Label: "浅度"},
+			{Level: strategy.TrappedZoneModerate, Label: "中度"},
+			{Level: strategy.TrappedZoneDeep, Label: "深度"},
+		},
+	}
+	r.Ranking[0].Trapped = signal
+	r.Ranking[5].Trapped = signal
+	cards, err := FromSelection(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := cards.SecondStage[0].Article.Body
+	for _, unwanted := range []string{"**套牢区区间**", "合计100%"} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("empty trapped zones left %q in article:\n%s", unwanted, body)
+		}
+	}
+	brief := articleBriefTrapped(&strategy.Candidate{Trapped: signal})
+	if !strings.Contains(brief, "无套牢区") || strings.Contains(brief, "分区未保存") {
+		t.Fatalf("empty trapped brief = %q, want no-zone text", brief)
+	}
+	if !strings.Contains(body, "；套牢："+brief+"。") {
+		t.Fatalf("empty trapped brief missing from article body: %q", brief)
+	}
+	if _, err := wechat.RenderHTML(body); err != nil {
+		t.Fatalf("empty trapped article does not render: %v", err)
+	}
+}
+
+func TestArticleTrappedPartialZonesNormalizeOnlyValidIntervals(t *testing.T) {
+	r := articleTestReport(1)
+	signal := &strategy.TrappedSignal{
+		Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusWatch,
+		LookbackSessions: 120, Sessions: 120, VolumeSessions: 120, CurrentPrice: 15.15,
+		TrappedVolumeRatio: 0.24, BaselineTrappedVolumeRatio: 0.30,
+		OverheadCost: 15.60, OverheadLow: 15.50, OverheadHigh: 15.70, OverheadDistancePct: 2.97,
+		CurrentZone: strategy.TrappedZoneShallow, TurnoverSessions: 120, TurnoverCoveragePct: 100,
+		TurnoverSource: "sohu", DecayApplied: true,
+		Zones: []strategy.TrappedZone{
+			{Level: strategy.TrappedZoneShallow, Label: "浅度", Low: 15.20, High: 15.50, VolumeShare: 0.45, SharePct: 45},
+			{Level: strategy.TrappedZoneModerate, Label: "中度", Low: 15.90, High: 16.30, VolumeShare: 0.55, SharePct: 54},
+			{Level: strategy.TrappedZoneDeep, Label: "深度"},
+		},
+	}
+	r.Ranking[0].Trapped = signal
+	percents := articleTrappedZonePercents(signal)
+	if percents[0]+percents[1] != 100 || percents[2] != 0 {
+		t.Fatalf("partial trapped percentages = %v, want valid bands summing to 100", percents)
+	}
+	cards, err := FromSelection(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := cards.SecondStage[0].Article.Body
+	for _, want := range []string{
+		"**套牢区区间**（占上方套牢量，合计100%）：浅度 15.20~15.50（45%） 中度 15.90~16.30（55%） 深度无",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("partial trapped article missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "深度 0.00~0.00") {
+		t.Fatalf("partial trapped article rendered an empty deep interval:\n%s", body)
+	}
+	if signal.Zones[0].SharePct != 45 || signal.Zones[1].SharePct != 54 || signal.Zones[2].SharePct != 0 {
+		t.Fatalf("partial display mutated SharePct: %+v", signal.Zones)
+	}
+	if _, err := wechat.RenderHTML(body); err != nil {
+		t.Fatalf("partial trapped article does not render: %v", err)
+	}
+}
+
 func TestArticlePhaseValidationNamesRulePhaseAndSupport(t *testing.T) {
 	r := articleTestReport(6)
 	r.PhaseValidation = &strategy.PhaseValidation{
@@ -482,6 +605,61 @@ func TestSixStockDetailedArticleFitsWechatLimit(t *testing.T) {
 	}
 	if got := len([]rune(rendered)); got >= 20000 {
 		t.Fatalf("detailed six-stock article has %d runes, exceeds WeChat draft limit", got)
+	}
+}
+
+func TestSixStockDetailedArticleWithTrappedSignalsFitsWechatLimit(t *testing.T) {
+	r := articleTestReport(6)
+	for index := range r.Ranking {
+		r.Ranking[index].Trapped = articleCompleteTrappedSignal()
+	}
+	cards, err := FromSelection(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := cards.SecondStage[0].Article.Body
+	if got, want := strings.Count(body, "#### 套牢盘诊断"), 5; got != want {
+		t.Fatalf("detailed trapped sections = %d, want %d", got, want)
+	}
+	if got, want := strings.Count(body, "**套牢区区间**"), 5; got != want {
+		t.Fatalf("detailed trapped zone rows = %d, want %d", got, want)
+	}
+	if got, want := strings.Count(body, "**换手衰减**"), 5; got != want {
+		t.Fatalf("detailed turnover coverage rows = %d, want %d", got, want)
+	}
+	if got, want := strings.Count(body, "成本带 15.90~16.30"), 5; got != want {
+		t.Fatalf("detailed cost bands = %d, want %d", got, want)
+	}
+	brief := articleBriefTrapped(&strategy.Candidate{Trapped: r.Ranking[5].Trapped})
+	if !strings.Contains(brief, "当前中度@16.10") || !strings.Contains(brief, "浅15.20~15.50(20%)") || !strings.Contains(brief, "中15.90~16.30(50%)") || !strings.Contains(brief, "深17.00~17.80(30%)") {
+		t.Fatalf("sixth candidate brief missing trapped details: %q", brief)
+	}
+	if !strings.Contains(body, "；套牢："+brief+"。") {
+		t.Fatalf("sixth candidate brief missing from article body: %q", brief)
+	}
+	rendered, err := wechat.RenderHTML(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len([]rune(rendered)); got >= 20000 {
+		t.Fatalf("detailed six-stock article with trapped signals has %d runes, exceeds WeChat draft limit", got)
+	}
+}
+
+func articleCompleteTrappedSignal() *strategy.TrappedSignal {
+	return &strategy.TrappedSignal{
+		Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusTriggered,
+		LookbackSessions: 120, Sessions: 120, VolumeSessions: 118, ZeroVolumeSessions: 2,
+		TurnoverSessions: 118, TurnoverCoveragePct: 98.3, TurnoverSource: "sohu", DecayApplied: true,
+		CurrentPrice: 15.15, RecentHigh: 16.50, DrawdownFromHighPct: -8.18,
+		TrappedVolumeRatio: 0.36, BaselineTrappedVolumeRatio: 0.48,
+		OverheadCost: 16.10, OverheadLow: 15.90, OverheadHigh: 16.30, OverheadDistancePct: 6.27,
+		CurrentZone: strategy.TrappedZoneModerate, DominantZone: strategy.TrappedZoneModerate, NearTermShare: 0.70,
+		Zones: []strategy.TrappedZone{
+			{Level: strategy.TrappedZoneShallow, Label: "浅度", Low: 15.20, High: 15.50, VolumeShare: 0.20, SharePct: 20},
+			{Level: strategy.TrappedZoneModerate, Label: "中度", Low: 15.90, High: 16.30, VolumeShare: 0.50, SharePct: 50},
+			{Level: strategy.TrappedZoneDeep, Label: "深度", Low: 17.00, High: 17.80, VolumeShare: 0.30, SharePct: 30},
+		},
 	}
 }
 

@@ -123,6 +123,94 @@ func TestTrappedVolumeSharesAreConvertedByProvider(t *testing.T) {
 	}
 }
 
+func TestWeightedQuantileSortsObservationsByPrice(t *testing.T) {
+	ascending := []trappedPricedVolume{
+		{price: 10, volume: 1},
+		{price: 12, volume: 3},
+		{price: 14, volume: 1},
+		{price: 15, volume: 2},
+		{price: 20, volume: 1},
+	}
+	descending := []trappedPricedVolume{
+		{price: 20, volume: 1},
+		{price: 15, volume: 2},
+		{price: 14, volume: 1},
+		{price: 12, volume: 3},
+		{price: 10, volume: 1},
+	}
+	shuffled := []trappedPricedVolume{
+		{price: 15, volume: 2},
+		{price: 10, volume: 1},
+		{price: 20, volume: 1},
+		{price: 12, volume: 3},
+		{price: 14, volume: 1},
+	}
+	wantLow := weightedQuantile(ascending, 0.20)
+	wantHigh := weightedQuantile(ascending, 0.80)
+	if wantLow != 12 || wantHigh != 15 {
+		t.Fatalf("ascending quantiles = %.2f~%.2f, want 12~15", wantLow, wantHigh)
+	}
+
+	for _, test := range []struct {
+		name         string
+		observations []trappedPricedVolume
+	}{
+		{name: "price ascending", observations: ascending},
+		{name: "price descending", observations: descending},
+		{name: "time order shuffled", observations: shuffled},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			before := append([]trappedPricedVolume(nil), test.observations...)
+			low := weightedQuantile(test.observations, 0.20)
+			high := weightedQuantile(test.observations, 0.80)
+			if low != wantLow || high != wantHigh || low > high {
+				t.Fatalf("quantiles = %.2f~%.2f, want %.2f~%.2f", low, high, wantLow, wantHigh)
+			}
+			for i := range before {
+				if test.observations[i] != before[i] {
+					t.Fatalf("input observations were reordered: got %+v, want %+v", test.observations, before)
+				}
+			}
+		})
+	}
+
+	if got := weightedQuantile(descending, 0); got != 10 {
+		t.Fatalf("quantile 0 = %.2f, want lowest price 10", got)
+	}
+	if got := weightedQuantile(descending, 1); got != 20 {
+		t.Fatalf("quantile 1 = %.2f, want highest price 20", got)
+	}
+}
+
+func TestAnalyzeTrappedSignalV3OrdersOverheadQuantilesForDescendingHistory(t *testing.T) {
+	const sessions = 120
+	bars := make([]market.Bar, sessions)
+	step := 9.5 / float64(sessions-1)
+	for i := range bars {
+		price := 20 - step*float64(i)
+		bars[i] = market.Bar{
+			Date:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("2006-01-02"),
+			Open:   price,
+			High:   price,
+			Low:    price,
+			Close:  price,
+			Volume: 100,
+		}
+	}
+	history := market.History{
+		Version: 1, Code: "sz000001", Name: "测试", Source: "sina", Adjust: "none",
+		DataField: "day", VolumeUnit: "provider_raw", AsOf: bars[len(bars)-1].Date,
+		FetchedAt: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC), Bars: bars,
+	}
+	signal := AnalyzeTrappedSignalV3(history, trappedMetrics(history, 0.001))
+	if signal.Status == TrappedStatusUnknown {
+		t.Fatalf("unexpected unknown signal: %+v", signal)
+	}
+	if signal.OverheadLow > signal.OverheadHigh {
+		t.Fatalf("overhead quantiles reversed: low=%.4f high=%.4f", signal.OverheadLow, signal.OverheadHigh)
+	}
+}
+
 func TestTriangularDistributionPreservesVolumeAndSpansRange(t *testing.T) {
 	bar := market.Bar{Open: 10, Low: 10, High: 12, Close: 11, Volume: 100}
 	points := triangularDistribution(bar, 100)
@@ -147,6 +235,34 @@ func TestTriangularDistributionPreservesVolumeAndSpansRange(t *testing.T) {
 	}
 }
 
+func TestTriangularDistributionPeaksNearCloseAndCollapsesZeroRange(t *testing.T) {
+	bar := market.Bar{Open: 9, Low: 8, High: 12, Close: 9.3, Volume: 100}
+	points := triangularDistribution(bar, 100)
+	if len(points) != trappedIntradayBuckets {
+		t.Fatalf("buckets = %d, want %d", len(points), trappedIntradayBuckets)
+	}
+	var total float64
+	peak := 0
+	for i, point := range points {
+		total += point.volume
+		if point.volume > points[peak].volume {
+			peak = i
+		}
+	}
+	if math.Abs(total-100) > 1e-9 {
+		t.Fatalf("triangular volume = %.9f, want 100", total)
+	}
+	bucketWidth := (bar.High - bar.Low) / trappedIntradayBuckets
+	if points[peak].high < bar.Close-bucketWidth-trappedEpsilon || points[peak].low > bar.Close+bucketWidth+trappedEpsilon {
+		t.Fatalf("peak bucket %.6f~%.6f is not near close %.6f", points[peak].low, points[peak].high, bar.Close)
+	}
+
+	flat := triangularDistribution(market.Bar{Open: 10, Low: 10, High: 10, Close: 10, Volume: 100}, 100)
+	if len(flat) != 1 || flat[0].price != 10 || flat[0].volume != 100 || flat[0].low != 10 || flat[0].high != 10 {
+		t.Fatalf("zero-range distribution = %+v, want one point at 10", flat)
+	}
+}
+
 func TestBuildTrappedZonesNormalizesSharesTo100(t *testing.T) {
 	zones, nearTerm, dominant := buildTrappedZones([]trappedPricedVolume{
 		{price: 10.2, volume: 1},
@@ -168,6 +284,60 @@ func TestBuildTrappedZonesNormalizesSharesTo100(t *testing.T) {
 	}
 	if dominant == "" {
 		t.Fatal("dominant zone missing")
+	}
+}
+
+func TestTrappedObservationsDecaysExistingChipsBeforeAddingCurrentDay(t *testing.T) {
+	bars := []market.Bar{
+		{Date: "2026-01-01", Open: 12, High: 12, Low: 12, Close: 12, Volume: 100},
+		{Date: "2026-01-02", Open: 10, High: 10, Low: 10, Close: 10, Volume: 100},
+	}
+	history := market.History{Code: "sz000001", Source: "sina"}
+	observations, _ := trappedObservations(history, trappedWindow{bars: bars}, map[string]float64{
+		"2026-01-01": 10,
+		"2026-01-02": 25,
+	})
+	ratio, cost, _, _ := summarizeTrapped(observations, 11)
+	if want := 75.0 / 175.0; math.Abs(ratio-want) > 1e-9 {
+		t.Fatalf("trapped ratio = %.9f, want %.9f: current-day chips were decayed before insertion", ratio, want)
+	}
+	if math.Abs(cost-12) > 1e-9 {
+		t.Fatalf("overhead cost = %.9f, want 12", cost)
+	}
+}
+
+func TestTrappedStatusThresholdBoundaries(t *testing.T) {
+	tests := []struct {
+		name        string
+		volumeRatio float64
+		distancePct float64
+		nearTerm    float64
+		wantStatus  string
+		wantReason  string
+	}{
+		{name: "observe volume boundary", volumeRatio: 0.20, distancePct: 1, nearTerm: 0.40, wantStatus: TrappedStatusWatch, wantReason: "trapped_volume_ratio_ge_20pct"},
+		{name: "observe volume below", volumeRatio: 0.20 - 1e-6, distancePct: 1, nearTerm: 0.40, wantStatus: TrappedStatusNone, wantReason: "below_observation_threshold"},
+		{name: "trigger volume boundary", volumeRatio: 0.30, distancePct: 2, nearTerm: 0.50, wantStatus: TrappedStatusTriggered, wantReason: "trapped_volume_ratio_ge_30pct"},
+		{name: "trigger volume below", volumeRatio: 0.30 - 1e-6, distancePct: 2, nearTerm: 0.50, wantStatus: TrappedStatusWatch, wantReason: "trapped_volume_ratio_ge_20pct"},
+		{name: "observe distance boundary", volumeRatio: 0.25, distancePct: 1, nearTerm: 0.45, wantStatus: TrappedStatusWatch, wantReason: "trapped_volume_ratio_ge_20pct"},
+		{name: "observe distance below", volumeRatio: 0.25, distancePct: 1 - 1e-6, nearTerm: 0.45, wantStatus: TrappedStatusNone, wantReason: "below_observation_threshold"},
+		{name: "trigger distance boundary", volumeRatio: 0.35, distancePct: 2, nearTerm: 0.55, wantStatus: TrappedStatusTriggered, wantReason: "trapped_volume_ratio_ge_30pct"},
+		{name: "trigger distance below", volumeRatio: 0.35, distancePct: 2 - 1e-6, nearTerm: 0.55, wantStatus: TrappedStatusWatch, wantReason: "trapped_volume_ratio_ge_20pct"},
+		{name: "observe near-term boundary", volumeRatio: 0.25, distancePct: 1.5, nearTerm: 0.40, wantStatus: TrappedStatusWatch, wantReason: "trapped_volume_ratio_ge_20pct"},
+		{name: "observe near-term below", volumeRatio: 0.25, distancePct: 1.5, nearTerm: 0.40 - 1e-6, wantStatus: TrappedStatusNone, wantReason: "near_term_share_below_threshold"},
+		{name: "trigger near-term boundary", volumeRatio: 0.35, distancePct: 2.5, nearTerm: 0.50, wantStatus: TrappedStatusTriggered, wantReason: "trapped_volume_ratio_ge_30pct"},
+		{name: "trigger near-term below", volumeRatio: 0.35, distancePct: 2.5, nearTerm: 0.50 - 1e-6, wantStatus: TrappedStatusWatch, wantReason: "trapped_volume_ratio_ge_20pct"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			status, reasons := trappedStatus(test.volumeRatio, test.distancePct, test.nearTerm)
+			if status != test.wantStatus {
+				t.Fatalf("status = %q, want %q (reasons %v)", status, test.wantStatus, reasons)
+			}
+			if len(reasons) == 0 || reasons[0] != test.wantReason {
+				t.Fatalf("reasons = %v, want first %q", reasons, test.wantReason)
+			}
+		})
 	}
 }
 

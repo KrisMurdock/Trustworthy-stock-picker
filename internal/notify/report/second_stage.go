@@ -3,6 +3,7 @@ package report
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -1306,10 +1307,10 @@ func articleTrappedLines(candidate *strategy.Candidate) []string {
 		if len(signal.Zones) == 0 {
 			zoneLabel = "未保存"
 		}
-		lines = append(lines, fmt.Sprintf("**当前套牢区**：%s；衰减后加权成本 %.2f，距现价 %+.1f%%；成本带 %.2f~%.2f",
-			zoneLabel, signal.OverheadCost, signal.OverheadDistancePct, signal.OverheadLow, signal.OverheadHigh))
+		lines = append(lines, fmt.Sprintf("**当前套牢区**：%s；%s %.2f，距现价 %+.1f%%；成本带 %.2f~%.2f",
+			zoneLabel, articleTrappedCostLabel(signal.Version), signal.OverheadCost, signal.OverheadDistancePct, signal.OverheadLow, signal.OverheadHigh))
 	}
-	if len(signal.Zones) > 0 {
+	if articleTrappedHasValidZone(signal) {
 		lines = append(lines, "**套牢区区间**（占上方套牢量，合计100%）："+articleTrappedZoneText(signal, false))
 	}
 	if signal.Version >= 3 {
@@ -1338,13 +1339,12 @@ func articleBriefTrapped(candidate *strategy.Candidate) string {
 	if signal.Version >= 3 && signal.BaselineTrappedVolumeRatio > 0 {
 		parts[0] += "/衰减前" + articleTrappedRatioText(signal.BaselineTrappedVolumeRatio)
 	}
-	if signal.OverheadCost <= 0 {
+	if !articleTrappedHasValidZone(signal) {
 		return strings.Join(append(parts, "无套牢区"), "｜")
 	}
-	if len(signal.Zones) == 0 {
-		return strings.Join(append(parts, "分区未保存"), "｜")
+	if signal.OverheadCost > 0 {
+		parts = append(parts, fmt.Sprintf("当前%s@%.2f", articleTrappedZoneLabel(signal.CurrentZone), signal.OverheadCost))
 	}
-	parts = append(parts, fmt.Sprintf("当前%s@%.2f", articleTrappedZoneLabel(signal.CurrentZone), signal.OverheadCost))
 	parts = append(parts, articleTrappedZoneText(signal, true))
 	return strings.Join(parts, "｜")
 }
@@ -1353,8 +1353,9 @@ func articleTrappedZoneText(signal *strategy.TrappedSignal, compact bool) string
 	if signal == nil || len(signal.Zones) == 0 {
 		return "无"
 	}
+	percents := articleTrappedZonePercents(signal)
 	parts := make([]string, 0, len(signal.Zones))
-	for _, zone := range signal.Zones {
+	for index, zone := range signal.Zones {
 		label := zone.Label
 		if label == "" {
 			label = articleTrappedZoneLabel(zone.Level)
@@ -1367,12 +1368,130 @@ func articleTrappedZoneText(signal *strategy.TrappedSignal, compact bool) string
 			continue
 		}
 		if compact {
-			parts = append(parts, fmt.Sprintf("%s%.2f~%.2f(%d%%)", label, zone.Low, zone.High, articleTrappedZoneSharePct(signal, zone)))
+			parts = append(parts, fmt.Sprintf("%s%.2f~%.2f(%d%%)", label, zone.Low, zone.High, percents[index]))
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s %.2f~%.2f（%d%%）", label, zone.Low, zone.High, articleTrappedZoneSharePct(signal, zone)))
+		parts = append(parts, fmt.Sprintf("%s %.2f~%.2f（%d%%）", label, zone.Low, zone.High, percents[index]))
 	}
 	return strings.Join(parts, " ")
+}
+
+func articleTrappedCostLabel(version int) string {
+	if version == 1 || version == 2 {
+		return "加权成本"
+	}
+	return "衰减后加权成本"
+}
+
+func articleTrappedHasValidZone(signal *strategy.TrappedSignal) bool {
+	if signal == nil {
+		return false
+	}
+	for _, zone := range signal.Zones {
+		if zone.Low > 0 && zone.High > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+type articleTrappedShareRemainder struct {
+	index    int
+	fraction float64
+}
+
+func articleTrappedZonePercents(signal *strategy.TrappedSignal) []int {
+	if signal == nil {
+		return nil
+	}
+	percents := make([]int, len(signal.Zones))
+	valid := make([]int, 0, len(signal.Zones))
+	for index, zone := range signal.Zones {
+		if zone.Low > 0 && zone.High > 0 {
+			valid = append(valid, index)
+		}
+	}
+	if len(valid) == 0 {
+		return percents
+	}
+
+	if signal.Version >= 3 {
+		sum := 0
+		for _, index := range valid {
+			if signal.Zones[index].SharePct < 0 {
+				sum = -1
+				break
+			}
+			sum += signal.Zones[index].SharePct
+		}
+		if sum == 100 {
+			for _, index := range valid {
+				percents[index] = signal.Zones[index].SharePct
+			}
+			return percents
+		}
+	}
+
+	weights := make([]float64, len(valid))
+	for offset, index := range valid {
+		weight := signal.Zones[index].VolumeShare
+		if weight > 0 && !math.IsNaN(weight) && !math.IsInf(weight, 0) {
+			weights[offset] = weight
+		}
+	}
+	shares := articleLargestRemainderPercents(weights)
+	for offset, index := range valid {
+		percents[index] = shares[offset]
+	}
+	return percents
+}
+
+func articleLargestRemainderPercents(weights []float64) []int {
+	percents := make([]int, len(weights))
+	if len(weights) == 0 {
+		return percents
+	}
+	total := 0.0
+	for _, weight := range weights {
+		if weight > 0 {
+			total += weight
+		}
+	}
+	if total <= 0 {
+		base := 100 / len(weights)
+		extra := 100 % len(weights)
+		for index := range percents {
+			percents[index] = base
+			if index < extra {
+				percents[index]++
+			}
+		}
+		return percents
+	}
+
+	remainders := make([]articleTrappedShareRemainder, 0, len(weights))
+	sum := 0
+	for index, weight := range weights {
+		share := 0.0
+		if weight > 0 {
+			share = weight / total * 100
+		}
+		floor := int(math.Floor(share))
+		percents[index] = floor
+		sum += floor
+		remainders = append(remainders, articleTrappedShareRemainder{index: index, fraction: share - float64(floor)})
+	}
+	sort.SliceStable(remainders, func(i, j int) bool {
+		if math.Abs(remainders[i].fraction-remainders[j].fraction) <= 1e-9 {
+			return remainders[i].index < remainders[j].index
+		}
+		return remainders[i].fraction > remainders[j].fraction
+	})
+	for index := 0; sum < 100; index++ {
+		percents[remainders[index%len(remainders)].index]++
+		sum++
+	}
+	return percents
 }
 
 func articleTrappedRatioText(value float64) string {
@@ -1380,13 +1499,6 @@ func articleTrappedRatioText(value float64) string {
 		return fmt.Sprintf("%.1f%%", value*100)
 	}
 	return fmt.Sprintf("%.0f%%", value*100)
-}
-
-func articleTrappedZoneSharePct(signal *strategy.TrappedSignal, zone strategy.TrappedZone) int {
-	if signal != nil && signal.Version >= 3 {
-		return zone.SharePct
-	}
-	return int(math.Round(zone.VolumeShare * 100))
 }
 
 func articleTrappedUnknownReason(signal *strategy.TrappedSignal) string {
