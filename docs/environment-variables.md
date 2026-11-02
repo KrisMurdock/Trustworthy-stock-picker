@@ -111,6 +111,8 @@
 | STOCK_WATCHER_MARKET_TUSHARE_TOKEN_ENV | TUSHARE_TOKEN | Tushare Token 所在环境变量名 |
 | STOCK_WATCHER_MARKET_EASTMONEY_ENDPOINT | 东方财富公开端点 | 东方财富日线端点覆盖 |
 | STOCK_WATCHER_MARKET_LISTING_ENDPOINT | 新浪发行资料端点 | 上市日期查询端点覆盖 |
+| STOCK_WATCHER_MARKET_UNIVERSE_ENDPOINT | 新浪沪深 A 股列表端点 | `sync-all` 全市场证券发现端点覆盖 |
+| STOCK_WATCHER_MARKET_UNIVERSE_COUNT_ENDPOINT | 新浪沪深 A 股总数端点 | `sync-all` 分页完整性校验端点覆盖 |
 
 ### 指数与板块同步
 

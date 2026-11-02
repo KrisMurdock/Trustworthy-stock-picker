@@ -177,6 +177,7 @@ func main() {
 | `status-refresh` | 刷新最近一段时间的证券状态 | 是 | 否 |
 | `status-audit` | 只读审计交易日、停牌、缺口和可分析状态 | 否 | 否 |
 | `sync` | 同步整池行情、指数与全量板块并生成报告 | 是 | 否 |
+| `sync-all` | 独立同步全市场沪深 A 股日线到 `all-market.db` | 是（独立库） | 否 |
 | `sync-context` | 只补跑指数与板块同步，用于排障 | 是 | 否 |
 | `sync-index-minutes` | 补采上证/创业板指数 5/30 分钟线到 `context.db`，用于上午/下午树模型 | 是 | 否 |
 | `sync-korea-context` | 补采 KOSPI/KOSDAQ 日线到 `context.db`，作为可选盘前特征 | 是 | 否 |
@@ -201,6 +202,8 @@ func main() {
 | `retry` | 解锁指定通道或全部通道的永久错误 | 是 | 可能 |
 
 `sync` 会在同一轮同步中并发下载整池股票、核心 A 股指数和东方财富可发现的所有行业/概念板块；指数或板块失败只记录在 `context.db` 的同步状态中，不阻断股票报告。`sync-context` 只用于单独补跑或排障，常规流程不需要手动执行。`sync` 不发送消息；`run` 和 `once` 才会执行调度与投递。常驻进程持有数据目录写锁，手动写入命令需要先停止常驻实例。修改股池、环境变量或凭证后需要重启。
+
+`sync-all` 是独立的全市场日线链路：通过新浪 `sh_a` + `sz_a` 节点发现当前沪深 A 股，排除 ST、名称含“退”的退市股票、北交所和 B 股，只保存 10 年不复权日线与分析窗口前复权日线到 `<data_dir>/all-market.db`。它使用独立 `.all-market.lock`，可与常驻 `run` 并行，不读取或写入 `market.db`，不参与选股、报告和通知。首次运行会全量抓取，之后同日已完成股票自动跳过；`-full` 强制全量刷新，`-codes` 用于小范围冒烟，`-workers` 控制 1～8 并发。新浪列表不提供上市日期，因此实际历史起点仍受上市日期和上游可用数据限制，不能把“请求了 10 年”表述为“已验证十年完整性”。
 
 ## 工作原理
 
@@ -352,12 +355,15 @@ make build
 ./bin/stock-watcher check
 
 sudo install -m 644 deploy/stock-watcher.service /etc/systemd/system/stock-watcher.service
+sudo install -m 644 deploy/stock-watcher-allmarket.service /etc/systemd/system/stock-watcher-allmarket.service
+sudo install -m 644 deploy/stock-watcher-allmarket.timer /etc/systemd/system/stock-watcher-allmarket.timer
 sudo systemctl daemon-reload
 sudo systemctl enable --now stock-watcher.service
+sudo systemctl enable --now stock-watcher-allmarket.timer
 sudo systemctl status stock-watcher.service
 ```
 
-服务模板读取 `/etc/stock-watcher.env`，工作目录和二进制路径按实际安装位置调整。完整准备、SELinux、升级、回滚和排障步骤见[部署与排障](docs/deployment.md)。
+服务模板读取 `/etc/stock-watcher.env`，工作目录和二进制路径按实际安装位置调整。`stock-watcher-allmarket.timer` 在交易日 `18:40` 调用 `sync-all`，把全市场沪深 A 股日线写入独立的 `all-market.db`，不参与股池报告和通知。完整准备、SELinux、升级、回滚和排障步骤见[部署与排障](docs/deployment.md)。
 
 ### Docker Compose
 

@@ -1,0 +1,21 @@
+[Unit]
+Description=Sync full Shanghai/Shenzhen A-share daily history
+Wants=network-online.target mnt-windows_database.automount
+After=network-online.target mnt-windows_database.automount stock-watcher.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/data/codebase/toys_project/stock_watcher
+EnvironmentFile=-/etc/stock-watcher.env
+Environment=STOCK_WATCHER_DATA_DIR=/mnt/windows_database
+Environment=STOCK_WATCHER_REQUIRE_CIFS=true
+Environment=STOCK_WATCHER_FEISHU_ENABLED=false
+Environment=STOCK_WATCHER_WECHAT_ENABLED=false
+Environment=STOCK_WATCHER_MARKET_REQUEST_INTERVAL=500ms
+Environment=STOCK_WATCHER_LOG_DIR=/root/data/codebase/toys_project/stock_watcher/logs/all-market
+ExecStart=/root/data/codebase/toys_project/stock_watcher/bin/stock-watcher sync-all -workers 3 -timeout 24h
+TimeoutStartSec=25h
+Nice=10
+UMask=0077
+NoNewPrivileges=true
+

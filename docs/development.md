@@ -24,6 +24,21 @@ make status
 make run
 ```
 
+全市场日线单独用 `sync-all` 同步，不进入股池、报告和通知：
+
+```bash
+# 小范围冒烟（临时目录）
+STOCK_WATCHER_DATA_DIR=/tmp/sw-all-market \
+STOCK_WATCHER_REQUIRE_CIFS=false \
+./bin/stock-watcher sync-all -codes sh600000,sz000001 -workers 2 -timeout 1h
+
+# 正式全市场；使用独立锁，可与常驻 run 并行
+STOCK_WATCHER_DATA_DIR=/mnt/windows_database \
+./bin/stock-watcher sync-all -workers 3 -timeout 24h
+```
+
+发现使用新浪 `sh_a`/`sz_a` 并排除 ST、名称含“退”的退市股票、北交所和 B 股；写入独立 `<data_dir>/all-market.db` 与 `.all-market.lock`。每只股票保存 10 年不复权窗口和 `daily.history_days` 前复权窗口；同日已完成的股票重跑时跳过，`-full` 强制刷新。全市场约 5,000 只股票，首次同步通常需要数小时，数据量按实际历史为几 GB 到十余 GB。该命令不生成报告、不发送通知；新浪列表不提供上市日期，实际历史起点受上市日期和上游可用数据限制。
+
 首次部署完成 `sync` 后，用 `make minute-backfill`（默认 6 并发、最近 200 个交易日）补齐历史 5 分钟线；可用 `MINUTE_ARGS` 覆盖 `-from`、`-as-of`、`-codes`、`-workers`、`-provider`。`-provider auto` 对最近 104 个完整交易日优先使用新浪，更长窗口使用 BaoStock。已有生产实例运行时不要直接写生产库，先按 [行情来源与回退](data-sources.md#分钟数据) 的 staging 流程抓取，再停止 `run` 执行 `-import-from`。
 
 业务配置和凭证全部来自 `.env`，启动不读取 `config.yaml`，默认也不读取 `feishu.config`；观测股池仍独立保存在 `leaders.yaml`。默认使用本地 `data/`，`init` 会自动创建；使用 Windows 挂载盘时设置 `STOCK_WATCHER_REQUIRE_CIFS=true` 和对应 `STOCK_WATCHER_DATA_DIR`。`make run` 用于前台运行，会构建并加载开发 `.env`。若 `stock-watcher.service` 已运行同一个仓库二进制，则先用原生 `check-config` 校验配置与日志环境变量，通过后正常停止后台服务，确认 MainPID 为 0，再进入前台运行。构建或配置校验失败时不停止原服务；停止失败或超时时中止前台启动并报错。

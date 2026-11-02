@@ -1,0 +1,11 @@
+[Unit]
+Description=Trigger daily full-market A-share daily sync after close
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 18:40:00
+Persistent=true
+AccuracySec=1min
+Unit=stock-watcher-allmarket.service
+
+[Install]
+WantedBy=timers.target

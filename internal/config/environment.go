@@ -39,6 +39,8 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_MARKET_SINA_ENDPOINT":             &c.Market.SinaEndpoint,
 		"STOCK_WATCHER_MARKET_SINA_DAILY_ENDPOINT":       &c.Market.SinaDailyEndpoint,
 		"STOCK_WATCHER_MARKET_LISTING_ENDPOINT":          &c.Market.ListingEndpoint,
+		"STOCK_WATCHER_MARKET_UNIVERSE_ENDPOINT":         &c.Market.UniverseEndpoint,
+		"STOCK_WATCHER_MARKET_UNIVERSE_COUNT_ENDPOINT":   &c.Market.UniverseCountEndpoint,
 		"STOCK_WATCHER_CONTEXT_REQUEST_INTERVAL":         &c.MarketContext.RequestInterval,
 		"STOCK_WATCHER_CONTEXT_EASTMONEY_LIST_ENDPOINT":  &c.MarketContext.EastmoneyListEndpoint,
 		"STOCK_WATCHER_CONTEXT_EASTMONEY_KLINE_ENDPOINT": &c.MarketContext.EastmoneyKlineEndpoint,

@@ -1,0 +1,478 @@
+package storage
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
+)
+
+const (
+	allMarketDBName        = "all-market.db"
+	allMarketLockName      = ".all-market.lock"
+	allMarketSchemaVersion = 1
+)
+
+// AllMarketDB is a deliberately separate store for the full current
+// Shanghai/Shenzhen A-share universe. It never participates in selection,
+// reports or notification delivery.
+type AllMarketDB struct {
+	db          *sql.DB
+	root        string
+	writable    bool
+	requireCIFS bool
+	lock        *os.File
+}
+
+type AllMarketSync struct {
+	Code        string    `json:"code"`
+	Adjust      string    `json:"adjust"`
+	AsOf        string    `json:"as_of"`
+	WindowStart string    `json:"window_start,omitempty"`
+	Bars        int       `json:"bars"`
+	Source      string    `json:"source,omitempty"`
+	DataField   string    `json:"data_field,omitempty"`
+	FetchedAt   time.Time `json:"fetched_at,omitempty"`
+	Status      string    `json:"status"`
+	Reason      string    `json:"reason,omitempty"`
+}
+
+type AllMarketRun struct {
+	ID         string    `json:"id"`
+	AsOf       string    `json:"as_of"`
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at"`
+	Status     string    `json:"status"`
+	Total      int       `json:"total"`
+	Succeeded  int       `json:"succeeded"`
+	Partial    int       `json:"partial"`
+	Failed     int       `json:"failed"`
+	Skipped    int       `json:"skipped"`
+	ErrorKind  string    `json:"error_kind,omitempty"`
+}
+
+func OpenAllMarket(root string, requireCIFS bool) (*AllMarketDB, error) {
+	return openAllMarket(root, requireCIFS, true)
+}
+
+func OpenAllMarketView(root string, requireCIFS bool) (*AllMarketDB, error) {
+	return openAllMarket(root, requireCIFS, false)
+}
+
+func openAllMarket(root string, requireCIFS, writable bool) (*AllMarketDB, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	check := &Store{root: root, requireCIFS: requireCIFS}
+	if err := check.Check(); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(root, allMarketDBName)
+	if !writable {
+		if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, errors.New("all-market database is not initialized")
+		}
+	}
+	m := &AllMarketDB{root: root, writable: writable, requireCIFS: requireCIFS}
+	if writable {
+		f, err := os.OpenFile(filepath.Join(root, allMarketLockName), os.O_CREATE|os.O_RDWR, 0600)
+		if err != nil {
+			return nil, errors.New("all-market lock is not writable")
+		}
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			f.Close()
+			return nil, errors.New("another all-market synchronization owns the data directory")
+		}
+		m.lock = f
+	}
+	mode := "ro"
+	if writable {
+		mode = "rwc"
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode="+mode)
+	if err != nil {
+		m.unlock()
+		return nil, errors.New("cannot open all-market database")
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	m.db = db
+	if err := m.configure(); err != nil {
+		_ = m.Close()
+		return nil, err
+	}
+	return m, nil
+}
+
+func (m *AllMarketDB) configure() error {
+	if m == nil || m.db == nil {
+		return errors.New("all-market database is unavailable")
+	}
+	if !m.writable {
+		for _, statement := range []string{"PRAGMA query_only=ON", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=30000"} {
+			if _, err := m.db.Exec(statement); err != nil {
+				return errors.New("cannot configure all-market database view")
+			}
+		}
+		return nil
+	}
+	for _, statement := range []string{
+		"PRAGMA journal_mode=DELETE",
+		"PRAGMA synchronous=FULL",
+		"PRAGMA foreign_keys=ON",
+		"PRAGMA busy_timeout=30000",
+	} {
+		if _, err := m.db.Exec(statement); err != nil {
+			return errors.New("cannot configure all-market database")
+		}
+	}
+	if err := m.initSchema(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *AllMarketDB) initSchema() error {
+	var version int
+	if err := m.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return errors.New("cannot read all-market database version")
+	}
+	if version != 0 && version != allMarketSchemaVersion {
+		return errors.New("unsupported all-market database version")
+	}
+	_, err := m.db.Exec(`
+		CREATE TABLE IF NOT EXISTS stock (
+			code TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			listed_from TEXT NOT NULL DEFAULT '',
+			active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+			updated_at TEXT NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS daily_bar (
+			code TEXT NOT NULL REFERENCES stock(code),
+			adjust TEXT NOT NULL CHECK (adjust IN ('none', 'qfq')),
+			trade_date TEXT NOT NULL,
+			open_micros INTEGER NOT NULL CHECK (open_micros > 0),
+			close_micros INTEGER NOT NULL CHECK (close_micros > 0),
+			high_micros INTEGER NOT NULL CHECK (high_micros >= open_micros AND high_micros >= close_micros),
+			low_micros INTEGER NOT NULL CHECK (low_micros > 0 AND low_micros <= open_micros AND low_micros <= close_micros),
+			volume_raw REAL NOT NULL CHECK (volume_raw >= 0),
+			volume_shares INTEGER NOT NULL CHECK (volume_shares >= 0),
+			data_field TEXT NOT NULL CHECK (data_field IN ('qfqday', 'day')),
+			source TEXT NOT NULL,
+			PRIMARY KEY (code, adjust, trade_date)
+		);
+		CREATE TABLE IF NOT EXISTS stock_sync (
+			code TEXT NOT NULL REFERENCES stock(code),
+			adjust TEXT NOT NULL CHECK (adjust IN ('none', 'qfq')),
+			as_of TEXT NOT NULL,
+			window_start TEXT NOT NULL DEFAULT '',
+			bars INTEGER NOT NULL DEFAULT 0 CHECK (bars >= 0),
+			source TEXT NOT NULL DEFAULT '',
+			data_field TEXT NOT NULL DEFAULT '',
+			fetched_at TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL CHECK (status IN ('ok', 'failed', 'stale')),
+			reason TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (code, adjust, as_of)
+		);
+		CREATE TABLE IF NOT EXISTS sync_run (
+			id TEXT PRIMARY KEY,
+			as_of TEXT NOT NULL,
+			started_at TEXT NOT NULL,
+			finished_at TEXT NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('running', 'complete', 'partial', 'failed')),
+			total INTEGER NOT NULL DEFAULT 0,
+			succeeded INTEGER NOT NULL DEFAULT 0,
+			partial INTEGER NOT NULL DEFAULT 0,
+			failed INTEGER NOT NULL DEFAULT 0,
+			skipped INTEGER NOT NULL DEFAULT 0,
+			error_kind TEXT NOT NULL DEFAULT ''
+		);
+		PRAGMA user_version=1;
+	`)
+	if err != nil {
+		return errors.New("cannot initialize all-market database schema")
+	}
+	return nil
+}
+
+func (m *AllMarketDB) Close() error {
+	if m == nil {
+		return nil
+	}
+	var err error
+	if m.db != nil {
+		err = m.db.Close()
+		m.db = nil
+	}
+	if unlockErr := m.unlock(); unlockErr != nil {
+		err = errors.Join(err, unlockErr)
+	}
+	return err
+}
+
+func (m *AllMarketDB) unlock() error {
+	if m.lock == nil {
+		return nil
+	}
+	err := syscall.Flock(int(m.lock.Fd()), syscall.LOCK_UN)
+	closeErr := m.lock.Close()
+	m.lock = nil
+	return errors.Join(err, closeErr)
+}
+
+func (m *AllMarketDB) checkWriter(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if m == nil || !m.writable || m.db == nil {
+		return errors.New("all-market database is read-only")
+	}
+	return (&Store{root: m.root, requireCIFS: m.requireCIFS}).Check()
+}
+
+func (m *AllMarketDB) SaveHistory(ctx context.Context, stock config.Stock, h market.History, replace bool) error {
+	if err := m.checkWriter(ctx); err != nil {
+		return err
+	}
+	if stock.Code != h.Code || !config.ValidCode(stock.Code) || (h.Adjust != "none" && h.Adjust != "qfq") {
+		return errors.New("invalid all-market history")
+	}
+	if err := h.Validate(); err != nil {
+		return fmt.Errorf("invalid all-market history: %w", err)
+	}
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("cannot begin all-market transaction")
+	}
+	rollback := func(err error) error {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := upsertAllMarketStock(ctx, tx, stock); err != nil {
+		return rollback(err)
+	}
+	if replace {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM daily_bar WHERE code=? AND adjust=?", stock.Code, h.Adjust); err != nil {
+			return rollback(errors.New("cannot replace all-market history"))
+		}
+	}
+	for _, bar := range h.Bars {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO daily_bar(code, adjust, trade_date, open_micros, close_micros, high_micros, low_micros,
+				volume_raw, volume_shares, data_field, source)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(code, adjust, trade_date) DO UPDATE SET open_micros=excluded.open_micros,
+				close_micros=excluded.close_micros, high_micros=excluded.high_micros, low_micros=excluded.low_micros,
+				volume_raw=excluded.volume_raw, volume_shares=excluded.volume_shares,
+				data_field=excluded.data_field, source=excluded.source
+		`, h.Code, h.Adjust, bar.Date, micros(bar.Open), micros(bar.Close), micros(bar.High), micros(bar.Low), bar.Volume,
+			int64(providerVolumeShares(h.Source, h.Code, bar.Volume)), h.DataField, h.Source); err != nil {
+			return rollback(errors.New("cannot persist all-market daily history"))
+		}
+	}
+	if err := upsertAllMarketStatus(ctx, tx, stock, h.Adjust, h.AsOf, h.Bars[0].Date, len(h.Bars), h.Source, h.DataField, h.FetchedAt, "ok", ""); err != nil {
+		return rollback(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("cannot commit all-market history")
+	}
+	return nil
+}
+
+func (m *AllMarketDB) RecordStatus(ctx context.Context, stock config.Stock, adjust, asOf, status, reason string) error {
+	if err := m.checkWriter(ctx); err != nil {
+		return err
+	}
+	if !config.ValidCode(stock.Code) || (adjust != "none" && adjust != "qfq") || (status != "failed" && status != "stale") {
+		return errors.New("invalid all-market stock status")
+	}
+	if _, err := time.Parse("2006-01-02", asOf); err != nil {
+		return errors.New("invalid all-market status date")
+	}
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("cannot begin all-market status transaction")
+	}
+	rollback := func(err error) error {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := upsertAllMarketStock(ctx, tx, stock); err != nil {
+		return rollback(err)
+	}
+	if err := upsertAllMarketStatus(ctx, tx, stock, adjust, asOf, "", 0, "", "", time.Time{}, status, reason); err != nil {
+		return rollback(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("cannot commit all-market stock status")
+	}
+	return nil
+}
+
+func upsertAllMarketStock(ctx context.Context, tx *sql.Tx, stock config.Stock) error {
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO stock(code, name, listed_from, active, updated_at) VALUES(?, ?, ?, 1, ?)
+		ON CONFLICT(code) DO UPDATE SET name=excluded.name,
+			listed_from=CASE WHEN excluded.listed_from<>'' THEN excluded.listed_from ELSE stock.listed_from END,
+			active=1, updated_at=excluded.updated_at
+	`, stock.Code, stock.Name, stock.ListedFrom, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return errors.New("cannot persist all-market stock metadata")
+	}
+	return nil
+}
+
+func upsertAllMarketStatus(ctx context.Context, tx *sql.Tx, stock config.Stock, adjust, asOf, windowStart string, bars int, source, dataField string, fetchedAt time.Time, status, reason string) error {
+	fetched := ""
+	if !fetchedAt.IsZero() {
+		fetched = fetchedAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO stock_sync(code, adjust, as_of, window_start, bars, source, data_field, fetched_at, status, reason)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(code, adjust, as_of) DO UPDATE SET
+			status=CASE WHEN stock_sync.status='ok' THEN 'ok' ELSE excluded.status END,
+			reason=CASE WHEN stock_sync.status='ok' THEN stock_sync.reason ELSE excluded.reason END,
+			window_start=CASE WHEN excluded.status='ok' THEN excluded.window_start ELSE stock_sync.window_start END,
+			bars=CASE WHEN excluded.status='ok' THEN excluded.bars ELSE stock_sync.bars END,
+			source=CASE WHEN excluded.status='ok' THEN excluded.source ELSE stock_sync.source END,
+			data_field=CASE WHEN excluded.status='ok' THEN excluded.data_field ELSE stock_sync.data_field END,
+			fetched_at=CASE WHEN excluded.status='ok' THEN excluded.fetched_at ELSE stock_sync.fetched_at END
+	`, stock.Code, adjust, asOf, windowStart, bars, source, dataField, fetched, status, reason)
+	if err != nil {
+		return errors.New("cannot persist all-market sync status")
+	}
+	return nil
+}
+
+func (m *AllMarketDB) SyncStatus(ctx context.Context, code, adjust, asOf string) (AllMarketSync, error) {
+	var out AllMarketSync
+	if m == nil || m.db == nil {
+		return out, fs.ErrNotExist
+	}
+	var fetched string
+	err := m.db.QueryRowContext(ctx, `
+		SELECT code, adjust, as_of, window_start, bars, source, data_field, fetched_at, status, reason
+		FROM stock_sync WHERE code=? AND adjust=? AND as_of=?
+	`, code, adjust, asOf).Scan(&out.Code, &out.Adjust, &out.AsOf, &out.WindowStart, &out.Bars, &out.Source, &out.DataField, &fetched, &out.Status, &out.Reason)
+	if errors.Is(err, sql.ErrNoRows) {
+		return out, fs.ErrNotExist
+	}
+	if err != nil {
+		return out, errors.New("cannot read all-market sync status")
+	}
+	if fetched != "" {
+		out.FetchedAt, _ = time.Parse(time.RFC3339Nano, fetched)
+	}
+	return out, nil
+}
+
+func (m *AllMarketDB) LastSuccessful(ctx context.Context, code, adjust string) (AllMarketSync, error) {
+	var out AllMarketSync
+	if m == nil || m.db == nil {
+		return out, fs.ErrNotExist
+	}
+	var fetched string
+	err := m.db.QueryRowContext(ctx, `
+		SELECT code, adjust, as_of, window_start, bars, source, data_field, fetched_at, status, reason
+		FROM stock_sync WHERE code=? AND adjust=? AND status='ok'
+		ORDER BY as_of DESC LIMIT 1
+	`, code, adjust).Scan(&out.Code, &out.Adjust, &out.AsOf, &out.WindowStart, &out.Bars, &out.Source, &out.DataField, &fetched, &out.Status, &out.Reason)
+	if errors.Is(err, sql.ErrNoRows) {
+		return out, fs.ErrNotExist
+	}
+	if err != nil {
+		return out, errors.New("cannot read latest all-market sync")
+	}
+	if fetched != "" {
+		out.FetchedAt, _ = time.Parse(time.RFC3339Nano, fetched)
+	}
+	return out, nil
+}
+
+func (m *AllMarketDB) LastBarDate(ctx context.Context, code, adjust string) (string, error) {
+	if m == nil || m.db == nil {
+		return "", fs.ErrNotExist
+	}
+	var date sql.NullString
+	if err := m.db.QueryRowContext(ctx, "SELECT MAX(trade_date) FROM daily_bar WHERE code=? AND adjust=?", code, adjust).Scan(&date); err != nil {
+		return "", errors.New("cannot read latest all-market bar")
+	}
+	if !date.Valid || date.String == "" {
+		return "", fs.ErrNotExist
+	}
+	return date.String, nil
+}
+
+func (m *AllMarketDB) LoadBars(ctx context.Context, code, adjust, from, through string) ([]market.Bar, error) {
+	if m == nil || m.db == nil {
+		return nil, fs.ErrNotExist
+	}
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT trade_date, open_micros, close_micros, high_micros, low_micros, volume_raw
+		FROM daily_bar WHERE code=? AND adjust=? AND trade_date>=? AND trade_date<=? ORDER BY trade_date
+	`, code, adjust, from, through)
+	if err != nil {
+		return nil, errors.New("cannot read all-market daily history")
+	}
+	defer rows.Close()
+	out := []market.Bar{}
+	for rows.Next() {
+		var date string
+		var open, close, high, low int64
+		var volume float64
+		if err := rows.Scan(&date, &open, &close, &high, &low, &volume); err != nil {
+			return nil, errors.New("cannot decode all-market daily history")
+		}
+		out = append(out, market.Bar{Date: date, Open: float64(open) / 1_000_000, Close: float64(close) / 1_000_000,
+			High: float64(high) / 1_000_000, Low: float64(low) / 1_000_000, Volume: volume})
+	}
+	return out, rows.Err()
+}
+
+func (m *AllMarketDB) StartRun(ctx context.Context, run AllMarketRun) error {
+	if err := m.checkWriter(ctx); err != nil {
+		return err
+	}
+	if _, err := m.db.ExecContext(ctx, `
+		UPDATE sync_run SET status='failed', finished_at=?, error_kind='stale' WHERE status='running'
+	`, run.StartedAt.UTC().Format(time.RFC3339Nano)); err != nil {
+		return errors.New("cannot clean stale all-market sync runs")
+	}
+	_, err := m.db.ExecContext(ctx, `
+		INSERT INTO sync_run(id, as_of, started_at, finished_at, status, total, succeeded, partial, failed, skipped, error_kind)
+		VALUES(?, ?, ?, ?, 'running', ?, 0, 0, 0, 0, '')
+	`, run.ID, run.AsOf, run.StartedAt.UTC().Format(time.RFC3339Nano), run.FinishedAt.UTC().Format(time.RFC3339Nano), run.Total)
+	if err != nil {
+		return errors.New("cannot start all-market sync run")
+	}
+	return nil
+}
+
+func (m *AllMarketDB) FinishRun(ctx context.Context, run AllMarketRun) error {
+	if err := m.checkWriter(ctx); err != nil {
+		return err
+	}
+	_, err := m.db.ExecContext(ctx, `
+		UPDATE sync_run SET finished_at=?, status=?, total=?, succeeded=?, partial=?, failed=?, skipped=?, error_kind=? WHERE id=?
+	`, run.FinishedAt.UTC().Format(time.RFC3339Nano), run.Status, run.Total, run.Succeeded, run.Partial, run.Failed, run.Skipped, run.ErrorKind, run.ID)
+	if err != nil {
+		return errors.New("cannot finish all-market sync run")
+	}
+	return nil
+}
+
+// providerVolumeShares keeps the full-market store's share counts aligned with
+// the production daily_bar contract while preserving provider_raw volume.
+func providerVolumeShares(source, code string, raw float64) float64 {
+	return market.ProviderVolumeShares(source, code, raw)
+}

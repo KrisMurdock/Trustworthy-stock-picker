@@ -11,20 +11,22 @@ import (
 )
 
 type Market struct {
-	Providers         []string `yaml:"providers"`
-	RequestInterval   string   `yaml:"request_interval"`
-	AttemptTimeout    string   `yaml:"attempt_timeout"`
-	FailureThreshold  int      `yaml:"failure_threshold"`
-	FailureCooldown   string   `yaml:"failure_cooldown"`
-	TencentEndpoint   string   `yaml:"tencent_endpoint"`
-	BaostockAddress   string   `yaml:"baostock_address"`
-	TushareEndpoint   string   `yaml:"tushare_endpoint"`
-	TushareTokenEnv   string   `yaml:"tushare_token_env"`
-	TushareToken      string   `yaml:"-" json:"-"`
-	EastmoneyEndpoint string   `yaml:"eastmoney_endpoint"`
-	SinaEndpoint      string   `yaml:"sina_endpoint"`
-	SinaDailyEndpoint string   `yaml:"sina_daily_endpoint"`
-	ListingEndpoint   string   `yaml:"listing_endpoint"`
+	Providers             []string `yaml:"providers"`
+	RequestInterval       string   `yaml:"request_interval"`
+	AttemptTimeout        string   `yaml:"attempt_timeout"`
+	FailureThreshold      int      `yaml:"failure_threshold"`
+	FailureCooldown       string   `yaml:"failure_cooldown"`
+	TencentEndpoint       string   `yaml:"tencent_endpoint"`
+	BaostockAddress       string   `yaml:"baostock_address"`
+	TushareEndpoint       string   `yaml:"tushare_endpoint"`
+	TushareTokenEnv       string   `yaml:"tushare_token_env"`
+	TushareToken          string   `yaml:"-" json:"-"`
+	EastmoneyEndpoint     string   `yaml:"eastmoney_endpoint"`
+	SinaEndpoint          string   `yaml:"sina_endpoint"`
+	SinaDailyEndpoint     string   `yaml:"sina_daily_endpoint"`
+	ListingEndpoint       string   `yaml:"listing_endpoint"`
+	UniverseEndpoint      string   `yaml:"universe_endpoint"`
+	UniverseCountEndpoint string   `yaml:"universe_count_endpoint"`
 }
 
 func DefaultMarket() Market {
@@ -33,9 +35,11 @@ func DefaultMarket() Market {
 		TencentEndpoint: "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get",
 		BaostockAddress: "public-api.baostock.com:10030", TushareEndpoint: "https://api.tushare.pro",
 		TushareTokenEnv: "TUSHARE_TOKEN", EastmoneyEndpoint: "https://push2his.eastmoney.com/api/qt/stock/kline/get",
-		SinaEndpoint:      "https://finance.sina.com.cn/realstock/company",
-		SinaDailyEndpoint: "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData",
-		ListingEndpoint:   "https://vip.stock.finance.sina.com.cn/corp/go.php/vISSUE_NewStock/stockid"}
+		SinaEndpoint:          "https://finance.sina.com.cn/realstock/company",
+		SinaDailyEndpoint:     "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData",
+		ListingEndpoint:       "https://vip.stock.finance.sina.com.cn/corp/go.php/vISSUE_NewStock/stockid",
+		UniverseEndpoint:      "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData",
+		UniverseCountEndpoint: "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeStockCount"}
 }
 
 func (m *Market) loadCredentials() { m.TushareToken = strings.TrimSpace(os.Getenv(m.TushareTokenEnv)) }
@@ -43,6 +47,12 @@ func (m *Market) loadCredentials() { m.TushareToken = strings.TrimSpace(os.Geten
 func (m Market) Validate() error {
 	if !validMarketEndpoint(m.ListingEndpoint) {
 		return errors.New("market.listing_endpoint requires HTTPS or loopback HTTP, without credentials or query parameters")
+	}
+	if !validMarketEndpoint(m.UniverseEndpoint) {
+		return errors.New("market.universe_endpoint requires HTTPS or loopback HTTP, without credentials or query parameters")
+	}
+	if !validMarketEndpoint(m.UniverseCountEndpoint) {
+		return errors.New("market.universe_count_endpoint requires HTTPS or loopback HTTP, without credentials or query parameters")
 	}
 	if len(m.Providers) == 0 || len(m.Providers) > 5 {
 		return errors.New("market.providers must contain one to five providers")

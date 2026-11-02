@@ -36,7 +36,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-context|sync-index-minutes|sync-korea-context|sync-hang-seng-context|sync-korea-minutes|sync-intraday|backfill-minutes|status-backfill|status-refresh|status-audit|preview|research|experiment|study-yang-pullback|plan|run|once|status|retry|train-predictor|predictor-status|predictor-eval|market-signal|train-dayrange|predict-dayrange|reconcile-dayrange|status-dayrange|replay-dayrange [channel] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-all|sync-context|sync-index-minutes|sync-korea-context|sync-hang-seng-context|sync-korea-minutes|sync-intraday|backfill-minutes|status-backfill|status-refresh|status-audit|preview|research|experiment|study-yang-pullback|plan|run|once|status|retry|train-predictor|predictor-status|predictor-eval|market-signal|train-dayrange|predict-dayrange|reconcile-dayrange|status-dayrange|replay-dayrange [channel] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -52,9 +52,11 @@ func run(args []string) error {
 	policy := f.String("policy", "baseline", "conditional-{entry,rsi,macd,bollinger,confluence,all-three,guard,confluence-guard,chan-5-15-30}, baseline, upper-wick, risk-qualified or next-day-{baseline,upper-wick,low-volatility,pullback,breakout,momentum,volume-recovery,balanced,risk-qualified} (experiment only)")
 	from := f.String("from", "", "inclusive start date (experiment; pair with -through, or backfill/index-minute sync)")
 	through := f.String("through", "", "inclusive backtest signal end date (experiment only; pair with -from)")
-	backfillWorkers := f.Int("workers", 3, "concurrent BaoStock workers (backfill-minutes only, 1..8)")
+	backfillWorkers := f.Int("workers", 3, "concurrent workers (backfill-minutes or sync-all, 1..8)")
 	backfillProvider := f.String("provider", "auto", "minute history provider: auto, baostock or sina (backfill-minutes only)")
-	backfillCodes := f.String("codes", "", "comma-separated pool codes (backfill-minutes only; default all)")
+	backfillCodes := f.String("codes", "", "comma-separated codes (backfill-minutes or sync-all; default all)")
+	allFull := f.Bool("full", false, "force a full 10-year raw refresh (sync-all only)")
+	allTimeout := f.Duration("timeout", 24*time.Hour, "overall synchronization timeout (sync-all only)")
 	importFrom := f.String("import-from", "", "staging data directory to merge without network access (backfill-minutes only)")
 	referenceDir := f.String("reference-dir", "", "read-only production data directory used for resume coverage (backfill-minutes fetch only)")
 	entry := f.Float64("entry-price", 0, "actual buy fill price (plan only)")
@@ -77,7 +79,7 @@ func run(args []string) error {
 		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
-	case "check-config", "init", "check", "health", "replay", "sync", "sync-context", "sync-index-minutes", "sync-korea-context", "sync-hang-seng-context", "sync-korea-minutes", "sync-intraday", "backfill-minutes", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "study-yang-pullback", "plan", "run", "once", "status", "retry", "train-predictor", "predictor-status", "predictor-eval", "market-signal", "train-dayrange", "predict-dayrange", "reconcile-dayrange", "status-dayrange", "replay-dayrange":
+	case "check-config", "init", "check", "health", "replay", "sync", "sync-all", "sync-context", "sync-index-minutes", "sync-korea-context", "sync-hang-seng-context", "sync-korea-minutes", "sync-intraday", "backfill-minutes", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "study-yang-pullback", "plan", "run", "once", "status", "retry", "train-predictor", "predictor-status", "predictor-eval", "market-signal", "train-dayrange", "predict-dayrange", "reconcile-dayrange", "status-dayrange", "replay-dayrange":
 	default:
 		return errors.New("unknown command")
 	}
@@ -87,8 +89,14 @@ func run(args []string) error {
 	if command != "replay" && *revision != "" {
 		return errors.New("revision requires replay")
 	}
-	if *asof != "" && command != "sync" && command != "sync-context" && command != "sync-index-minutes" && command != "sync-korea-context" && command != "sync-hang-seng-context" && command != "sync-korea-minutes" && command != "backfill-minutes" && command != "status-backfill" && command != "status-refresh" && command != "status-audit" && command != "preview" && command != "research" && command != "experiment" && command != "study-yang-pullback" && command != "predictor-eval" && command != "market-signal" && command != "train-dayrange" && command != "predict-dayrange" && command != "reconcile-dayrange" && command != "status-dayrange" && command != "replay-dayrange" {
-		return errors.New("as-of is supported by sync, context sync, minute backfill, status commands, preview, research, experiment, yang-pullback, predictor-eval, market-signal and dayrange commands only")
+	if *asof != "" && command != "sync" && command != "sync-all" && command != "sync-context" && command != "sync-index-minutes" && command != "sync-korea-context" && command != "sync-hang-seng-context" && command != "sync-korea-minutes" && command != "backfill-minutes" && command != "status-backfill" && command != "status-refresh" && command != "status-audit" && command != "preview" && command != "research" && command != "experiment" && command != "study-yang-pullback" && command != "predictor-eval" && command != "market-signal" && command != "train-dayrange" && command != "predict-dayrange" && command != "reconcile-dayrange" && command != "status-dayrange" && command != "replay-dayrange" {
+		return errors.New("as-of is supported by sync, sync-all, context sync, minute backfill, status commands, preview, research, experiment, yang-pullback, predictor-eval, market-signal and dayrange commands only")
+	}
+	if command != "sync-all" && (*allFull || *allTimeout != 24*time.Hour) {
+		return errors.New("full and timeout are supported by sync-all only")
+	}
+	if command == "sync-all" && (*allTimeout < time.Hour || *allTimeout > 72*time.Hour) {
+		return errors.New("sync-all timeout must be between 1h and 72h")
 	}
 	if command != "predictor-eval" && (*windows != "40,60,120" || *validationDays != 20 || *halfLife != 60) {
 		return errors.New("predictor-eval flags require the predictor-eval command")
@@ -120,7 +128,10 @@ func run(args []string) error {
 	if command != "experiment" && command != "backfill-minutes" && command != "sync-index-minutes" && command != "sync-korea-context" && *from != "" {
 		return errors.New("from requires the experiment, backfill-minutes, sync-index-minutes or sync-korea-context command")
 	}
-	if command != "backfill-minutes" && (*backfillWorkers != 3 || *backfillProvider != "auto" || *backfillCodes != "" || *importFrom != "" || *referenceDir != "") {
+	if command != "backfill-minutes" && command != "sync-all" && (*backfillWorkers != 3 || *backfillCodes != "") {
+		return errors.New("workers and codes require the backfill-minutes or sync-all command")
+	}
+	if command != "backfill-minutes" && (*backfillProvider != "auto" || *importFrom != "" || *referenceDir != "") {
 		return errors.New("minute backfill flags require the backfill-minutes command")
 	}
 	if command != "study-yang-pullback" && (*bootstrap != 1000 || *split != 0.70) {
@@ -205,6 +216,9 @@ func run(args []string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(status)
+	}
+	if command == "sync-all" {
+		return runSyncAll(ctx, c, log, *asof, *allFull, *backfillWorkers, *allTimeout, *backfillCodes)
 	}
 	if command == "predictor-status" {
 		return predictorStatus(c)

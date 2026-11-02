@@ -19,15 +19,23 @@
 sudo install -m 644 deploy/stock-watcher.service /etc/systemd/system/stock-watcher.service
 sudo install -m 644 deploy/stock-watcher-secondstage.service /etc/systemd/system/stock-watcher-secondstage.service
 sudo install -m 644 deploy/stock-watcher-secondstage.timer /etc/systemd/system/stock-watcher-secondstage.timer
+sudo install -m 644 deploy/stock-watcher-allmarket.service /etc/systemd/system/stock-watcher-allmarket.service
+sudo install -m 644 deploy/stock-watcher-allmarket.timer /etc/systemd/system/stock-watcher-allmarket.timer
 sudo systemctl daemon-reload
 sudo systemctl enable --now stock-watcher.service
 sudo systemctl enable --now stock-watcher-secondstage.timer
+sudo systemctl enable --now stock-watcher-allmarket.timer
 sudo systemctl status stock-watcher.service
 sudo systemctl status stock-watcher-secondstage.timer
+sudo systemctl status stock-watcher-allmarket.timer
 journalctl -u stock-watcher.service -n 50 --no-pager
 ```
 
 模板默认目录 `/root/data/codebase/toys_project/stock_watcher`，读取 `/etc/stock-watcher.env`，等待网络与已有 `mnt-windows_database.automount`。主服务在 15:00 收盘后同步行情；精排服务由 timer 在 15:00、15:05、15:10、15:15、15:20 触发，等待当日冻结初筛报告并生成四模型 artifact。到 `15:28` 仍未齐时 Go 进程会按中性分降级发布，不阻塞主报告。SELinux Enforcing 环境需配置适当的程序路径策略；本服务器原生路径已有 `bin_t` 策略，替换二进制后运行 `sudo restorecon -v /root/data/codebase/toys_project/stock_watcher/bin/stock-watcher` 再重启。
+
+全市场日线由 `stock-watcher-allmarket.timer` 在交易日 `18:40` 触发 `sync-all`，写入独立 `<data_dir>/all-market.db`，使用独立 `.all-market.lock`，可与主服务并行，不参与股池报告、排名或通知。该 unit 固定 `STOCK_WATCHER_DATA_DIR=/mnt/windows_database`、`STOCK_WATCHER_REQUIRE_CIFS=true`、`STOCK_WATCHER_MARKET_REQUEST_INTERVAL=500ms` 和独立日志目录 `logs/all-market/`，避免与主服务共用日志文件；如公共行情源限流，可把请求间隔改回 `1s`。定时器只在周一至周五触发，节假日会按最后一个已完成交易日执行并在已同步时快速跳过。
+
+全市场线上验收至少检查：`systemctl list-timers stock-watcher-allmarket.timer` 显示下一次触发时间；`journalctl -u stock-watcher-allmarket.service -n 50 --no-pager` 最后一行 JSON 为 `status=complete`；`all-market.db` 的 `sync_run` 最新记录 `as_of` 等于最近已完成交易日且 `failed=partial=0`；主服务 `stock-watcher.service` 仍保持 active。若服务以 `cannot persist all-market stock metadata` 或共享盘错误退出，先检查 CIFS 与 `busy_timeout`，不要通过改成本地目录绕过。
 
 精排线上验收至少检查：`systemctl list-timers stock-watcher-secondstage.timer`、当日 `state/secondstage/<model>/<as_of>.json` 四份文件均存在、`/api/reports?as_of=<date>` 中 `second_stage.degraded=false`、精排稿只在初筛/主报告之后发送。若 `journalctl -u stock-watcher-secondstage.service` 显示模型目录、Python 依赖或 CIFS 挂载错误，先修复离线生成链；不要把缺失 artifact 误判为 Go 精排算法失败。
 
