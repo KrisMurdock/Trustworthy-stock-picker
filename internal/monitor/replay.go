@@ -40,6 +40,7 @@ func (m *Monitor) Replay(ctx context.Context, revision string) (selection.Report
 	}
 	var adjusted, raw []market.History
 	var minutes []market.MinuteHistory
+	turnover := map[string]market.DailyMetricHistory{}
 	for _, item := range items {
 		if item.Adjusted != nil {
 			minutes = append(minutes, item.Minutes...)
@@ -50,11 +51,18 @@ func (m *Monitor) Replay(ctx context.Context, revision string) (selection.Report
 				raw = append(raw, *item.Adjusted)
 			}
 		}
+		if item.Turnover != nil {
+			turnover[item.Turnover.Code] = *item.Turnover
+		}
 	}
 	replay := *m
 	replay.Config = params
 	replay.Now = func() time.Time { return recorded.GeneratedAt }
-	result, err := replay.buildReportWithMinutes(ctx, adjusted, raw, minutes, recorded.AsOf, recorded.Target)
+	codes := make(map[string]bool, len(raw))
+	for _, history := range raw {
+		codes[history.Code] = true
+	}
+	result, err := replay.buildReportWithMinutes(ctx, adjusted, raw, minutes, currentTurnoverMetrics(turnoverCache{Histories: turnover}, codes), recorded.AsOf, recorded.Target)
 	if err != nil {
 		return result, err
 	}

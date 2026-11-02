@@ -40,7 +40,8 @@ type SyncItem struct {
 	Stock         config.Stock
 	Adjusted      *market.History
 	Raw           *market.History
-	Minutes       MinuteInputs `json:",omitempty"`
+	Turnover      *market.DailyMetricHistory `json:",omitempty"`
+	Minutes       MinuteInputs               `json:",omitempty"`
 	Status        string
 	Reason        string
 	Analyzable    bool

@@ -68,25 +68,26 @@ var (
 type Runtime struct {
 	mu sync.Mutex
 
-	config        config.Config
-	version       string
-	log           *Logger
-	store         *storage.Store
-	marketDB      *storage.MarketDB
-	dayRangeDB    *storage.DayRangeDB
-	contextDB     *storage.ContextDB
-	contextClient *marketcontext.Client
-	contextSyncer *marketcontext.Syncer
-	sources       *market.Sources
-	channels      []notify.Channel
-	closeChannels func()
-	monitor       *monitor.Monitor
-	minuteClient  *market.MinuteClient
-	minuteMonitor *intraday.Monitor
-	predictor     *predictor.Monitor
-	dayRange      *dayrange.Service
-	dashboard     http.Handler
-	runMonitor    func(context.Context) error
+	config         config.Config
+	version        string
+	log            *Logger
+	store          *storage.Store
+	marketDB       *storage.MarketDB
+	dayRangeDB     *storage.DayRangeDB
+	contextDB      *storage.ContextDB
+	contextClient  *marketcontext.Client
+	contextSyncer  *marketcontext.Syncer
+	sources        *market.Sources
+	channels       []notify.Channel
+	closeChannels  func()
+	monitor        *monitor.Monitor
+	minuteClient   *market.MinuteClient
+	turnoverClient *market.SohuMetricsClient
+	minuteMonitor  *intraday.Monitor
+	predictor      *predictor.Monitor
+	dayRange       *dayrange.Service
+	dashboard      http.Handler
+	runMonitor     func(context.Context) error
 
 	running    bool
 	cancel     context.CancelFunc
@@ -231,6 +232,8 @@ func New(opts Options) (*Runtime, error) {
 			return hkconnect.LoadLatestRecommendation(loadCtx, cfg.DataDir, cfg.RequireCIFS)
 		}
 	}
+	r.turnoverClient = market.NewSohuMetricsClient(20*time.Second, 350*time.Millisecond)
+	r.monitor.TurnoverSource = r.turnoverClient
 	if r.contextSyncer != nil {
 		r.monitor.MarketContextSync = func(ctx context.Context, day string) (marketcontext.SyncResult, error) {
 			result, err := r.contextSyncer.ForDate(ctx, day)
@@ -480,6 +483,10 @@ func (r *Runtime) release() error {
 	if r.closeChannels != nil {
 		r.closeChannels()
 		r.closeChannels = nil
+	}
+	if r.turnoverClient != nil {
+		r.turnoverClient.Close()
+		r.turnoverClient = nil
 	}
 	if r.predictor != nil {
 		errs = append(errs, r.predictor.Close())

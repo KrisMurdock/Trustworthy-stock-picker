@@ -142,29 +142,32 @@ func TestSecondStageArticleIncludesTrappedSignalForEveryCandidate(t *testing.T) 
 	r := articleTestReport(6)
 	r.Ranking[0].Trapped = &strategy.TrappedSignal{
 		Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusTriggered,
-		LookbackSessions: 120, Sessions: 120, CurrentPrice: 15.15, RecentHigh: 16.50, DrawdownFromHighPct: -8.18,
-		TrappedVolumeRatio: 0.36, OverheadCost: 16.10, OverheadLow: 15.90, OverheadHigh: 16.30, OverheadDistancePct: 6.27,
-		CurrentZone: strategy.TrappedZoneModerate,
+		LookbackSessions: 120, Sessions: 120, VolumeSessions: 120, CurrentPrice: 15.15, RecentHigh: 16.50, DrawdownFromHighPct: -8.18,
+		TrappedVolumeRatio: 0.36, BaselineTrappedVolumeRatio: 0.48, OverheadCost: 16.10, OverheadLow: 15.90, OverheadHigh: 16.30, OverheadDistancePct: 6.27,
+		CurrentZone: strategy.TrappedZoneModerate, NearTermShare: 0.40,
+		TurnoverSessions: 120, TurnoverCoveragePct: 100, TurnoverSource: "sohu", DecayApplied: true,
 		Zones: []strategy.TrappedZone{
-			{Level: strategy.TrappedZoneShallow, Label: "浅度", Low: 15.20, High: 15.50, VolumeShare: 0.10},
-			{Level: strategy.TrappedZoneModerate, Label: "中度", Low: 15.90, High: 16.30, VolumeShare: 0.60},
-			{Level: strategy.TrappedZoneDeep, Label: "深度", Low: 17.00, High: 17.80, VolumeShare: 0.30},
+			{Level: strategy.TrappedZoneShallow, Label: "浅度", Low: 15.20, High: 15.50, VolumeShare: 0.10, SharePct: 10},
+			{Level: strategy.TrappedZoneModerate, Label: "中度", Low: 15.90, High: 16.30, VolumeShare: 0.60, SharePct: 60},
+			{Level: strategy.TrappedZoneDeep, Label: "深度", Low: 17.00, High: 17.80, VolumeShare: 0.30, SharePct: 30},
 		},
 	}
 	r.Ranking[1].Trapped = &strategy.TrappedSignal{
 		Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusWatch,
-		LookbackSessions: 120, Sessions: 120, CurrentPrice: 15.15, TrappedVolumeRatio: 0.24,
+		LookbackSessions: 120, Sessions: 120, VolumeSessions: 120, CurrentPrice: 15.15, TrappedVolumeRatio: 0.24, BaselineTrappedVolumeRatio: 0.30,
 		OverheadCost: 15.60, OverheadLow: 15.50, OverheadHigh: 15.70, OverheadDistancePct: 2.97,
-		CurrentZone: strategy.TrappedZoneShallow,
+		CurrentZone: strategy.TrappedZoneShallow, NearTermShare: 0.90,
+		TurnoverSessions: 120, TurnoverCoveragePct: 100, TurnoverSource: "sohu", DecayApplied: true,
 		Zones: []strategy.TrappedZone{
-			{Level: strategy.TrappedZoneShallow, Label: "浅度", Low: 15.20, High: 15.70, VolumeShare: 0.60},
-			{Level: strategy.TrappedZoneModerate, Label: "中度", Low: 16.00, High: 16.40, VolumeShare: 0.30},
-			{Level: strategy.TrappedZoneDeep, Label: "深度", Low: 16.80, High: 17.20, VolumeShare: 0.10},
+			{Level: strategy.TrappedZoneShallow, Label: "浅度", Low: 15.20, High: 15.70, VolumeShare: 0.60, SharePct: 60},
+			{Level: strategy.TrappedZoneModerate, Label: "中度", Low: 16.00, High: 16.40, VolumeShare: 0.30, SharePct: 30},
+			{Level: strategy.TrappedZoneDeep, Label: "深度", Low: 16.80, High: 17.20, VolumeShare: 0.10, SharePct: 10},
 		},
 	}
 	r.Ranking[2].Trapped = &strategy.TrappedSignal{
 		Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusNone,
-		LookbackSessions: 120, Sessions: 120, CurrentPrice: 15.15, TrappedVolumeRatio: 0.05,
+		LookbackSessions: 120, Sessions: 120, VolumeSessions: 120, CurrentPrice: 15.15, TrappedVolumeRatio: 0.05, BaselineTrappedVolumeRatio: 0.05,
+		TurnoverSessions: 120, TurnoverCoveragePct: 100, TurnoverSource: "sohu", DecayApplied: true,
 	}
 	cards, err := FromSelection(r)
 	if err != nil {
@@ -175,9 +178,9 @@ func TestSecondStageArticleIncludesTrappedSignalForEveryCandidate(t *testing.T) 
 	}
 	body := cards.SecondStage[0].Article.Body
 	for _, want := range []string{
-		"#### 套牢盘诊断\n- **套牢信号**：触发；上方套牢量 36.0%\n- **当前套牢区**：中度；加权成本 16.10，距现价 +6.3%；成本带 15.90~16.30\n- **套牢区区间**（占上方套牢量）：浅度 15.20~15.50（10%） 中度 15.90~16.30（60%） 深度 17.00~17.80（30%）\n- **区间回撤**：现价距近 120 日高点 -8.2%",
-		"#### 套牢盘诊断\n- **套牢信号**：观察；上方套牢量 24.0%\n- **当前套牢区**：浅度；加权成本 15.60，距现价 +3.0%；成本带 15.50~15.70\n- **套牢区区间**（占上方套牢量）：浅度 15.20~15.70（60%） 中度 16.00~16.40（30%） 深度 16.80~17.20（10%）",
-		"#### 套牢盘诊断\n- **套牢信号**：无明显；上方套牢量 5.0%",
+		"#### 套牢盘诊断\n- **套牢信号**：触发；衰减后上方套牢量 36.0%，衰减前 48.0%\n- **当前套牢区**：中度；衰减后加权成本 16.10，距现价 +6.3%；成本带 15.90~16.30\n- **套牢区区间**（占上方套牢量，合计100%）：浅度 15.20~15.50（10%） 中度 15.90~16.30（60%） 深度 17.00~17.80（30%）\n- **换手衰减**：搜狐换手率覆盖 120/120 个正成交日（100%）；零成交保留 0 日\n- **区间回撤**：现价距近 120 日高点 -8.2%",
+		"#### 套牢盘诊断\n- **套牢信号**：观察；衰减后上方套牢量 24.0%，衰减前 30.0%\n- **当前套牢区**：浅度；衰减后加权成本 15.60，距现价 +3.0%；成本带 15.50~15.70\n- **套牢区区间**（占上方套牢量，合计100%）：浅度 15.20~15.70（60%） 中度 16.00~16.40（30%） 深度 16.80~17.20（10%）",
+		"#### 套牢盘诊断\n- **套牢信号**：无明显；衰减后上方套牢量 5.0%，衰减前 5.0%",
 		"**状态**：本次报告未保存套牢盘信号；重新生成报告后展示",
 		"；套牢：未保存。",
 		"## 套牢盘诊断说明",
@@ -511,13 +514,14 @@ func TestSecondStageArticleWithTenChartsFitsWechatLimit(t *testing.T) {
 		r.Ranking[index].Chart = chart
 		r.Ranking[index].Trapped = &strategy.TrappedSignal{
 			Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusTriggered,
-			LookbackSessions: 120, Sessions: 120, CurrentPrice: 15.15, TrappedVolumeRatio: 1,
+			LookbackSessions: 120, Sessions: 120, VolumeSessions: 120, CurrentPrice: 15.15, TrappedVolumeRatio: 1, BaselineTrappedVolumeRatio: 1,
 			OverheadCost: 1234.56, OverheadLow: 1200, OverheadHigh: 1300, OverheadDistancePct: 8048.91,
-			CurrentZone: strategy.TrappedZoneDeep,
+			CurrentZone: strategy.TrappedZoneDeep, NearTermShare: 0.10,
+			TurnoverSessions: 120, TurnoverCoveragePct: 100, TurnoverSource: "sohu", DecayApplied: true,
 			Zones: []strategy.TrappedZone{
-				{Level: strategy.TrappedZoneShallow, Label: "浅度"},
-				{Level: strategy.TrappedZoneModerate, Label: "中度"},
-				{Level: strategy.TrappedZoneDeep, Label: "深度", Low: 1200, High: 1300, VolumeShare: 1},
+				{Level: strategy.TrappedZoneShallow, Label: "浅度", SharePct: 0},
+				{Level: strategy.TrappedZoneModerate, Label: "中度", SharePct: 0},
+				{Level: strategy.TrappedZoneDeep, Label: "深度", Low: 1200, High: 1300, VolumeShare: 1, SharePct: 100},
 			},
 		}
 		images[chart.ID] = wechat.RenderedImage{URL: "https://mmbiz.qpic.cn/mmbiz_png/" + strings.Repeat("a", 160) + "/0?wx_fmt=png", Caption: articleChartCaption(*chart)}
@@ -723,3 +727,41 @@ func articleTestPhase() *strategy.PhaseEvidence {
 }
 
 func floatPtr(value float64) *float64 { return &value }
+
+func TestSecondStageArticleShowsV3UnknownAndLegacySignal(t *testing.T) {
+	r := articleTestReport(3)
+	r.Ranking[0].Trapped = &strategy.TrappedSignal{
+		Version: 2, Method: "volume_weighted_overhead_v2", Status: strategy.TrappedStatusWatch,
+		LookbackSessions: 120, Sessions: 120, CurrentPrice: 15.15, TrappedVolumeRatio: 0.24,
+		OverheadCost: 15.60, OverheadLow: 15.50, OverheadHigh: 15.70, OverheadDistancePct: 2.97,
+		CurrentZone: strategy.TrappedZoneShallow,
+		Zones: []strategy.TrappedZone{
+			{Level: strategy.TrappedZoneShallow, Label: "浅度", Low: 15.20, High: 15.70, VolumeShare: 0.60},
+			{Level: strategy.TrappedZoneModerate, Label: "中度", Low: 16.00, High: 16.40, VolumeShare: 0.30},
+			{Level: strategy.TrappedZoneDeep, Label: "深度", Low: 16.80, High: 17.20, VolumeShare: 0.10},
+		},
+	}
+	r.Ranking[1].Trapped = &strategy.TrappedSignal{
+		Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusUnknown,
+		LookbackSessions: 120, Sessions: 120, VolumeSessions: 118, ZeroVolumeSessions: 2,
+		BaselineTrappedVolumeRatio: 0.48, Reasons: []string{"turnover_history_unavailable"},
+	}
+	cards, err := FromSelection(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := cards.SecondStage[0].Article.Body
+	for _, want := range []string{
+		"上方套牢量 24.0%",
+		"浅度 15.20~15.70（60%） 中度 16.00~16.40（30%） 深度 16.80~17.20（10%）",
+		"数据不足（换手率缺失）",
+		"**衰减前上方套牢量**：48.0%",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("compatibility text missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "换手衰减**：搜狐换手率覆盖 0/0") {
+		t.Fatalf("legacy signal incorrectly claimed turnover coverage:\n%s", body)
+	}
+}

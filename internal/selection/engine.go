@@ -36,6 +36,9 @@ type Input struct {
 	Histories []market.History
 	Raw       []market.History
 	Minutes   []market.MinuteHistory
+	// TurnoverMetrics freezes daily turnover observations used by the v3
+	// trapped-supply decay. Missing entries yield an explicit unknown signal.
+	TurnoverMetrics map[string]market.DailyMetricHistory
 	// SecondStageModels are frozen, already validated offline model snapshots.
 	// Execute loads them before SafeConfig strips filesystem paths; engines
 	// never read artifacts from disk themselves.
@@ -74,7 +77,7 @@ type builtinEngine struct{ descriptor EngineDescriptor }
 
 func (e builtinEngine) Descriptor() EngineDescriptor { return e.descriptor }
 func (e builtinEngine) Analyze(ctx context.Context, in Input) (Report, error) {
-	return buildWithExecution(ctx, in.Config, in.Histories, in.Raw, in.Minutes, in.SecondStageModels, in.AsOf, in.Target, in.Now)
+	return buildWithExecution(ctx, in.Config, in.Histories, in.Raw, in.Minutes, in.TurnoverMetrics, in.SecondStageModels, in.AsOf, in.Target, in.Now)
 }
 func DefaultEngine(c config.Config) (Engine, error) {
 	id := "leader_daily_v1"
@@ -161,6 +164,11 @@ func Execute(ctx context.Context, e Engine, in Input, build string) (Report, err
 	for _, h := range append(append([]market.History{}, frozen.Histories...), frozen.Raw...) {
 		if h.AsOf != in.AsOf || h.Validate() != nil {
 			return Report{}, errors.New("invalid algorithm input history")
+		}
+	}
+	for code, metric := range frozen.TurnoverMetrics {
+		if !allowed[code] || !execution[code] || metric.Validate() != nil || metric.Code != code {
+			return Report{}, errors.New("invalid algorithm turnover metrics")
 		}
 	}
 	minutePeriods := map[string]map[int]bool{}

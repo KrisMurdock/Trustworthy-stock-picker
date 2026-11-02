@@ -120,11 +120,11 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 
 	out.WriteString("## 价格区间说明\n\n")
 	if compactPhase {
-		out.WriteString(fmt.Sprintf("买区=参考价±%.2g×ATR14；明日高低点为 dayrange 点估计及名义区间，非收益承诺；缺失标“暂缺”。套牢=近%d日量价代理；触发≥30%%/2%%，观察≥20%%/1%%，非信号。\n\n", articleBuyBandATR, strategy.TrappedLookbackSessions))
+		out.WriteString(fmt.Sprintf("买区=参考价±%.2g×ATR14；明日高低点为 dayrange 点估计及名义区间，非收益承诺；缺失标“暂缺”。套牢=近%d日不复权成交按换手率衰减、日内三角分布；触发≥30%%/2%%且浅+中度≥50%%，观察≥20%%/1%%且≥40%%，非信号。\n\n", articleBuyBandATR, strategy.TrappedLookbackSessions))
 	} else {
 		out.WriteString(fmt.Sprintf("推荐买区以参考买价为中枢、ATR14 的 %.2g 倍为半宽生成，保留两位小数；信号日实际区间取 %s 的最高价至最低价。明日高点和低点来自已保存的 dayrange 预测，点估计之外分别给出各自的名义边际区间；高、低区间不是联合覆盖，也不是收益承诺。预测缺失时文章会明确标注“暂缺”，不临时编造。\n\n", articleBuyBandATR, articleMonthDay(result.AsOf)))
 		out.WriteString("## 套牢盘诊断说明\n\n")
-		out.WriteString(fmt.Sprintf("套牢盘按近 %d 个交易日典型价和成交量估算：上方套牢量=典型价高于信号日收盘的成交量占比；触发=套牢量≥30%%且加权成本高于现价≥2%%，观察=≥20%%且≥1%%，无明显=未达观察阈值，数据不足=有效样本少于%d个。成本带为上方成交量20%%~80%%加权分位。该指标只描述上方成交压力，成交量不等同真实持仓成本，不构成交易信号，也不改变排名或推荐。\n\n", strategy.TrappedLookbackSessions, strategy.TrappedMinimumSessions))
+		out.WriteString(fmt.Sprintf("套牢盘按近 %d 个交易日的不复权成交估算：每日成交量先换算为股数，再按低-收-高三角分布展开；历史筹码按当日换手率逐日衰减，零成交日保留为未换手样本。上方套牢量=衰减后价格高于信号日收盘的筹码占比；触发=≥30%%且加权成本高于现价≥2%%且浅+中度套牢区合计≥50%%，观察=≥20%%且≥1%%且合计≥40%%，无明显=未达观察阈值，数据不足=样本少于%d个或换手率缺失。成本带为上方筹码20%%~80%%加权分位；三档区间占比按最大余数法归一化，合计恒为100%%。该指标只描述上方成交压力，成交量不等同真实持仓成本，不构成交易信号，也不改变排名或推荐。\n\n", strategy.TrappedLookbackSessions, strategy.TrappedMinimumSessions))
 	}
 
 	out.WriteString("## 理论与方法边界\n\n")
@@ -1283,21 +1283,39 @@ func articleTrappedLines(candidate *strategy.Candidate) []string {
 		return []string{"**状态**：本次报告未保存套牢盘信号；重新生成报告后展示"}
 	}
 	signal := candidate.Trapped
-	status := articleTrappedStatusLabel(signal.Status)
 	if signal.Status == strategy.TrappedStatusUnknown {
-		return []string{fmt.Sprintf("**状态**：数据不足；有效样本 %d/%d 个", signal.Sessions, strategy.TrappedMinimumSessions)}
+		lines := []string{fmt.Sprintf("**状态**：数据不足（%s）", articleTrappedUnknownReason(signal))}
+		if signal.Sessions > 0 {
+			lines[0] += fmt.Sprintf("；样本 %d/%d 个，零成交 %d 日", signal.Sessions, strategy.TrappedMinimumSessions, signal.ZeroVolumeSessions)
+		}
+		if signal.BaselineTrappedVolumeRatio > 0 {
+			lines = append(lines, fmt.Sprintf("**衰减前上方套牢量**：%.1f%%（未应用换手衰减，不据此判断状态）", signal.BaselineTrappedVolumeRatio*100))
+		}
+		return lines
 	}
-	lines := []string{fmt.Sprintf("**套牢信号**：%s；上方套牢量 %.1f%%", status, signal.TrappedVolumeRatio*100)}
+	lines := []string{}
+	if signal.Version >= 3 {
+		lines = append(lines, fmt.Sprintf("**套牢信号**：%s；衰减后上方套牢量 %.1f%%，衰减前 %.1f%%",
+			articleTrappedStatusLabel(signal.Status), signal.TrappedVolumeRatio*100, signal.BaselineTrappedVolumeRatio*100))
+	} else {
+		lines = append(lines, fmt.Sprintf("**套牢信号**：%s；上方套牢量 %.1f%%",
+			articleTrappedStatusLabel(signal.Status), signal.TrappedVolumeRatio*100))
+	}
 	if signal.OverheadCost > 0 {
 		zoneLabel := articleTrappedZoneLabel(signal.CurrentZone)
 		if len(signal.Zones) == 0 {
 			zoneLabel = "未保存"
 		}
-		lines = append(lines, fmt.Sprintf("**当前套牢区**：%s；加权成本 %.2f，距现价 %+.1f%%；成本带 %.2f~%.2f",
+		lines = append(lines, fmt.Sprintf("**当前套牢区**：%s；衰减后加权成本 %.2f，距现价 %+.1f%%；成本带 %.2f~%.2f",
 			zoneLabel, signal.OverheadCost, signal.OverheadDistancePct, signal.OverheadLow, signal.OverheadHigh))
 	}
 	if len(signal.Zones) > 0 {
-		lines = append(lines, "**套牢区区间**（占上方套牢量）："+articleTrappedZoneText(signal, false))
+		lines = append(lines, "**套牢区区间**（占上方套牢量，合计100%）："+articleTrappedZoneText(signal, false))
+	}
+	if signal.Version >= 3 {
+		coverage := signal.TurnoverCoveragePct
+		lines = append(lines, fmt.Sprintf("**换手衰减**：%s换手率覆盖 %d/%d 个正成交日（%.0f%%）；零成交保留 %d 日",
+			articleTurnoverSourceLabel(signal.TurnoverSource), signal.TurnoverSessions, signal.VolumeSessions, coverage, signal.ZeroVolumeSessions))
 	}
 	if signal.RecentHigh > 0 && signal.CurrentPrice > 0 {
 		lines = append(lines, fmt.Sprintf("**区间回撤**：现价距近 %d 日高点 %+.1f%%", signal.LookbackSessions, signal.DrawdownFromHighPct))
@@ -1310,11 +1328,16 @@ func articleBriefTrapped(candidate *strategy.Candidate) string {
 		return "未保存"
 	}
 	signal := candidate.Trapped
-	status := articleTrappedStatusLabel(signal.Status)
 	if signal.Status == strategy.TrappedStatusUnknown {
-		return "数据不足"
+		if signal.BaselineTrappedVolumeRatio > 0 {
+			return fmt.Sprintf("数据不足(%s)｜衰减前%.0f%%", articleTrappedUnknownReason(signal), signal.BaselineTrappedVolumeRatio*100)
+		}
+		return "数据不足(" + articleTrappedUnknownReason(signal) + ")"
 	}
-	parts := []string{status + fmt.Sprintf("%.0f%%", signal.TrappedVolumeRatio*100)}
+	parts := []string{articleTrappedStatusLabel(signal.Status) + fmt.Sprintf("%.0f%%", signal.TrappedVolumeRatio*100)}
+	if signal.Version >= 3 && signal.BaselineTrappedVolumeRatio > 0 {
+		parts[0] += fmt.Sprintf("/衰减前%.0f%%", signal.BaselineTrappedVolumeRatio*100)
+	}
 	if signal.OverheadCost <= 0 {
 		return strings.Join(append(parts, "无套牢区"), "｜")
 	}
@@ -1344,12 +1367,56 @@ func articleTrappedZoneText(signal *strategy.TrappedSignal, compact bool) string
 			continue
 		}
 		if compact {
-			parts = append(parts, fmt.Sprintf("%s%.2f~%.2f", label, zone.Low, zone.High))
+			parts = append(parts, fmt.Sprintf("%s%.2f~%.2f(%d%%)", label, zone.Low, zone.High, articleTrappedZoneSharePct(signal, zone)))
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s %.2f~%.2f（%.0f%%）", label, zone.Low, zone.High, zone.VolumeShare*100))
+		parts = append(parts, fmt.Sprintf("%s %.2f~%.2f（%d%%）", label, zone.Low, zone.High, articleTrappedZoneSharePct(signal, zone)))
 	}
 	return strings.Join(parts, " ")
+}
+
+func articleTrappedZoneSharePct(signal *strategy.TrappedSignal, zone strategy.TrappedZone) int {
+	if signal != nil && signal.Version >= 3 {
+		return zone.SharePct
+	}
+	return int(math.Round(zone.VolumeShare * 100))
+}
+
+func articleTrappedUnknownReason(signal *strategy.TrappedSignal) string {
+	if signal == nil || len(signal.Reasons) == 0 {
+		return "未知"
+	}
+	switch signal.Reasons[0] {
+	case "turnover_history_unavailable":
+		return "换手率缺失"
+	case "unadjusted_history_unavailable":
+		return "缺少不复权历史"
+	case "unadjusted_history_required":
+		return "需要不复权历史"
+	case "unsupported_volume_source_or_unit":
+		return "成交量来源或单位不一致"
+	case "insufficient_daily_bars":
+		return "有效样本不足"
+	case "no_volume_data":
+		return "没有正成交量"
+	case "no_daily_bars":
+		return "没有日线"
+	default:
+		return signal.Reasons[0]
+	}
+}
+
+func articleTurnoverSourceLabel(source string) string {
+	switch source {
+	case "sohu":
+		return "搜狐"
+	case "baostock":
+		return "BaoStock"
+	case "":
+		return "换手率"
+	default:
+		return source
+	}
 }
 
 func articleTrappedZoneLabel(level string) string {

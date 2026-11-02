@@ -350,6 +350,9 @@ func run(args []string) error {
 			return hkconnect.LoadLatestRecommendation(loadCtx, c.DataDir, c.RequireCIFS)
 		}
 	}
+	turnoverClient := market.NewSohuMetricsClient(20*time.Second, 350*time.Millisecond)
+	defer turnoverClient.Close()
+	m.TurnoverSource = turnoverClient
 	if (command == "sync" || command == "once") && c.MarketContext.Enabled {
 		ctxRuntime, err := openMarketContextRuntime(c, log)
 		if err != nil {

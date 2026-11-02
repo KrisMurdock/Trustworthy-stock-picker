@@ -59,6 +59,7 @@ type Monitor struct {
 	MarketContextSync  func(context.Context, string) (marketcontext.SyncResult, error)
 	DayRangeForecasts  func(context.Context, string, []string) (map[string]selection.DayRangeForecast, error)
 	HKRecommendations  func(context.Context) (hkrecommend.Recommendation, error)
+	TurnoverSource     TurnoverSource
 	Channels           []notify.Channel
 	Log                *logging.Logger
 	Calendar           *calendar.Calendar
@@ -539,7 +540,14 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (report selection.Repor
 			}
 		}
 	}
-	report, err = m.buildReportWithMinutes(ctx, histories, raw, minutes, asof, target)
+	turnover := m.refreshTurnoverMetrics(ctx, items)
+	for i := range items {
+		if history, ok := turnover[items[i].Stock.Code]; ok {
+			copy := history
+			items[i].Turnover = &copy
+		}
+	}
+	report, err = m.buildReportWithMinutes(ctx, histories, raw, minutes, turnover, asof, target)
 	if err != nil {
 		return report, err
 	}
@@ -984,7 +992,11 @@ func (m *Monitor) buildReport(ctx context.Context, histories, raw []market.Histo
 	if err != nil {
 		return selection.Report{}, err
 	}
-	return m.buildReportWithMinutes(ctx, histories, raw, minutes, asof, target)
+	codes := make(map[string]bool, len(raw))
+	for _, history := range raw {
+		codes[history.Code] = true
+	}
+	return m.buildReportWithMinutes(ctx, histories, raw, minutes, currentTurnoverMetrics(m.loadTurnoverCache(), codes), asof, target)
 }
 
 // reportMinutes preserves the existing bounded Chan input, excluding forming
@@ -1033,7 +1045,7 @@ func (m *Monitor) reportMinutes(ctx context.Context, histories []market.History,
 	return minutes, nil
 }
 
-func (m *Monitor) buildReportWithMinutes(ctx context.Context, histories, raw []market.History, minutes []market.MinuteHistory, asof, target string) (selection.Report, error) {
+func (m *Monitor) buildReportWithMinutes(ctx context.Context, histories, raw []market.History, minutes []market.MinuteHistory, turnover map[string]market.DailyMetricHistory, asof, target string) (selection.Report, error) {
 	end, err := time.Parse("2006-01-02", asof)
 	if err != nil {
 		return selection.Report{}, err
@@ -1063,7 +1075,7 @@ func (m *Monitor) buildReportWithMinutes(ctx context.Context, histories, raw []m
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return selection.Execute(ctx, engine, selection.Input{Config: m.Config, Histories: window(histories), Raw: window(raw), Minutes: minutes, AsOf: asof, Target: target, Now: m.Now()}, m.BuildVersion)
+	return selection.Execute(ctx, engine, selection.Input{Config: m.Config, Histories: window(histories), Raw: window(raw), Minutes: minutes, TurnoverMetrics: turnover, AsOf: asof, Target: target, Now: m.Now()}, m.BuildVersion)
 }
 
 func mustNext(cal *calendar.Calendar, asof string) string {
