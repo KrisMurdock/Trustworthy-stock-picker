@@ -171,13 +171,16 @@ func main() {
 | 命令 | 作用 | 写入数据 | 发送通知 |
 | --- | --- | --- | --- |
 | `check-config` | 校验内置配置、股池、凭证与日志参数 | 否 | 否 |
-| `init` | 显式创建或迁移 `market.db`；启用时含 `dayrange.db` | 是 | 否 |
+| `init` | 显式创建或迁移 `market.db`、`fundamentals.db`；启用时含 `dayrange.db` | 是 | 否 |
 | `check` | 检查存储、日历、任务和投递状态 | 否 | 否 |
 | `status-backfill` | 补齐股池十年停牌状态与交易所日历 | 是 | 否 |
 | `status-refresh` | 刷新最近一段时间的证券状态 | 是 | 否 |
 | `status-audit` | 只读审计交易日、停牌、缺口和可分析状态 | 否 | 否 |
 | `sync` | 同步整池行情、指数与全量板块并生成报告 | 是 | 否 |
 | `sync-all` | 独立同步全市场沪深 A 股日线到 `all-market.db` | 是（独立库） | 否 |
+| `sync-fundamentals` | 从 Tushare 追加 PIT 年度财务到 `fundamentals.db` | 是（独立库） | 否 |
+| `audit-fundamentals` | 只读审计财务覆盖、可见性和 stale 状态 | 否 | 否 |
+| `fair-value -code C` | 用本地 PIT 财务与不复权收盘价计算 v3 研究区间；默认严格 observed，可选显式 vendor_backfill | 否 | 否 |
 | `sync-hk-connect` | 独立同步当前港股通股票日线到 `hk-market.db` | 是（独立库） | 否 |
 | `sync-context` | 只补跑指数与板块同步，用于排障 | 是 | 否 |
 | `sync-index-minutes` | 补采上证/创业板指数 5/30 分钟线到 `context.db`，用于上午/下午树模型 | 是 | 否 |
@@ -416,6 +419,8 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | `internal/calendar` | 北京时间交易日、节假日、T+1 与过期窗口 |
 | `internal/market` | 行情源协议、分页、复权、超时与回退 |
 | `internal/storage` | 本地/CIFS 存储策略、SQLite、原子状态与只读看板查询 |
+| `internal/fundamentals` | PIT 年度财务事实、observed/vendor 可见性裁剪、抓取批次与 5-10 年标准化盈利/ROE/派息 |
+| `internal/fairvalue` | v1/v2/v3 研究估值、区间情景与滚动校准原语 |
 | `internal/monitor` | 整池同步、启动刷新、调度、重试和账本迁移 |
 | `internal/selection` | 趋势筛选与报告事件组装 |
 | `internal/firststage` | 高召回第一层初筛、版本化 logistic 模型和初筛报告 |

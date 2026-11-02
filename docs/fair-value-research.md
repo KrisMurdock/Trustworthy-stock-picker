@@ -1,13 +1,14 @@
-# 个股估值研究：v1 基线、文献约束与 v2 设计
+# 个股估值研究：v1 基线、v2 影子与 v3 标准化估值
 
-本文固化个股估值方法的研究结论、v2 目标公式、数据契约和发布边界。它不表示 v2 已经进入生产链路，也不构成目标价、收益预测、成功概率或买卖建议。
+本文固化个股估值方法的研究结论、v2/v3 公式、point-in-time 数据契约和发布边界。v1 仍是唯一进入公众号的“财务研究区间”；v2/v3 仍是研究字段，不构成目标价、收益预测、成功概率或买卖建议。
 
 ## 研究结论
 
 - v1 是基于工程经验的 PE/PB 相对估值区间，不是论文推导，也没有经过行业、周期和参数的系统校准。它可以继续作为“财务研究区间”展示，但不能称为最终合理价值。
 - v2 以稳态 justified PB 为核心，并用 `PE = PB / ROE` 强制保持盈利倍数和净资产倍数一致；它只是稳态交叉校验，不是完整 DCF。
 - v2 首版只有 TTM EPS、前一年 EPS 和当前每股净资产，标准化盈利与严格 point-in-time 数据尚未具备，因此只能 shadow 存储，所有结果标记低置信度/`ttm_only`，不进入公众号正文。
-- 只有完成 5-10 年标准化财务数据、公告日约束和滚动 walk-forward 校准后，才讨论把 v2 升格为正式估值字段。
+- v3 已接入 5-10 年年度合并报表、公告日后下一交易日可见性、平均净资产 ROE、实际现金派息率和剩余收益情景；输入与结果仍只服务研究，未进入推荐排名或公众号。
+- 只有在真实 Tushare 权限下补齐历史抓取快照、完成全市场/股池滚动校准和人工复核后，才讨论把标准化结果升格为正式估值字段。当前已区分严格 `observed` 与显式 `vendor_backfill` 两种可见性口径，后者不能进入滚动校准。
 
 ## v1：工程经验基线
 
@@ -84,6 +85,51 @@ v2 首版只复用当前快照中的 TTM EPS、前一年 EPS 和每股净资产�
 - 行业中位数/分位数和基于基本面的 peer 组，最少按行业、规模和杠杆分层，并记录分类标准版本。
 - 滚动样本外校准的 `r`、`g`、标准化方法和区间分位数；参数只能在开发窗口选择，测试窗口不得回调。
 
+## v3：标准化剩余收益
+
+### 已实现公式
+
+v3 复用 v2 的稳态恒等式，但输入改为 point-in-time 年度标准化值。设 `NP_med` 为可见年度归母净利润中位数，`EQ_latest` 为最新年末归母权益，`S` 为最新总股本，`EQ_avg` 为相邻年度平均权益：
+
+```text
+EPS_norm  = NP_med / S
+BVPS      = EQ_latest / S
+ROE_i     = NP_i / ((EQ_i-1 + EQ_i) / 2) × 100
+ROE_norm  = median(ROE_i)
+payout    = median(已实施现金分红 / 归母净利润 × 100)
+g         = clamp(ROE_norm × (1 - payout / 100), -2, 6)
+FairPB    = (ROE_norm - g) / (r - g)
+FairPE    = FairPB / (ROE_norm / 100)
+Price     = BVPS × FairPB
+```
+
+- 只接受 `r ∈ {8.5%, 9.5%, 10.5%}`、`g ∈ {base-1%, base, base+1%}` 的情景，强制 `g < ROE` 和 `r - g >= 1%`。
+- 缺少任一可见年度、有效净利润年份少于 5 年、净利润中位数非正、净资产/股本非正、派息缺失，或最新报告相对 as-of 超过约 18 个月时，必须返回 `unavailable` 或明确低置信度；不得补零或回退 v1。
+- 区间仍是 20/80 情景价格分位，不是统计置信区间；v3 固定标记 `confidence=low` 和 `model_uncalibrated`，直到滚动校准完成。
+
+### Point-in-time 存储
+
+- 独立 `fundamentals.db` schema 3 保存追加式财务事实：`report_end_date`、`announcement_date`、`available_from`、合并口径、报表类型、`update_flag`、抓取时间、行哈希和各项金额。`available_from` 是事实身份的一部分；可见日修正会追加新版本，不会覆盖旧版本，因此重放旧抓取批次也不能撤销修正。
+- 同一报告期保留修订和可见日版本；默认 `observed` 口径同时要求 `available_from <= asOf` 且 `fetched_at` 的上海日期 `<= asOf`，再选择最新披露。今天才抓取的历史行不会污染更早的 as-of。这里的 `as-of` 是上海日历日边界，不声称支持盘中某个时刻的可见性；如果未来要按收盘时刻校准，必须另加明确的截止时间字段。
+- 每次 `AppendSeries` 同时写入 `fundamental_fetch` 和 `fundamental_fetch_period` 批次记录，保留本次抓取的完整期间成员、抓取时间和输入哈希；财务事实本身仍追加保存，不用批次记录替代历史修订。
+- `vendor_backfill` 只忽略 `fetched_at`，用于明确标注的历史重建；输出固定带 `vendor_backfill_mode` 警告、`confidence=low`，且 `fairvalue.EvaluateBandCalibration` 拒绝这类样本。不能用它宣称严格 point-in-time 或已完成的样本外校准。
+- `available_from` 取公告日之后的下一个交易日；公告日只有日期，不假设盘中时刻。
+- `income`/`cashflow` 使用年度累计值，`balancesheet` 使用期末时点值；金额为元、股本为股、EPS/BVPS 为元/股。`null` 与真实 `0` 分开保存。
+- 实际派息只汇总 `div_proc=实施` 的现金分红；缺失分红不当作 0 派息。行业分类仍是当前快照，不用于历史 peer 回填。
+
+### 命令与输出
+
+```text
+stock-watcher sync-fundamentals [-as-of YYYY-MM-DD] [-codes sh600519,sz000001]
+stock-watcher audit-fundamentals [-as-of YYYY-MM-DD]
+stock-watcher fair-value -code sh600519 [-as-of YYYY-MM-DD] [-visibility observed|vendor_backfill]
+```
+
+- `sync-fundamentals` 使用 Tushare 年度 `income`、`balancesheet`、`cashflow` 和已实施 `dividend`，要求配置 `TUSHARE_TOKEN`；写独立 `.fundamentals.lock`，不占主数据目录写锁。
+- `audit-fundamentals` 只读输出代码数、严格 observed 可见数、vendor 回填可见数、stale 数、未来抓取期间数、期间数、批次数和同步状态；`future_fetched_only` 表示数据按公告日可见但抓取晚于 as-of。
+- `fair-value` 只读已保存报告/行情的不复权 as-of 收盘价和 PIT 财务，输出 `visibility_mode`、`normalized` 输入与 `estimate`（`method=residual_income_normalized_v3`）供抽样审计；它不访问外部网络。默认 `observed`，历史回填研究必须显式传 `-visibility vendor_backfill`。
+- v3 结果当前不写入 `selection.Report`、不进入公众号、不改变推荐资格。公众号仍展示 v1 财务研究区间。
+
 ## 数据契约与缺口
 
 ### 当前 Sina 数据的限制
@@ -94,18 +140,18 @@ v2 首版只复用当前快照中的 TTM EPS、前一年 EPS 和每股净资产�
 - 不能用历史 `sync -as-of` 声称严格 point-in-time；
 - 不能用现有数据完成 v2 所需的标准化盈利和滚动样本外检验。
 
-### 建议的 Tushare 数据
+### 已接入的 Tushare 数据
 
-建议接入 Tushare 的 `stock_basic`、`daily_basic`、`fina_indicator`、`income`/`balancesheet`/`cashflow`，并把公告日、报告期和修订标识作为一等字段；分红数据若使用 Tushare `dividend`，也必须记录公告日和口径。
+当前接入 `income`/`balancesheet`/`cashflow` 与 `dividend`，把公告日、报告期和修订标识作为一等字段。`stock_basic` 的行业仍是当前快照，`daily_basic` 只可用于当前展示/校验；两者不能回填历史 peer 或历史估值。
 
 | 新增字段或口径 | 用途 | 建议来源与处理 |
 | --- | --- | --- |
 | `report_end_date` | 标识财报所属报告期，防止把不同季度混在一起 | 财务报表接口的 `end_date` |
 | `announcement_date` | 严格 point-in-time 门槛：信号日只能看到已公告数据 | 优先实际公告日 `f_ann_date`，缺失时回退 `ann_date` |
-| 5-10 年 EPS 序列 | 标准化盈利、周期平滑和增长估计 | `fina_indicator`/`income`，按股本变化和复权口径统一 |
-| 5-10 年 ROE 序列 | 标准化 ROE、稳定性与质量分层 | `fina_indicator`，保留原始值和计算口径 |
+| 5-10 年 EPS 序列 | 标准化盈利、周期平滑和增长估计 | 已用 `income` 的归母净利润与最新总股本重算，避免供应商 EPS 口径混用 |
+| 5-10 年 ROE 序列 | 标准化 ROE、稳定性与质量分层 | 已用 `n_income_attr_p / ((EQ_i-1 + EQ_i)/2)` 重算；不把 `fina_indicator` 的不同 ROE 定义直接混用 |
 | 平均净资产 | 替代单期每股净资产，降低周期和融资时点影响 | `balancesheet` 的归母权益，按同一窗口平均 |
-| 派息率 | 可持续增长交叉检查、质量和股东回报诊断 | 分红记录与归母净利润匹配；记录年度和公告日 |
+| 派息率 | 可持续增长交叉检查、质量和股东回报诊断 | 已汇总 `div_proc=实施` 的现金分红并与归母净利润匹配；记录实施公告日 |
 | 经营现金流 | 盈利质量、现金流与利润背离诊断 | `cashflow` 的经营活动现金流 |
 | 负债率 | 杠杆风险、金融/非金融分层和 peer 匹配 | `balancesheet`/`fina_indicator`，统一合并口径 |
 | 行业中位数/分位数 | 可比公司相对估值，不把行业名称当 peer | `stock_basic` 行业 + 同报告期 peer；要求最小样本数 |
@@ -117,7 +163,11 @@ v2 首版只复用当前快照中的 TTM EPS、前一年 EPS 和每股净资产�
 
 ### 影子输出契约
 
-当前 v2 shadow 记录包含：`method=residual_income_pb_roe_v2`、`schema_version`、`as_of`、`fetched_at`、`statement_basis`、`data_quality=ttm_only|unavailable`、`confidence`、`warnings`、`roe_pct`、`eps_growth_pct`、`cost_of_equity_pct`、各情景 `pb`/`pe`/`price`、区间上下界与中枢、来源和不可估值 `reason`。接入严格 point-in-time 数据时还必须增加 `report_end_date`、`announcement_date`、`input_mode=ttm_only|normalized` 和 `source_version`。
+v2 shadow 记录包含：`method=residual_income_pb_roe_v2`、`schema_version`、`as_of`、`fetched_at`、`statement_basis`、`data_quality=ttm_only|unavailable`、`confidence`、`warnings`、`roe_pct`、`eps_growth_pct`、`cost_of_equity_pct`、各情景 `pb`/`pe`/`price`、区间上下界与中枢、来源和不可估值 `reason`。
+
+v3 研究记录包含：`method=residual_income_normalized_v3`、`source_version`、`input_mode=normalized`、`visibility_mode`、`input_digest`、`window_start/window_end`、`fiscal_years`、`latest_report_end`、`latest_announcement_date`、`latest_available_from`、`latest_fetched_at`、`payout_years`、`eps_normalized`、`bvps`、`roe_norm_pct`、`payout_norm_pct`、`sustainable_growth_pct`、各情景和区间上下界。`input_digest` 对当时选中的完整期间记录及可见性口径做哈希，未来修订或口径变化不能改变早期 digest。
+
+滚动校准入口 `fairvalue.EvaluateBandCalibration` 只接受 `future_date > as_of`、严格 `observed` 可见性、估值身份一致且在当时可用的样本；输出 60% 名义覆盖率、覆盖率、平均宽度、中枢与未来实际收益的平均绝对偏差、方向命中率、20/80 分位的 pinball loss，并按年度和行业分组。样本少于最低数量时明确标记 `insufficient_data`。该评估不假设价格会回归中枢，只检验研究区间与后续价格的关系。
 
 缺失数据的处理必须是显式降级，不得静默复用 v1：
 
@@ -125,7 +175,7 @@ v2 首版只复用当前快照中的 TTM EPS、前一年 EPS 和每股净资产�
 - 行业 peer 不足：保留绝对估值和缺口标记，不虚构行业分位。
 - 股权成本或增长无法满足约束：输出 `unavailable`，不填零、不回退固定倍数。
 - 净资产/ROE 非正、`r - g < 1%` 或 PB/PE 非正：明确写出不可估值原因。
-- 财务数据过期或来自快照抓取：标记 `stale`/`ttm_only`，不进入公众号。
+- 财务数据过期或来自快照抓取：标记 `stale`/`ttm_only`，不进入公众号；v3 仍必须通过完整历史校准才能进入发布候选。`vendor_backfill` 只能用于数据缺口研究，不能替代 observed 样本。
 
 ## 验收与发布边界
 
@@ -133,6 +183,7 @@ v2 首版只复用当前快照中的 TTM EPS、前一年 EPS 和每股净资产�
 
 - v1 继续展示，但统一标注为“财务研究区间”；它不是论文推导、目标价或最终合理价值。
 - v2 只做 shadow 存储和研究评估，不显示在公众号正文，不改变推荐排名、风险门槛或交易结论。
+- v3 的 PIT 财务层、标准化层、独立存储、Tushare 年度客户端、只读研究命令和校准原语已实现；尚未使用真实 Token 在全股池完成历史回填和样本外报告，因此仍不进入公众号。
 - 现有估值只覆盖报告候选的一部分，研究样本必须单独定义，不能把“文章中出现过的股票”当作无偏的全市场样本。
 
 ### 必须验证的断言
@@ -148,6 +199,6 @@ v2 首版只复用当前快照中的 TTM EPS、前一年 EPS 和每股净资产�
 
 ### 发布门槛
 
-v2 在通过上述 walk-forward、完成 point-in-time 数据审计并经过人工复核前，不得称为“最终合理价值”，不得进入公众号正文，也不得替代 v1 的“财务研究区间”。即使通过，也只能先作为有版本、有校准报告、有可追溯输入的正式研究字段发布；任何数据缺失、参数越界或无法满足稳态约束的情况都必须保持“暂缺”，不能用旧缓存或固定倍数补齐。
+v3 在通过上述 walk-forward、完成 point-in-time 数据审计并经过人工复核前，不得称为“最终合理价值”，不得进入公众号正文，也不得替代 v1 的“财务研究区间”。即使通过，也只能先作为有版本、有校准报告、有可追溯输入的正式研究字段发布；任何数据缺失、参数越界或无法满足稳态约束的情况都必须保持“暂缺”，不能用旧缓存或固定倍数补齐。当前环境没有配置真实 `TUSHARE_TOKEN`，在线权限、限流、字段完整性和实际历史样本仍属于未验证项。
 
 方法变更、数据源变更和校准结果应同步记录在本文及实验档案中。历史结果只描述当时可见数据和当时版本，不代表未来收益或价格会落入区间。

@@ -6,7 +6,7 @@
 
 1. 默认使用本地存储，无需 Windows 或 SSH 隧道。使用 Windows/CIFS 共享盘时，保持 Windows 在线及 SSH 反向隧道可用，由宿主机把共享挂载至 `/mnt/windows_database`，并确认 `findmnt -T /mnt/windows_database -o TARGET,FSTYPE` 显示 cifs。容器不会建立隧道或挂载 SMB。
 2. 从 `.env.example` 复制 `.env`，按[环境变量说明](environment-variables.md)配置数据目录、通知、行情源和滚动日志。业务配置不再读取 `config.yaml`；观测股池继续独立保存在 `leaders.yaml`，`leaders.pending.yaml` 只是待确认名单。
-3. 本地模式使用默认 `data/`，显式 `init` 会自动创建；共享盘模式通过 `STOCK_WATCHER_DATA_DIR` 指向挂载目录，并设置 `STOCK_WATCHER_REQUIRE_CIFS=true`。目录 `logs/` 保持在宿主机。先关闭通知完成检查，再按实际需要启用通道。
+3. 本地模式使用默认 `data/`，显式 `init` 会自动创建 `market.db` 和独立的 `fundamentals.db`；共享盘模式通过 `STOCK_WATCHER_DATA_DIR` 指向挂载目录，并设置 `STOCK_WATCHER_REQUIRE_CIFS=true`。目录 `logs/` 保持在宿主机。先关闭通知完成检查，再按实际需要启用通道。
 4. 记录提交 SHA、镜像 ID 或包校验和。升级前备份配置与共享盘状态，保留旧制品。
 
 ## 原生与 systemd
@@ -105,7 +105,7 @@ macOS 可使用 `tmux new-session -d -s stock-public 'STOCK_WATCHER_PUBLIC_TUNNE
 
 本版将行情库从 schema 2/3/4/5 升至 6；写入入口在持有存储锁后迁移，旧库的只读入口会要求先迁移。迁移保留原表，新增压缩的不可变日线窗口、报告输入／修订、任务与检查点，以及逐日停牌状态、状态覆盖和交易所日历表；schema 6 为 `report_archive` 增加 `as_of`、`generated_at`、`schema_version` 和 `(as_of, generated_at)` 索引，并从不可变报告载荷回填。升级时先停止所有写入实例，备份共享目录，再用新二进制执行 `init`；它会迁移已有数据库，不会重建或清空。迁移完成后旧二进制不兼容 schema 6，回滚须恢复升级前完整备份。升级后先执行一次 `status-backfill`，再用 `status-audit` 确认覆盖，之后才启动 `run`。复盘页读取现有 `selection_run` 与 `report_archive`，不新增复盘数据表；旧报告缺少冻结输入或完整执行参数时会明确标记为不支持完整复盘。
 
-启用 `STOCK_WATCHER_DAYRANGE_ENABLED=true` 时，`init` 还会创建或校验独立的 `dayrange.db` schema 1；它与 `market.db` schema 6 分开，不影响行情库迁移。首次启用可先执行 `train-dayrange -offline` 做不写生产库的数据审计与训练检查，再停止 `run` 执行一次 `train-dayrange`、盘前 `predict-dayrange` 和收盘后 `reconcile-dayrange`。模型 checksum 错误会被标记为 `invalid` 并回退已验证基线；阶段六盘中剩余时段模型不在此版本中。
+独立的 `fundamentals.db` 当前为 schema 3，保存财务期间、可见日版本、抓取批次及完整批次成员快照；`init` 会事务化迁移 schema 1/2，保留已有财务期间并补齐批次成员口径、可用日和抓取时间，失败时回滚且不提升 `user_version`。它仍与 `market.db` schema 6 分离，不应通过修改 `market.db` 来启用估值研究。启用 `STOCK_WATCHER_DAYRANGE_ENABLED=true` 时，`init` 还会创建或校验独立的 `dayrange.db` schema 1；它与 `market.db` schema 6 分开，不影响行情库迁移。首次启用可先执行 `train-dayrange -offline` 做不写生产库的数据审计与训练检查，再停止 `run` 执行一次 `train-dayrange`、盘前 `predict-dayrange` 和收盘后 `reconcile-dayrange`。模型 checksum 错误会被标记为 `invalid` 并回退已验证基线；阶段六盘中剩余时段模型不在此版本中。
 
 盘前分页卡片只使用 `predictor_dayrange` 路由，账本保存在 `<data_dir>/state/dayrange-delivery.json`。生产应配置 `STOCK_WATCHER_DAYRANGE_PUSH_ENABLED=true` 和对应命名通道；验证时检查卡片中的目标日、数据截止、生成时点、覆盖数、跳过原因与“不构成投资建议”声明。重复执行 `predict-dayrange` 或重启 `run` 不应重复发送同一目标日、同一页；09:30 后账本中的未发送卡片会过期。关闭该开关后预测仍会保存，但不会创建新的分页投递事件。
 
@@ -127,6 +127,6 @@ curl --fail http://127.0.0.1:8080/api/status
 
 整池采集时，每只股票只有完整通过校验后才进入检查点；尚未完成的批次不能发布推荐。重启后同日期、同参数任务复用已完成股票，覆盖失败会重新尝试隔离股票。行情发布和分析分离，分析失败可基于已采集窗口重试。成功任务之后的新启动仍刷新全池。默认整轮期限 90 分钟、分析期限 10 分钟，每 30 秒更新心跳；算法须遵守 context 取消，框架不在进程内强杀任意 Go 函数。
 
-备份必须覆盖 `market.db`、`context.db`、`experiments.db`、`calendar.db`、`dayrange.db`（启用时）、`predictions.db`、`models/intraday/`、`state/`、上市信息缓存及私有配置，保留权限；本地模式备份到指定备份盘，共享盘模式在 Windows 端完整复制，不复制到服务器行情目录。安全的最小流程是停止所有 systemd／容器／CLI 写入进程，确认数据库连接关闭，再完整复制数据目录，记录构建 SHA、库版本和校验和。不要在线仅复制一个 SQLite 主文件或删除 journal 文件。恢复先到隔离目录，在通知关闭、独占锁、匹配构建的环境执行 `init/check/health`，抽查 `replay` 与 K 线，再走 `predictor-status`、`status-dayrange` 和 `replay-dayrange` 及一次只读网页检查，再停服务替换生产目录并恢复挂载。Windows 断线／重挂载和真实备份恢复需在部署环境演练；本地 mock 不能证明网络文件系统锁和 fsync 可靠。
+备份必须覆盖 `market.db`、`fundamentals.db`、`context.db`、`experiments.db`、`calendar.db`、`dayrange.db`（启用时）、`predictions.db`、`models/intraday/`、`state/`、上市信息缓存及私有配置，保留权限；本地模式备份到指定备份盘，共享盘模式在 Windows 端完整复制，不复制到服务器行情目录。财务写命令使用独立 `.fundamentals.lock`，但备份仍应在停止所有写入进程后完成。安全的最小流程是停止所有 systemd／容器／CLI 写入进程，确认数据库连接关闭，再完整复制数据目录，记录构建 SHA、库版本和校验和。不要在线仅复制一个 SQLite 主文件或删除 journal 文件。恢复先到隔离目录，在通知关闭、独占锁、匹配构建的环境执行 `init/check/health`，抽查 `replay` 与 K 线，再走 `predictor-status`、`status-dayrange` 和 `replay-dayrange` 及一次只读网页检查，再停服务替换生产目录并恢复挂载。Windows 断线／重挂载和真实备份恢复需在部署环境演练；本地 mock 不能证明网络文件系统锁和 fsync 可靠。
 
 不可变窗口会增加磁盘占用；目前不自动删除历史修订，运维需监测容量并制定归档策略。不要在 CIFS 上开启 WAL，也不要在共享故障时退回服务器本地数据目录。

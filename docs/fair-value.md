@@ -1,10 +1,27 @@
-# 个股财务研究区间（v1）
+# 个股财务研究区间（v1 展示，v2/v3 研究）
 
 财务研究区间是报告内的一项财务研究字段，用来回答“按最近四季度盈利和净资产，当前价格处于什么位置”。它不是目标价、收益预测、成功概率或买卖指令，也不参与推荐排名和推荐门槛。
 
 ## 研究状态
 
-v1 当前继续展示，但对外统一标注为“财务研究区间”；它是工程经验基线，不是论文推导，也不是最终合理价值。v2 采用稳态 justified PB 与 `PE = PB / ROE` 交叉校验，目前只做 shadow 存储和研究评估，尚未进入公众号正文。由于首版只有 TTM/前一年 EPS，所有可计算的 v2 结果必须标记低置信度/`ttm_only`，无法计算时标记 `unavailable`；在 5-10 年标准化财务数据、公告日 point-in-time 和滚动 walk-forward 完成前，不能把 v2 结果称为最终合理价值。方法、文献、数据契约和验收门槛见[个股估值研究](fair-value-research.md)。以下数据来源和区间公式仍描述当前展示的 v1。
+v1 当前继续展示，但对外统一标注为“财务研究区间”；它是工程经验基线，不是论文推导，也不是最终合理价值。v2 采用稳态 justified PB 与 `PE = PB / ROE` 交叉校验，目前只做 shadow 存储和研究评估，尚未进入公众号正文。由于首版只有 TTM/前一年 EPS，所有可计算的 v2 结果必须标记低置信度/`ttm_only`，无法计算时标记 `unavailable`。
+
+v3 已实现 5-10 年 point-in-time 年度财务、公告日后下一交易日可见性、实际抓取日期约束、平均净资产 ROE、实际现金派息率和 `residual_income_normalized_v3` 研究区间。默认 `observed` 口径不会让后来才抓取的历史行回流到早期 as-of；这里的 as-of 是上海日历日边界，不是盘中时刻级可见性。历史重建需显式使用 `vendor_backfill`，并固定标记低置信度、不进入滚动校准。财务事实与抓取批次保存在独立 `fundamentals.db`，不修改 `market.db`；v3 目前仍不进入 `selection.Report` 或公众号正文。真实 Tushare Token 的全股池回填、滚动校准和人工复核尚未完成，因此不能把 v3 结果称为最终合理价值。方法、文献、数据契约和验收门槛见[个股估值研究](fair-value-research.md)。以下数据来源和区间公式仍描述当前展示的 v1。
+
+## v3 研究与校准命令
+
+```text
+stock-watcher sync-fundamentals [-as-of YYYY-MM-DD] [-codes sh600519,sz000001]
+stock-watcher audit-fundamentals [-as-of YYYY-MM-DD]
+stock-watcher fair-value -code sh600519 [-as-of YYYY-MM-DD] [-visibility observed|vendor_backfill]
+```
+
+- `sync-fundamentals` 从 Tushare 年度 `income`、`balancesheet`、`cashflow` 和已实施 `dividend` 追加财务事实，要求配置 `TUSHARE_TOKEN`，使用独立 `.fundamentals.lock`，不会占用常驻 `run` 的主写锁；每次抓取同时保存完整批次和期间成员。
+- `audit-fundamentals` 只读汇总代码数、严格 observed 可见数、vendor 回填可见数、stale 数、未来抓取期间数、期间数、抓取批次数、同步状态和问题列表。
+- `fair-value` 使用本地已保存的不复权 as-of 收盘价和 PIT 财务输出标准化输入与 v3 估值，不访问外部网络；默认 `observed`，历史重建必须显式传 `vendor_backfill`，该结果带警告和低置信度，不能进入滚动校准。
+- 滚动评估原语输出区间的实际覆盖率、平均宽度、方向命中、分位损失和年度/行业分层；少于最低样本时标记 `insufficient_data`。
+
+v3 公式为 `EPS_norm=年度归母净利润中位数/最新总股本`、`BVPS=最新归母权益/最新总股本`、`ROE_norm=年度归母净利润/平均归母权益的中位数`、`g=clamp(ROE_norm×(1-派息率), -2%, 6%)`，再代入 `PB=(ROE-g)/(r-g)`、`PE=PB/ROE`。缺少至少 5 年有效数据、派息证据、正盈利/净资产，或 `g>=ROE`、`r-g<1%` 时，结果必须暂缺，不补零、不退回 v1。
 
 ## 数据来源
 
