@@ -22,6 +22,12 @@ type tushareFundamentalsRequest struct {
 	Fields string            `json:"fields"`
 }
 
+const testTushareTotalShareWan = 100
+
+func testTushareProfit(basicEPS float64) any {
+	return basicEPS * testTushareTotalShareWan * 10000
+}
+
 func newTushareFundamentalsClient(t *testing.T, respond func(tushareFundamentalsRequest) any) *TushareClient {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -203,6 +209,10 @@ func TestTushareFundamentalsMergesAnnualReportsDividendsAndPIT(t *testing.T) {
 	nextTradingDay := func(date string) (string, error) {
 		nextCalls[date]++
 		switch date {
+		case "2024-04-11":
+			return "2024-04-12", nil
+		case "2025-04-23":
+			return "2025-04-24", nil
 		case "2024-06-20":
 			return "2024-06-21", nil
 		case "2025-06-20":
@@ -217,14 +227,14 @@ func TestTushareFundamentalsMergesAnnualReportsDividendsAndPIT(t *testing.T) {
 		switch req.API {
 		case "income":
 			rows := []map[string]any{
-				testTushareIncomeRow("20231231", "20240410", "20240412", 1, 0, 1, 100, 1000, 900),
+				testTushareIncomeRow("20231231", "20240410", "20240412", 1, 0, 1, testTushareProfit(1), 1000, 900),
 				testTushareIncomeRow("20241231", "20250421", "20250425", 1, 1, 0, nil, 5000, 0),
 			}
 			rows = append(rows, testTushareIncomeRow("20241231", "20250421", "20250425", 1, 1, 0, nil, 5000, 0))
 			return tushareFinancialDataFor(req, rows)
 		case "balancesheet":
 			return tushareFinancialDataFor(req, []map[string]any{
-				testTushareBalanceRow("20231231", "20240411", "20240413", 1, 0, 50, 800, 300, 500),
+				testTushareBalanceRow("20231231", "20240411", "20240413", 1, 0, 100, 800, 300, 500),
 				testTushareBalanceRow("20241231", nil, "20250422", 1, 0, 100, 2000, 800, 1200),
 			})
 		case "cashflow":
@@ -263,11 +273,17 @@ func TestTushareFundamentalsMergesAnnualReportsDividendsAndPIT(t *testing.T) {
 	if !period2023.FetchedAt.Equal(series.FetchedAt) || !period2024.FetchedAt.Equal(series.FetchedAt) {
 		t.Fatalf("period fetched_at values are not unified: %#v", series.Periods)
 	}
-	if period2023.AnnouncementDate != "2024-06-20" || period2023.AvailableFrom != "2024-06-21" {
-		t.Fatalf("2023 PIT dates = %q/%q", period2023.AnnouncementDate, period2023.AvailableFrom)
+	if period2023.AnnouncementDate != "2024-04-11" || period2023.AvailableFrom != "2024-04-12" {
+		t.Fatalf("2023 statement PIT dates = %q/%q", period2023.AnnouncementDate, period2023.AvailableFrom)
 	}
-	if period2024.AnnouncementDate != "2025-06-20" || period2024.AvailableFrom != "2025-06-23" {
-		t.Fatalf("2024 PIT dates = %q/%q", period2024.AnnouncementDate, period2024.AvailableFrom)
+	if period2023.CashDividendAnnouncementDate != "2024-06-20" || period2023.CashDividendAvailableFrom != "2024-06-21" {
+		t.Fatalf("2023 dividend PIT dates = %q/%q", period2023.CashDividendAnnouncementDate, period2023.CashDividendAvailableFrom)
+	}
+	if period2024.AnnouncementDate != "2025-04-23" || period2024.AvailableFrom != "2025-04-24" {
+		t.Fatalf("2024 statement PIT dates = %q/%q", period2024.AnnouncementDate, period2024.AvailableFrom)
+	}
+	if period2024.CashDividendAnnouncementDate != "2025-06-20" || period2024.CashDividendAvailableFrom != "2025-06-23" {
+		t.Fatalf("2024 dividend PIT dates = %q/%q", period2024.CashDividendAnnouncementDate, period2024.CashDividendAvailableFrom)
 	}
 	if period2024.CompType != 1 || period2024.UpdateFlag != 1 || period2024.Revision == "" || len(period2024.RowHash) != 64 {
 		t.Fatalf("invalid revision metadata: %#v", period2024)
@@ -281,16 +297,17 @@ func TestTushareFundamentalsMergesAnnualReportsDividendsAndPIT(t *testing.T) {
 	if period2024.NetProfit != nil || period2024.OperatingCashFlow != nil {
 		t.Fatalf("nullable 2024 values were filled: net=%v cashflow=%v", period2024.NetProfit, period2024.OperatingCashFlow)
 	}
-	requireFundamentalNumber(t, "2024 total shares", period2024.TotalShares, 100)
+	requireFundamentalNumber(t, "2024 total shares", period2024.TotalShares, 1_000_000)
 	requireFundamentalNumber(t, "2024 total assets", period2024.TotalAssets, 2000)
 	requireFundamentalNumber(t, "2024 total liabilities", period2024.TotalLiabilities, 800)
 	requireFundamentalNumber(t, "2024 equity", period2024.Equity, 1200)
 	requireFundamentalNumber(t, "2024 cash dividend", period2024.CashDividend, 600000000)
-	requireFundamentalNumber(t, "2023 net profit", period2023.NetProfit, 100)
+	requireFundamentalNumber(t, "2023 net profit", period2023.NetProfit, 1_000_000)
 	requireFundamentalNumber(t, "2023 operating cash flow", period2023.OperatingCashFlow, 70)
 	requireFundamentalNumber(t, "2023 cash dividend", period2023.CashDividend, 10000000)
 
-	if nextCalls["2024-06-20"] != 1 || nextCalls["2025-06-20"] != 1 || len(nextCalls) != 2 {
+	if nextCalls["2024-04-11"] != 1 || nextCalls["2025-04-23"] != 1 ||
+		nextCalls["2024-06-20"] != 1 || nextCalls["2025-06-20"] != 1 || len(nextCalls) != 4 {
 		t.Fatalf("next trading day calls = %#v", nextCalls)
 	}
 }
@@ -313,8 +330,8 @@ func TestTushareFundamentalsSelectsLatestRevisionAndPrefersFinalAnnouncement(t *
 			return tushareFinancialDataFor(req, []map[string]any{
 				testTushareIncomeRow("20241231", "20250401", "20250402", 1, 0, 1, 10, 100, 90),
 				testTushareIncomeRow("20241231", "20250414", "20250416", 1, 0, 2, 20, 200, 180),
-				testTushareIncomeRow("20241231", "20250414", "20250417", 1, 1, 3, 30, 300, 270),
-				testTushareIncomeRow("20241231", "20250414", "20250417", 1, 1, 3, 30, 300, 270),
+				testTushareIncomeRow("20241231", "20250414", "20250417", 1, 1, 3, testTushareProfit(3), 300, 270),
+				testTushareIncomeRow("20241231", "20250414", "20250417", 1, 1, 3, testTushareProfit(3), 300, 270),
 			})
 		case "balancesheet":
 			return tushareFinancialDataFor(req, []map[string]any{
@@ -342,7 +359,7 @@ func TestTushareFundamentalsSelectsLatestRevisionAndPrefersFinalAnnouncement(t *
 	if period.UpdateFlag != 1 {
 		t.Fatalf("update flag = %d, want 1", period.UpdateFlag)
 	}
-	requireFundamentalNumber(t, "net profit", period.NetProfit, 30)
+	requireFundamentalNumber(t, "net profit", period.NetProfit, 3_000_000)
 	requireFundamentalNumber(t, "revenue", period.Revenue, 270)
 	requireFundamentalNumber(t, "basic EPS", period.BasicEPS, 3)
 	if period.Revision == "" || len(period.RowHash) != 64 {
@@ -373,7 +390,7 @@ func TestTushareFundamentalsFiltersNonAnnualAndNonConsolidatedRows(t *testing.T)
 			singleQuarter := testTushareIncomeRow("20241231", "20250426", "20250427", 1, 0, 5, 5555, 5555, 5555)
 			singleQuarter["report_type"] = "2"
 			return tushareFinancialDataFor(req, []map[string]any{
-				testTushareIncomeRow("20241231", "20250410", "20250412", 1, 0, 1, 100, 1000, 1000),
+				testTushareIncomeRow("20241231", "20250410", "20250412", 1, 0, 1, testTushareProfit(1), 1000, 1000),
 				testTushareIncomeRow("20240930", "20250420", "20250421", 1, 0, 9, 9999, 9999, 9999),
 				parent,
 				singleQuarter,
@@ -409,7 +426,7 @@ func TestTushareFundamentalsFiltersNonAnnualAndNonConsolidatedRows(t *testing.T)
 		t.Fatalf("periods = %#v, want only the consolidated annual report", series.Periods)
 	}
 	period := series.Periods[0]
-	requireFundamentalNumber(t, "net profit", period.NetProfit, 100)
+	requireFundamentalNumber(t, "net profit", period.NetProfit, 1_000_000)
 	requireFundamentalNumber(t, "revenue", period.Revenue, 1000)
 	requireFundamentalNumber(t, "equity", period.Equity, 600)
 }
@@ -477,6 +494,28 @@ func TestTushareFundamentalsRejectsMalformedResponses(t *testing.T) {
 			requireFundamentalDataError(t, err, test.wantReason)
 		})
 	}
+}
+
+func TestTushareFundamentalsRejectsInconsistentEPSAndNetProfit(t *testing.T) {
+	stock := config.Stock{Code: "sh600036", Name: "招商银行"}
+	c := newTushareFundamentalsClient(t, func(req tushareFundamentalsRequest) any {
+		switch req.API {
+		case "income":
+			return tushareFinancialDataFor(req, []map[string]any{
+				testTushareIncomeRow("20241231", "20250410", "20250412", 1, 0, 2, 100, 1000, 1000),
+			})
+		case "balancesheet":
+			return tushareFinancialDataFor(req, []map[string]any{
+				testTushareBalanceRow("20241231", "20250410", "20250412", 1, 0, 100, 1000, 400, 600),
+			})
+		default:
+			return tushareFinancialDataFor(req, nil)
+		}
+	})
+	_, err := c.FetchAnnualFundamentals(context.Background(), stock, "2024-01-01", "2024-12-31", func(string) (string, error) {
+		return "2025-04-14", nil
+	})
+	requireFundamentalDataError(t, err, "inconsistent_tushare_fundamental_eps")
 }
 
 func TestTushareFundamentalsRejectsCompTypeConflicts(t *testing.T) {
@@ -587,6 +626,8 @@ func TestTushareFundamentalsAllowsMissingCashflowAndDividendAmount(t *testing.T)
 	nextTradingDay := func(date string) (string, error) {
 		nextCalls[date]++
 		switch date {
+		case "2024-04-10":
+			return "2024-04-11", nil
 		case "2024-05-20":
 			return "2024-05-21", nil
 		case "2025-04-10":
@@ -600,8 +641,8 @@ func TestTushareFundamentalsAllowsMissingCashflowAndDividendAmount(t *testing.T)
 		switch req.API {
 		case "income":
 			return tushareFinancialDataFor(req, []map[string]any{
-				testTushareIncomeRow("20231231", "20240410", "20240411", 1, 0, 1, 77, 1234, nil),
-				testTushareIncomeRow("20241231", "20250410", "20250411", 1, 0, 2, 88, 2000, 2000),
+				testTushareIncomeRow("20231231", "20240410", "20240411", 1, 0, 1, testTushareProfit(1), 1234, nil),
+				testTushareIncomeRow("20241231", "20250410", "20250411", 1, 0, 2, testTushareProfit(2), 2000, 2000),
 			})
 		case "balancesheet":
 			return tushareFinancialDataFor(req, []map[string]any{
@@ -632,13 +673,17 @@ func TestTushareFundamentalsAllowsMissingCashflowAndDividendAmount(t *testing.T)
 	if period2024.OperatingCashFlow != nil || period2024.CashDividend != nil {
 		t.Fatalf("missing cashflow or dividend row was filled: %#v", period2024)
 	}
-	if period2023.AnnouncementDate != "2024-05-20" || period2023.AvailableFrom != "2024-05-21" {
-		t.Fatalf("2023 PIT dates = %q/%q", period2023.AnnouncementDate, period2023.AvailableFrom)
+	if period2023.AnnouncementDate != "2024-04-10" || period2023.AvailableFrom != "2024-04-11" {
+		t.Fatalf("2023 statement PIT dates = %q/%q", period2023.AnnouncementDate, period2023.AvailableFrom)
+	}
+	if period2023.CashDividendAnnouncementDate != "2024-05-20" || period2023.CashDividendAvailableFrom != "2024-05-21" {
+		t.Fatalf("2023 dividend PIT dates = %q/%q", period2023.CashDividendAnnouncementDate, period2023.CashDividendAvailableFrom)
 	}
 	if period2024.AnnouncementDate != "2025-04-10" || period2024.AvailableFrom != "2025-04-11" {
 		t.Fatalf("2024 PIT dates = %q/%q", period2024.AnnouncementDate, period2024.AvailableFrom)
 	}
-	if nextCalls["2024-05-20"] != 1 || nextCalls["2025-04-10"] != 1 || len(nextCalls) != 2 {
+	if nextCalls["2024-04-10"] != 1 || nextCalls["2024-05-20"] != 1 ||
+		nextCalls["2025-04-10"] != 1 || len(nextCalls) != 3 {
 		t.Fatalf("next trading day calls = %#v", nextCalls)
 	}
 }
@@ -657,7 +702,7 @@ func TestTushareFundamentalsConvertsShanghaiAndShenzhenCodes(t *testing.T) {
 				assertTushareFundamentalsAPI(t, req, test.tushareCode, "20240101", "20241231")
 				switch req.API {
 				case "income":
-					row := testTushareIncomeRow("20241231", "20250410", "20250411", 1, 0, 1, 100, 1000, 1000)
+					row := testTushareIncomeRow("20241231", "20250410", "20250411", 1, 0, 1, testTushareProfit(1), 1000, 1000)
 					row["ts_code"] = test.tushareCode
 					return tushareFinancialDataFor(req, []map[string]any{row})
 				case "balancesheet":

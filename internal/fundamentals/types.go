@@ -62,21 +62,26 @@ func (m VisibilityMode) Valid() bool {
 // Period is one disclosed annual consolidated financial statement. Monetary
 // values are yuan, per-share values are yuan/share, shares are shares, and
 // ratios are percentage points. Pointer fields preserve missing values instead
-// of treating them as zero.
+// of treating them as zero. Statement visibility and cash-dividend visibility
+// are deliberately separate: an annual report becomes usable as soon as the
+// statements are published, while its payout only enters normalization after
+// the implemented dividend announcement is visible.
 type Period struct {
-	SchemaVersion    int       `json:"schema_version"`
-	Code             string    `json:"code"`
-	Source           string    `json:"source"`
-	ReportEnd        string    `json:"report_end_date"`
-	AnnouncementDate string    `json:"announcement_date"`
-	AvailableFrom    string    `json:"available_from"`
-	StatementBasis   string    `json:"statement_basis"`
-	ReportType       string    `json:"report_type"`
-	CompType         int       `json:"comp_type"`
-	UpdateFlag       int       `json:"update_flag"`
-	Revision         string    `json:"revision"`
-	FetchedAt        time.Time `json:"fetched_at"`
-	RowHash          string    `json:"row_hash"`
+	SchemaVersion                int       `json:"schema_version"`
+	Code                         string    `json:"code"`
+	Source                       string    `json:"source"`
+	ReportEnd                    string    `json:"report_end_date"`
+	AnnouncementDate             string    `json:"announcement_date"`
+	AvailableFrom                string    `json:"available_from"`
+	CashDividendAnnouncementDate string    `json:"cash_dividend_announcement_date,omitempty"`
+	CashDividendAvailableFrom    string    `json:"cash_dividend_available_from,omitempty"`
+	StatementBasis               string    `json:"statement_basis"`
+	ReportType                   string    `json:"report_type"`
+	CompType                     int       `json:"comp_type"`
+	UpdateFlag                   int       `json:"update_flag"`
+	Revision                     string    `json:"revision"`
+	FetchedAt                    time.Time `json:"fetched_at"`
+	RowHash                      string    `json:"row_hash"`
 
 	Revenue           *float64 `json:"revenue,omitempty"`
 	NetProfit         *float64 `json:"net_profit_attr,omitempty"`
@@ -183,6 +188,22 @@ func (p Period) Validate() error {
 	if err != nil || !available.After(announced) {
 		return errors.New("fundamental available_from must follow announcement")
 	}
+	if (p.CashDividendAnnouncementDate == "") != (p.CashDividendAvailableFrom == "") {
+		return errors.New("cash dividend visibility dates must be both present or both absent")
+	}
+	if p.CashDividendAvailableFrom != "" {
+		dividendAnnounced, err := parseDate(p.CashDividendAnnouncementDate)
+		if err != nil || dividendAnnounced.Before(reportEnd) {
+			return errors.New("invalid cash dividend announcement date")
+		}
+		dividendAvailable, err := parseDate(p.CashDividendAvailableFrom)
+		if err != nil || !dividendAvailable.After(dividendAnnounced) {
+			return errors.New("cash dividend available_from must follow announcement")
+		}
+	}
+	if p.CashDividend != nil && p.CashDividendAvailableFrom == "" {
+		return errors.New("cash dividend requires a visibility date")
+	}
 	if p.CompType < 1 || p.CompType > 7 || p.UpdateFlag < 0 || p.UpdateFlag > 1 {
 		return errors.New("invalid fundamental statement classification")
 	}
@@ -274,6 +295,12 @@ func laterPeriod(candidate, current Period) bool {
 	if candidate.AvailableFrom != current.AvailableFrom {
 		return candidate.AvailableFrom > current.AvailableFrom
 	}
+	if candidate.CashDividendAvailableFrom != current.CashDividendAvailableFrom {
+		return candidate.CashDividendAvailableFrom > current.CashDividendAvailableFrom
+	}
+	if candidate.CashDividendAnnouncementDate != current.CashDividendAnnouncementDate {
+		return candidate.CashDividendAnnouncementDate > current.CashDividendAnnouncementDate
+	}
 	return candidate.RowHash > current.RowHash
 }
 
@@ -337,7 +364,11 @@ func (p Period) ObservedBy(asOf string) bool {
 func periodKey(period Period) string {
 	// available_from is part of the fact identity: a corrected visibility date is
 	// a new append-only observation, not an in-place edit of the earlier one.
-	return strings.Join([]string{period.Code, period.Source, period.ReportEnd, period.StatementBasis, period.ReportType, period.AnnouncementDate, period.Revision, period.RowHash, period.AvailableFrom}, "|")
+	return strings.Join([]string{
+		period.Code, period.Source, period.ReportEnd, period.StatementBasis, period.ReportType,
+		period.AnnouncementDate, period.Revision, period.RowHash, period.AvailableFrom,
+		period.CashDividendAnnouncementDate, period.CashDividendAvailableFrom,
+	}, "|")
 }
 
 func parseDate(value string) (time.Time, error) {

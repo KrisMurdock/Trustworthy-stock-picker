@@ -47,6 +47,27 @@ func TestEvaluateBandCalibrationComputesCoverageAndDirection(t *testing.T) {
 	}
 }
 
+func TestEvaluateBandCalibrationUsesEstimateSectorSnapshot(t *testing.T) {
+	series := normalizedSeriesFixture(t)
+	estimate := evaluationEstimate(t)
+	observation := ForwardObservation{
+		Code: "sh600519", AsOf: "2026-11-01", FutureDate: "2026-12-01",
+		CurrentPrice: 10, FuturePrice: 11, Estimate: estimate, Series: series,
+	}
+	result := EvaluateBandCalibration([]ForwardObservation{observation}, 1)
+	if result.Valid != 1 || result.Invalid != 0 || len(result.BySector) != 1 || result.BySector[0].Group != estimate.Sector {
+		t.Fatalf("calibration did not use the estimate sector snapshot: %+v", result)
+	}
+
+	conflicting := observation
+	conflicting.Sector = "银行"
+	result = EvaluateBandCalibration([]ForwardObservation{conflicting}, 1)
+	if result.Valid != 0 || result.Invalid != 1 || len(result.Problems) != 1 ||
+		result.Problems[0] != "sample=0:sector_snapshot_mismatch" {
+		t.Fatalf("conflicting sector input was accepted: %+v", result)
+	}
+}
+
 func TestEvaluateBandCalibrationRejectsLeakageAndMismatch(t *testing.T) {
 	series := normalizedSeriesFixture(t)
 	estimate := evaluationEstimate(t)

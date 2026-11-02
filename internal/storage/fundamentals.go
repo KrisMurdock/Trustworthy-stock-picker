@@ -23,13 +23,25 @@ import (
 const (
 	fundamentalsDBName        = "fundamentals.db"
 	fundamentalsLockName      = ".fundamentals.lock"
-	fundamentalsSchemaVersion = 3
+	fundamentalsSchemaVersion = 4
 )
 
 const fundamentalPeriodInsertColumns = `code, source, report_end_date, statement_basis, report_type,
-	announcement_date, revision, row_hash, schema_version, available_from, comp_type, update_flag,
+	announcement_date, revision, row_hash, schema_version, available_from,
+	cash_dividend_announcement_date, cash_dividend_available_from, comp_type, update_flag,
 	fetched_at, revenue, net_profit_attr, equity_attr, operating_cash_flow, total_assets,
 	total_liabilities, total_shares, basic_eps, cash_dividend`
+
+// Pre-v4 Tushare rows stored total_share in ten-thousand shares. The adapter
+// now canonicalizes the value to shares before it reaches Period, so the v4
+// migration must convert existing Tushare rows inside the same transaction.
+const fundamentalPeriodLegacySelect = `code, source, report_end_date, statement_basis, report_type,
+	announcement_date, revision, row_hash, schema_version, available_from,
+	announcement_date, available_from, comp_type, update_flag,
+	fetched_at, revenue, net_profit_attr, equity_attr, operating_cash_flow, total_assets,
+	total_liabilities,
+	CASE WHEN source='tushare' AND total_shares IS NOT NULL THEN total_shares * 10000 ELSE total_shares END,
+	basic_eps, cash_dividend`
 
 // FundamentalsDB owns the independent point-in-time financial fact store in
 // <data_dir>/fundamentals.db. It never opens or extends market.db.
@@ -285,7 +297,7 @@ func (f *FundamentalsDB) initSchema() error {
 		if err := createFundamentalsSchema(tx); err != nil {
 			return err
 		}
-	case 1, 2:
+	case 1, 2, 3:
 		if err := migrateFundamentalsSchema(tx, version); err != nil {
 			return err
 		}
@@ -314,6 +326,8 @@ const fundamentalsSchemaSQL = `
 		row_hash TEXT NOT NULL,
 		schema_version INTEGER NOT NULL,
 		available_from TEXT NOT NULL,
+		cash_dividend_announcement_date TEXT NOT NULL,
+		cash_dividend_available_from TEXT NOT NULL,
 		comp_type INTEGER NOT NULL,
 		update_flag INTEGER NOT NULL,
 		fetched_at TEXT NOT NULL,
@@ -327,7 +341,8 @@ const fundamentalsSchemaSQL = `
 		basic_eps REAL,
 		cash_dividend REAL,
 		PRIMARY KEY(code, source, report_end_date, statement_basis, report_type,
-			announcement_date, revision, row_hash, available_from)
+			announcement_date, revision, row_hash, available_from,
+			cash_dividend_announcement_date, cash_dividend_available_from)
 	);
 	CREATE INDEX IF NOT EXISTS fundamental_period_visible
 		ON fundamental_period(code, available_from, report_end_date);
@@ -363,9 +378,12 @@ const fundamentalsSchemaSQL = `
 		revision TEXT NOT NULL,
 		row_hash TEXT NOT NULL,
 		available_from TEXT NOT NULL,
+		cash_dividend_announcement_date TEXT NOT NULL,
+		cash_dividend_available_from TEXT NOT NULL,
 		fetched_at TEXT NOT NULL,
 		PRIMARY KEY(batch_id, report_end_date, statement_basis, report_type,
-			announcement_date, revision, row_hash, available_from)
+			announcement_date, revision, row_hash, available_from,
+			cash_dividend_announcement_date, cash_dividend_available_from)
 	);
 `
 
@@ -408,7 +426,7 @@ func migrateFundamentalsSchema(tx *sql.Tx, version int) error {
 		return errors.New("cannot count legacy fundamental periods")
 	}
 	if _, err := tx.Exec(`INSERT INTO fundamental_period(` + fundamentalPeriodInsertColumns + `)
-		SELECT ` + fundamentalPeriodInsertColumns + ` FROM fundamental_period_legacy`); err != nil {
+		SELECT ` + fundamentalPeriodLegacySelect + ` FROM fundamental_period_legacy`); err != nil {
 		return errors.New("cannot copy legacy fundamental periods")
 	}
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM fundamental_period`).Scan(&after); err != nil || before != after {
@@ -421,9 +439,11 @@ func migrateFundamentalsSchema(tx *sql.Tx, version int) error {
 		if _, err := tx.Exec(`
 			INSERT INTO fundamental_fetch_period(
 				batch_id, report_end_date, statement_basis, report_type, announcement_date,
-				revision, row_hash, available_from, fetched_at)
+				revision, row_hash, available_from, cash_dividend_announcement_date,
+				cash_dividend_available_from, fetched_at)
 			SELECT fp.batch_id, fp.report_end_date, p.statement_basis, p.report_type,
-				fp.announcement_date, fp.revision, fp.row_hash, p.available_from, p.fetched_at
+				fp.announcement_date, fp.revision, fp.row_hash, p.available_from,
+				p.announcement_date, p.available_from, p.fetched_at
 			FROM fundamental_fetch_period_legacy fp
 			JOIN fundamental_fetch f ON f.batch_id=fp.batch_id
 			JOIN fundamental_period_legacy p ON p.code=f.code AND p.source=f.source
@@ -545,6 +565,7 @@ func verifyFundamentalsSchema(reader sqlReader) error {
 		{"fundamental_period", []string{
 			"code", "source", "report_end_date", "statement_basis", "report_type", "announcement_date",
 			"revision", "row_hash", "schema_version", "available_from", "comp_type", "update_flag",
+			"cash_dividend_announcement_date", "cash_dividend_available_from",
 			"fetched_at", "revenue", "net_profit_attr", "equity_attr", "operating_cash_flow",
 			"total_assets", "total_liabilities", "total_shares", "basic_eps", "cash_dividend",
 		}},
@@ -552,7 +573,8 @@ func verifyFundamentalsSchema(reader sqlReader) error {
 		{"fundamental_fetch", []string{"batch_id", "code", "source", "fetched_at", "periods", "input_digest", "created_at"}},
 		{"fundamental_fetch_period", []string{
 			"batch_id", "report_end_date", "statement_basis", "report_type", "announcement_date",
-			"revision", "row_hash", "available_from", "fetched_at",
+			"revision", "row_hash", "available_from", "cash_dividend_announcement_date",
+			"cash_dividend_available_from", "fetched_at",
 		}},
 	} {
 		if err := requireFundamentalsColumns(reader, table.name, table.columns); err != nil {
@@ -566,12 +588,14 @@ func verifyFundamentalsSchema(reader sqlReader) error {
 		{"fundamental_period", []string{
 			"code", "source", "report_end_date", "statement_basis", "report_type",
 			"announcement_date", "revision", "row_hash", "available_from",
+			"cash_dividend_announcement_date", "cash_dividend_available_from",
 		}},
 		{"fundamental_fetch", []string{"batch_id"}},
 		{"fundamental_sync", []string{"code", "source"}},
 		{"fundamental_fetch_period", []string{
 			"batch_id", "report_end_date", "statement_basis", "report_type",
 			"announcement_date", "revision", "row_hash", "available_from",
+			"cash_dividend_announcement_date", "cash_dividend_available_from",
 		}},
 	} {
 		primaryKey, err := fundamentalsPrimaryKey(reader, table.name)
@@ -819,15 +843,18 @@ func (f *FundamentalsDB) AppendSeries(ctx context.Context, series fundamentals.S
 		result, err := tx.ExecContext(ctx, `
 			INSERT INTO fundamental_period(
 				code, source, report_end_date, statement_basis, report_type, announcement_date,
-				revision, row_hash, schema_version, available_from, comp_type, update_flag,
+				revision, row_hash, schema_version, available_from, cash_dividend_announcement_date,
+				cash_dividend_available_from, comp_type, update_flag,
 				fetched_at, revenue, net_profit_attr, equity_attr, operating_cash_flow,
 				total_assets, total_liabilities, total_shares, basic_eps, cash_dividend)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(code, source, report_end_date, statement_basis, report_type,
-				announcement_date, revision, row_hash, available_from) DO NOTHING
+				announcement_date, revision, row_hash, available_from,
+				cash_dividend_announcement_date, cash_dividend_available_from) DO NOTHING
 		`, period.Code, period.Source, period.ReportEnd, period.StatementBasis, period.ReportType,
 			period.AnnouncementDate, period.Revision, period.RowHash, period.SchemaVersion,
-			period.AvailableFrom, period.CompType, period.UpdateFlag,
+			period.AvailableFrom, period.CashDividendAnnouncementDate, period.CashDividendAvailableFrom,
+			period.CompType, period.UpdateFlag,
 			period.FetchedAt.UTC().Format(time.RFC3339Nano), nullableFundamentalFloat(period.Revenue),
 			nullableFundamentalFloat(period.NetProfit), nullableFundamentalFloat(period.Equity),
 			nullableFundamentalFloat(period.OperatingCashFlow), nullableFundamentalFloat(period.TotalAssets),
@@ -844,12 +871,15 @@ func (f *FundamentalsDB) AppendSeries(ctx context.Context, series fundamentals.S
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO fundamental_fetch_period(
 				batch_id, report_end_date, statement_basis, report_type, announcement_date,
-				revision, row_hash, available_from, fetched_at)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+				revision, row_hash, available_from, cash_dividend_announcement_date,
+				cash_dividend_available_from, fetched_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(batch_id, report_end_date, statement_basis, report_type,
-				announcement_date, revision, row_hash, available_from) DO NOTHING
+				announcement_date, revision, row_hash, available_from,
+				cash_dividend_announcement_date, cash_dividend_available_from) DO NOTHING
 		`, batchID, period.ReportEnd, period.StatementBasis, period.ReportType,
 			period.AnnouncementDate, period.Revision, period.RowHash, period.AvailableFrom,
+			period.CashDividendAnnouncementDate, period.CashDividendAvailableFrom,
 			period.FetchedAt.UTC().Format(time.RFC3339Nano)); err != nil {
 			return rollback(errors.New("cannot persist fundamental fetch batch period"))
 		}
@@ -952,8 +982,9 @@ func (f *FundamentalsDB) LoadSeries(ctx context.Context, code string) (fundament
 	}
 	rows, err := f.db.QueryContext(ctx, `
 		SELECT code, source, report_end_date, statement_basis, report_type, announcement_date,
-			revision, row_hash, schema_version, available_from, comp_type, update_flag, fetched_at,
-			revenue, net_profit_attr, equity_attr, operating_cash_flow, total_assets,
+			revision, row_hash, schema_version, available_from, cash_dividend_announcement_date,
+			cash_dividend_available_from, comp_type, update_flag, fetched_at, revenue,
+			net_profit_attr, equity_attr, operating_cash_flow, total_assets,
 			total_liabilities, total_shares, basic_eps, cash_dividend
 		FROM fundamental_period
 		WHERE code=?
@@ -973,8 +1004,9 @@ func (f *FundamentalsDB) LoadSeries(ctx context.Context, code string) (fundament
 		if err := rows.Scan(
 			&period.Code, &period.Source, &period.ReportEnd, &period.StatementBasis,
 			&period.ReportType, &period.AnnouncementDate, &period.Revision, &period.RowHash,
-			&period.SchemaVersion, &period.AvailableFrom, &period.CompType, &period.UpdateFlag,
-			&fetched, &revenue, &netProfit, &equity, &operatingCashFlow, &totalAssets,
+			&period.SchemaVersion, &period.AvailableFrom, &period.CashDividendAnnouncementDate,
+			&period.CashDividendAvailableFrom, &period.CompType, &period.UpdateFlag, &fetched,
+			&revenue, &netProfit, &equity, &operatingCashFlow, &totalAssets,
 			&totalLiabilities, &totalShares, &basicEPS, &cashDividend,
 		); err != nil {
 			return fundamentals.Series{}, errors.New("cannot read fundamental series")
@@ -1026,6 +1058,12 @@ func (f *FundamentalsDB) LoadSeries(ctx context.Context, code string) (fundament
 		}
 		if left.AvailableFrom != right.AvailableFrom {
 			return left.AvailableFrom < right.AvailableFrom
+		}
+		if left.CashDividendAnnouncementDate != right.CashDividendAnnouncementDate {
+			return left.CashDividendAnnouncementDate < right.CashDividendAnnouncementDate
+		}
+		if left.CashDividendAvailableFrom != right.CashDividendAvailableFrom {
+			return left.CashDividendAvailableFrom < right.CashDividendAvailableFrom
 		}
 		return left.FetchedAt.Before(right.FetchedAt)
 	})
@@ -1222,8 +1260,9 @@ func (f *FundamentalsDB) Audit(ctx context.Context, asOf string) (FundamentalsAu
 		return audit, errors.New("cannot count fundamental fetch batches")
 	}
 	rows, err := f.db.QueryContext(ctx, `
-		SELECT code, report_end_date, statement_basis, report_type, available_from,
-			update_flag, fetched_at, row_hash
+		SELECT code, report_end_date, statement_basis, report_type, announcement_date,
+			revision, available_from, cash_dividend_announcement_date,
+			cash_dividend_available_from, update_flag, fetched_at, row_hash
 		FROM fundamental_period
 		ORDER BY code, report_end_date, announcement_date, revision, row_hash, fetched_at
 	`)
@@ -1236,7 +1275,9 @@ func (f *FundamentalsDB) Audit(ctx context.Context, asOf string) (FundamentalsAu
 		var period fundamentals.Period
 		var fetched string
 		if err := rows.Scan(&period.Code, &period.ReportEnd, &period.StatementBasis, &period.ReportType,
-			&period.AvailableFrom, &period.UpdateFlag, &fetched, &period.RowHash); err != nil {
+			&period.AnnouncementDate, &period.Revision, &period.AvailableFrom,
+			&period.CashDividendAnnouncementDate, &period.CashDividendAvailableFrom,
+			&period.UpdateFlag, &fetched, &period.RowHash); err != nil {
 			return audit, errors.New("cannot audit fundamentals database")
 		}
 		parsed, err := time.Parse(time.RFC3339Nano, fetched)

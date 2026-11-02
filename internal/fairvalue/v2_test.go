@@ -266,12 +266,15 @@ func TestEstimateV2JSONContract(t *testing.T) {
 		`"schema_version"`, `"code"`, `"as_of"`, `"source"`, `"fetched_at"`, `"method"`,
 		`"statement_basis"`, `"confidence"`, `"data_quality"`, `"warnings"`, `"current_price"`,
 		`"eps_ttm"`, `"book_value_per_share"`, `"eps_growth_pct"`, `"roe_pct"`, `"current_pe"`,
-		`"current_pb"`, `"sustainable_growth_pct"`, `"payout_pct"`, `"cost_of_equity_pct"`,
+		`"current_pb"`, `"sustainable_growth_pct"`, `"implied_payout_pct"`, `"cost_of_equity_pct"`,
 		`"fair_pb"`, `"fair_pe"`, `"lower"`, `"central"`, `"upper"`, `"upside_pct"`, `"scenarios"`,
 		`"growth_pct"`, `"price"`,
 	} {
 		if !strings.Contains(text, key) {
 			t.Fatalf("JSON contract missing %s: %s", key, text)
 		}
+	}
+	if strings.Contains(text, `"payout_pct"`) || !strings.Contains(text, `"implied_payout_pct"`) {
+		t.Fatalf("derived payout was exposed as an observed payout: %s", text)
 	}
 }

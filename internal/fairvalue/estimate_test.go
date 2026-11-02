@@ -56,15 +56,12 @@ func TestCalculateRejectsNegativeEarnings(t *testing.T) {
 	}
 }
 
-func TestCalculateFallsBackToPeWhenBookValueIsUnavailable(t *testing.T) {
+func TestCalculateRejectsMissingBookValue(t *testing.T) {
 	snapshot := testSnapshot()
 	snapshot.BookValuePerShare = 0
 	estimate := Calculate(config.Stock{Code: snapshot.Code}, 20, "2026-10-31", snapshot)
-	if !estimate.Available() || estimate.FairPB != 0 || estimate.BookValueAnchored || !contains(estimate.Warnings, "book_value_non_positive") || estimate.Confidence != "low" {
-		t.Fatalf("book value fallback failed: %+v", estimate)
-	}
-	if width := (estimate.Upper - estimate.Lower) / estimate.Central; width < 0.59 {
-		t.Fatalf("low-confidence fallback did not widen the band: width=%.2f estimate=%+v", width, estimate)
+	if estimate.Available() || !contains(estimate.Warnings, "book_value_non_positive") || !strings.Contains(estimate.Reason, "每股净资产") {
+		t.Fatalf("missing book value produced a PE-only range: %+v", estimate)
 	}
 }
 
@@ -92,15 +89,37 @@ func TestCalculateUsesIndependentBookValueAnchor(t *testing.T) {
 	}
 }
 
-func TestCalculateWidensBandForAbnormalROE(t *testing.T) {
+func TestCalculateRejectsAbnormalROE(t *testing.T) {
 	snapshot := testSnapshot()
 	snapshot.BookValuePerShare = 1.5
 	estimate := Calculate(config.Stock{Code: snapshot.Code}, 20, "2026-10-31", snapshot)
-	if !estimate.Available() || estimate.Confidence != "low" {
-		t.Fatalf("abnormal ROE was not marked low confidence: %+v", estimate)
+	if estimate.Available() || !contains(estimate.Warnings, "abnormal_roe") || !strings.Contains(estimate.Reason, "净资产收益率") {
+		t.Fatalf("abnormal ROE produced a displayed range: %+v", estimate)
 	}
-	if width := (estimate.Upper - estimate.Lower) / estimate.Central; width < 0.69 {
-		t.Fatalf("abnormal ROE did not widen the band to 35%%: width=%.2f estimate=%+v", width, estimate)
+}
+
+func TestCalculateRejectsAbnormalPB(t *testing.T) {
+	estimate := Calculate(config.Stock{Code: "sh600519"}, 200.01, "2026-10-31", testSnapshot())
+	if estimate.Available() || !contains(estimate.Warnings, "abnormal_pb") || !strings.Contains(estimate.Reason, "市净率") {
+		t.Fatalf("abnormal PB produced a displayed range: %+v", estimate)
+	}
+}
+
+func TestCalculateDowngradesNearEPSReconciliationTolerance(t *testing.T) {
+	snapshot := testSnapshot()
+	snapshot.TTMNetProfitYi = 0.000108
+	estimate := Calculate(config.Stock{Code: snapshot.Code}, 20, "2026-10-31", snapshot)
+	if !estimate.Available() || estimate.Confidence != "low" || !contains(estimate.Warnings, "eps_reconciliation_near_tolerance") {
+		t.Fatalf("near EPS tolerance was not downgraded: %+v", estimate)
+	}
+}
+
+func TestCalculateRejectsEPSOutsideReconciliationTolerance(t *testing.T) {
+	snapshot := testSnapshot()
+	snapshot.TTMNetProfitYi = 0.000111
+	estimate := Calculate(config.Stock{Code: snapshot.Code}, 20, "2026-10-31", snapshot)
+	if estimate.Available() || estimate.Reason == "" {
+		t.Fatalf("EPS outside reconciliation tolerance produced a band: %+v", estimate)
 	}
 }
 

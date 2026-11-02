@@ -381,7 +381,7 @@ func TestFundamentalsRejectsUnsupportedVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.db.Exec("PRAGMA user_version=4"); err != nil {
+	if _, err := db.db.Exec("PRAGMA user_version=5"); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -596,28 +596,30 @@ func TestFundamentalsSyncRecords(t *testing.T) {
 
 func fundamentalsPeriodFixture(code, reportEnd, announcement, available, revision, rowHash string, fetchedAt time.Time) fundamentals.Period {
 	return fundamentals.Period{
-		SchemaVersion:     fundamentals.Version,
-		Code:              code,
-		Source:            fundamentals.SourceTushare,
-		ReportEnd:         reportEnd,
-		AnnouncementDate:  announcement,
-		AvailableFrom:     available,
-		StatementBasis:    fundamentals.StatementAnnualConsolidated,
-		ReportType:        "1",
-		CompType:          1,
-		UpdateFlag:        0,
-		Revision:          revision,
-		FetchedAt:         fetchedAt,
-		RowHash:           rowHash,
-		Revenue:           fundamentalsFloatPtr(1000),
-		NetProfit:         fundamentalsFloatPtr(1000),
-		Equity:            fundamentalsFloatPtr(5000),
-		OperatingCashFlow: fundamentalsFloatPtr(800),
-		TotalAssets:       fundamentalsFloatPtr(10000),
-		TotalLiabilities:  fundamentalsFloatPtr(5000),
-		TotalShares:       fundamentalsFloatPtr(100),
-		BasicEPS:          fundamentalsFloatPtr(10),
-		CashDividend:      fundamentalsFloatPtr(2),
+		SchemaVersion:                fundamentals.Version,
+		Code:                         code,
+		Source:                       fundamentals.SourceTushare,
+		ReportEnd:                    reportEnd,
+		AnnouncementDate:             announcement,
+		AvailableFrom:                available,
+		CashDividendAnnouncementDate: announcement,
+		CashDividendAvailableFrom:    available,
+		StatementBasis:               fundamentals.StatementAnnualConsolidated,
+		ReportType:                   "1",
+		CompType:                     1,
+		UpdateFlag:                   0,
+		Revision:                     revision,
+		FetchedAt:                    fetchedAt,
+		RowHash:                      rowHash,
+		Revenue:                      fundamentalsFloatPtr(1000),
+		NetProfit:                    fundamentalsFloatPtr(1000),
+		Equity:                       fundamentalsFloatPtr(5000),
+		OperatingCashFlow:            fundamentalsFloatPtr(800),
+		TotalAssets:                  fundamentalsFloatPtr(10000),
+		TotalLiabilities:             fundamentalsFloatPtr(5000),
+		TotalShares:                  fundamentalsFloatPtr(100),
+		BasicEPS:                     fundamentalsFloatPtr(10),
+		CashDividend:                 fundamentalsFloatPtr(2),
 	}
 }
 

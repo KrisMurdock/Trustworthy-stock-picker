@@ -6,8 +6,8 @@
 
 - v1 是基于工程经验的 PE/PB 相对估值区间，不是论文推导，也没有经过行业、周期和参数的系统校准。它可以继续作为“财务研究区间”展示，但不能称为最终合理价值。
 - v2 以稳态 justified PB 为核心，并用 `PE = PB / ROE` 强制保持盈利倍数和净资产倍数一致；它只是稳态交叉校验，不是完整 DCF。
-- v2 首版只有 TTM EPS、前一年 EPS 和当前每股净资产，标准化盈利与严格 point-in-time 数据尚未具备，因此只能 shadow 存储，所有结果标记低置信度/`ttm_only`，不进入公众号正文。
-- v3 已接入 5-10 年年度合并报表、公告日后下一交易日可见性、平均净资产 ROE、实际现金派息率和剩余收益情景；输入与结果仍只服务研究，未进入推荐排名或公众号。
+- v2 首版只有 TTM EPS、前一年 EPS 和当前每股净资产，标准化盈利与严格 point-in-time 数据尚未具备，因此只能 shadow 存储，所有结果标记低置信度/`ttm_only`，不进入公众号正文。v2 的 `implied_payout_pct` 是由有界增长和 ROE 反推的隐含值，不是现金分红事实。
+- v3 已接入 5-10 年年度合并报表、公告日后下一交易日可见性、平均净资产 ROE、实际现金派息率和剩余收益情景；报表可见日与分红实施公告可见日分开记录，输入与结果仍只服务研究，未进入推荐排名或公众号。
 - 只有在真实 Tushare 权限下补齐历史抓取快照、完成全市场/股池滚动校准和人工复核后，才讨论把标准化结果升格为正式估值字段。当前已区分严格 `observed` 与显式 `vendor_backfill` 两种可见性口径，后者不能进入滚动校准。
 
 ## v1：工程经验基线
@@ -109,13 +109,13 @@ Price     = BVPS × FairPB
 
 ### Point-in-time 存储
 
-- 独立 `fundamentals.db` schema 3 保存追加式财务事实：`report_end_date`、`announcement_date`、`available_from`、合并口径、报表类型、`update_flag`、抓取时间、行哈希和各项金额。`available_from` 是事实身份的一部分；可见日修正会追加新版本，不会覆盖旧版本，因此重放旧抓取批次也不能撤销修正。
+- 独立 `fundamentals.db` schema 4 保存追加式财务事实：`report_end_date`、`announcement_date`、`available_from`、现金分红公告日与可见日、合并口径、报表类型、`update_flag`、抓取时间、行哈希和各项金额。`available_from` 是事实身份的一部分；可见日修正会追加新版本，不会覆盖旧版本，因此重放旧抓取批次也不能撤销修正。升级到 v4 时旧 Tushare 股本单位会从万股换算为股，避免同一 schema 下混用两种单位。
 - 同一报告期保留修订和可见日版本；默认 `observed` 口径同时要求 `available_from <= asOf` 且 `fetched_at` 的上海日期 `<= asOf`，再选择最新披露。今天才抓取的历史行不会污染更早的 as-of。这里的 `as-of` 是上海日历日边界，不声称支持盘中某个时刻的可见性；如果未来要按收盘时刻校准，必须另加明确的截止时间字段。
 - 每次 `AppendSeries` 同时写入 `fundamental_fetch` 和 `fundamental_fetch_period` 批次记录，保留本次抓取的完整期间成员、抓取时间和输入哈希；财务事实本身仍追加保存，不用批次记录替代历史修订。
 - `vendor_backfill` 只忽略 `fetched_at`，用于明确标注的历史重建；输出固定带 `vendor_backfill_mode` 警告、`confidence=low`，且 `fairvalue.EvaluateBandCalibration` 拒绝这类样本。不能用它宣称严格 point-in-time 或已完成的样本外校准。
-- `available_from` 取公告日之后的下一个交易日；公告日只有日期，不假设盘中时刻。
+- 报表 `available_from` 取财报公告日之后的下一个交易日，现金分红单独取实施公告日之后的下一个交易日；两类可见日都只有日期，不假设盘中时刻。
 - `income`/`cashflow` 使用年度累计值，`balancesheet` 使用期末时点值；金额为元、股本为股、EPS/BVPS 为元/股。`null` 与真实 `0` 分开保存。
-- 实际派息只汇总 `div_proc=实施` 的现金分红；缺失分红不当作 0 派息。行业分类仍是当前快照，不用于历史 peer 回填。
+- 实际派息只汇总 `div_proc=实施` 的现金分红；缺失分红不当作 0 派息。Tushare 的 `total_share`/`base_share` 在适配层由万股换算为股，并以 `basic_eps × total_shares` 对归母净利润做交叉校验。行业分类仍是当前快照，不用于历史 peer 回填。
 
 ### 命令与输出
 
@@ -149,7 +149,7 @@ stock-watcher fair-value -code sh600519 [-as-of YYYY-MM-DD] [-visibility observe
 | `report_end_date` | 标识财报所属报告期，防止把不同季度混在一起 | 财务报表接口的 `end_date` |
 | `announcement_date` | 严格 point-in-time 门槛：信号日只能看到已公告数据 | 优先实际公告日 `f_ann_date`，缺失时回退 `ann_date` |
 | 5-10 年 EPS 序列 | 标准化盈利、周期平滑和增长估计 | 已用 `income` 的归母净利润与最新总股本重算，避免供应商 EPS 口径混用 |
-| 5-10 年 ROE 序列 | 标准化 ROE、稳定性与质量分层 | 已用 `n_income_attr_p / ((EQ_i-1 + EQ_i)/2)` 重算；不把 `fina_indicator` 的不同 ROE 定义直接混用 |
+| 5-10 年 ROE 序列 | 标准化 ROE、稳定性与质量分层 | 已用 `n_income_attr_p / ((EQ_i-1 + EQ_i)/2)` 重算；只允许相邻财年配对，缺年不跨年桥接；至少 5 个有效平均净资产 ROE，即至少 6 个年度报告。不把 `fina_indicator` 的不同 ROE 定义直接混用 |
 | 平均净资产 | 替代单期每股净资产，降低周期和融资时点影响 | `balancesheet` 的归母权益，按同一窗口平均 |
 | 派息率 | 可持续增长交叉检查、质量和股东回报诊断 | 已汇总 `div_proc=实施` 的现金分红并与归母净利润匹配；记录实施公告日 |
 | 经营现金流 | 盈利质量、现金流与利润背离诊断 | `cashflow` 的经营活动现金流 |
@@ -163,11 +163,11 @@ stock-watcher fair-value -code sh600519 [-as-of YYYY-MM-DD] [-visibility observe
 
 ### 影子输出契约
 
-v2 shadow 记录包含：`method=residual_income_pb_roe_v2`、`schema_version`、`as_of`、`fetched_at`、`statement_basis`、`data_quality=ttm_only|unavailable`、`confidence`、`warnings`、`roe_pct`、`eps_growth_pct`、`cost_of_equity_pct`、各情景 `pb`/`pe`/`price`、区间上下界与中枢、来源和不可估值 `reason`。
+v2 shadow 记录包含：`method=residual_income_pb_roe_v2`、`schema_version`、`as_of`、`fetched_at`、`statement_basis`、`data_quality=ttm_only|unavailable`、`confidence`、`warnings`、`roe_pct`、`eps_growth_pct`、`implied_payout_pct`（由增长与 ROE 反推，不是实际分红）、`cost_of_equity_pct`、各情景 `pb`/`pe`/`price`、区间上下界与中枢、来源和不可估值 `reason`。
 
 v3 研究记录包含：`method=residual_income_normalized_v3`、`source_version`、`input_mode=normalized`、`visibility_mode`、`input_digest`、`window_start/window_end`、`fiscal_years`、`latest_report_end`、`latest_announcement_date`、`latest_available_from`、`latest_fetched_at`、`payout_years`、`eps_normalized`、`bvps`、`roe_norm_pct`、`payout_norm_pct`、`sustainable_growth_pct`、各情景和区间上下界。`input_digest` 对当时选中的完整期间记录及可见性口径做哈希，未来修订或口径变化不能改变早期 digest。
 
-滚动校准入口 `fairvalue.EvaluateBandCalibration` 只接受 `future_date > as_of`、严格 `observed` 可见性、估值身份一致且在当时可用的样本；输出 60% 名义覆盖率、覆盖率、平均宽度、中枢与未来实际收益的平均绝对偏差、方向命中率、20/80 分位的 pinball loss，并按年度和行业分组。样本少于最低数量时明确标记 `insufficient_data`。该评估不假设价格会回归中枢，只检验研究区间与后续价格的关系。
+滚动校准入口 `fairvalue.EvaluateBandCalibration` 只接受 `future_date > as_of`、严格 `observed` 可见性、估值身份一致且在当时可用的样本；行业分组和重算只使用 `EstimateV3.sector` 快照，忽略已弃用的外部 `sector` 输入，二者冲突时拒绝样本；输出 60% 名义覆盖率、覆盖率、平均宽度、中枢与未来实际收益的平均绝对偏差、方向命中率、20/80 分位的 pinball loss，并按年度和行业分组。样本少于最低数量时明确标记 `insufficient_data`。该评估不假设价格会回归中枢，只检验研究区间与后续价格的关系。
 
 缺失数据的处理必须是显式降级，不得静默复用 v1：
 

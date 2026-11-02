@@ -24,7 +24,7 @@ const (
 // cannot be used as an input.
 type ForwardObservation struct {
 	Code         string              `json:"code"`
-	Sector       string              `json:"sector,omitempty"`
+	Sector       string              `json:"sector,omitempty"` // Deprecated input; calibration uses Estimate.Sector.
 	AsOf         string              `json:"as_of"`
 	FutureDate   string              `json:"future_date"`
 	CurrentPrice float64             `json:"current_price"`
@@ -101,10 +101,10 @@ func EvaluateBandCalibration(observations []ForwardObservation, minSample int) B
 		return date.Format("2006")
 	})
 	result.BySector = evaluateBandGroups(valid, minSample, func(observation ForwardObservation) string {
-		if strings.TrimSpace(observation.Sector) == "" {
+		if strings.TrimSpace(observation.Estimate.Sector) == "" {
 			return "unknown"
 		}
-		return observation.Sector
+		return strings.TrimSpace(observation.Estimate.Sector)
 	})
 	return result
 }
@@ -134,6 +134,9 @@ func validateForwardObservation(observation ForwardObservation) string {
 	if observation.Estimate.AsOf != observation.AsOf || observation.Estimate.Code != observation.Code {
 		return "estimate_identity_mismatch"
 	}
+	if observation.Sector != "" && observation.Estimate.Sector != "" && observation.Sector != observation.Estimate.Sector {
+		return "sector_snapshot_mismatch"
+	}
 	if math.Abs(observation.Estimate.CurrentPrice-observation.CurrentPrice) > 1e-9 {
 		return "estimate_current_price_mismatch"
 	}
@@ -150,7 +153,7 @@ func validateForwardObservation(observation ForwardObservation) string {
 	if normalized.InputDigest != observation.Estimate.InputDigest {
 		return "estimate_digest_mismatch"
 	}
-	recomputed := CalculateV3(config.Stock{Code: observation.Code, Sector: observation.Sector},
+	recomputed := CalculateV3(config.Stock{Code: observation.Code, Sector: observation.Estimate.Sector},
 		observation.CurrentPrice, observation.AsOf, normalized)
 	if err := recomputed.Validate(); err != nil || !recomputed.Available() {
 		return "unavailable_estimate"
@@ -163,7 +166,7 @@ func validateForwardObservation(observation ForwardObservation) string {
 
 func sameEstimate(left, right EstimateV3) bool {
 	if left.Version != right.Version || left.Code != right.Code || left.AsOf != right.AsOf ||
-		left.SourceVersion != right.SourceVersion || left.InputMode != right.InputMode ||
+		left.SourceVersion != right.SourceVersion || left.Sector != right.Sector || left.InputMode != right.InputMode ||
 		left.VisibilityMode != right.VisibilityMode || left.StatementBasis != right.StatementBasis ||
 		left.Confidence != right.Confidence || left.DataQuality != right.DataQuality || left.Reason != right.Reason ||
 		!slices.Equal(left.Warnings, right.Warnings) ||

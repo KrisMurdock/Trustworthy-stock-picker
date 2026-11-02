@@ -92,6 +92,11 @@ func Calculate(stock config.Stock, price float64, asOf string, snapshot market.F
 		out.Warnings = append(out.Warnings, "non_positive_earnings")
 		return out
 	}
+	if snapshot.BookValuePerShare <= 0 {
+		out.Reason = "最近报告每股净资产非正，市净率锚不可用"
+		out.Warnings = append(out.Warnings, "book_value_non_positive")
+		return out
+	}
 
 	out.GrowthKnown = snapshot.GrowthKnown
 	if snapshot.GrowthKnown && snapshot.EPSPrior > 0 {
@@ -99,11 +104,17 @@ func Calculate(stock config.Stock, price float64, asOf string, snapshot market.F
 	} else {
 		out.Warnings = append(out.Warnings, "prior_year_eps_missing")
 	}
-	if snapshot.BookValuePerShare > 0 {
-		out.ROEPct = snapshot.EPS / snapshot.BookValuePerShare * 100
-		out.PB = price / snapshot.BookValuePerShare
-	} else {
-		out.Warnings = append(out.Warnings, "book_value_non_positive")
+	out.ROEPct = snapshot.EPS / snapshot.BookValuePerShare * 100
+	out.PB = price / snapshot.BookValuePerShare
+	if out.ROEPct <= 0 || out.ROEPct > 50 {
+		out.Reason = "净资产收益率异常，财务相对估值不适用"
+		out.Warnings = append(out.Warnings, "abnormal_roe")
+		return out
+	}
+	if out.PB < 0.1 || out.PB > 20 {
+		out.Reason = "当前市净率异常，财务相对估值不适用"
+		out.Warnings = append(out.Warnings, "abnormal_pb")
+		return out
 	}
 	out.PE = price / snapshot.EPS
 
@@ -131,12 +142,14 @@ func Calculate(stock config.Stock, price float64, asOf string, snapshot market.F
 	width := 0.15 + math.Min(math.Abs(out.GrowthPct), 25)/100*0.20
 	out.UpsidePct = (out.Central/price - 1) * 100
 	out.Confidence = "medium"
-	if !snapshot.GrowthKnown || snapshot.BookValuePerShare <= 0 || out.ROEPct < 0 || out.ROEPct > 50 {
+	lowConfidence := !snapshot.GrowthKnown
+	if snapshot.EPSReconciliationNearTolerance() {
+		out.Warnings = append(out.Warnings, "eps_reconciliation_near_tolerance")
+		lowConfidence = true
+	}
+	if lowConfidence {
 		out.Confidence = "low"
 		width = math.Max(width, 0.30)
-	}
-	if out.ROEPct < 0 || out.ROEPct > 50 {
-		width = math.Max(width, 0.35)
 	}
 	out.Lower = out.Central * (1 - width)
 	out.Upper = out.Central * (1 + width)

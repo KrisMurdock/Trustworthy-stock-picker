@@ -52,7 +52,8 @@ func NormalizeWithMode(series Series, asOf string, mode VisibilityMode) Normaliz
 	if !mode.Valid() {
 		return unavailableNormalized(out, "invalid_visibility_mode")
 	}
-	if _, err := parseDate(asOf); err != nil {
+	asOfDate, err := parseDate(asOf)
+	if err != nil {
 		return unavailableNormalized(out, "invalid_as_of")
 	}
 	if mode == VisibilityVendorBackfill {
@@ -138,8 +139,8 @@ func NormalizeWithMode(series Series, asOf string, mode VisibilityMode) Normaliz
 	}
 
 	roeValues, averageEquities := annualROEs(visible, selected)
-	if len(roeValues) == 0 {
-		return unavailableNormalized(out, "no_valid_roe")
+	if len(roeValues) < MinWindowYears || len(averageEquities) < MinWindowYears {
+		return unavailableNormalized(out, "insufficient_roe_years")
 	}
 	out.ROEPct = median(roeValues)
 	out.AverageEquityMedian = median(averageEquities)
@@ -152,6 +153,13 @@ func NormalizeWithMode(series Series, asOf string, mode VisibilityMode) Normaliz
 	payouts := make([]float64, 0, len(selected))
 	for _, period := range selected {
 		if period.CashDividend == nil || period.NetProfit == nil || *period.NetProfit <= 0 {
+			continue
+		}
+		dividendAvailable, err := parseDate(period.CashDividendAvailableFrom)
+		if err != nil || dividendAvailable.After(asOfDate) {
+			if err == nil {
+				out.Warnings = appendWarning(out.Warnings, "payout_not_yet_visible")
+			}
 			continue
 		}
 		ratio := *period.CashDividend / *period.NetProfit * 100
@@ -254,7 +262,13 @@ func annualROEs(visible, selected []Period) ([]float64, []float64) {
 			continue
 		}
 		previous := visible[position-1]
-		if previous.Equity == nil {
+		if fiscalYear(previous.ReportEnd) != fiscalYear(period.ReportEnd)-1 {
+			// A missing annual report breaks the average-equity pair. Do not
+			// bridge across a gap and present a multi-year equity change as a
+			// single-year ROE.
+			continue
+		}
+		if previous.Equity == nil || *previous.Equity <= 0 || *period.Equity <= 0 {
 			continue
 		}
 		average := (*previous.Equity + *period.Equity) / 2

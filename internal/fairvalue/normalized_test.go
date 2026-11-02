@@ -21,8 +21,10 @@ func normalizedSeriesFixture(t *testing.T) fundamentals.Series {
 		periods = append(periods, fundamentals.Period{
 			SchemaVersion: fundamentals.Version, Code: "sh600519", Source: fundamentals.SourceTushare,
 			ReportEnd: fmt.Sprintf("%d-12-31", year), AnnouncementDate: announcement,
-			AvailableFrom: fmt.Sprintf("%d-04-02", year+1), StatementBasis: fundamentals.StatementAnnualConsolidated,
-			ReportType: "1", CompType: 1, UpdateFlag: 0, Revision: "v0", FetchedAt: fetched,
+			AvailableFrom:                fmt.Sprintf("%d-04-02", year+1),
+			CashDividendAnnouncementDate: announcement, CashDividendAvailableFrom: fmt.Sprintf("%d-04-02", year+1),
+			StatementBasis: fundamentals.StatementAnnualConsolidated,
+			ReportType:     "1", CompType: 1, UpdateFlag: 0, Revision: "v0", FetchedAt: fetched,
 			RowHash: fmt.Sprintf("row-%d", year), NetProfit: float64Ptr(100), Equity: float64Ptr(1000),
 			TotalShares: float64Ptr(100), CashDividend: float64Ptr(30),
 		})

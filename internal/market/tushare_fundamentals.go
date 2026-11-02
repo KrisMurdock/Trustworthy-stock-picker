@@ -129,12 +129,18 @@ func (c *TushareClient) FetchAnnualFundamentals(ctx context.Context, stock confi
 			announcementDate = maxFundamentalDate(announcementDate, cashflowRow.announcementDate)
 			updateFlag = maxInt(updateFlag, cashflowRow.updateFlag)
 		}
-		if dividend != nil {
-			announcementDate = maxFundamentalDate(announcementDate, dividend.announcementDate)
-		}
 		availableFrom, err := fundamentalAvailableFrom(announcementDate, nextTradingDay)
 		if err != nil {
 			return fundamentals.Series{}, err
+		}
+		cashDividendAnnouncementDate := ""
+		cashDividendAvailableFrom := ""
+		if dividend != nil {
+			cashDividendAnnouncementDate = dividend.announcementDate
+			cashDividendAvailableFrom, err = fundamentalAvailableFrom(cashDividendAnnouncementDate, nextTradingDay)
+			if err != nil {
+				return fundamentals.Series{}, err
+			}
 		}
 
 		revenue, err := optionalFundamentalNumber(incomeRow.raw, "revenue")
@@ -158,6 +164,10 @@ func (c *TushareClient) FetchAnnualFundamentals(ctx context.Context, stock confi
 		totalShares, err := optionalFundamentalNumber(balanceRow.raw, "total_share")
 		if err != nil {
 			return fundamentals.Series{}, err
+		}
+		if totalShares != nil {
+			converted := tushareWanSharesToShares(*totalShares)
+			totalShares = &converted
 		}
 		totalAssets, err := optionalFundamentalNumber(balanceRow.raw, "total_assets")
 		if err != nil {
@@ -184,33 +194,38 @@ func (c *TushareClient) FetchAnnualFundamentals(ctx context.Context, stock confi
 			cashDividend = cloneFundamentalNumber(dividend.total)
 			dividendRowsForHash = dividend.rows
 		}
+		if err := validateTushareEPSReconciliation(netProfit, basicEPS, totalShares); err != nil {
+			return fundamentals.Series{}, err
+		}
 		rowHash, err := annualFundamentalRowHash(incomeRow.raw, balanceRow.raw, cashflowRow.raw, hasCashflow, dividendRowsForHash)
 		if err != nil {
 			return fundamentals.Series{}, err
 		}
 		periods = append(periods, fundamentals.Period{
-			SchemaVersion:     fundamentals.Version,
-			Code:              stock.Code,
-			Source:            fundamentals.SourceTushare,
-			ReportEnd:         reportEnd,
-			AnnouncementDate:  announcementDate,
-			AvailableFrom:     availableFrom,
-			StatementBasis:    fundamentals.StatementAnnualConsolidated,
-			ReportType:        "1",
-			CompType:          incomeRow.compType,
-			UpdateFlag:        updateFlag,
-			Revision:          annualFundamentalRevision(incomeRow, balanceRow, cashflowRow, hasCashflow, dividend),
-			FetchedAt:         fetchedAt,
-			RowHash:           rowHash,
-			Revenue:           revenue,
-			NetProfit:         netProfit,
-			Equity:            equity,
-			OperatingCashFlow: operatingCashFlow,
-			TotalAssets:       totalAssets,
-			TotalLiabilities:  totalLiabilities,
-			TotalShares:       totalShares,
-			BasicEPS:          basicEPS,
-			CashDividend:      cashDividend,
+			SchemaVersion:                fundamentals.Version,
+			Code:                         stock.Code,
+			Source:                       fundamentals.SourceTushare,
+			ReportEnd:                    reportEnd,
+			AnnouncementDate:             announcementDate,
+			AvailableFrom:                availableFrom,
+			CashDividendAnnouncementDate: cashDividendAnnouncementDate,
+			CashDividendAvailableFrom:    cashDividendAvailableFrom,
+			StatementBasis:               fundamentals.StatementAnnualConsolidated,
+			ReportType:                   "1",
+			CompType:                     incomeRow.compType,
+			UpdateFlag:                   updateFlag,
+			Revision:                     annualFundamentalRevision(incomeRow, balanceRow, cashflowRow, hasCashflow, dividend),
+			FetchedAt:                    fetchedAt,
+			RowHash:                      rowHash,
+			Revenue:                      revenue,
+			NetProfit:                    netProfit,
+			Equity:                       equity,
+			OperatingCashFlow:            operatingCashFlow,
+			TotalAssets:                  totalAssets,
+			TotalLiabilities:             totalLiabilities,
+			TotalShares:                  totalShares,
+			BasicEPS:                     basicEPS,
+			CashDividend:                 cashDividend,
 		})
 	}
 	sort.Slice(periods, func(i, j int) bool { return periods[i].ReportEnd < periods[j].ReportEnd })
@@ -382,7 +397,7 @@ func aggregateAnnualDividends(rows []map[string]json.RawMessage, code string, re
 		if cashPerShare == nil || baseShares == nil {
 			continue
 		}
-		amount := *cashPerShare * *baseShares * 10000
+		amount := *cashPerShare * tushareWanSharesToShares(*baseShares)
 		if math.IsNaN(amount) || math.IsInf(amount, 0) || amount < 0 {
 			return nil, &DataError{Reason: "invalid_tushare_dividend_amount"}
 		}
@@ -393,6 +408,29 @@ func aggregateAnnualDividends(rows []map[string]json.RawMessage, code string, re
 		*aggregate.total += amount
 	}
 	return out, nil
+}
+
+func tushareWanSharesToShares(value float64) float64 {
+	return value * 10000
+}
+
+func validateTushareEPSReconciliation(netProfit, basicEPS, totalShares *float64) error {
+	if netProfit == nil || basicEPS == nil || totalShares == nil || *totalShares <= 0 {
+		return nil
+	}
+	implied := *basicEPS * *totalShares
+	if !finiteFundamentalNumber(implied) || !finiteFundamentalNumber(*netProfit) {
+		return &DataError{Reason: "invalid_tushare_fundamental_eps_reconciliation"}
+	}
+	tolerance := math.Max(math.Abs(*netProfit), math.Abs(implied)) * 0.25
+	if math.Abs(implied-*netProfit) > tolerance {
+		return &DataError{Reason: "inconsistent_tushare_fundamental_eps"}
+	}
+	return nil
+}
+
+func finiteFundamentalNumber(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func fundamentalAvailableFrom(announcementDate string, nextTradingDay NextTradingDayFunc) (string, error) {

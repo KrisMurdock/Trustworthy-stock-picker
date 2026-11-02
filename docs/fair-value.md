@@ -21,7 +21,7 @@ stock-watcher fair-value -code sh600519 [-as-of YYYY-MM-DD] [-visibility observe
 - `fair-value` 使用本地已保存的不复权 as-of 收盘价和 PIT 财务输出标准化输入与 v3 估值，不访问外部网络；默认 `observed`，历史重建必须显式传 `vendor_backfill`，该结果带警告和低置信度，不能进入滚动校准。
 - 滚动评估原语输出区间的实际覆盖率、平均宽度、方向命中、分位损失和年度/行业分层；少于最低样本时标记 `insufficient_data`。
 
-v3 公式为 `EPS_norm=年度归母净利润中位数/最新总股本`、`BVPS=最新归母权益/最新总股本`、`ROE_norm=年度归母净利润/平均归母权益的中位数`、`g=clamp(ROE_norm×(1-派息率), -2%, 6%)`，再代入 `PB=(ROE-g)/(r-g)`、`PE=PB/ROE`。缺少至少 5 年有效数据、派息证据、正盈利/净资产，或 `g>=ROE`、`r-g<1%` 时，结果必须暂缺，不补零、不退回 v1。
+v3 公式为 `EPS_norm=年度归母净利润中位数/最新总股本`、`BVPS=最新归母权益/最新总股本`、`ROE_norm=年度归母净利润/平均归母权益的中位数`、`g=clamp(ROE_norm×(1-派息率), -2%, 6%)`，再代入 `PB=(ROE-g)/(r-g)`、`PE=PB/ROE`。ROE 只使用相邻财年的平均净资产配对，至少需要 5 个有效 ROE（即至少 6 个年度报告）；缺少足够报表或派息证据、正盈利/净资产，或 `g>=ROE`、`r-g<1%` 时，结果必须暂缺，不补零、不退回 v1。
 
 ## 数据来源
 
@@ -39,11 +39,11 @@ https://finance.sina.com.cn/realstock/company/<code>/jsvar.js
 | `lastyear_mgsy` | 前一年每股收益 | 盈利同比增速 |
 | `mgjzc` | 最近报告每股净资产 | PB 估值与 ROE |
 | `profit_four` | 最近四季度净利润（亿元） | 与总股本交叉校验 EPS |
-| `totalcapital` | 总股本（万股） | 与净利润交叉校验 EPS |
+| `totalcapital` | 总股本（万股） | 适配层换算为股后与净利润交叉校验 EPS |
 | `stock_state` | 上市状态 | 只接受正常上市（`1`） |
 | `papercode` / `a_code` | 股票代码 | 防止页面与请求股票错配 |
 
-`fourQ_mgsy`、`stock_state`、股票代码和名称是必需字段；前一年 EPS、每股净资产、四季度净利润和总股本缺失时，估值会降级为低置信度或仅盈利倍数锚，而不是伪造数据。解析时仍会拒绝重复字段、非有限数值、代码不匹配和非正常上市状态；当净利润和总股本都存在时，还会用二者反推 EPS 与 `fourQ_mgsy` 交叉校验。该数据是财报口径，不是实时行情；同日多次同步可能得到相同快照。
+`fourQ_mgsy`、`stock_state`、股票代码和名称是必需字段；每股净资产缺失或非正时 v1 暂缺，不再退化为仅盈利倍数锚。前一年 EPS 缺失会把结果降为低置信度；四季度净利润或总股本缺失时跳过 EPS 交叉校验。解析时仍会拒绝重复字段、非有限数值、代码不匹配和非正常上市状态；当净利润和总股本都存在时，会用二者反推 EPS 与 `fourQ_mgsy` 交叉校验：绝对差超过 `max(0.10×|EPS|, 0.02)` 元时暂缺，处于 `max(0.05×|EPS|, 0.01)` 到硬阈值之间时保留原值但降为低置信度并展示告警。该数据是财报口径，不是实时行情；同日多次同步可能得到相同快照。
 
 ## 区间公式
 
@@ -72,7 +72,7 @@ growth_clamped = clamp(growth, -15, 35)
 
 ```text
 pe_price = E × FairPE
-pb_price = B × FairPB（B 或 ROE 不可用时退化为 pe_price）
+pb_price = B × FairPB（B 非正时结果暂缺，不再退化为 pe_price）
 central  = (pe_price + pb_price) / 2
 width    = 0.15 + min(|growth|, 25) / 100 × 0.20
 lower    = central × (1 - width)
@@ -80,7 +80,7 @@ upper    = central × (1 + width)
 upside   = (central / P - 1) × 100
 ```
 
-盈利增速绝对值越大，区间越宽；盈利增速缺失、每股净资产不可用、ROE 为负或异常偏高时，`confidence` 标记为 `low`，区间宽度至少扩大到 30%（ROE 异常时为 35%）。净资产不可用时退化为盈利倍数单锚，文章会明确写出“本次仅使用盈利倍数”。TTM EPS 非正、价格无效或快照校验失败时不生成区间，结果只保留明确的 `reason`，并在文章中显示“暂缺”。
+盈利增速绝对值越大，区间越宽；盈利增速缺失或 EPS 交叉校验接近容差时，`confidence` 标记为 `low`，区间宽度至少扩大到 30%。TTM EPS 非正、每股净资产非正、ROE 不在 `(0, 50%]`、当前 PB 不在 `[0.1, 20]`、价格无效或快照校验失败时不生成区间，结果只保留明确的 `reason`，并在文章中显示“暂缺”。
 
 ## 生成与保存
 

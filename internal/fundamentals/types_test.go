@@ -20,23 +20,25 @@ func testPeriod(year int, netProfit, equity, cashDividend *float64) Period {
 func testPeriodAvailable(year int, netProfit, equity, cashDividend *float64, announced, available, revision, rowHash string) Period {
 	fetched, _ := parseDate(available)
 	return Period{
-		SchemaVersion:    Version,
-		Code:             testCode,
-		Source:           SourceTushare,
-		ReportEnd:        fmt.Sprintf("%d-12-31", year),
-		AnnouncementDate: announced,
-		AvailableFrom:    available,
-		StatementBasis:   StatementAnnualConsolidated,
-		ReportType:       "1",
-		CompType:         1,
-		UpdateFlag:       0,
-		Revision:         revision,
-		FetchedAt:        fetched.Add(12 * time.Hour),
-		RowHash:          rowHash,
-		NetProfit:        netProfit,
-		Equity:           equity,
-		TotalShares:      number(1000),
-		CashDividend:     cashDividend,
+		SchemaVersion:                Version,
+		Code:                         testCode,
+		Source:                       SourceTushare,
+		ReportEnd:                    fmt.Sprintf("%d-12-31", year),
+		AnnouncementDate:             announced,
+		AvailableFrom:                available,
+		CashDividendAnnouncementDate: announced,
+		CashDividendAvailableFrom:    available,
+		StatementBasis:               StatementAnnualConsolidated,
+		ReportType:                   "1",
+		CompType:                     1,
+		UpdateFlag:                   0,
+		Revision:                     revision,
+		FetchedAt:                    fetched.Add(12 * time.Hour),
+		RowHash:                      rowHash,
+		NetProfit:                    netProfit,
+		Equity:                       equity,
+		TotalShares:                  number(1000),
+		CashDividend:                 cashDividend,
 	}
 }
 
@@ -198,6 +200,23 @@ func TestFundamentalDigestsCanonicalizeTimeZone(t *testing.T) {
 	}
 }
 
+func TestPeriodDigestIncludesDividendVisibility(t *testing.T) {
+	period := testPeriod(2023, number(10), number(100), number(3))
+	first, err := period.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	period.CashDividendAnnouncementDate = "2024-06-20"
+	period.CashDividendAvailableFrom = "2024-06-21"
+	second, err := period.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("dividend visibility was omitted from the period digest")
+	}
+}
+
 func TestSeriesRejectsFetchBeforePeriod(t *testing.T) {
 	series := seriesForYears(2019, 2023)
 	series.FetchedAt = series.Periods[0].FetchedAt.Add(-time.Second)
@@ -226,6 +245,16 @@ func TestPeriodValidateRejectsInvalidValues(t *testing.T) {
 		{name: "Inf equity", mutate: func(p *Period) { p.Equity = number(math.Inf(1)) }},
 		{name: "negative shares", mutate: func(p *Period) { p.TotalShares = number(-1) }},
 		{name: "negative dividend", mutate: func(p *Period) { p.CashDividend = number(-1) }},
+		{name: "dividend dates incomplete", mutate: func(p *Period) { p.CashDividendAvailableFrom = "" }},
+		{name: "dividend available not after announcement", mutate: func(p *Period) {
+			p.CashDividendAnnouncementDate = "2024-06-21"
+			p.CashDividendAvailableFrom = "2024-06-21"
+		}},
+		{name: "dividend without visibility", mutate: func(p *Period) {
+			p.CashDividend = number(1)
+			p.CashDividendAnnouncementDate = ""
+			p.CashDividendAvailableFrom = ""
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

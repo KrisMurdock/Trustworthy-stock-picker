@@ -72,6 +72,37 @@ var papercode = 'sh600519';
 	}
 }
 
+func TestSinaFundamentalSnapshotEPSReconciliationTolerance(t *testing.T) {
+	base := FundamentalSnapshot{
+		Version: 1, Code: "sh600519", Source: "sina", FetchedAt: time.Now().In(Shanghai),
+		EPS: 1, BookValuePerShare: 10, Shares: 100_000_000,
+		FinancialStatementBasis: "trailing_four_quarters",
+	}
+	tests := []struct {
+		name     string
+		ttmYi    float64
+		wantErr  bool
+		wantNear bool
+	}{
+		{name: "exact", ttmYi: 1.00},
+		{name: "near hard bound", ttmYi: 1.06, wantNear: true},
+		{name: "outside hard bound", ttmYi: 1.11, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := base
+			snapshot.TTMNetProfitYi = test.ttmYi
+			err := snapshot.Validate()
+			if (err != nil) != test.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr %v: %+v", err, test.wantErr, snapshot)
+			}
+			if got := snapshot.EPSReconciliationNearTolerance(); got != test.wantNear {
+				t.Fatalf("EPSReconciliationNearTolerance() = %v, want %v: %+v", got, test.wantNear, snapshot)
+			}
+		})
+	}
+}
+
 func TestSinaFundamentalsRejectMismatchedStock(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`

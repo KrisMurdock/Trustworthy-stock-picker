@@ -28,6 +28,7 @@ const (
 type EstimateV3 struct {
 	Version                int                         `json:"schema_version"`
 	Code                   string                      `json:"code"`
+	Sector                 string                      `json:"sector,omitempty"`
 	AsOf                   string                      `json:"as_of"`
 	Source                 string                      `json:"source"`
 	SourceVersion          string                      `json:"source_version"`
@@ -77,7 +78,7 @@ func (e EstimateV3) Available() bool {
 // calibration and release review.
 func CalculateV3(stock config.Stock, price float64, asOf string, normalized fundamentals.Normalized) EstimateV3 {
 	out := EstimateV3{
-		Version: VersionV3, Code: stock.Code, AsOf: asOf, Source: normalized.Source,
+		Version: VersionV3, Code: stock.Code, Sector: stock.Sector, AsOf: asOf, Source: normalized.Source,
 		SourceVersion: normalized.SourceVersion, InputMode: normalized.InputMode,
 		VisibilityMode: normalized.VisibilityMode,
 		Method:         MethodV3, StatementBasis: fundamentals.StatementAnnualConsolidated,
@@ -207,6 +208,9 @@ func (e EstimateV3) Validate() error {
 	}
 	if !e.VisibilityMode.Valid() {
 		return errors.New("invalid normalized fair value visibility mode")
+	}
+	if len([]rune(e.Sector)) > 128 {
+		return errors.New("normalized fair value sector is too long")
 	}
 	if e.VisibilityMode == fundamentals.VisibilityObserved && containsString(e.Warnings, "vendor_backfill_mode") {
 		return errors.New("observed fair value contains vendor backfill evidence")

@@ -42,34 +42,37 @@ type ScenarioV2 struct {
 // EstimateV2 is the schema-stable, residual-income valuation result. It is a
 // research band rather than a target price or a recommendation.
 type EstimateV2 struct {
-	Version              int          `json:"schema_version"`
-	Code                 string       `json:"code"`
-	AsOf                 string       `json:"as_of"`
-	Source               string       `json:"source"`
-	FetchedAt            time.Time    `json:"fetched_at"`
-	Method               string       `json:"method"`
-	StatementBasis       string       `json:"statement_basis"`
-	Confidence           string       `json:"confidence"`
-	DataQuality          string       `json:"data_quality"`
-	Reason               string       `json:"reason"`
-	Warnings             []string     `json:"warnings"`
-	CurrentPrice         float64      `json:"current_price"`
-	EPS                  float64      `json:"eps_ttm"`
-	BookValuePerShare    float64      `json:"book_value_per_share"`
-	GrowthPct            float64      `json:"eps_growth_pct"`
-	ROEPct               float64      `json:"roe_pct"`
-	CurrentPE            float64      `json:"current_pe"`
-	CurrentPB            float64      `json:"current_pb"`
-	SustainableGrowthPct float64      `json:"sustainable_growth_pct"`
-	PayoutPct            float64      `json:"payout_pct"`
-	CostOfEquityPct      float64      `json:"cost_of_equity_pct"`
-	FairPB               float64      `json:"fair_pb"`
-	FairPE               float64      `json:"fair_pe"`
-	Lower                float64      `json:"lower"`
-	Central              float64      `json:"central"`
-	Upper                float64      `json:"upper"`
-	UpsidePct            float64      `json:"upside_pct"`
-	Scenarios            []ScenarioV2 `json:"scenarios"`
+	Version              int       `json:"schema_version"`
+	Code                 string    `json:"code"`
+	AsOf                 string    `json:"as_of"`
+	Source               string    `json:"source"`
+	FetchedAt            time.Time `json:"fetched_at"`
+	Method               string    `json:"method"`
+	StatementBasis       string    `json:"statement_basis"`
+	Confidence           string    `json:"confidence"`
+	DataQuality          string    `json:"data_quality"`
+	Reason               string    `json:"reason"`
+	Warnings             []string  `json:"warnings"`
+	CurrentPrice         float64   `json:"current_price"`
+	EPS                  float64   `json:"eps_ttm"`
+	BookValuePerShare    float64   `json:"book_value_per_share"`
+	GrowthPct            float64   `json:"eps_growth_pct"`
+	ROEPct               float64   `json:"roe_pct"`
+	CurrentPE            float64   `json:"current_pe"`
+	CurrentPB            float64   `json:"current_pb"`
+	SustainableGrowthPct float64   `json:"sustainable_growth_pct"`
+	// ImpliedPayoutPct is algebraically implied by the bounded sustainable
+	// growth and ROE. It is not an observed cash-dividend payout; v3 carries
+	// the actual payout once point-in-time dividend data is available.
+	ImpliedPayoutPct float64      `json:"implied_payout_pct"`
+	CostOfEquityPct  float64      `json:"cost_of_equity_pct"`
+	FairPB           float64      `json:"fair_pb"`
+	FairPE           float64      `json:"fair_pe"`
+	Lower            float64      `json:"lower"`
+	Central          float64      `json:"central"`
+	Upper            float64      `json:"upper"`
+	UpsidePct        float64      `json:"upside_pct"`
+	Scenarios        []ScenarioV2 `json:"scenarios"`
 }
 
 func (e EstimateV2) Available() bool {
@@ -131,7 +134,7 @@ func CalculateV2(stock config.Stock, price float64, asOf string, snapshot market
 		out.Reason = "增长率不低于净资产收益率，无法生成有效剩余收益情景"
 		return out
 	}
-	out.PayoutPct = clamp((1-out.SustainableGrowthPct/out.ROEPct)*100, 0, 100)
+	out.ImpliedPayoutPct = clamp((1-out.SustainableGrowthPct/out.ROEPct)*100, 0, 100)
 	out.CostOfEquityPct = centralCostOfEquityPctV2
 
 	financial := isFinancialSector(stock.Sector)
@@ -290,7 +293,7 @@ func (e EstimateV2) Validate() error {
 	}
 	values := []float64{
 		e.CurrentPrice, e.EPS, e.BookValuePerShare, e.GrowthPct, e.ROEPct,
-		e.CurrentPE, e.CurrentPB, e.SustainableGrowthPct, e.PayoutPct,
+		e.CurrentPE, e.CurrentPB, e.SustainableGrowthPct, e.ImpliedPayoutPct,
 		e.CostOfEquityPct, e.FairPB, e.FairPE, e.Lower, e.Central, e.Upper, e.UpsidePct,
 	}
 	for _, value := range values {

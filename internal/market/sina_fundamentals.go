@@ -11,6 +11,13 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 )
 
+const (
+	sinaEPSHardRelativeTolerance    = 0.10
+	sinaEPSHardAbsoluteTolerance    = 0.02
+	sinaEPSCautionRelativeTolerance = 0.05
+	sinaEPSCautionAbsoluteTolerance = 0.01
+)
+
 // FundamentalSnapshot is the small, point-in-time financial surface used by
 // relative valuation. Sina's jsvar payload exposes trailing-four-quarter EPS,
 // prior-year EPS, book value per share and trailing net profit. The fields are
@@ -46,14 +53,35 @@ func (s FundamentalSnapshot) Validate() error {
 	if s.Shares < 0 || s.TTMNetProfitYi < 0 && s.EPS > 0 {
 		return &DataError{Reason: "invalid_sina_fundamental_value"}
 	}
-	if s.Shares > 0 && s.TTMNetProfitYi != 0 && s.EPS != 0 {
-		impliedEPS := s.TTMNetProfitYi * 100000000 / s.Shares
-		tolerance := math.Max(0.05, math.Abs(s.EPS)*0.20)
-		if math.Abs(impliedEPS-s.EPS) > tolerance {
+	if difference, ok := s.epsReconciliationDifference(); ok {
+		tolerance := math.Max(sinaEPSHardAbsoluteTolerance, math.Abs(s.EPS)*sinaEPSHardRelativeTolerance)
+		if difference > tolerance {
 			return &DataError{Reason: "inconsistent_sina_fundamental_eps"}
 		}
 	}
 	return nil
+}
+
+// EPSReconciliationNearTolerance reports that Sina's TTM EPS and the EPS
+// implied by trailing net profit and total shares are still within the hard
+// rejection bound, but close enough to warrant a displayed low-confidence
+// warning. The raw values remain available for audit.
+func (s FundamentalSnapshot) EPSReconciliationNearTolerance() bool {
+	difference, ok := s.epsReconciliationDifference()
+	if !ok {
+		return false
+	}
+	caution := math.Max(sinaEPSCautionAbsoluteTolerance, math.Abs(s.EPS)*sinaEPSCautionRelativeTolerance)
+	hard := math.Max(sinaEPSHardAbsoluteTolerance, math.Abs(s.EPS)*sinaEPSHardRelativeTolerance)
+	return difference > caution && difference <= hard
+}
+
+func (s FundamentalSnapshot) epsReconciliationDifference() (float64, bool) {
+	if s.Shares <= 0 || s.TTMNetProfitYi == 0 || s.EPS == 0 {
+		return 0, false
+	}
+	impliedEPS := s.TTMNetProfitYi * 100000000 / s.Shares
+	return math.Abs(impliedEPS - s.EPS), true
 }
 
 var sinaJSNumber = regexp.MustCompile(`(?m)^\s*var\s+(fourQ_mgsy|lastyear_mgsy|mgjzc|profit_four|totalcapital|stock_state)\s*=\s*([-+0-9.eE]+)\s*;`)

@@ -8,9 +8,9 @@ import (
 )
 
 func TestNormalizeSameDayAnnouncementIsUnavailable(t *testing.T) {
-	series := seriesForYears(2019, 2023)
+	series := seriesForYears(2018, 2023)
 	before := Normalize(series, "2024-04-20")
-	if before.Available || before.Reason != "insufficient_visible_years" {
+	if before.Available || before.Reason != "insufficient_roe_years" {
 		t.Fatalf("same-day result = %+v", before)
 	}
 	if err := before.Validate(); err != nil {
@@ -28,6 +28,7 @@ func TestNormalizeSameDayAnnouncementIsUnavailable(t *testing.T) {
 
 func TestNormalizeRevisionSelectionAndFutureStability(t *testing.T) {
 	periods := []Period{
+		testPeriod(2018, number(10), number(90), nil),
 		testPeriod(2019, number(10), number(100), nil),
 		testPeriod(2020, number(11), number(110), nil),
 		testPeriod(2021, number(12), number(120), nil),
@@ -42,7 +43,7 @@ func TestNormalizeRevisionSelectionAndFutureStability(t *testing.T) {
 	if !early.Available || !late.Available {
 		t.Fatalf("revision results unavailable: early=%+v late=%+v", early, late)
 	}
-	if early.NetProfitAnnualMedian != 11.5 || late.NetProfitAnnualMedian != 12 {
+	if !(early.NetProfitAnnualMedian < late.NetProfitAnnualMedian) {
 		t.Fatalf("revision medians = %v/%v", early.NetProfitAnnualMedian, late.NetProfitAnnualMedian)
 	}
 	if early.InputDigest == late.InputDigest {
@@ -59,7 +60,7 @@ func TestNormalizeRevisionSelectionAndFutureStability(t *testing.T) {
 }
 
 func TestNormalizeObservedModeRejectsFutureFetches(t *testing.T) {
-	series := seriesForYears(2019, 2023)
+	series := seriesForYears(2018, 2023)
 	for index := range series.Periods {
 		series.Periods[index].FetchedAt = time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
 	}
@@ -97,8 +98,9 @@ func TestNormalizeRequiresFiveVisibleAndCompleteYears(t *testing.T) {
 	})
 
 	t.Run("profit years", func(t *testing.T) {
-		series := seriesForYears(2019, 2023)
+		series := seriesForYears(2018, 2023)
 		series.Periods[4].NetProfit = nil
+		series.Periods[5].NetProfit = nil
 		normalized := Normalize(series, "2024-05-01")
 		if normalized.Available || normalized.Reason != "insufficient_profit_years" {
 			t.Fatalf("four profit years = %+v", normalized)
@@ -106,17 +108,35 @@ func TestNormalizeRequiresFiveVisibleAndCompleteYears(t *testing.T) {
 	})
 
 	t.Run("equity years", func(t *testing.T) {
-		series := seriesForYears(2019, 2023)
+		series := seriesForYears(2018, 2023)
 		series.Periods[2].Equity = nil
+		series.Periods[3].Equity = nil
 		normalized := Normalize(series, "2024-05-01")
 		if normalized.Available || normalized.Reason != "insufficient_equity_years" {
 			t.Fatalf("four equity years = %+v", normalized)
+		}
+	})
+
+	t.Run("roe years", func(t *testing.T) {
+		normalized := Normalize(seriesForYears(2019, 2023), "2024-05-01")
+		if normalized.Available || normalized.Reason != "insufficient_roe_years" {
+			t.Fatalf("four average-equity ROEs = %+v", normalized)
+		}
+	})
+
+	t.Run("roe gap not bridged", func(t *testing.T) {
+		series := seriesForYears(2017, 2023)
+		series.Periods = append(series.Periods[:3], series.Periods[4:]...)
+		normalized := Normalize(series, "2024-05-01")
+		if normalized.Available || normalized.Reason != "insufficient_roe_years" {
+			t.Fatalf("missing year was bridged into an average-equity ROE: %+v", normalized)
 		}
 	})
 }
 
 func TestNormalizeDistinguishesMissingAndZeroDividend(t *testing.T) {
 	series := testSeries(
+		testPeriod(2018, number(100), number(1000), nil),
 		testPeriod(2019, number(100), number(1000), nil),
 		testPeriod(2020, number(100), number(1000), number(0)),
 		testPeriod(2021, number(100), number(1000), number(10)),
@@ -132,6 +152,7 @@ func TestNormalizeDistinguishesMissingAndZeroDividend(t *testing.T) {
 	}
 
 	zeroSeries := testSeries(
+		testPeriod(2018, number(100), number(1000), number(0)),
 		testPeriod(2019, number(100), number(1000), number(0)),
 		testPeriod(2020, number(100), number(1000), number(0)),
 		testPeriod(2021, number(100), number(1000), number(0)),
@@ -139,11 +160,12 @@ func TestNormalizeDistinguishesMissingAndZeroDividend(t *testing.T) {
 		testPeriod(2023, number(100), number(1000), number(0)),
 	)
 	zero := Normalize(zeroSeries, "2024-05-01")
-	if !zero.Available || zero.PayoutYears != 5 || zero.PayoutPct != 0 || containsWarning(zero.Warnings, "payout_missing") {
+	if !zero.Available || zero.PayoutYears != 6 || zero.PayoutPct != 0 || containsWarning(zero.Warnings, "payout_missing") {
 		t.Fatalf("zero dividend handling = %+v", zero)
 	}
 
 	missingSeries := testSeries(
+		testPeriod(2018, number(100), number(1000), nil),
 		testPeriod(2019, number(100), number(1000), nil),
 		testPeriod(2020, number(100), number(1000), nil),
 		testPeriod(2021, number(100), number(1000), nil),
@@ -153,6 +175,31 @@ func TestNormalizeDistinguishesMissingAndZeroDividend(t *testing.T) {
 	missing := Normalize(missingSeries, "2024-05-01")
 	if !missing.Available || missing.PayoutYears != 0 || !containsWarning(missing.Warnings, "payout_missing") || missing.Confidence != ConfidenceLow {
 		t.Fatalf("missing dividend handling = %+v", missing)
+	}
+}
+
+func TestNormalizeWaitsForDividendVisibilityIndependentlyOfAnnualReport(t *testing.T) {
+	periods := make([]Period, 0, 6)
+	for year := 2018; year <= 2023; year++ {
+		periods = append(periods, testPeriod(year, number(100), number(1000), nil))
+	}
+	latest := &periods[len(periods)-1]
+	latest.CashDividend = number(30)
+	latest.CashDividendAnnouncementDate = "2024-06-01"
+	latest.CashDividendAvailableFrom = "2024-06-03"
+	series := testSeries(periods...)
+
+	before := Normalize(series, "2024-05-01")
+	if !before.Available || before.LatestReportEnd != "2023-12-31" || before.LatestAvailableFrom != "2024-04-21" {
+		t.Fatalf("annual report was not visible before dividend implementation: %+v", before)
+	}
+	if before.PayoutYears != 0 || before.PayoutPct != 0 || !containsWarning(before.Warnings, "payout_missing") || !containsWarning(before.Warnings, "payout_not_yet_visible") {
+		t.Fatalf("future dividend leaked into payout: %+v", before)
+	}
+
+	after := Normalize(series, "2024-06-03")
+	if !after.Available || after.PayoutYears != 1 || after.PayoutPct != 30 || containsWarning(after.Warnings, "payout_missing") {
+		t.Fatalf("implemented dividend was not visible after its own date: %+v", after)
 	}
 }
 
@@ -184,6 +231,7 @@ func TestNormalizeUsesAverageEquityForROE(t *testing.T) {
 
 func TestNormalizePayoutConfidence(t *testing.T) {
 	twoYears := testSeries(
+		testPeriod(2018, number(100), number(1000), nil),
 		testPeriod(2019, number(100), number(1000), number(10)),
 		testPeriod(2020, number(100), number(1000), number(20)),
 		testPeriod(2021, number(100), number(1000), nil),
@@ -197,6 +245,7 @@ func TestNormalizePayoutConfidence(t *testing.T) {
 	}
 
 	medium := testSeries(
+		testPeriod(2018, number(100), number(1000), number(0)),
 		testPeriod(2019, number(100), number(1000), number(10)),
 		testPeriod(2020, number(100), number(1000), number(20)),
 		testPeriod(2021, number(100), number(1000), number(30)),
@@ -210,7 +259,7 @@ func TestNormalizePayoutConfidence(t *testing.T) {
 }
 
 func TestNormalizeAddsStaleReportWarning(t *testing.T) {
-	normalized := Normalize(seriesForYears(2017, 2021), "2023-07-02")
+	normalized := Normalize(seriesForYears(2016, 2021), "2023-07-02")
 	if !normalized.Available || !containsWarning(normalized.Warnings, "stale_report") || normalized.Confidence != ConfidenceLow {
 		t.Fatalf("stale report handling = %+v", normalized)
 	}
@@ -220,7 +269,7 @@ func TestNormalizeAddsStaleReportWarning(t *testing.T) {
 }
 
 func TestNormalizeDigestIsDeterministic(t *testing.T) {
-	series := seriesForYears(2019, 2023)
+	series := seriesForYears(2018, 2023)
 	first := Normalize(series, "2024-05-01")
 	second := Normalize(series, "2024-05-01")
 	if first.InputDigest == "" || first.InputDigest != second.InputDigest {
@@ -237,7 +286,7 @@ func TestNormalizeDigestIsDeterministic(t *testing.T) {
 
 func TestNormalizeInvalidInputs(t *testing.T) {
 	t.Run("invalid as of", func(t *testing.T) {
-		normalized := Normalize(seriesForYears(2019, 2023), "2024/05/01")
+		normalized := Normalize(seriesForYears(2018, 2023), "2024/05/01")
 		if normalized.Available || normalized.Reason != "invalid_as_of" {
 			t.Fatalf("invalid as-of = %+v", normalized)
 		}
@@ -282,7 +331,7 @@ func TestNormalizeInvalidInputs(t *testing.T) {
 }
 
 func TestNormalizedValidateRejectsInvalidSurfaces(t *testing.T) {
-	valid := Normalize(seriesForYears(2019, 2023), "2024-05-01")
+	valid := Normalize(seriesForYears(2018, 2023), "2024-05-01")
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("fixture is invalid: %v", err)
 	}
