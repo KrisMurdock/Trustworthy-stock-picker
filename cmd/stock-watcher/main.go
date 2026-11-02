@@ -58,7 +58,7 @@ func run(args []string) error {
 	visibility := f.String("visibility", "observed", "fundamental visibility: observed or vendor_backfill (fair-value only)")
 	parent := f.String("parent", "", "parent experiment ID (experiment only)")
 	holdout := f.Bool("holdout", false, "consume the parent experiment's reserved holdout interval once (experiment only)")
-	policy := f.String("policy", "baseline", "conditional-{entry,rsi,macd,bollinger,confluence,all-three,guard,confluence-guard,chan-5-15-30}, baseline, upper-wick, risk-qualified or next-day-{baseline,upper-wick,low-volatility,pullback,breakout,momentum,volume-recovery,balanced,risk-qualified} (experiment only)")
+	policy := f.String("policy", "baseline", "conditional-{entry,rsi,macd,bollinger,confluence,all-three,guard,confluence-guard,chan-5-15-30}, baseline, upper-wick, risk-qualified, next-day-{baseline,upper-wick,low-volatility,pullback,breakout,momentum,volume-recovery,balanced,risk-qualified} or four-light-{all-red,flip-any,flip-all} (experiment only)")
 	from := f.String("from", "", "inclusive start date (experiment, sync-hk-minutes, backfill/index-minute sync)")
 	through := f.String("through", "", "inclusive end date (experiment or sync-hk-minutes; pair with -from)")
 	backfillWorkers := f.Int("workers", 3, "concurrent workers (backfill-minutes, sync-all, scan-low-valuation, scan-value-trapped, sync-hk-connect or sync-hk-minutes, 1..8)")

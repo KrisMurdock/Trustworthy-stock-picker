@@ -64,6 +64,7 @@ type Spec struct {
 	RequireEvidence bool                    `json:"require_risk_evidence,omitempty"`
 	MaxUpperWick    *float64                `json:"max_upper_wick,omitempty"`
 	NextDayRule     string                  `json:"next_day_rule,omitempty"`
+	FourLightRule   string                  `json:"four_light_rule,omitempty"`
 	EntryMode       string                  `json:"entry_mode,omitempty"`
 	SignalRule      string                  `json:"signal_rule,omitempty"`
 	Range           *strategy.BacktestRange `json:"signal_range,omitempty"`
@@ -124,6 +125,9 @@ func Specification(policy string) (Spec, error) {
 	}
 	if strings.HasPrefix(policy, "next-day-") {
 		return nextDaySpecification(strings.TrimPrefix(policy, "next-day-"))
+	}
+	if strings.HasPrefix(policy, "four-light-") {
+		return fourLightSpecification(strings.TrimPrefix(policy, "four-light-"))
 	}
 	s := Spec{Direction: "建立基线", Title: "现有机会排序 · 开发期基线", Hypothesis: "测量现有机会排序在同一数据快照上的目标触达、实际退出收益、风险与样本覆盖，作为后续对照。", Change: "沿用现有机会评分与证据规则，每个信号日选择前 N 名。", Criteria: "硬条件：每笔扣费后净亏损严格低于实际投入的 3%，等于 3% 也否决；未决交易不能视为达标。至少 30 个完整信号日和 30 笔完成交易后，按可卖出持仓窗口内最高价扣除成本及滑点是否触达 2.5%／3% 验证盈利机会，不要求收盘价达标；触达率越高、首次触达天数越短越好。固定 Top N 槽位不足按现金 0，数据未知使该信号日不完整。日内先止损还是先触达不明时单独标记且不计触达成功，触达不等于实际成交。实际退出平均净收益须为正；软指标相互退让时标为取舍，不抵消风险超限。仅作开发候选，最终区间未验证。"}
 	if policy == "baseline" {
@@ -323,7 +327,7 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 	if record.Spec.EntryMode == strategy.ConditionalEntryMode {
 		x, err = strategy.AnalyzeConditional(ctx, c, snapshot.Adjusted, snapshot.Raw, snapshot.Minutes, snapshot.AsOf, record.Spec.Range, record.Spec.SignalRule)
 	} else {
-		x, err = strategy.AnalyzeDevelopment(ctx, c, snapshot.Adjusted, snapshot.Raw, snapshot.AsOf, strategy.EntryPolicy{MaxUpperWick: record.Spec.MaxUpperWick, RequireEvidence: record.Spec.RequireEvidence, NextDayRule: record.Spec.NextDayRule, Range: record.Spec.Range})
+		x, err = strategy.AnalyzeDevelopment(ctx, c, snapshot.Adjusted, snapshot.Raw, snapshot.AsOf, strategy.EntryPolicy{MaxUpperWick: record.Spec.MaxUpperWick, RequireEvidence: record.Spec.RequireEvidence, NextDayRule: record.Spec.NextDayRule, FourLightRule: record.Spec.FourLightRule, Range: record.Spec.Range})
 	}
 	if err != nil {
 		return err
@@ -373,6 +377,11 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 	result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("开发期共 %d 个信号日期、%d 笔完成交易、%d 笔未决交易、%d 次跳过入场。", stats.Dates, stats.Resolved, stats.Unresolved, stats.SkippedEntries), []string{}})
 	if stats.HighTouchSamples > 0 {
 		result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("已确认持仓内最高价扣费后触达 2.5%% 的样本 %d 笔，触达 3%% 的样本 %d 笔；%d 笔退出日内先后顺序不明，%d 笔触达证据缺失或未决。触达与实际退出盈亏分别统计，不以收盘价判断目标触达。", stats.HighTouch25, stats.HighTouch30, stats.HighTouchAmbiguous, stats.HighTouchUnknown), []string{}})
+	}
+	if summary := x.Research.FourLight; summary != nil && record.Spec.FourLightRule != "" {
+		result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("四灯规则 %s：样本 %d 条、信号日 %d 个；当前 unknown %d 条（%.2f%%），上一交易日 unknown %d 条；当前四灯全红 %d 条，至少一灯转红 %d 条，四灯全部转红 %d 条。资金流字段 %d 条均为 unknown，未用成交量冒充。", record.Spec.FourLightRule, summary.Samples, summary.SignalDates, summary.UnknownCurrent, summary.UnknownRate*100, summary.UnknownPrevious, summary.AllRed, summary.FlipAny, summary.FlipAll, summary.MoneyFlowUnknown), []string{}})
+		result.Findings = append(result.Findings, Finding{"limitation", "四灯为基于本仓库价量特征的 shadow 代理，不是约牛或其他商业软件原版公式；实验不改变正式推荐。日线逐笔统计没有资金组合权益曲线，最差单笔净收益不等同账户最大回撤。", []string{}})
+		result.Next = append(result.Next, "冻结本轮规则后，只在预留区间复核四灯全红、转红数量与 unknown 比例；不得根据留出结果回改阈值或规则定义。", "只有相对 baseline 在样本量、净收益、风险与成交跳过率上同时改善，才讨论接入正式排序或通知。")
 	}
 	if len(evidence) > 0 {
 		result.Findings = append(result.Findings, Finding{"measured", "损失最大的已完成样本需要复查入场形态、跳空及止损执行。", evidence})
@@ -478,7 +487,7 @@ func EvaluateHoldout(ctx context.Context, snapshot Snapshot, record *Record, par
 			x.Research.Verdict = strategy.HoldoutVerdict(x.Research, record.Holdout.Contaminated)
 		}
 	} else {
-		policy := strategy.EntryPolicy{MaxUpperWick: parent.Spec.MaxUpperWick, RequireEvidence: parent.Spec.RequireEvidence, NextDayRule: parent.Spec.NextDayRule}
+		policy := strategy.EntryPolicy{MaxUpperWick: parent.Spec.MaxUpperWick, RequireEvidence: parent.Spec.RequireEvidence, NextDayRule: parent.Spec.NextDayRule, FourLightRule: parent.Spec.FourLightRule}
 		x, err = strategy.AnalyzeHoldout(ctx, c, snapshot.Adjusted, snapshot.Raw, snapshot.AsOf, policy, record.Holdout.From, record.Holdout.Through, record.Holdout.Contaminated)
 	}
 	if err != nil {

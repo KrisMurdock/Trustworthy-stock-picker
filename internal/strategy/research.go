@@ -30,6 +30,7 @@ type Sample struct {
 	Rules     []string
 	Outcomes  map[string]Outcome
 	NextDay   *NextDay
+	FourLight FourLightEvidence
 }
 type Stats struct {
 	Rule                 string             `json:"rule"`
@@ -105,24 +106,42 @@ type Evaluation struct {
 	LegacyTrend    Stats       `json:"legacy_trend_baseline"`
 }
 type Research struct {
-	Version          int              `json:"schema_version"`
-	Strategy         string           `json:"strategy"`
-	AsOf             string           `json:"as_of"`
-	Parameters       config.Strategy  `json:"parameters"`
-	TrainingThrough  string           `json:"training_label_through"`
-	Rules            []Stats          `json:"rule_statistics"`
-	Development      Evaluation       `json:"development"`
-	Holdout          Evaluation       `json:"holdout"`
-	ValidationPassed bool             `json:"holdout_validation_passed"`
-	SampleCount      int              `json:"sample_count"`
-	AvailableSamples int              `json:"available_samples"`
-	EvaluatedSamples int              `json:"evaluated_samples"`
-	AuditCandidates  int              `json:"audit_candidates"`
-	Calendar         CalendarCoverage `json:"calendar_coverage"`
-	Flags            []string         `json:"flags,omitempty"`
-	Verdict          string           `json:"verdict"`
-	Skipped          map[string]int   `json:"skipped_samples"`
-	Limitations      []string         `json:"limitations"`
+	Version          int               `json:"schema_version"`
+	Strategy         string            `json:"strategy"`
+	AsOf             string            `json:"as_of"`
+	Parameters       config.Strategy   `json:"parameters"`
+	TrainingThrough  string            `json:"training_label_through"`
+	Rules            []Stats           `json:"rule_statistics"`
+	Development      Evaluation        `json:"development"`
+	Holdout          Evaluation        `json:"holdout"`
+	ValidationPassed bool              `json:"holdout_validation_passed"`
+	SampleCount      int               `json:"sample_count"`
+	AvailableSamples int               `json:"available_samples"`
+	EvaluatedSamples int               `json:"evaluated_samples"`
+	AuditCandidates  int               `json:"audit_candidates"`
+	Calendar         CalendarCoverage  `json:"calendar_coverage"`
+	Flags            []string          `json:"flags,omitempty"`
+	Verdict          string            `json:"verdict"`
+	Skipped          map[string]int    `json:"skipped_samples"`
+	Limitations      []string          `json:"limitations"`
+	FourLight        *FourLightSummary `json:"four_light,omitempty"`
+}
+
+// FourLightSummary describes signal availability across the frozen sample set.
+// It is diagnostic only and never feeds the opportunity score or recommendation.
+type FourLightSummary struct {
+	Version          int     `json:"schema_version"`
+	Rule             string  `json:"rule"`
+	Samples          int     `json:"samples"`
+	SignalDates      int     `json:"signal_dates"`
+	UnknownCurrent   int     `json:"unknown_current"`
+	UnknownPrevious  int     `json:"unknown_previous"`
+	UnknownRate      float64 `json:"unknown_rate"`
+	AllRed           int     `json:"all_red"`
+	AllRedRate       float64 `json:"all_red_rate"`
+	FlipAny          int     `json:"flip_any"`
+	FlipAll          int     `json:"flip_all"`
+	MoneyFlowUnknown int     `json:"money_flow_unknown"`
 }
 
 type CalendarCoverage struct {
@@ -165,6 +184,7 @@ type Candidate struct {
 	Phase                     *PhaseEvidence          `json:"phase,omitempty"`
 	Chart                     *articlechart.Spec      `json:"article_chart,omitempty"`
 	Continuation              *ContinuationStats      `json:"continuation,omitempty"`
+	FourLight                 *FourLightEvidence      `json:"four_light,omitempty"`
 }
 
 // ScoreBreakdown records the arithmetic behind a candidate's opportunity
@@ -716,7 +736,7 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 				research.Skipped["outside_calendar"]++
 				continue
 			}
-			sample := Sample{Code: h.Code, Date: date, LabelEnds: map[string]string{}, Features: f, Outcomes: map[string]Outcome{}}
+			sample := Sample{Code: h.Code, Date: date, LabelEnds: map[string]string{}, Features: f, Outcomes: map[string]Outcome{}, FourLight: AnalyzeFourLight(h.Bars[:i+1])}
 			if next, err := cal.Next(date); err == nil && i+1 < len(r.Bars) && r.Bars[i+1].Date == next {
 				factor := h.Bars[i].Close / r.Bars[i].Close
 				rawFactor := h.Bars[i+1].Close / r.Bars[i+1].Close
@@ -773,6 +793,7 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 		samples[i].Features.Relative5 = samples[i].Features.Return5 - means[samples[i].Date]/float64(counts[samples[i].Date])
 		samples[i].Rules = Matches(samples[i].Features)
 	}
+	research.FourLight = summarizeFourLight(samples)
 	if experiment != nil {
 		if experiment.holdout {
 			holdoutDates := evaluationDates(samples, s.TargetNetPct, s.MaxHoldingDays, "", experiment.holdoutFrom, experiment.holdoutThrough)
@@ -780,6 +801,7 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 				return result, errors.New("no signal dates inside the reserved holdout interval")
 			}
 			research.Holdout = evaluateFiltered(ctx, samples, holdoutDates, s, experiment.holdoutFrom, c.Selection.TopN, experiment)
+			research.FourLight = summarizeFourLightRange(samples, research.Holdout.From, research.Holdout.Through)
 			research.Holdout.Method = "frozen_holdout"
 			research.AvailableSamples = len(samples)
 			research.EvaluatedSamples = research.Holdout.TopRanked.Samples
@@ -812,6 +834,7 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 		}
 		dates := evaluationDates(samples, s.TargetNetPct, s.MaxHoldingDays, experiment.boundary, "", "")
 		research.Development = evaluateFiltered(ctx, samples, dates, s, "", c.Selection.TopN, experiment)
+		research.FourLight = summarizeFourLightRange(samples, research.Development.From, research.Development.Through)
 		research.AvailableSamples = len(samples)
 		research.EvaluatedSamples = research.Development.TopRanked.Samples
 		research.SampleCount = research.AvailableSamples
@@ -854,6 +877,8 @@ func analyze(ctx context.Context, c config.Config, histories, raw []market.Histo
 				candidate.Wave = &wave
 				phase := AnalyzePhase(d.Adjusted.Bars, x.Features, &wave)
 				candidate.Phase = &phase
+				fourLight := AnalyzeFourLight(d.Adjusted.Bars)
+				candidate.FourLight = &fourLight
 				p, err := NewPlan(s, x.Code, signal.Close*(1+s.SlippageRate))
 				if err != nil {
 					candidate.Recommended = false
@@ -942,6 +967,50 @@ func evaluate(ctx context.Context, samples []Sample, dates []string, s config.St
 	return evaluateFiltered(ctx, samples, dates, s, frozen, topN, nil)
 }
 
+func summarizeFourLight(samples []Sample) *FourLightSummary {
+	return summarizeFourLightRange(samples, "", "")
+}
+
+func summarizeFourLightRange(samples []Sample, from, through string) *FourLightSummary {
+	if len(samples) == 0 {
+		return nil
+	}
+	allowed := from != "" || through != ""
+	summary := &FourLightSummary{Version: 1, Rule: FourLightRule}
+	dates := map[string]bool{}
+	for _, sample := range samples {
+		if allowed && (from == "" || sample.Date < from) || allowed && (through == "" || sample.Date > through) {
+			continue
+		}
+		summary.Samples++
+		evidence := sample.FourLight
+		dates[sample.Date] = true
+		if evidence.UnknownLights > 0 {
+			summary.UnknownCurrent++
+		}
+		if evidence.PreviousUnknown > 0 {
+			summary.UnknownPrevious++
+		}
+		if evidence.AllRed {
+			summary.AllRed++
+		}
+		if evidence.AllRed && evidence.FlipCount > 0 {
+			summary.FlipAny++
+		}
+		if evidence.AllRed && evidence.AllFlipped {
+			summary.FlipAll++
+		}
+		summary.MoneyFlowUnknown++
+	}
+	if summary.Samples == 0 {
+		return nil
+	}
+	summary.SignalDates = len(dates)
+	summary.UnknownRate = float64(summary.UnknownCurrent) / float64(summary.Samples)
+	summary.AllRedRate = float64(summary.AllRed) / float64(summary.Samples)
+	return summary
+}
+
 func evaluateFiltered(ctx context.Context, samples []Sample, dates []string, s config.Strategy, frozen string, topN int, experiment *developmentOptions) Evaluation {
 	e := Evaluation{Method: "purged_walk_forward", TopRanked: Stats{Rule: "top_ranked", Target: s.TargetNetPct, Horizon: s.MaxHoldingDays}, Recommended: Stats{Rule: "recommended", Target: s.TargetNetPct, Horizon: s.MaxHoldingDays}, PoolBaseline: Stats{Rule: "pool_baseline", Target: s.TargetNetPct, Horizon: s.MaxHoldingDays}, LegacyTrend: Stats{Rule: "legacy_trend", Target: s.TargetNetPct, Horizon: s.MaxHoldingDays}}
 	var frozenStats []Stats
@@ -1000,6 +1069,7 @@ func evaluateFiltered(ctx context.Context, samples []Sample, dates []string, s c
 			allowed := experiment == nil || experiment.maxUpperWick == nil || x.Features.UpperWick <= *experiment.maxUpperWick
 			allowed = allowed && (experiment == nil || !experiment.requireEvidence || x.Recommended)
 			allowed = allowed && (experiment == nil || matchesNextDay(experiment.nextDayRule, x.Features))
+			allowed = allowed && (experiment == nil || experiment.fourLightRule == "" || matchesFourLightRule(experiment.fourLightRule, sample.FourLight))
 			selected := allowed && picked < topN
 			if i < topN {
 				dayBaseline.add(out)
@@ -1010,7 +1080,12 @@ func evaluateFiltered(ctx context.Context, samples []Sample, dates []string, s c
 				picked++
 			}
 			if experiment != nil && (selected || i < topN) {
-				experiment.trades = append(experiment.trades, ExperimentTrade{ID: sample.Date + "/" + x.Code, Code: x.Code, Date: sample.Date, Rank: i + 1, Selected: selected, Features: sample.Features, Outcome: out})
+				trade := ExperimentTrade{ID: sample.Date + "/" + x.Code, Code: x.Code, Date: sample.Date, Rank: i + 1, Selected: selected, Features: sample.Features, Outcome: out}
+				if experiment.fourLightRule != "" {
+					evidence := sample.FourLight
+					trade.FourLight = &evidence
+				}
+				experiment.trades = append(experiment.trades, trade)
 			}
 			if allowed && x.Recommended && recommended < topN {
 				add(&e.Recommended, sample, out)

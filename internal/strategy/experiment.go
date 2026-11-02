@@ -13,15 +13,16 @@ import (
 // ExperimentTrade retains the exact signal features and simulated execution.
 // Selected=false records a rejected original top-N candidate for attribution.
 type ExperimentTrade struct {
-	ID        string        `json:"id"`
-	Code      string        `json:"code"`
-	Date      string        `json:"date"`
-	Rank      int           `json:"rank"`
-	Selected  bool          `json:"selected"`
-	Features  Features      `json:"features"`
-	Outcome   Outcome       `json:"outcome"`
-	EntryZone *EntryZone    `json:"entry_zone,omitempty"`
-	Chan      *ChanEvidence `json:"chan,omitempty"`
+	ID        string             `json:"id"`
+	Code      string             `json:"code"`
+	Date      string             `json:"date"`
+	Rank      int                `json:"rank"`
+	Selected  bool               `json:"selected"`
+	Features  Features           `json:"features"`
+	Outcome   Outcome            `json:"outcome"`
+	EntryZone *EntryZone         `json:"entry_zone,omitempty"`
+	Chan      *ChanEvidence      `json:"chan,omitempty"`
+	FourLight *FourLightEvidence `json:"four_light,omitempty"`
 }
 type DevelopmentResult struct {
 	Research       Research          `json:"research"`
@@ -42,6 +43,7 @@ type EntryPolicy struct {
 	MaxUpperWick    *float64
 	RequireEvidence bool
 	NextDayRule     string
+	FourLightRule   string
 	Range           *BacktestRange
 }
 
@@ -50,6 +52,7 @@ type developmentOptions struct {
 	maxUpperWick    *float64
 	requireEvidence bool
 	nextDayRule     string
+	fourLightRule   string
 	rangeFilter     *BacktestRange
 	holdout         bool
 	holdoutFrom     string
@@ -70,6 +73,9 @@ func AnalyzeDevelopment(ctx context.Context, c config.Config, histories, raw []m
 	}
 	if !validNextDayRule(policy.NextDayRule) {
 		return result, errors.New("unknown next-day entry rule")
+	}
+	if !validFourLightRule(policy.FourLightRule) {
+		return result, errors.New("unknown four-light entry rule")
 	}
 	horizon := c.Strategy.MaxHoldingDays
 	if policy.NextDayRule != "" {
@@ -116,7 +122,7 @@ func AnalyzeDevelopment(ctx context.Context, c config.Config, histories, raw []m
 	if policy.NextDayRule != "" {
 		c.Strategy.MaxHoldingDays = 1
 	}
-	options := &developmentOptions{boundary: result.HoldoutFrom, maxUpperWick: policy.MaxUpperWick, requireEvidence: policy.RequireEvidence, nextDayRule: policy.NextDayRule, rangeFilter: policy.Range, trades: []ExperimentTrade{}}
+	options := &developmentOptions{boundary: result.HoldoutFrom, maxUpperWick: policy.MaxUpperWick, requireEvidence: policy.RequireEvidence, nextDayRule: policy.NextDayRule, fourLightRule: policy.FourLightRule, rangeFilter: policy.Range, trades: []ExperimentTrade{}}
 	x, err := analyze(ctx, c, histories, raw, asof, options)
 	if err != nil {
 		return result, err
@@ -145,6 +151,9 @@ func AnalyzeHoldout(ctx context.Context, c config.Config, histories, raw []marke
 	if !validNextDayRule(policy.NextDayRule) {
 		return result, errors.New("unknown next-day entry rule")
 	}
+	if !validFourLightRule(policy.FourLightRule) {
+		return result, errors.New("unknown four-light entry rule")
+	}
 	data, err := datasets(c, histories, raw, asof)
 	if err != nil {
 		return result, err
@@ -158,7 +167,7 @@ func AnalyzeHoldout(ctx context.Context, c config.Config, histories, raw []marke
 	}
 	options := &developmentOptions{
 		maxUpperWick: policy.MaxUpperWick, requireEvidence: policy.RequireEvidence,
-		nextDayRule: policy.NextDayRule, holdout: true, holdoutFrom: from,
+		nextDayRule: policy.NextDayRule, fourLightRule: policy.FourLightRule, holdout: true, holdoutFrom: from,
 		holdoutThrough: through, contaminated: contaminated, trades: []ExperimentTrade{},
 	}
 	x, err := analyze(ctx, c, histories, raw, asof, options)

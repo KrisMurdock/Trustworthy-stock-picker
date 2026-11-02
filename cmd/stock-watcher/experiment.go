@@ -15,6 +15,8 @@ import (
 	"time"
 )
 
+const experimentSaveTimeout = 30 * time.Second
+
 // The experiment path never constructs market providers or notification clients.
 func runExperiment(ctx context.Context, c config.Config, asof, parentID, policy string, log *logging.Logger, ranges ...*strategy.BacktestRange) error {
 	spec, err := experiment.Specification(policy)
@@ -146,7 +148,7 @@ func runExperiment(ctx context.Context, c config.Config, asof, parentID, policy 
 		log.Warn("Development experiment failed", "experiment_id", record.ID, "error", evaluationErr)
 	}
 	// Persist cancellation with a fresh bounded context while releasing resources.
-	saveCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+	saveCtx, stop := context.WithTimeout(context.Background(), experimentSaveTimeout)
 	defer stop()
 	if err = db.Finish(saveCtx, record); err != nil {
 		return err
@@ -211,7 +213,7 @@ func runHoldout(ctx context.Context, c config.Config, parentID string, log *logg
 		record.FinishedAt = &now
 		log.Warn("Holdout experiment failed", "experiment_id", record.ID, "error", evaluationErr)
 	}
-	saveCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+	saveCtx, stop := context.WithTimeout(context.Background(), experimentSaveTimeout)
 	defer stop()
 	if err = db.Finish(saveCtx, record); err != nil {
 		return err

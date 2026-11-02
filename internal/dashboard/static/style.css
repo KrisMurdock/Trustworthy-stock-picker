@@ -255,6 +255,7 @@ th button:hover, th[aria-sort="ascending"], th[aria-sort="descending"] { color: 
 .reason-list { list-style: none; padding: 0; margin: 0; color: #B4C0BC; font-family: var(--sans); font-size: 11px; line-height: 1.9; overflow-wrap: anywhere; }
 .risk-list { color: var(--copper); }
 .rule-caption { color: var(--muted); font-family: var(--sans); font-size: 10px; margin-top: 4px; overflow-wrap: anywhere; }
+.four-light-evidence { color: var(--jade); border-left: 2px solid rgba(117, 191, 164, .45); padding-left: 8px; }
 .state-detail { display: block; max-width: 180px; margin-top: 4px; color: var(--muted); font-family: var(--sans); font-size: 10px; white-space: normal; overflow-wrap: anywhere; }
 .panel-footer { border-top: 1px solid var(--line); padding: 12px 24px; display: flex; justify-content: space-between; gap: 8px 20px; flex-wrap: wrap; color: var(--muted); font-size: 10px; }
 .market-legend { display: flex; gap: 15px; color: var(--muted); font-size: 10px; white-space: nowrap; }
