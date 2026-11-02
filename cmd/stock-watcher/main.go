@@ -14,6 +14,8 @@ import (
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/channels"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/fairvalue"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/health"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkconnect"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkrecommend"
@@ -333,6 +335,9 @@ func run(args []string) error {
 		return err
 	}
 	defer source.Close()
+	fairValueClient := market.NewSinaClient(config.Duration(c.Timeout), config.Duration(c.Market.RequestInterval))
+	fairValueClient.Endpoint = c.Market.SinaEndpoint
+	defer fairValueClient.Close()
 	noticeChannels, closeChannels, err := channels.Build(c)
 	if err != nil {
 		return err
@@ -353,6 +358,7 @@ func run(args []string) error {
 	turnoverClient := market.NewSohuMetricsClient(20*time.Second, 350*time.Millisecond)
 	defer turnoverClient.Close()
 	m.TurnoverSource = turnoverClient
+	m.FairValues = fairvalue.NewEstimator(fairValueClient)
 	if (command == "sync" || command == "once") && c.MarketContext.Enabled {
 		ctxRuntime, err := openMarketContextRuntime(c, log)
 		if err != nil {

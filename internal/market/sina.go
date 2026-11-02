@@ -32,6 +32,7 @@ func (c *SinaClient) get(ctx context.Context, code, path string) ([]byte, error)
 		return nil, &Failure{Status: 400, Kind: "request"}
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 stock-watcher/1.0")
+	req.Header.Set("Referer", "https://finance.sina.com.cn/")
 	if err := c.pacer.wait(ctx); err != nil {
 		return nil, err
 	}

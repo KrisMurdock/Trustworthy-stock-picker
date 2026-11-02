@@ -449,7 +449,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | 5 分钟预测 | [5 分钟价格预测](docs/minute-predictor.md) · [close L1 损失评估](docs/predictor-l1-loss-evaluation.md) |
 | 全天高低价预测 | [开发路线与当前边界](docs/dayrange-roadmap.md) · [评估指标契约](docs/dayrange-evaluation.md) |
 | 指数方向信号 | [模型口径、周内统计与限制](docs/market-signal.md) |
-| 研究与工具 | [单股价格策略](docs/单股价格策略.md) · [底部形态](docs/bottom-signals.md) |
+| 研究与工具 | [个股合理价值区间](docs/fair-value.md) · [单股价格策略](docs/单股价格策略.md) · [底部形态](docs/bottom-signals.md) |
 | 容器 | [Compose 部署与升级](docker/README.md) |
 
 ## 已知边界

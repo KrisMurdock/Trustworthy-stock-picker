@@ -69,7 +69,7 @@ func BuildPremarketArticle(input PremarketArticleInput) (notify.Message, bool, e
 	}
 	reportCopy := premarketReportCopy(input)
 	title := fmt.Sprintf("盘前观察｜%s 全天高低与执行确认", articleMonthDay(input.TargetDate))
-	digest := fmt.Sprintf("%s盘前：%d只候选附全天高低点、执行状态与缠论/波浪结构图。研究观察，不构成投资建议。", articleMonthDay(input.TargetDate), len(rows))
+	digest := fmt.Sprintf("%s盘前：%d只候选附全天高低点、执行状态、合理价值区间与缠论/波浪结构图。研究观察，不构成投资建议。", articleMonthDay(input.TargetDate), len(rows))
 	chartCandidates := make([]*strategy.Candidate, 0, len(rows))
 	for _, row := range rows {
 		chartCandidates = append(chartCandidates, row.observation)
@@ -225,6 +225,7 @@ func premarketArticleBody(input PremarketArticleInput, r selection.Report, rows 
 	out.WriteString("## 方法与边界\n\n")
 	out.WriteString("- **高低预测**：参考价取上一完成交易日不复权收盘；高点、低点分别为点估计，区间是各自的名义边际区间，不是高、低联合覆盖。\n")
 	out.WriteString("- **执行状态**：只比较已保存的盘前预测与参考计划。可执行要求为正式推荐且预测高低覆盖净目标与止损；观察表示无正式推荐或可能先触止损；放弃表示预测高不足以覆盖净目标。\n")
+	out.WriteString("- **合理价值区间**：以最近四季度 EPS 对应盈利倍数和每股净资产对应净资产倍数各占一半，倍数按 TTM ROE 与盈利增速调整；只作财务研究参考，不是目标价或收益预测。\n")
 	out.WriteString("- **技术指标**：MA、RSI、MACD、BOLL、ATR、量比只描述当前状态，不把单一指标交叉当作交易信号。\n")
 	out.WriteString("- **缠论结构**：采用包含关系处理、严格分型、完成笔和笔重叠区；笔重叠区不是严格缠论中枢。\n")
 	out.WriteString("- **波浪视角**：只依据完成笔方向、回撤比例、均线方向和区间位置作启发式描述，不是严格艾略特浪级计数。\n")
@@ -243,6 +244,7 @@ func writePremarketDetail(out *strings.Builder, r selection.Report, row premarke
 	writePremarketHeading(out, row)
 	writeArticleChart(out, row.observation)
 	writePremarketStatus(out, row)
+	writeArticleFairValue(out, r, row.code)
 	out.WriteString("#### 全天高低预测\n")
 	for _, line := range premarketForecastLines(row) {
 		out.WriteString("- **" + line.label + "**：" + line.value + "\n")
@@ -258,6 +260,7 @@ func writePremarketBrief(out *strings.Builder, r selection.Report, row premarket
 	writePremarketHeading(out, row)
 	writeArticleChart(out, row.observation)
 	writePremarketStatus(out, row)
+	out.WriteString("- **合理价值区间**：" + articleFairValueSummary(r, row.code) + "。\n")
 	forecast := make([]string, 0, len(premarketForecastLines(row)))
 	for _, line := range premarketForecastLines(row) {
 		forecast = append(forecast, line.label+" "+line.value)

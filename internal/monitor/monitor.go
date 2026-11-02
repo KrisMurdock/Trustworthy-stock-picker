@@ -10,6 +10,7 @@ import (
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/calendar"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/fairvalue"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkrecommend"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
@@ -61,11 +62,16 @@ type Monitor struct {
 	DayRangeForecasts  func(context.Context, string, []string) (map[string]selection.DayRangeForecast, error)
 	HKRecommendations  func(context.Context) (hkrecommend.Recommendation, error)
 	TurnoverSource     TurnoverSource
+	FairValues         FairValueSource
 	Channels           []notify.Channel
 	Log                *logging.Logger
 	Calendar           *calendar.Calendar
 	Now                func() time.Time
 	secondStagePending bool
+}
+
+type FairValueSource interface {
+	Estimate(context.Context, config.Stock, float64, string) (fairvalue.Estimate, error)
 }
 
 func New(c config.Config, s *storage.Store, source Source, channels []notify.Channel, log *logging.Logger) *Monitor {
@@ -552,6 +558,7 @@ func (m *Monitor) Sync(ctx context.Context, asof string) (report selection.Repor
 	if err != nil {
 		return report, err
 	}
+	m.enrichFairValues(ctx, &report)
 	run.FinishedAt = m.Now()
 	if durable {
 		if err := m.Market.CommitAnalysis(ctx, run, items, report); err != nil {

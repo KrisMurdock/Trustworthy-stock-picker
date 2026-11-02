@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/fairvalue"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"io/fs"
@@ -32,7 +33,8 @@ func TestMarketDBCommitReadAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	report := selection.Report{Version: 1, ID: "event-1", AsOf: "2026-10-13", Target: "2026-10-14", GeneratedAt: time.Now(), Strategy: "leader_daily_v1", Adjust: "qfq"}
+	report := selection.Report{Version: 1, ID: "event-1", AsOf: "2026-10-13", Target: "2026-10-14", GeneratedAt: time.Now(), Strategy: "leader_daily_v1", Adjust: "qfq",
+		FairValues: map[string]fairvalue.Estimate{"sz000001": {Version: fairvalue.Version, Code: "sz000001", AsOf: "2026-10-13", Method: fairvalue.Method, Lower: 9, Central: 10, Upper: 11}}}
 	h := dbHistory("sz000001", "qfq", "qfqday")
 	run := SyncRun{ID: "run-1", AsOf: h.AsOf, StartedAt: h.FetchedAt.Add(-time.Minute), FinishedAt: h.FetchedAt, CoveragePct: 100}
 	if err := db.CommitSnapshot(context.Background(), run, []SyncItem{{Stock: config.Stock{Code: h.Code, Name: h.Name}, Adjusted: &h, Status: "ok"}}, report); err != nil {
@@ -48,6 +50,9 @@ func TestMarketDBCommitReadAndRollback(t *testing.T) {
 	got, err := db.LoadReport(context.Background(), h.AsOf)
 	if err != nil || got.ID != report.ID {
 		t.Fatalf("load report: %v %+v", err, got)
+	}
+	if got.FairValues["sz000001"].Central != 10 || got.FairValues["sz000001"].Method != fairvalue.Method {
+		t.Fatalf("fair value snapshot was not persisted: %+v", got.FairValues)
 	}
 	if _, err := db.LatestRun(context.Background(), h.AsOf); err != nil {
 		t.Fatal(err)

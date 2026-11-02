@@ -15,6 +15,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/dashboard"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/dayrange"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/fairvalue"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkconnect"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkrecommend"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/intraday"
@@ -68,26 +69,27 @@ var (
 type Runtime struct {
 	mu sync.Mutex
 
-	config         config.Config
-	version        string
-	log            *Logger
-	store          *storage.Store
-	marketDB       *storage.MarketDB
-	dayRangeDB     *storage.DayRangeDB
-	contextDB      *storage.ContextDB
-	contextClient  *marketcontext.Client
-	contextSyncer  *marketcontext.Syncer
-	sources        *market.Sources
-	channels       []notify.Channel
-	closeChannels  func()
-	monitor        *monitor.Monitor
-	minuteClient   *market.MinuteClient
-	turnoverClient *market.SohuMetricsClient
-	minuteMonitor  *intraday.Monitor
-	predictor      *predictor.Monitor
-	dayRange       *dayrange.Service
-	dashboard      http.Handler
-	runMonitor     func(context.Context) error
+	config          config.Config
+	version         string
+	log             *Logger
+	store           *storage.Store
+	marketDB        *storage.MarketDB
+	dayRangeDB      *storage.DayRangeDB
+	contextDB       *storage.ContextDB
+	contextClient   *marketcontext.Client
+	contextSyncer   *marketcontext.Syncer
+	sources         *market.Sources
+	fairValueClient *market.SinaClient
+	channels        []notify.Channel
+	closeChannels   func()
+	monitor         *monitor.Monitor
+	minuteClient    *market.MinuteClient
+	turnoverClient  *market.SohuMetricsClient
+	minuteMonitor   *intraday.Monitor
+	predictor       *predictor.Monitor
+	dayRange        *dayrange.Service
+	dashboard       http.Handler
+	runMonitor      func(context.Context) error
 
 	running    bool
 	cancel     context.CancelFunc
@@ -214,6 +216,8 @@ func New(opts Options) (*Runtime, error) {
 		return nil, err
 	}
 	r.sources = sources
+	r.fairValueClient = market.NewSinaClient(config.Duration(cfg.Timeout), config.Duration(cfg.Market.RequestInterval))
+	r.fairValueClient.Endpoint = cfg.Market.SinaEndpoint
 	noticeChannels, closeChannels, err := channels.Build(cfg)
 	if err != nil {
 		return nil, err
@@ -234,6 +238,7 @@ func New(opts Options) (*Runtime, error) {
 	}
 	r.turnoverClient = market.NewSohuMetricsClient(20*time.Second, 350*time.Millisecond)
 	r.monitor.TurnoverSource = r.turnoverClient
+	r.monitor.FairValues = fairvalue.NewEstimator(r.fairValueClient)
 	if r.contextSyncer != nil {
 		r.monitor.MarketContextSync = func(ctx context.Context, day string) (marketcontext.SyncResult, error) {
 			result, err := r.contextSyncer.ForDate(ctx, day)
@@ -499,6 +504,10 @@ func (r *Runtime) release() error {
 	if r.contextClient != nil {
 		r.contextClient.Close()
 		r.contextClient = nil
+	}
+	if r.fairValueClient != nil {
+		r.fairValueClient.Close()
+		r.fairValueClient = nil
 	}
 	if r.sources != nil {
 		r.sources.Close()
