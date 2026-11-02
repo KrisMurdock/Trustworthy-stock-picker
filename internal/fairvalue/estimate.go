@@ -48,6 +48,7 @@ type Estimate struct {
 	PB                float64   `json:"current_pb,omitempty"`
 	FairPE            float64   `json:"fair_pe,omitempty"`
 	FairPB            float64   `json:"fair_pb,omitempty"`
+	BookValueAnchored bool      `json:"book_value_anchored"`
 	Lower             float64   `json:"lower,omitempty"`
 	Central           float64   `json:"central,omitempty"`
 	Upper             float64   `json:"upper,omitempty"`
@@ -102,8 +103,8 @@ func Calculate(stock config.Stock, price float64, asOf string, snapshot market.F
 		return out
 	}
 	if snapshot.EPS <= 0 {
-		out.Reason = "最近四季度每股收益为负，盈利与净资产相对估值不适用"
-		out.Warnings = append(out.Warnings, "negative_earnings")
+		out.Reason = "最近四季度每股收益非正，盈利与净资产相对估值不适用"
+		out.Warnings = append(out.Warnings, "non_positive_earnings")
 		return out
 	}
 
@@ -125,30 +126,35 @@ func Calculate(stock config.Stock, price float64, asOf string, snapshot market.F
 	growth := clamp(out.GrowthPct, -15, 35)
 	quality := clamp(out.ROEPct-8, -8, 25)
 	if financial {
-		out.FairPE = clamp(5, 10, 5.5+0.15*growth+0.20*quality)
+		out.FairPE = clamp(5.5+0.15*growth+0.20*quality, 5, 10)
 	} else {
-		out.FairPE = clamp(8, 30, 11+0.35*growth+0.45*quality)
+		out.FairPE = clamp(11+0.35*growth+0.45*quality, 8, 30)
 	}
 	pePrice := snapshot.EPS * out.FairPE
 
 	pbPrice := pePrice
 	if snapshot.BookValuePerShare > 0 && out.ROEPct > 0 {
 		if financial {
-			out.FairPB = clamp(0.35, 1.20, out.ROEPct/15)
+			out.FairPB = clamp(0.70+0.03*(clamp(out.ROEPct, 0, 30)-8), 0.40, 1.50)
 		} else {
-			out.FairPB = clamp(0.50, 8, out.ROEPct/5)
+			out.FairPB = clamp(1.50+0.12*(clamp(out.ROEPct, 0, 40)-8), 0.80, 6.0)
 		}
 		pbPrice = snapshot.BookValuePerShare * out.FairPB
+		out.BookValueAnchored = true
 	}
 	out.Central = (pePrice + pbPrice) / 2
 	width := 0.15 + math.Min(math.Abs(out.GrowthPct), 25)/100*0.20
-	out.Lower = out.Central * (1 - width)
-	out.Upper = out.Central * (1 + width)
 	out.UpsidePct = (out.Central/price - 1) * 100
 	out.Confidence = "medium"
 	if !snapshot.GrowthKnown || snapshot.BookValuePerShare <= 0 || out.ROEPct < 0 || out.ROEPct > 50 {
 		out.Confidence = "low"
+		width = math.Max(width, 0.30)
 	}
+	if out.ROEPct < 0 || out.ROEPct > 50 {
+		width = math.Max(width, 0.35)
+	}
+	out.Lower = out.Central * (1 - width)
+	out.Upper = out.Central * (1 + width)
 	if !finite(out.Lower) || !finite(out.Central) || !finite(out.Upper) || out.Lower <= 0 || out.Central <= 0 || out.Upper <= 0 {
 		return Estimate{Version: Version, Code: stock.Code, AsOf: asOf, Source: snapshot.Source,
 			FetchedAt: snapshot.FetchedAt, Method: Method, Reason: "估值计算结果无效"}

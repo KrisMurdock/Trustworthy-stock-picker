@@ -15,7 +15,7 @@ import (
 func testSnapshot() market.FundamentalSnapshot {
 	return market.FundamentalSnapshot{
 		Version: 1, Code: "sh600519", Source: "sina", FetchedAt: time.Date(2026, 10, 31, 9, 0, 0, 0, time.UTC),
-		EPS: 1, EPSPrior: 0.8, BookValuePerShare: 10, TTMNetProfitCNY: 0.0001, Shares: 10000,
+		EPS: 1, EPSPrior: 0.8, BookValuePerShare: 10, TTMNetProfitYi: 0.0001, Shares: 10000,
 		GrowthKnown: true, FinancialStatementBasis: "trailing_four_quarters",
 	}
 }
@@ -32,7 +32,7 @@ func TestCalculateProducesOrderedResearchBand(t *testing.T) {
 	if math.Abs(estimate.GrowthPct-25) > 1e-9 || math.Abs(estimate.ROEPct-10) > 1e-9 || math.Abs(estimate.PE-20) > 1e-9 || math.Abs(estimate.PB-2) > 1e-9 {
 		t.Fatalf("unexpected multiples: %+v", estimate)
 	}
-	if estimate.FairPE < 20 || estimate.FairPB < 1.9 || estimate.Confidence != "medium" {
+	if estimate.FairPE < 20 || estimate.FairPE > 30 || estimate.FairPB < 1.5 || estimate.FairPB > 6 || estimate.Confidence != "medium" {
 		t.Fatalf("unexpected fair multiples: %+v", estimate)
 	}
 }
@@ -41,7 +41,7 @@ func TestCalculateUsesFinancialSectorCaps(t *testing.T) {
 	snapshot := testSnapshot()
 	snapshot.Code = "sh600000"
 	estimate := Calculate(config.Stock{Code: snapshot.Code, Sector: "股份制银行"}, 5, "2026-10-31", snapshot)
-	if !estimate.Available() || estimate.FairPE > 10 || estimate.FairPB > 1.2 {
+	if !estimate.Available() || estimate.FairPE < 5 || estimate.FairPE > 10 || estimate.FairPB < 0.4 || estimate.FairPB > 1.2 {
 		t.Fatalf("financial caps not applied: %+v", estimate)
 	}
 }
@@ -49,9 +49,9 @@ func TestCalculateUsesFinancialSectorCaps(t *testing.T) {
 func TestCalculateRejectsNegativeEarnings(t *testing.T) {
 	snapshot := testSnapshot()
 	snapshot.EPS = -1
-	snapshot.TTMNetProfitCNY = -0.0001
+	snapshot.TTMNetProfitYi = -0.0001
 	estimate := Calculate(config.Stock{Code: snapshot.Code}, 10, "2026-10-31", snapshot)
-	if estimate.Available() || !strings.Contains(estimate.Reason, "每股收益为负") {
+	if estimate.Available() || !strings.Contains(estimate.Reason, "每股收益非正") {
 		t.Fatalf("negative earnings produced a range: %+v", estimate)
 	}
 }
@@ -60,8 +60,11 @@ func TestCalculateFallsBackToPeWhenBookValueIsUnavailable(t *testing.T) {
 	snapshot := testSnapshot()
 	snapshot.BookValuePerShare = 0
 	estimate := Calculate(config.Stock{Code: snapshot.Code}, 20, "2026-10-31", snapshot)
-	if !estimate.Available() || estimate.FairPB != 0 || !contains(estimate.Warnings, "book_value_non_positive") || estimate.Confidence != "low" {
+	if !estimate.Available() || estimate.FairPB != 0 || estimate.BookValueAnchored || !contains(estimate.Warnings, "book_value_non_positive") || estimate.Confidence != "low" {
 		t.Fatalf("book value fallback failed: %+v", estimate)
+	}
+	if width := (estimate.Upper - estimate.Lower) / estimate.Central; width < 0.59 {
+		t.Fatalf("low-confidence fallback did not widen the band: width=%.2f estimate=%+v", width, estimate)
 	}
 }
 
@@ -72,6 +75,32 @@ func TestCalculateMarksMissingPriorEpsAsLowConfidence(t *testing.T) {
 	estimate := Calculate(config.Stock{Code: snapshot.Code}, 20, "2026-10-31", snapshot)
 	if !estimate.Available() || estimate.GrowthPct != 0 || !contains(estimate.Warnings, "prior_year_eps_missing") || estimate.Confidence != "low" {
 		t.Fatalf("growth fallback failed: %+v", estimate)
+	}
+	if width := (estimate.Upper - estimate.Lower) / estimate.Central; width < 0.59 {
+		t.Fatalf("missing growth did not widen the band: width=%.2f estimate=%+v", width, estimate)
+	}
+}
+
+func TestCalculateUsesIndependentBookValueAnchor(t *testing.T) {
+	estimate := Calculate(config.Stock{Code: "sh600519", Sector: "白酒"}, 20, "2026-10-31", testSnapshot())
+	if !estimate.BookValueAnchored || estimate.FairPB <= 0 {
+		t.Fatalf("book value anchor not recorded: %+v", estimate)
+	}
+	// The PB branch must not collapse to EPS multiplied by a constant.
+	if math.Abs(estimate.FairPB-2.0) > 0.4 {
+		t.Fatalf("ROE-adjusted PB anchor is implausible: %+v", estimate)
+	}
+}
+
+func TestCalculateWidensBandForAbnormalROE(t *testing.T) {
+	snapshot := testSnapshot()
+	snapshot.BookValuePerShare = 1.5
+	estimate := Calculate(config.Stock{Code: snapshot.Code}, 20, "2026-10-31", snapshot)
+	if !estimate.Available() || estimate.Confidence != "low" {
+		t.Fatalf("abnormal ROE was not marked low confidence: %+v", estimate)
+	}
+	if width := (estimate.Upper - estimate.Lower) / estimate.Central; width < 0.69 {
+		t.Fatalf("abnormal ROE did not widen the band to 35%%: width=%.2f estimate=%+v", width, estimate)
 	}
 }
 

@@ -965,7 +965,11 @@ func (m *Monitor) PreviewContext(ctx context.Context, asof string) (selection.Re
 	if m.Market != nil && m.Market.HasDatabase() {
 		histories, raw, err := m.Market.LoadHistoriesPair(ctx, m.Config.Stocks, asof, m.Config.Daily.Adjust, true)
 		if err == nil {
-			return m.buildReport(ctx, histories, raw, asof, mustNext(m.Calendar, asof))
+			report, buildErr := m.buildReport(ctx, histories, raw, asof, mustNext(m.Calendar, asof))
+			if buildErr != nil {
+				return selection.Report{}, buildErr
+			}
+			return m.withSavedFairValues(ctx, report, asof), nil
 		}
 		return selection.Report{}, err
 	}
@@ -994,7 +998,28 @@ func (m *Monitor) PreviewContext(ctx context.Context, asof string) (selection.Re
 	if err != nil {
 		return selection.Report{}, err
 	}
-	return m.buildReport(ctx, histories, raw, asof, target)
+	report, err := m.buildReport(ctx, histories, raw, asof, target)
+	if err != nil {
+		return selection.Report{}, err
+	}
+	return m.withSavedFairValues(ctx, report, asof), nil
+}
+
+func (m *Monitor) withSavedFairValues(ctx context.Context, report selection.Report, asof string) selection.Report {
+	if m.Market != nil && m.Market.HasDatabase() {
+		saved, err := m.Market.LoadReport(ctx, asof)
+		if err == nil {
+			report.FairValues = saved.FairValues
+		}
+		return report
+	}
+	if m.Store != nil {
+		var saved selection.Report
+		if err := m.Store.Read("reports/"+asof+".json", &saved); err == nil {
+			report.FairValues = saved.FairValues
+		}
+	}
+	return report
 }
 
 func (m *Monitor) buildReport(ctx context.Context, histories, raw []market.History, asof, target string) (selection.Report, error) {

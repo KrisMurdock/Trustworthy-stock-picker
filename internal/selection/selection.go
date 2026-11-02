@@ -299,6 +299,9 @@ func buildWithExecution(ctx context.Context, c config.Config, histories, raw, tr
 func reportIdentity(report Report) Report {
 	report.GeneratedAt = time.Time{}
 	report.ID = ""
+	// Fair values are an external snapshot attached after selection; they must
+	// not change the deterministic identity of the ranking itself.
+	report.FairValues = nil
 	if report.FirstStage != nil {
 		firstStage := *report.FirstStage
 		firstStage.GeneratedAt = time.Time{}

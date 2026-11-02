@@ -44,8 +44,31 @@ var papercode = 'sh600519';
 	if snapshot.EPS != 65.6615 || snapshot.EPSPrior != 65.66 || snapshot.BookValuePerShare != 216.949629 || !snapshot.GrowthKnown {
 		t.Fatalf("unexpected fundamentals: %+v", snapshot)
 	}
-	if snapshot.Shares != 1_250_081_601 || snapshot.TTMNetProfitCNY != 823.2007 {
+	if snapshot.Shares != 1_250_081_601 || snapshot.TTMNetProfitYi != 823.2007 {
 		t.Fatalf("unexpected units: %+v", snapshot)
+	}
+}
+
+func TestSinaFundamentalsAllowsOptionalGrowthAndBookValue(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`
+var totalcapital = 10000;
+var fourQ_mgsy = 1;
+var profit_four = 1;
+var stock_state = 1;
+var stockname = '可选字段';
+var papercode = 'sh600519';
+`))
+	}))
+	defer server.Close()
+	client := NewSinaClient(time.Second, 0)
+	client.Endpoint = server.URL
+	snapshot, err := client.FetchFundamentals(context.Background(), config.Stock{Code: "sh600519"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.EPS != 1 || snapshot.EPSPrior != 0 || snapshot.BookValuePerShare != 0 || snapshot.GrowthKnown {
+		t.Fatalf("optional fields were not degraded: %+v", snapshot)
 	}
 }
 

@@ -185,7 +185,7 @@ func writeArticleDetail(out *strings.Builder, r selection.Report, row articleCan
 	writeArticleChart(out, row.observation)
 
 	out.WriteString("#### 价格与明日区间\n")
-	priceLines := articlePriceLines(r, row.observation)
+	priceLines := articlePriceLines(r, code, row.observation, compactPhase)
 	for index, line := range priceLines {
 		value := line.value
 		if compactPhase && index == len(priceLines)-1 {
@@ -243,7 +243,7 @@ func writeArticleBrief(out *strings.Builder, r selection.Report, row articleCand
 	out.WriteString(fmt.Sprintf("### %d. %s（%s）\n\n", row.rank, name, code))
 	out.WriteString("**" + articleRankLabel(row) + " · " + sector + "**\n\n")
 	writeArticleChart(out, row.observation)
-	out.WriteString("- **价格**：" + strings.Join(articlePriceLineTexts(r, row.observation), "；") + "；套牢：" + articleBriefTrapped(row.observation) + "。\n")
+	out.WriteString("- **价格**：" + strings.Join(articlePriceLineTexts(r, code, row.observation, compactPhase), "；") + "；套牢：" + articleBriefTrapped(row.observation) + "。\n")
 	out.WriteString("- **指标**：" + strings.Join(articleBriefTechnical(row.observation), "；") + "。\n")
 	if phase := articleBriefPhase(row.observation, compactPhase); phase != "" {
 		out.WriteString("- **阶段**：" + phase + "。\n")
@@ -1141,19 +1141,28 @@ type articlePriceLine struct {
 	value string
 }
 
-func articlePriceLines(r selection.Report, candidate *strategy.Candidate) []articlePriceLine {
+func articlePriceLines(r selection.Report, code string, candidate *strategy.Candidate, compact bool) []articlePriceLine {
 	lines := make([]articlePriceLine, 0, 6)
 	low, high, ok := articleBuyRange(candidate)
 	buy := "暂缺（价格数据不足）"
 	if ok {
 		buy = fmt.Sprintf("%.2f~%.2f 购入", low, high)
 	}
-	lines = append(lines, articlePriceLine{label: "推荐买区", value: buy})
-	code := ""
-	if candidate != nil {
+	buyLabel := "推荐买区"
+	if compact {
+		buyLabel = "买区"
+	}
+	lines = append(lines, articlePriceLine{label: buyLabel, value: buy})
+	if code == "" && candidate != nil {
 		code = candidate.Code
 	}
-	lines = append(lines, articlePriceLine{label: "估值区间", value: articleFairValueSummary(r, code)})
+	valuation := articleFairValueSummary(r, code)
+	valuationLabel := "估值区间"
+	if compact {
+		valuation = articleFairValueCompactSummary(r, code)
+		valuationLabel = "估值"
+	}
+	lines = append(lines, articlePriceLine{label: valuationLabel, value: valuation})
 
 	forecast, hasForecast := articleForecast(r, candidate)
 	if hasForecast && forecast.PointHigh > 0 && forecast.PointLow > 0 {
@@ -1176,8 +1185,8 @@ func articlePriceLines(r selection.Report, candidate *strategy.Candidate) []arti
 	return lines
 }
 
-func articlePriceLineTexts(r selection.Report, candidate *strategy.Candidate) []string {
-	lines := articlePriceLines(r, candidate)
+func articlePriceLineTexts(r selection.Report, code string, candidate *strategy.Candidate, compact bool) []string {
+	lines := articlePriceLines(r, code, candidate, compact)
 	out := make([]string, 0, len(lines))
 	for _, line := range lines {
 		out = append(out, line.label+" "+line.value)

@@ -15,6 +15,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/secondstage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 )
 
 func secondStageRefreshFixture(t *testing.T) (*Monitor, selection.Report) {
@@ -54,6 +55,8 @@ func secondStageRefreshFixture(t *testing.T) (*Monitor, selection.Report) {
 		GeneratedAt: now, Strategy: "leader_daily_v1", SelectionEnabled: true,
 		Adjust: "qfq", TopN: 1, PoolSize: 1, Eligible: 1,
 		FirstStage: first,
+		Ranking:    []strategy.Candidate{{Code: "sz000001", Name: "测试股票", Close: 10}},
+		Selected:   []selection.Candidate{{Code: "sz000001", Name: "测试股票", Close: 99}},
 		SecondStage: &secondstage.Report{
 			Version: secondstage.ReportSchemaVersion, Status: secondstage.StatusOK,
 			AsOf: "2026-10-13", Target: "2026-10-14", TopN: 10, InputCount: 1,
@@ -131,6 +134,28 @@ func TestPrepareSecondStageConsumesArtifactsAtDeadline(t *testing.T) {
 	}
 	if m.secondStagePending {
 		t.Fatal("completed second stage left the short-poll flag set")
+	}
+}
+
+func TestPrepareSecondStageRefreshesFairValuesForFinalCandidates(t *testing.T) {
+	m, report := secondStageRefreshFixture(t)
+	m.Config.Strategy.Enabled = true
+	source := &fakeFairValueSource{}
+	m.FairValues = source
+	writeRefreshArtifact(t, m, report.AsOf)
+	refreshed, wait, err := m.prepareSecondStage(context.Background(), nil, report)
+	if err != nil || wait || refreshed.SecondStage == nil || refreshed.SecondStage.Degraded {
+		t.Fatalf("second-stage refresh failed: wait=%v err=%v report=%+v", wait, err, refreshed.SecondStage)
+	}
+	if len(source.prices) != 1 || source.prices[0] != 10 {
+		t.Fatalf("final candidate valuation did not use ranking price: %v", source.prices)
+	}
+	if refreshed.FairValues["sz000001"].Central != 10 {
+		t.Fatalf("final candidate fair value was not refreshed: %+v", refreshed.FairValues)
+	}
+	stored, err := m.readReport(context.Background(), report.AsOf)
+	if err != nil || stored.FairValues["sz000001"].Central != 10 {
+		t.Fatalf("refreshed fair value was not persisted: %+v err=%v", stored.FairValues, err)
 	}
 }
 

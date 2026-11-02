@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/fairvalue"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/indicators"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/secondstage"
@@ -524,7 +525,7 @@ func TestArticlePriceAnnotationsUseOutwardCentRoundingAndShowMissingFallback(t *
 	if _, _, ok := articleBuyRange(&strategy.Candidate{Close: 10}); ok {
 		t.Fatal("accepted a candidate without ATR")
 	}
-	lines := articlePriceLineTexts(selection.Report{AsOf: "2026-10-21"}, &strategy.Candidate{Close: 10})
+	lines := articlePriceLineTexts(selection.Report{AsOf: "2026-10-21"}, "", &strategy.Candidate{Close: 10}, false)
 	if !strings.Contains(strings.Join(lines, "\n"), "信号日区间 暂缺（信号日高低价未记录）") {
 		t.Fatalf("missing daily range fallback: %v", lines)
 	}
@@ -568,6 +569,7 @@ func TestSecondStageArticleRequiresExplicitPush(t *testing.T) {
 
 func TestSecondStageArticleCardsRenderWithinWechatLimit(t *testing.T) {
 	r := articleTestReport(10)
+	r.FairValues = fairValuesForArticle(r)
 	cards, err := FromSelection(r)
 	if err != nil {
 		t.Fatal(err)
@@ -589,6 +591,7 @@ func TestSecondStageArticleCardsRenderWithinWechatLimit(t *testing.T) {
 
 func TestSixStockDetailedArticleFitsWechatLimit(t *testing.T) {
 	r := articleTestReport(6)
+	r.FairValues = fairValuesForArticle(r)
 	r.PhaseValidation = &strategy.PhaseValidation{
 		Status: "ok", Verdict: "weak", HorizonDays: 5,
 		Predicted: 7400, Dates: 100, Stocks: 191, Universe: 191, PoolSize: 193, Evaluated: 7400, Coverage: 1,
@@ -681,6 +684,11 @@ func TestArticlePhaseLabelComparisonShowsUnstableDistribution(t *testing.T) {
 
 func TestSecondStageArticleWithTenChartsFitsWechatLimit(t *testing.T) {
 	r := articleTestReport(10)
+	r.FairValues = fairValuesForArticle(r)
+	lowCode := r.SecondStage.Candidates[0].Code
+	lowEstimate := r.FairValues[lowCode]
+	lowEstimate.Confidence = "low"
+	r.FairValues[lowCode] = lowEstimate
 	r.PhaseValidation = &strategy.PhaseValidation{
 		Status: "ok", HorizonDays: 5, Predicted: 9650, Dates: 50, Stocks: 191, Universe: 191, PoolSize: 193, Evaluated: 11200, Coverage: 0.86,
 		Accuracy: 0.61, BalancedAccuracy: 0.55, BaselineAccuracy: 0.48, LabelSource: "unadjusted_close",
@@ -711,6 +719,10 @@ func TestSecondStageArticleWithTenChartsFitsWechatLimit(t *testing.T) {
 	if len(cards.SecondStage) != 1 || cards.SecondStage[0].Article == nil {
 		t.Fatalf("missing second-stage article: %+v", cards.SecondStage)
 	}
+	body := cards.SecondStage[0].Article.Body
+	if got := strings.Count(body, "14.40~17.60（低）"); got != 1 {
+		t.Fatalf("compact low-confidence valuations = %d, want 1:\n%s", got, body)
+	}
 	rendered, err := wechat.RenderHTMLWithImages(cards.SecondStage[0].Article.Body, images)
 	if err != nil {
 		t.Fatal(err)
@@ -727,6 +739,14 @@ func TestSecondStageArticleWithTenChartsFitsWechatLimit(t *testing.T) {
 	if !strings.Contains(rendered, "当前深度@1234.56") || !strings.Contains(rendered, "深1200.00~1300.00") {
 		t.Fatalf("compact trapped zone ranges missing:\n%s", rendered)
 	}
+}
+
+func fairValuesForArticle(r selection.Report) map[string]fairvalue.Estimate {
+	values := make(map[string]fairvalue.Estimate, len(r.SecondStage.Candidates))
+	for _, candidate := range r.SecondStage.Candidates {
+		values[candidate.Code] = testFairValue(candidate.Code)
+	}
+	return values
 }
 
 func articleLabelComparisonFixture() *strategy.PhaseLabelComparison {

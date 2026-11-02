@@ -24,7 +24,7 @@ type FundamentalSnapshot struct {
 	EPS                     float64   `json:"eps_ttm"`
 	EPSPrior                float64   `json:"eps_prior_year"`
 	BookValuePerShare       float64   `json:"book_value_per_share"`
-	TTMNetProfitCNY         float64   `json:"ttm_net_profit_cny"`
+	TTMNetProfitYi          float64   `json:"ttm_net_profit_yi"`
 	Shares                  float64   `json:"shares"`
 	GrowthKnown             bool      `json:"growth_known"`
 	FinancialStatementBasis string    `json:"statement_basis"`
@@ -34,22 +34,24 @@ func (s FundamentalSnapshot) Validate() error {
 	if s.Version != 1 || !config.ValidCode(s.Code) || s.Source != "sina" || s.FetchedAt.IsZero() {
 		return &DataError{Reason: "invalid_sina_fundamental_metadata"}
 	}
-	if s.FinancialStatementBasis != "trailing_four_quarters" || s.Shares <= 0 {
+	if s.FinancialStatementBasis != "trailing_four_quarters" {
 		return &DataError{Reason: "invalid_sina_fundamental_basis"}
 	}
-	values := []float64{s.EPS, s.EPSPrior, s.BookValuePerShare, s.TTMNetProfitCNY, s.Shares}
+	values := []float64{s.EPS, s.EPSPrior, s.BookValuePerShare, s.TTMNetProfitYi, s.Shares}
 	for _, value := range values {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return &DataError{Reason: "invalid_sina_fundamental_value"}
 		}
 	}
-	if s.EPS == 0 || s.TTMNetProfitCNY == 0 {
+	if s.Shares < 0 || s.TTMNetProfitYi < 0 && s.EPS > 0 {
 		return &DataError{Reason: "invalid_sina_fundamental_value"}
 	}
-	impliedEPS := s.TTMNetProfitCNY * 100000000 / s.Shares
-	tolerance := math.Max(0.05, math.Abs(s.EPS)*0.20)
-	if math.Abs(impliedEPS-s.EPS) > tolerance {
-		return &DataError{Reason: "inconsistent_sina_fundamental_eps"}
+	if s.Shares > 0 && s.TTMNetProfitYi != 0 && s.EPS != 0 {
+		impliedEPS := s.TTMNetProfitYi * 100000000 / s.Shares
+		tolerance := math.Max(0.05, math.Abs(s.EPS)*0.20)
+		if math.Abs(impliedEPS-s.EPS) > tolerance {
+			return &DataError{Reason: "inconsistent_sina_fundamental_eps"}
+		}
 	}
 	return nil
 }
@@ -59,8 +61,8 @@ var sinaJSString = regexp.MustCompile(`(?m)^\s*var\s+(papercode|a_code|stockname
 
 // FetchFundamentals downloads the public Sina company snapshot. The response is
 // a JavaScript assignment file rather than executable code; only the expected
-// scalar assignments are parsed and all missing, duplicated or malformed fields
-// are rejected before a snapshot reaches the valuation model.
+// scalar assignments are parsed, required identity fields are enforced, and
+// optional financial fields degrade explicitly instead of being fabricated.
 func (c *SinaClient) FetchFundamentals(ctx context.Context, stock config.Stock) (FundamentalSnapshot, error) {
 	snapshot := FundamentalSnapshot{Version: 1, Code: stock.Code, Source: "sina",
 		FetchedAt: time.Now().In(Shanghai), FinancialStatementBasis: "trailing_four_quarters"}
@@ -95,16 +97,20 @@ func (c *SinaClient) FetchFundamentals(ctx context.Context, stock config.Stock) 
 	if papercode == "" {
 		papercode = stringsByName["a_code"]
 	}
-	if papercode != "" && !strings.EqualFold(papercode, stock.Code) {
+	if papercode == "" {
+		return snapshot, &DataError{Reason: "missing_sina_fundamental_code"}
+	}
+	if !strings.EqualFold(papercode, stock.Code) {
 		return snapshot, &DataError{Reason: "sina_fundamental_stock_mismatch"}
 	}
 	if stringsByName["stockname"] == "" {
 		return snapshot, &DataError{Reason: "missing_sina_fundamental_name"}
 	}
-	for _, name := range []string{"fourQ_mgsy", "lastyear_mgsy", "mgjzc", "profit_four", "totalcapital", "stock_state"} {
-		if _, ok := numbers[name]; !ok {
-			return snapshot, &DataError{Reason: "missing_sina_fundamental_field"}
-		}
+	if _, ok := numbers["fourQ_mgsy"]; !ok {
+		return snapshot, &DataError{Reason: "missing_sina_fundamental_field"}
+	}
+	if _, ok := numbers["stock_state"]; !ok {
+		return snapshot, &DataError{Reason: "missing_sina_fundamental_field"}
 	}
 	if numbers["stock_state"] != 1 {
 		return snapshot, &DataError{Reason: "sina_stock_not_normally_listed"}
@@ -112,7 +118,7 @@ func (c *SinaClient) FetchFundamentals(ctx context.Context, stock config.Stock) 
 	snapshot.EPS = numbers["fourQ_mgsy"]
 	snapshot.EPSPrior = numbers["lastyear_mgsy"]
 	snapshot.BookValuePerShare = numbers["mgjzc"]
-	snapshot.TTMNetProfitCNY = numbers["profit_four"]
+	snapshot.TTMNetProfitYi = numbers["profit_four"]
 	snapshot.Shares = numbers["totalcapital"] * 10000
 	snapshot.GrowthKnown = snapshot.EPSPrior > 0
 	if err := snapshot.Validate(); err != nil {

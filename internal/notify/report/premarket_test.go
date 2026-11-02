@@ -12,6 +12,7 @@ import (
 
 func TestPremarketArticleIncludesForecastExecutionAndMaskedLabels(t *testing.T) {
 	r := articleTestReport(6)
+	r.FairValues = fairValuesForArticle(r)
 	statuses := map[string]PremarketExecutionStatus{
 		"sz300628": {Status: "可执行", Reason: "预测高低覆盖参考目标与止损"},
 		"sh688111": {Status: "放弃", Reason: "预测高低于净目标价"},
@@ -63,6 +64,13 @@ func TestPremarketArticleIncludesForecastExecutionAndMaskedLabels(t *testing.T) 
 	}
 	if strings.Contains(body, "精排队列尚未就绪") {
 		t.Fatalf("ranking was available but article used fallback order:\n%s", body)
+	}
+	rendered, err := wechat.RenderHTML(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len([]rune(rendered)) >= 20000 {
+		t.Fatalf("premarket article with valuations has %d runes, exceeds WeChat draft limit", len([]rune(rendered)))
 	}
 	for _, unwanted := range []string{"亿联网络", "金山办公", "海螺水泥", "长江电力", "陕西煤业", "候选六"} {
 		if strings.Contains(body, unwanted) {

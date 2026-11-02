@@ -25,8 +25,29 @@ func (m *Monitor) enrichFairValues(ctx context.Context, report *selection.Report
 			prices[candidate.Code] = candidate.Close
 		}
 	}
+	adjust := report.Adjust
+	if adjust == "" {
+		adjust = m.Config.Daily.Adjust
+	}
+	requiresUnadjusted := adjust != "" && adjust != "none"
+	if !requiresUnadjusted {
+		for _, candidate := range report.Selected {
+			if candidate.Code != "" && candidate.Close > 0 {
+				if _, ok := prices[candidate.Code]; !ok {
+					prices[candidate.Code] = candidate.Close
+				}
+			}
+		}
+	}
 	codes := fairValueCodes(*report)
 	if len(codes) == 0 {
+		return
+	}
+	if !m.Config.Strategy.Enabled && requiresUnadjusted {
+		report.FairValues = make(map[string]fairvalue.Estimate, len(codes))
+		for _, code := range codes {
+			report.FairValues[code] = unavailableFairValue(code, report.AsOf, "需要不复权收盘价")
+		}
 		return
 	}
 	stocks := make(map[string]config.Stock, len(m.Config.Stocks))
@@ -36,14 +57,18 @@ func (m *Monitor) enrichFairValues(ctx context.Context, report *selection.Report
 	report.FairValues = make(map[string]fairvalue.Estimate, len(codes))
 	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	for _, code := range codes {
+	for index, code := range codes {
 		stock, ok := stocks[code]
 		if !ok {
 			continue
 		}
 		price := prices[code]
 		if price <= 0 {
-			report.FairValues[code] = unavailableFairValue(code, report.AsOf, "收盘价缺失")
+			reason := "收盘价缺失"
+			if requiresUnadjusted {
+				reason = "需要不复权收盘价"
+			}
+			report.FairValues[code] = unavailableFairValue(code, report.AsOf, reason)
 			continue
 		}
 		estimate, err := m.FairValues.Estimate(fetchCtx, stock, price, report.AsOf)
@@ -54,6 +79,9 @@ func (m *Monitor) enrichFairValues(ctx context.Context, report *selection.Report
 			report.FairValues[code] = estimate
 		}
 		if fetchCtx.Err() != nil {
+			for _, remaining := range codes[index+1:] {
+				report.FairValues[remaining] = unavailableFairValue(remaining, report.AsOf, "估值请求超时")
+			}
 			break
 		}
 	}

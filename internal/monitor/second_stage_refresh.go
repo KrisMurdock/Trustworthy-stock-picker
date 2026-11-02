@@ -37,6 +37,7 @@ func (m *Monitor) prepareSecondStage(ctx context.Context, state *State, report s
 	}
 	refreshed, err := selection.RecomputeSecondStage(report, m.Config, m.Now())
 	if err == nil && refreshed.SecondStage != nil && !refreshed.SecondStage.Degraded {
+		m.enrichFairValues(ctx, &refreshed)
 		if m.Market != nil && m.Market.HasDatabase() {
 			err = m.Market.ReplaceReport(ctx, refreshed)
 		} else {
