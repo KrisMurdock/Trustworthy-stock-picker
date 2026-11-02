@@ -1330,13 +1330,13 @@ func articleBriefTrapped(candidate *strategy.Candidate) string {
 	signal := candidate.Trapped
 	if signal.Status == strategy.TrappedStatusUnknown {
 		if signal.BaselineTrappedVolumeRatio > 0 {
-			return fmt.Sprintf("数据不足(%s)｜衰减前%.0f%%", articleTrappedUnknownReason(signal), signal.BaselineTrappedVolumeRatio*100)
+			return fmt.Sprintf("数据不足(%s)｜衰减前%s", articleTrappedUnknownReason(signal), articleTrappedRatioText(signal.BaselineTrappedVolumeRatio))
 		}
 		return "数据不足(" + articleTrappedUnknownReason(signal) + ")"
 	}
-	parts := []string{articleTrappedStatusLabel(signal.Status) + fmt.Sprintf("%.0f%%", signal.TrappedVolumeRatio*100)}
+	parts := []string{articleTrappedStatusLabel(signal.Status) + articleTrappedRatioText(signal.TrappedVolumeRatio)}
 	if signal.Version >= 3 && signal.BaselineTrappedVolumeRatio > 0 {
-		parts[0] += fmt.Sprintf("/衰减前%.0f%%", signal.BaselineTrappedVolumeRatio*100)
+		parts[0] += "/衰减前" + articleTrappedRatioText(signal.BaselineTrappedVolumeRatio)
 	}
 	if signal.OverheadCost <= 0 {
 		return strings.Join(append(parts, "无套牢区"), "｜")
@@ -1373,6 +1373,13 @@ func articleTrappedZoneText(signal *strategy.TrappedSignal, compact bool) string
 		parts = append(parts, fmt.Sprintf("%s %.2f~%.2f（%d%%）", label, zone.Low, zone.High, articleTrappedZoneSharePct(signal, zone)))
 	}
 	return strings.Join(parts, " ")
+}
+
+func articleTrappedRatioText(value float64) string {
+	if value > 0 && value*100 < 1 {
+		return fmt.Sprintf("%.1f%%", value*100)
+	}
+	return fmt.Sprintf("%.0f%%", value*100)
 }
 
 func articleTrappedZoneSharePct(signal *strategy.TrappedSignal, zone strategy.TrappedZone) int {

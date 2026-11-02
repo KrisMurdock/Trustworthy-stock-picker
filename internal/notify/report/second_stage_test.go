@@ -765,3 +765,18 @@ func TestSecondStageArticleShowsV3UnknownAndLegacySignal(t *testing.T) {
 		t.Fatalf("legacy signal incorrectly claimed turnover coverage:\n%s", body)
 	}
 }
+
+func TestArticleTrappedRatioTextKeepsSubOnePercentVisible(t *testing.T) {
+	for _, test := range []struct {
+		value float64
+		want  string
+	}{
+		{value: 0.004, want: "0.4%"},
+		{value: 0.011, want: "1%"},
+		{value: 0.59, want: "59%"},
+	} {
+		if got := articleTrappedRatioText(test.value); got != test.want {
+			t.Fatalf("ratio %.4f -> %q, want %q", test.value, got, test.want)
+		}
+	}
+}
