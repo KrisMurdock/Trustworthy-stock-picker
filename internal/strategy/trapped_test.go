@@ -231,3 +231,20 @@ func trappedMetrics(history market.History, rate float64) *market.DailyMetricHis
 	}
 	return metrics
 }
+
+func TestBuildTrappedZonesClipsRangesAtBandBoundaries(t *testing.T) {
+	zones, _, _ := buildTrappedZones([]trappedPricedVolume{
+		{price: 10.48, low: 10.46, high: 10.50, volume: 1},
+		{price: 10.52, low: 10.50, high: 10.54, volume: 1},
+		{price: 11.52, low: 11.50, high: 11.54, volume: 1},
+	}, 10)
+	if len(zones) != 3 {
+		t.Fatalf("zones = %+v", zones)
+	}
+	if zones[0].High > zones[1].Low+1e-9 || zones[1].High > zones[2].Low+1e-9 {
+		t.Fatalf("zone ranges overlap: %+v", zones)
+	}
+	if math.Abs(zones[0].High-10.5) > 1e-9 || math.Abs(zones[1].Low-10.5) > 1e-9 || math.Abs(zones[2].Low-11.5) > 1e-9 {
+		t.Fatalf("zone boundaries were not clipped: %+v", zones)
+	}
+}

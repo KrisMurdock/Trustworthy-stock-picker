@@ -456,6 +456,27 @@ func buildTrappedZones(observations []trappedPricedVolume, currentPrice float64)
 		if observation.low > 0 && observation.high > 0 {
 			low, high = observation.low, observation.high
 		}
+		// Clip each bucket to the band that classified it so the published
+		// ranges stay adjacent instead of overlapping at 5%/15% boundaries.
+		lower, upper := currentPrice, math.Inf(1)
+		switch index {
+		case 0:
+			upper = currentPrice * (1 + TrappedShallowMaxDistancePct/100)
+		case 1:
+			lower = currentPrice * (1 + TrappedShallowMaxDistancePct/100)
+			upper = currentPrice * (1 + TrappedModerateMaxDistancePct/100)
+		case 2:
+			lower = currentPrice * (1 + TrappedModerateMaxDistancePct/100)
+		}
+		if low < lower {
+			low = lower
+		}
+		if high > upper {
+			high = upper
+		}
+		if high < low {
+			high = low
+		}
 		if zone.Low <= 0 || low < zone.Low {
 			zone.Low = low
 		}
