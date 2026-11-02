@@ -21,7 +21,12 @@ func TestMain(m *testing.M) {
 }
 
 func TestCLIInvalidAndMissingConfiguration(t *testing.T) {
-	for _, args := range [][]string{nil, {"unknown"}, {"check", "-config", "config.yaml"}, {"run", "-as-of", "2026-10-13"}, {"run", "-entry-price", "10"}, {"plan", "-entry-price", "NaN"}} {
+	for _, args := range [][]string{
+		nil, {"unknown"}, {"check", "-config", "config.yaml"}, {"run", "-as-of", "2026-10-13"},
+		{"run", "-entry-price", "10"}, {"plan", "-entry-price", "NaN"},
+		{"plan", "-visibility", "vendor_backfill"},
+		{"fair-value", "-code", "sz000001", "-visibility", "future"},
+	} {
 		if err := run(args); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
@@ -90,6 +95,9 @@ func TestCLIInitCreatesMarketDatabase(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(data, "market.db")); err != nil {
 		t.Fatalf("market database was not initialized: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(data, "fundamentals.db")); err != nil {
+		t.Fatalf("fundamentals database was not initialized: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(data, "context.db")); err != nil {
 		t.Fatalf("context database was not initialized: %v", err)
