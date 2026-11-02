@@ -28,7 +28,7 @@ func fourLightBars(count int, lastClose, lastVolume float64) []market.Bar {
 
 func TestFourLightRequiresFinalDataAndDoesNotTreatUnknownAsRed(t *testing.T) {
 	ready := AnalyzeFourLight(fourLightBars(60, 12, 200))
-	if !ready.AllRed || ready.FinalOnly != true || ready.DataStatus != FourLightDataPartial || ready.PreviousUnknown != 4 {
+	if !ready.AllRed || ready.FinalOnly != true || !ready.Approximation || ready.AlignmentStatus != FourLightAlignmentUnverified || ready.DataStatus != FourLightDataPartial || ready.PreviousUnknown != 4 {
 		t.Fatalf("unexpected final-bar state: %+v", ready)
 	}
 	if ready.FlipCount != 0 || ready.AllFlipped || matchesFourLightRule(FourLightRuleFlipAny, ready) {

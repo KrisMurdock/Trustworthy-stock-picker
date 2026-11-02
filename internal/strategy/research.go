@@ -130,18 +130,17 @@ type Research struct {
 // FourLightSummary describes signal availability across the frozen sample set.
 // It is diagnostic only and never feeds the opportunity score or recommendation.
 type FourLightSummary struct {
-	Version          int     `json:"schema_version"`
-	Rule             string  `json:"rule"`
-	Samples          int     `json:"samples"`
-	SignalDates      int     `json:"signal_dates"`
-	UnknownCurrent   int     `json:"unknown_current"`
-	UnknownPrevious  int     `json:"unknown_previous"`
-	UnknownRate      float64 `json:"unknown_rate"`
-	AllRed           int     `json:"all_red"`
-	AllRedRate       float64 `json:"all_red_rate"`
-	FlipAny          int     `json:"flip_any"`
-	FlipAll          int     `json:"flip_all"`
-	MoneyFlowUnknown int     `json:"money_flow_unknown"`
+	Version         int     `json:"schema_version"`
+	Rule            string  `json:"rule"`
+	Samples         int     `json:"samples"`
+	SignalDates     int     `json:"signal_dates"`
+	UnknownCurrent  int     `json:"unknown_current"`
+	UnknownPrevious int     `json:"unknown_previous"`
+	UnknownRate     float64 `json:"unknown_rate"`
+	AllRed          int     `json:"all_red"`
+	AllRedRate      float64 `json:"all_red_rate"`
+	FlipAny         int     `json:"flip_any"`
+	FlipAll         int     `json:"flip_all"`
 }
 
 type CalendarCoverage struct {
@@ -1000,7 +999,6 @@ func summarizeFourLightRange(samples []Sample, from, through string) *FourLightS
 		if evidence.AllRed && evidence.AllFlipped {
 			summary.FlipAll++
 		}
-		summary.MoneyFlowUnknown++
 	}
 	if summary.Samples == 0 {
 		return nil

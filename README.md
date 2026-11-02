@@ -423,6 +423,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | `runtime` | 可被其他 Go 项目导入的运行时、初始化与看板 handler |
 | `cmd/bottom-study` | 底部形态与止损/持有期研究工具 |
 | `cmd/trapped-scan` | 全市场低套牢观察池离线扫描工具 |
+| `cmd/four-light-align` | 目标软件四灯样本与本地近似实现的逐灯/转换对照工具 |
 | `cmd/resolve-pool` | 股池名称与代码核对辅助工具 |
 | `internal/config` | 内置生产配置、环境变量覆盖和严格校验 |
 | `internal/calendar` | 北京时间交易日、节假日、T+1 与过期窗口 |
@@ -434,6 +435,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | `internal/selection` | 趋势筛选与报告事件组装 |
 | `internal/firststage` | 高召回第一层初筛、版本化 logistic 模型和初筛报告 |
 | `internal/strategy` | 前复权特征、成交模拟、排名、滚动验证和留出样本 |
+| `internal/fourlightalign` | 近似四灯逐灯一致率、全红转换漏报/误报和提前滞后根数 |
 | `internal/predictor` | 5 分钟 pooled GBDT、特征、卡尔曼趋势、预测库与投递 |
 | `internal/marketcontext` | 指数与行业/概念板块上下文同步和独立 `context.db` |
 | `internal/marketforecast` | 上证/创业板下一交易日方向模型、周内统计和只读信号 |
@@ -457,7 +459,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | 数据与运行 | [行情来源与回退](docs/data-sources.md) · [部署与排障](docs/deployment.md) |
 | 看板视觉 | [深色主题与环境层 3D](docs/dashboard-visual-design.md) |
 | 开发与发布 | [开发、CI 与发布包](docs/development.md) · [测试范围](tests/README.md) |
-| 策略研究 | [推荐门槛诊断](docs/strategy-diagnostics.md) · [策略实验室](docs/experiments.md) · [实验快照](docs/experiment-result-snapshots.md) |
+| 策略研究 | [推荐门槛诊断](docs/strategy-diagnostics.md) · [策略实验室](docs/experiments.md) · [实验快照](docs/experiment-result-snapshots.md) · [四灯对齐验收](docs/four-light-alignment.md) |
 | 财务估值 | [个股财务研究区间](docs/fair-value.md) · [全市场低估值观察](docs/low-valuation.md) · [低估值低套牢观察](docs/value-trapped.md) |
 | 选股算法 | [算法接入契约](docs/algorithm-interface.md) |
 | 模型与实验存储 | [模型、特征与评估产物存储](docs/model-storage.md) |

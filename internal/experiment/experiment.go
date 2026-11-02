@@ -379,8 +379,8 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 		result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("已确认持仓内最高价扣费后触达 2.5%% 的样本 %d 笔，触达 3%% 的样本 %d 笔；%d 笔退出日内先后顺序不明，%d 笔触达证据缺失或未决。触达与实际退出盈亏分别统计，不以收盘价判断目标触达。", stats.HighTouch25, stats.HighTouch30, stats.HighTouchAmbiguous, stats.HighTouchUnknown), []string{}})
 	}
 	if summary := x.Research.FourLight; summary != nil && record.Spec.FourLightRule != "" {
-		result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("四灯规则 %s：样本 %d 条、信号日 %d 个；当前 unknown %d 条（%.2f%%），上一交易日 unknown %d 条；当前四灯全红 %d 条，至少一灯转红 %d 条，四灯全部转红 %d 条。资金流字段 %d 条均为 unknown，未用成交量冒充。", record.Spec.FourLightRule, summary.Samples, summary.SignalDates, summary.UnknownCurrent, summary.UnknownRate*100, summary.UnknownPrevious, summary.AllRed, summary.FlipAny, summary.FlipAll, summary.MoneyFlowUnknown), []string{}})
-		result.Findings = append(result.Findings, Finding{"limitation", "四灯为基于本仓库价量特征的 shadow 代理，不是约牛或其他商业软件原版公式；实验不改变正式推荐。日线逐笔统计没有资金组合权益曲线，最差单笔净收益不等同账户最大回撤。", []string{}})
+		result.Findings = append(result.Findings, Finding{"measured", fmt.Sprintf("近似四灯规则 %s：样本 %d 条、信号日 %d 个；当前 unknown %d 条（%.2f%%），上一交易日 unknown %d 条；当前四灯全红 %d 条，至少一灯转红 %d 条，四灯全部转红 %d 条。", record.Spec.FourLightRule, summary.Samples, summary.SignalDates, summary.UnknownCurrent, summary.UnknownRate*100, summary.UnknownPrevious, summary.AllRed, summary.FlipAny, summary.FlipAll), []string{}})
+		result.Findings = append(result.Findings, Finding{"limitation", "四灯为基于本仓库价量特征的近似实现，不是约牛或其他商业软件原版公式；本实验不检验灯色对齐，也不改变正式推荐。日线逐笔统计没有资金组合权益曲线，最差单笔净收益不等同账户最大回撤。", []string{}})
 		result.Next = append(result.Next, "冻结本轮规则后，只在预留区间复核四灯全红、转红数量与 unknown 比例；不得根据留出结果回改阈值或规则定义。", "只有相对 baseline 在样本量、净收益、风险与成交跳过率上同时改善，才讨论接入正式排序或通知。")
 	}
 	if len(evidence) > 0 {

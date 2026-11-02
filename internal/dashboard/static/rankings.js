@@ -102,9 +102,9 @@
         const current = [["趋势", light.trend], ["量能", light.energy], ["中期", light.mid_term], ["短期", light.short_term]];
         const redCount = current.filter(([, value]) => value === "red").length;
         const signal = light.data_status === "unknown" ? "数据不足" : light.all_red ? "全红" : `红 ${redCount}/4`;
-        const detail = el("p", "rule-caption four-light-evidence", `研究信号 · 四灯状态：${signal}；转红 ${number(light.flip_count)} 盏；${current.map(([name, value]) => `${name}${states[value] || "未知"}`).join(" · ")}；资金流${states[light.money_flow] || "未知"}。仅观察，不改推荐。`);
+        const detail = el("p", "rule-caption four-light-evidence", `研究信号 · 近似四灯状态：${signal}；转红 ${number(light.flip_count)} 盏；${current.map(([name, value]) => `${name}${states[value] || "未知"}`).join(" · ")}。未对齐目标软件，仅观察，不改推荐。`);
         detail.dataset.testid = "four-light-evidence";
-        detail.title = light.reason || "四灯代理信号仅用于研究观察";
+        detail.title = light.reason || "近似四灯信号未对齐目标软件，仅用于研究观察";
         reasons.append(detail);
       }
       const detail = diagnosis?.candidates?.[entry.code];

@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	FourLightRule = "four_light_shadow_v1"
+	FourLightRule = "four_light_approx_v1"
 
 	FourLightRed     = "red"
 	FourLightGreen   = "green"
@@ -22,6 +22,8 @@ const (
 	FourLightRuleAllRed  = "all-red"
 	FourLightRuleFlipAny = "flip-any"
 	FourLightRuleFlipAll = "flip-all"
+
+	FourLightAlignmentUnverified = "unverified"
 )
 
 // FourLightState is the fixed four-light proxy vocabulary. Unknown is never
@@ -45,6 +47,8 @@ type FourLightTransitions struct {
 type FourLightEvidence struct {
 	Version         int                  `json:"schema_version"`
 	Rule            string               `json:"rule"`
+	Approximation   bool                 `json:"approximation"`
+	AlignmentStatus string               `json:"alignment_status"`
 	AsOf            string               `json:"as_of"`
 	FinalOnly       bool                 `json:"final_only"`
 	DataStatus      string               `json:"data_status"`
@@ -52,7 +56,6 @@ type FourLightEvidence struct {
 	Energy          string               `json:"energy"`
 	MidTerm         string               `json:"mid_term"`
 	ShortTerm       string               `json:"short_term"`
-	MoneyFlow       string               `json:"money_flow"`
 	PreviousState   FourLightState       `json:"previous_state"`
 	Transitions     FourLightTransitions `json:"transitions"`
 	AllRed          bool                 `json:"all_red"`
@@ -69,9 +72,10 @@ const fourLightMinBars = 60
 // completed daily bar. It never accepts intraday bars and never mutates input.
 func AnalyzeFourLight(bars []market.Bar) FourLightEvidence {
 	evidence := FourLightEvidence{
-		Version: 1, Rule: FourLightRule, FinalOnly: true,
-		DataStatus: FourLightDataUnknown, MoneyFlow: FourLightUnknown,
-		Trend: FourLightUnknown, Energy: FourLightUnknown,
+		Version: 1, Rule: FourLightRule, Approximation: true,
+		AlignmentStatus: FourLightAlignmentUnverified, FinalOnly: true,
+		DataStatus: FourLightDataUnknown,
+		Trend:      FourLightUnknown, Energy: FourLightUnknown,
 		MidTerm: FourLightUnknown, ShortTerm: FourLightUnknown,
 		PreviousState: FourLightState{
 			Trend: FourLightUnknown, Energy: FourLightUnknown,
@@ -222,7 +226,7 @@ func countFourLightFlips(transitions FourLightTransitions) int {
 }
 
 func fourLightReason(reasons []string) string {
-	base := []string{"价量四灯代理；资金流字段未接入；仅使用信号日已完成日线"}
+	base := []string{"价量四灯近似；未对齐目标软件；仅使用信号日已完成日线"}
 	base = append(base, reasons...)
 	return strings.Join(base, "；")
 }
