@@ -34,7 +34,8 @@ func TestMarketDBCommitReadAndRollback(t *testing.T) {
 	}
 	defer db.Close()
 	report := selection.Report{Version: 1, ID: "event-1", AsOf: "2026-10-13", Target: "2026-10-14", GeneratedAt: time.Now(), Strategy: "leader_daily_v1", Adjust: "qfq",
-		FairValues: map[string]fairvalue.Estimate{"sz000001": {Version: fairvalue.Version, Code: "sz000001", AsOf: "2026-10-13", Method: fairvalue.Method, Lower: 9, Central: 10, Upper: 11}}}
+		FairValues:   map[string]fairvalue.Estimate{"sz000001": {Version: fairvalue.Version, Code: "sz000001", AsOf: "2026-10-13", Method: fairvalue.Method, Lower: 9, Central: 10, Upper: 11}},
+		FairValuesV2: map[string]fairvalue.EstimateV2{"sz000001": {Version: fairvalue.VersionV2, Code: "sz000001", AsOf: "2026-10-13", Method: fairvalue.MethodV2, DataQuality: "test", Lower: 8.5, Central: 10.5, Upper: 12.5}}}
 	h := dbHistory("sz000001", "qfq", "qfqday")
 	run := SyncRun{ID: "run-1", AsOf: h.AsOf, StartedAt: h.FetchedAt.Add(-time.Minute), FinishedAt: h.FetchedAt, CoveragePct: 100}
 	if err := db.CommitSnapshot(context.Background(), run, []SyncItem{{Stock: config.Stock{Code: h.Code, Name: h.Name}, Adjusted: &h, Status: "ok"}}, report); err != nil {
@@ -53,6 +54,9 @@ func TestMarketDBCommitReadAndRollback(t *testing.T) {
 	}
 	if got.FairValues["sz000001"].Central != 10 || got.FairValues["sz000001"].Method != fairvalue.Method {
 		t.Fatalf("fair value snapshot was not persisted: %+v", got.FairValues)
+	}
+	if got.FairValuesV2["sz000001"].Central != 10.5 || got.FairValuesV2["sz000001"].Method != fairvalue.MethodV2 {
+		t.Fatalf("v2 fair value snapshot was not persisted: %+v", got.FairValuesV2)
 	}
 	if _, err := db.LatestRun(context.Background(), h.AsOf); err != nil {
 		t.Fatal(err)

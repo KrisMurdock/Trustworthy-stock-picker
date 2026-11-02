@@ -153,9 +153,12 @@ func TestPrepareSecondStageRefreshesFairValuesForFinalCandidates(t *testing.T) {
 	if refreshed.FairValues["sz000001"].Central != 10 {
 		t.Fatalf("final candidate fair value was not refreshed: %+v", refreshed.FairValues)
 	}
+	if refreshed.FairValuesV2["sz000001"].Central != 10 {
+		t.Fatalf("final candidate v2 fair value was not refreshed: %+v", refreshed.FairValuesV2)
+	}
 	stored, err := m.readReport(context.Background(), report.AsOf)
-	if err != nil || stored.FairValues["sz000001"].Central != 10 {
-		t.Fatalf("refreshed fair value was not persisted: %+v err=%v", stored.FairValues, err)
+	if err != nil || stored.FairValues["sz000001"].Central != 10 || stored.FairValuesV2["sz000001"].Central != 10 {
+		t.Fatalf("refreshed fair values were not persisted: v1=%+v v2=%+v err=%v", stored.FairValues, stored.FairValuesV2, err)
 	}
 }
 

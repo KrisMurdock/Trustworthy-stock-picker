@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/fairvalue"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/firststage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/secondstage"
@@ -335,6 +336,10 @@ func TestReportIdentityIgnoresNestedGenerationTimes(t *testing.T) {
 			GeneratedAt: time.Unix(3, 0),
 			Candidates:  []secondstage.Candidate{{Rank: 1, Code: "sh600001"}},
 		},
+		FairValues: map[string]fairvalue.Estimate{"sh600001": {Central: 10}},
+		FairValuesV2: map[string]fairvalue.EstimateV2{
+			"sh600001": {Central: 11},
+		},
 	}
 	first, err := json.Marshal(reportIdentity(report))
 	if err != nil {
@@ -343,6 +348,8 @@ func TestReportIdentityIgnoresNestedGenerationTimes(t *testing.T) {
 	report.GeneratedAt = time.Unix(10, 0)
 	report.FirstStage.GeneratedAt = time.Unix(20, 0)
 	report.SecondStage.GeneratedAt = time.Unix(30, 0)
+	report.FairValues["sh600001"] = fairvalue.Estimate{Central: 20}
+	report.FairValuesV2["sh600001"] = fairvalue.EstimateV2{Central: 21}
 	second, err := json.Marshal(reportIdentity(report))
 	if err != nil {
 		t.Fatal(err)

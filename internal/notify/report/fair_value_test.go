@@ -31,12 +31,12 @@ func TestSecondStageArticleIncludesFairValueRange(t *testing.T) {
 		t.Fatalf("missing daily article: %+v", cards.SecondStage)
 	}
 	body := cards.SecondStage[0].Article.Body
-	for _, want := range []string{"#### 合理价值区间", "14.40~17.60 元", "TTM EPS 1.20 元", "ROE 14.1%", "当前 PE 12.6 倍、PB 1.8 倍", "不是目标价"} {
+	for _, want := range []string{"#### 财务研究区间", "14.40~17.60 元", "TTM EPS 1.20 元", "ROE 14.1%", "当前 PE 12.6 倍、PB 1.8 倍", "不是目标价"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("daily article missing %q:\n%s", want, body)
 		}
 	}
-	if !strings.Contains(cards.SecondStage[0].Article.Digest, "合理价值区间") {
+	if !strings.Contains(cards.SecondStage[0].Article.Digest, "财务研究区间") {
 		t.Fatalf("digest does not mention valuation: %q", cards.SecondStage[0].Article.Digest)
 	}
 }
@@ -53,7 +53,7 @@ func TestPremarketArticleIncludesFairValueRange(t *testing.T) {
 	if err != nil || !ok || message.Article == nil {
 		t.Fatalf("build premarket article: ok=%v err=%v", ok, err)
 	}
-	for _, want := range []string{"#### 合理价值区间", "14.40~17.60 元", "TTM EPS 1.20 元", "合理价值区间"} {
+	for _, want := range []string{"#### 财务研究区间", "14.40~17.60 元", "TTM EPS 1.20 元", "财务研究区间"} {
 		if !strings.Contains(message.Article.Body, want) {
 			t.Fatalf("premarket article missing %q:\n%s", want, message.Article.Body)
 		}
@@ -71,6 +71,23 @@ func TestFairValueUnavailableIsExplicit(t *testing.T) {
 	body := cards.SecondStage[0].Article.Body
 	if !strings.Contains(body, "暂缺（最近四季度每股收益为负）") || strings.Contains(body, "14.40~17.60") {
 		t.Fatalf("unavailable estimate was not explicit:\n%s", body)
+	}
+}
+
+func TestSecondStageArticleDoesNotRenderV2FairValue(t *testing.T) {
+	r := articleTestReport(1)
+	code := r.SecondStage.Candidates[0].Code
+	r.FairValuesV2 = map[string]fairvalue.EstimateV2{code: {
+		Version: fairvalue.VersionV2, Code: code, AsOf: r.AsOf, Source: "sina", Method: fairvalue.MethodV2,
+		DataQuality: fairvalue.DataQualityTTMOnly, Lower: 9, Central: 10, Upper: 11,
+	}}
+	cards, err := FromSelection(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := cards.SecondStage[0].Article.Body
+	if !strings.Contains(body, "暂缺（估值缺失）") || strings.Contains(body, "9.00~11.00") {
+		t.Fatalf("v2 shadow value leaked into the article:\n%s", body)
 	}
 }
 

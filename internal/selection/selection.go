@@ -51,35 +51,36 @@ type DayRangeForecast struct {
 	LowCoverage    float64 `json:"low_interval_coverage,omitempty"`
 }
 type Report struct {
-	Revision          string                        `json:"revision,omitempty"`
-	Provenance        *Provenance                   `json:"provenance,omitempty"`
-	InputID           string                        `json:"input_id,omitempty"`
-	Version           int                           `json:"schema_version"`
-	ID                string                        `json:"id"`
-	AsOf              string                        `json:"as_of"`
-	Target            string                        `json:"target_trading_date"`
-	GeneratedAt       time.Time                     `json:"generated_at"`
-	Strategy          string                        `json:"strategy"`
-	ExecutionMode     string                        `json:"execution_mode,omitempty"`
-	SelectionEnabled  bool                          `json:"selection_enabled"`
-	Adjust            string                        `json:"adjust"`
-	MinScore          int                           `json:"min_score"`
-	TopN              int                           `json:"top_n"`
-	PoolSize          int                           `json:"pool_size"`
-	Eligible          int                           `json:"eligible"`
-	GuardPassed       int                           `json:"guard_passed"`
-	Passed            int                           `json:"passed"`
-	Rules             []string                      `json:"rules"`
-	Selected          []Candidate                   `json:"selected"`
-	Excluded          []Excluded                    `json:"excluded"`
-	Filtered          []Excluded                    `json:"filtered"`
-	Ranking           []strategy.Candidate          `json:"ranking,omitempty"`
-	Research          *strategy.Research            `json:"research,omitempty"`
-	PhaseValidation   *strategy.PhaseValidation     `json:"phase_validation,omitempty"`
-	FirstStage        *firststage.Report            `json:"first_stage,omitempty"`
-	SecondStage       *secondstage.Report           `json:"second_stage,omitempty"`
-	DayRangeForecasts map[string]DayRangeForecast   `json:"day_range_forecasts,omitempty"`
-	FairValues        map[string]fairvalue.Estimate `json:"fair_values,omitempty"`
+	Revision          string                          `json:"revision,omitempty"`
+	Provenance        *Provenance                     `json:"provenance,omitempty"`
+	InputID           string                          `json:"input_id,omitempty"`
+	Version           int                             `json:"schema_version"`
+	ID                string                          `json:"id"`
+	AsOf              string                          `json:"as_of"`
+	Target            string                          `json:"target_trading_date"`
+	GeneratedAt       time.Time                       `json:"generated_at"`
+	Strategy          string                          `json:"strategy"`
+	ExecutionMode     string                          `json:"execution_mode,omitempty"`
+	SelectionEnabled  bool                            `json:"selection_enabled"`
+	Adjust            string                          `json:"adjust"`
+	MinScore          int                             `json:"min_score"`
+	TopN              int                             `json:"top_n"`
+	PoolSize          int                             `json:"pool_size"`
+	Eligible          int                             `json:"eligible"`
+	GuardPassed       int                             `json:"guard_passed"`
+	Passed            int                             `json:"passed"`
+	Rules             []string                        `json:"rules"`
+	Selected          []Candidate                     `json:"selected"`
+	Excluded          []Excluded                      `json:"excluded"`
+	Filtered          []Excluded                      `json:"filtered"`
+	Ranking           []strategy.Candidate            `json:"ranking,omitempty"`
+	Research          *strategy.Research              `json:"research,omitempty"`
+	PhaseValidation   *strategy.PhaseValidation       `json:"phase_validation,omitempty"`
+	FirstStage        *firststage.Report              `json:"first_stage,omitempty"`
+	SecondStage       *secondstage.Report             `json:"second_stage,omitempty"`
+	DayRangeForecasts map[string]DayRangeForecast     `json:"day_range_forecasts,omitempty"`
+	FairValues        map[string]fairvalue.Estimate   `json:"fair_values,omitempty"`
+	FairValuesV2      map[string]fairvalue.EstimateV2 `json:"fair_values_v2,omitempty"`
 }
 
 func Score(bars []market.Bar) (Metrics, error) { return indicators.Score(bars) }
@@ -302,6 +303,7 @@ func reportIdentity(report Report) Report {
 	// Fair values are an external snapshot attached after selection; they must
 	// not change the deterministic identity of the ranking itself.
 	report.FairValues = nil
+	report.FairValuesV2 = nil
 	if report.FirstStage != nil {
 		firstStage := *report.FirstStage
 		firstStage.GeneratedAt = time.Time{}

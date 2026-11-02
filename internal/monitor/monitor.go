@@ -1010,6 +1010,7 @@ func (m *Monitor) withSavedFairValues(ctx context.Context, report selection.Repo
 		saved, err := m.Market.LoadReport(ctx, asof)
 		if err == nil {
 			report.FairValues = saved.FairValues
+			report.FairValuesV2 = saved.FairValuesV2
 		}
 		return report
 	}
@@ -1017,6 +1018,7 @@ func (m *Monitor) withSavedFairValues(ctx context.Context, report selection.Repo
 		var saved selection.Report
 		if err := m.Store.Read("reports/"+asof+".json", &saved); err == nil {
 			report.FairValues = saved.FairValues
+			report.FairValuesV2 = saved.FairValuesV2
 		}
 	}
 	return report

@@ -12,6 +12,10 @@ import (
 
 const fairValueStockLimit = 10
 
+type fairValueAssessor interface {
+	Assess(context.Context, config.Stock, float64, string) (fairvalue.Assessment, error)
+}
+
 // enrichFairValues attaches valuation bands to the report that will be saved
 // and reused by both the daily and premarket articles. A source failure is
 // recorded as an explicit unavailable estimate and never blocks publication.
@@ -43,10 +47,22 @@ func (m *Monitor) enrichFairValues(ctx context.Context, report *selection.Report
 	if len(codes) == 0 {
 		return
 	}
+	assessor, hasAssessor := m.FairValues.(fairValueAssessor)
+	report.FairValues = make(map[string]fairvalue.Estimate, len(codes))
+	if hasAssessor {
+		report.FairValuesV2 = make(map[string]fairvalue.EstimateV2, len(codes))
+	} else {
+		report.FairValuesV2 = nil
+	}
+	markUnavailable := func(code, reason string) {
+		report.FairValues[code] = unavailableFairValue(code, report.AsOf, reason)
+		if hasAssessor {
+			report.FairValuesV2[code] = unavailableFairValueV2(code, report.AsOf, reason)
+		}
+	}
 	if !m.Config.Strategy.Enabled && requiresUnadjusted {
-		report.FairValues = make(map[string]fairvalue.Estimate, len(codes))
 		for _, code := range codes {
-			report.FairValues[code] = unavailableFairValue(code, report.AsOf, "需要不复权收盘价")
+			markUnavailable(code, "需要不复权收盘价")
 		}
 		return
 	}
@@ -54,7 +70,6 @@ func (m *Monitor) enrichFairValues(ctx context.Context, report *selection.Report
 	for _, stock := range m.Config.Stocks {
 		stocks[stock.Code] = stock
 	}
-	report.FairValues = make(map[string]fairvalue.Estimate, len(codes))
 	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	for index, code := range codes {
@@ -68,19 +83,30 @@ func (m *Monitor) enrichFairValues(ctx context.Context, report *selection.Report
 			if requiresUnadjusted {
 				reason = "需要不复权收盘价"
 			}
-			report.FairValues[code] = unavailableFairValue(code, report.AsOf, reason)
+			markUnavailable(code, reason)
 			continue
 		}
-		estimate, err := m.FairValues.Estimate(fetchCtx, stock, price, report.AsOf)
-		if err != nil {
-			m.Log.Warn("Fair value snapshot failed", "code", code, "as_of", report.AsOf, "error", err.Error())
-			report.FairValues[code] = unavailableFairValue(code, report.AsOf, "财务估值数据获取失败")
+		if hasAssessor {
+			assessment, err := assessor.Assess(fetchCtx, stock, price, report.AsOf)
+			if err != nil {
+				m.Log.Warn("Fair value snapshot failed", "code", code, "as_of", report.AsOf, "error", err.Error())
+				markUnavailable(code, "财务估值数据获取失败")
+			} else {
+				report.FairValues[code] = assessment.V1
+				report.FairValuesV2[code] = assessment.V2
+			}
 		} else {
-			report.FairValues[code] = estimate
+			estimate, err := m.FairValues.Estimate(fetchCtx, stock, price, report.AsOf)
+			if err != nil {
+				m.Log.Warn("Fair value snapshot failed", "code", code, "as_of", report.AsOf, "error", err.Error())
+				report.FairValues[code] = unavailableFairValue(code, report.AsOf, "财务估值数据获取失败")
+			} else {
+				report.FairValues[code] = estimate
+			}
 		}
 		if fetchCtx.Err() != nil {
 			for _, remaining := range codes[index+1:] {
-				report.FairValues[remaining] = unavailableFairValue(remaining, report.AsOf, "估值请求超时")
+				markUnavailable(remaining, "估值请求超时")
 			}
 			break
 		}
@@ -114,4 +140,9 @@ func fairValueCodes(report selection.Report) []string {
 func unavailableFairValue(code, asOf, reason string) fairvalue.Estimate {
 	return fairvalue.Estimate{Version: fairvalue.Version, Code: code, AsOf: asOf, Source: "sina",
 		Method: fairvalue.Method, Reason: reason}
+}
+
+func unavailableFairValueV2(code, asOf, reason string) fairvalue.EstimateV2 {
+	return fairvalue.EstimateV2{Version: fairvalue.VersionV2, Code: code, AsOf: asOf, Source: "sina",
+		Method: fairvalue.MethodV2, DataQuality: fairvalue.DataQualityUnavailable, Reason: reason}
 }

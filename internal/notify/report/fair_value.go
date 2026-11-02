@@ -54,7 +54,7 @@ func articleFairValueUpside(value float64) string {
 }
 
 func writeArticleFairValue(out *strings.Builder, r selection.Report, code string) {
-	out.WriteString("#### 合理价值区间\n")
+	out.WriteString("#### 财务研究区间\n")
 	estimate, ok := articleFairValue(r, code)
 	if !ok || !estimate.Available() {
 		reason := "财务估值快照未生成"

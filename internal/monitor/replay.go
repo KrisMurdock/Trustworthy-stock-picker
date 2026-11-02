@@ -69,5 +69,6 @@ func (m *Monitor) Replay(ctx context.Context, revision string) (selection.Report
 	result.InputID = recorded.InputID
 	result.Revision = recorded.Revision
 	result.FairValues = recorded.FairValues
+	result.FairValuesV2 = recorded.FairValuesV2
 	return result, nil
 }

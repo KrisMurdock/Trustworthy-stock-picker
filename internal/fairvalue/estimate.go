@@ -71,23 +71,8 @@ func NewEstimator(source FundamentalSource) *Estimator {
 // Estimate fetches one fundamental snapshot and calculates a band using
 // trailing EPS and book value. Price must be the unadjusted signal-date close.
 func (e *Estimator) Estimate(ctx context.Context, stock config.Stock, price float64, asOf string) (Estimate, error) {
-	out := Estimate{Version: Version, Code: stock.Code, AsOf: asOf, Source: "sina", Method: Method}
-	if e == nil || e.Source == nil {
-		out.Reason = "财务估值数据源未配置"
-		return out, nil
-	}
-	if !config.ValidCode(stock.Code) || price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
-		out.Reason = "收盘价或股票代码无效"
-		return out, nil
-	}
-	snapshot, err := e.Source.FetchFundamentals(ctx, stock)
-	if err != nil {
-		return out, err
-	}
-	out.Source = snapshot.Source
-	out.FetchedAt = snapshot.FetchedAt
-	out.StatementBasis = snapshot.FinancialStatementBasis
-	return Calculate(stock, price, asOf, snapshot), nil
+	assessment, err := e.Assess(ctx, stock, price, asOf)
+	return assessment.V1, err
 }
 
 // Calculate is deterministic and does not fetch data. The fair multiple starts
