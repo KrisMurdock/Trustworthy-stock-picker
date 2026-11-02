@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-const Engine = "indicator_selection_v7"
+const Engine = "indicator_selection_v8"
 
 type Calendar struct {
 	Version  int      `json:"schema_version,omitempty"`
@@ -92,24 +92,25 @@ type Holdout struct {
 	Contaminated bool   `json:"contaminated,omitempty"`
 }
 type Record struct {
-	Version        int             `json:"schema_version"`
-	ID             string          `json:"id"`
-	Stage          string          `json:"stage,omitempty"`
-	ParentID       string          `json:"parent_id,omitempty"`
-	BaselineID     string          `json:"baseline_id"`
-	Engine         string          `json:"engine"`
-	CodeVersion    string          `json:"code_version"`
-	CreatedAt      time.Time       `json:"created_at"`
-	FinishedAt     *time.Time      `json:"finished_at,omitempty"`
-	Status         string          `json:"status"`
-	Verdict        string          `json:"verdict"`
-	Error          string          `json:"error,omitempty"`
-	Spec           Spec            `json:"spec"`
-	Data           DataSummary     `json:"data"`
-	Result         *Results        `json:"result,omitempty"`
-	Review         *Review         `json:"current_review,omitempty"`
-	ResultSnapshot *ResultSnapshot `json:"result_snapshot,omitempty"`
-	Holdout        *Holdout        `json:"holdout,omitempty"`
+	Version        int                         `json:"schema_version"`
+	ID             string                      `json:"id"`
+	Stage          string                      `json:"stage,omitempty"`
+	ParentID       string                      `json:"parent_id,omitempty"`
+	BaselineID     string                      `json:"baseline_id"`
+	Engine         string                      `json:"engine"`
+	CodeVersion    string                      `json:"code_version"`
+	CreatedAt      time.Time                   `json:"created_at"`
+	FinishedAt     *time.Time                  `json:"finished_at,omitempty"`
+	Status         string                      `json:"status"`
+	Verdict        string                      `json:"verdict"`
+	Error          string                      `json:"error,omitempty"`
+	Spec           Spec                        `json:"spec"`
+	Data           DataSummary                 `json:"data"`
+	Result         *Results                    `json:"result,omitempty"`
+	Review         *Review                     `json:"current_review,omitempty"`
+	ResultSnapshot *ResultSnapshot             `json:"result_snapshot,omitempty"`
+	Holdout        *Holdout                    `json:"holdout,omitempty"`
+	UpwardWave     *strategy.UpwardWaveSummary `json:"upward_wave,omitempty"`
 }
 
 func ValidID(id string) bool {
@@ -254,6 +255,9 @@ func NewRecord(snapshot Snapshot, spec Spec, parent *Record, version string) (Re
 // NewHoldoutRecord creates a child that consumes the parent's reserved range
 // with the exact frozen rule. The parent development record is never mutated.
 func NewHoldoutRecord(snapshot Snapshot, parent Record, contaminated bool) (Record, error) {
+	if parent.Engine != Engine {
+		return Record{}, errors.New("holdout engine differs from current engine; rerun development first")
+	}
 	if parent.Status != "completed" || parent.Result == nil || parent.Result.Development.HoldoutFrom == "" || parent.Result.Development.HoldoutThrough == "" {
 		return Record{}, errors.New("parent experiment has no reserved holdout interval")
 	}
@@ -295,6 +299,9 @@ func BaselineFor(record, parent Record) string {
 		}
 		return parent.ID
 	}
+	if record.Engine != parent.Engine || record.CodeVersion != parent.CodeVersion {
+		return record.ID
+	}
 	if record.Spec.NextDayRule == "baseline" && parent.Spec.NextDayRule == "" {
 		return record.ID
 	}
@@ -306,7 +313,13 @@ func BaselineFor(record, parent Record) string {
 }
 
 func Comparable(a, b Record) bool {
-	return a.Engine == b.Engine && a.CodeVersion == b.CodeVersion && a.Data.ID == b.Data.ID && a.Status == "completed" && b.Status == "completed" && (a.Spec.NextDayRule != "") == (b.Spec.NextDayRule != "") && a.Spec.EntryMode == b.Spec.EntryMode && sameRange(a.Spec.Range, b.Spec.Range)
+	stage := func(r Record) string {
+		if r.Stage == "" {
+			return "development"
+		}
+		return r.Stage
+	}
+	return stage(a) == stage(b) && a.Engine == b.Engine && a.CodeVersion == b.CodeVersion && a.Data.ID == b.Data.ID && a.Status == "completed" && b.Status == "completed" && (a.Spec.NextDayRule != "") == (b.Spec.NextDayRule != "") && a.Spec.EntryMode == b.Spec.EntryMode && sameRange(a.Spec.Range, b.Spec.Range)
 }
 func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Record) error {
 	if record.Stage == "holdout" {
@@ -361,6 +374,7 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 	}
 	stats := x.Research.Development.TopRanked
 	record.Result = result
+	record.UpwardWave = x.UpwardWave
 	record.Status = "completed"
 	record.Verdict = "baseline"
 	losses := append([]strategy.ExperimentTrade{}, x.Trades...)
@@ -446,6 +460,9 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 	} else {
 		result.Next = append(result.Next, "最终保留区间未计算收益；冻结候选后再单独设计最终验证。")
 	}
+	if record.Spec.FourLightRule != "" {
+		applyUpwardWaveFindings(record, parent)
+	}
 	now := time.Now().UTC()
 	record.FinishedAt = &now
 	return nil
@@ -456,6 +473,9 @@ func Evaluate(ctx context.Context, snapshot Snapshot, record *Record, parent *Re
 func EvaluateHoldout(ctx context.Context, snapshot Snapshot, record *Record, parent *Record) error {
 	if record.Stage != "holdout" || record.Holdout == nil || parent == nil {
 		return errors.New("invalid holdout evaluation")
+	}
+	if record.Engine != Engine || parent.Engine != Engine {
+		return errors.New("holdout engine differs from current engine; rerun development first")
 	}
 	if snapshot.Calendar.Version == 0 || len(snapshot.Calendar.Days) == 0 {
 		return errors.New("holdout requires a snapshot with a frozen trading calendar")
@@ -533,8 +553,13 @@ func EvaluateHoldout(ctx context.Context, snapshot Snapshot, record *Record, par
 	result.Findings = append(result.Findings, Finding{"limitation", "当前股池与行业名称来自今天，历史回溯存在幸存者偏差；即使通过保留区间，也只能标为当前股池下的探索性验证。", []string{}})
 	result.Next = append(result.Next, "只有未污染且通过验证的冻结规则才可进入发布评估；失败后应提出新假设并冻结新的未查看区间。")
 	record.Result = result
+	record.UpwardWave = x.UpwardWave
 	record.Status = "completed"
 	record.Verdict = x.Research.Verdict
+	if record.Spec.FourLightRule != "" {
+		applyUpwardWaveFindings(record, nil)
+		result.Findings = append(result.Findings, Finding{"limitation", "本轮消费了冻结保留区间；波段阈值仍是研究定义，尚未设定策略晋级门槛，不能将旧收益验证结论当作波段验证通过。", []string{}})
+	}
 	if record.Holdout.Contaminated {
 		record.Verdict = "contaminated"
 	}

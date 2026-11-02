@@ -150,3 +150,19 @@
   .experiment-item { transition: none; }
   .evidence-chart { scroll-behavior: auto; }
 }
+
+.upward-wave-review { border-top: 3px solid var(--jade); }
+.wave-window-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 0 24px 18px; }
+.wave-window { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--raised); }
+.wave-window:first-child { border-color: rgba(111, 211, 188, .45); }
+.wave-window h3, .wave-evidence h3 { margin: 0 0 14px; color: var(--ink-strong); font-size: 16px; }
+.wave-primary { display: block; margin: 8px 0; color: var(--jade); font-family: var(--serif); font-size: 24px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.wave-window p, .wave-evidence p { color: var(--muted); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.wave-window .metric-list { margin-top: 16px; }
+.wave-evidence { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); min-width: 0; }
+.wave-evidence:empty { display: none; }
+@media (max-width: 1050px) { .wave-window-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 540px) { .wave-window-grid { padding-inline: 16px; } .wave-window { padding: 14px 12px; } .wave-primary { font-size: 21px; } }
+
+.backtest-range-mode { display: block; margin: 16px 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.backtest-range-mode input { width: auto; margin-right: 6px; }

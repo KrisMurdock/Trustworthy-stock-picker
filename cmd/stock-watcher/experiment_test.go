@@ -144,6 +144,20 @@ func TestExperimentCLIUsesSavedDataAndFrozenParent(t *testing.T) {
 	if err != nil || inherited.Spec.Range == nil || *inherited.Spec.Range != *interval {
 		t.Fatal("child lost parent range", err)
 	}
+	// A build change must fail before writing a running holdout record; failed
+	// attempts must not consume the snapshot's one clean validation interval.
+	countBefore := len(items)
+	currentVersion := version
+	version = "different-wave-build"
+	buildErr := runHoldout(ctx, c, parent.ID, logging.Nop())
+	version = currentVersion
+	if buildErr == nil {
+		t.Fatal("holdout accepted a different build")
+	}
+	items, err = view.List(ctx)
+	if err != nil || len(items) != countBefore {
+		t.Fatal("rejected holdout wrote an archive record", err)
+	}
 	if err = run([]string{"experiment", "-parent", parent.ID, "-holdout"}); err != nil {
 		t.Fatal(err)
 	}

@@ -19,6 +19,11 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     records = payload["experiments"]
     child = next(r for r in records if r["spec"].get("max_upper_wick") is not None)
     parent = next(r for r in records if not r.get("parent_id") and not r["spec"].get("entry_mode") and r["engine"] != "no_stop_holding_speed_v1")
+    assert child["upward_wave"]["model"] == "upward_wave_v0", "list dropped frozen wave summary"
+    expect(page.locator(f'.experiment-item[data-id="{child["id"]}"]')).to_contain_text("五日波段")
+    list_wave = next(w for w in child["upward_wave"]["windows"] if w["days"] == 5)
+    if list_wave["success_rate"] is not None:
+        expect(page.locator(f'#history-body tr[data-experiment="{child["id"]}"]')).to_contain_text(f'{list_wave["success_rate"] * 100:.2f}%')
     research = next(r for r in records if r["engine"] == "no_stop_holding_speed_v1")
     page.locator(f'.experiment-item[data-id="{research["id"]}"]').click()
     expect(page.locator("#result-snapshot-title")).to_have_text("实验结果快照")
@@ -70,11 +75,12 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     page.locator("#history-sort").select_option("newest")
     expect(page.locator("#run-holdout")).not_to_have_text("待划分")
     expect(page.locator("#run-next")).not_to_be_empty()
-    expect(page.locator("#validation-rules")).to_contain_text("最高价触达 2.5%／3% 或以上")
-    expect(page.locator("#validation-rules")).to_contain_text("不要求收盘价达标")
-    page.locator("#validation-rules summary").click()
-    expect(page.locator("#validation-rules")).to_contain_text("买入当日受 T+1 限制")
-    page.locator("#validation-rules summary").click()
+    expect(page.locator("#validation-rules")).to_be_hidden()
+    expect(page.locator("#upward-wave-review")).to_be_visible()
+    expect(page.locator("#wave-model")).to_contain_text("upward_wave_v0")
+    expect(page.locator("#wave-content")).to_contain_text("完整未来路径的事后标签")
+    expect(page.locator("#next-day-review")).to_be_hidden()
+    expect(page.locator("#risk-title")).to_contain_text("旧交易模型旁证")
     expect(page.locator("#comparison-body")).to_contain_text("首次触达 3% 平均天数")
     expect(page.locator("#risk-title")).to_contain_text("已完成样本未超限")
     expect(page.locator("#risk-summary")).to_contain_text("等于 3% 也不通过")
@@ -96,6 +102,35 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     # Archived evidence must be frozen even though the dashboard fixture has
     # a different history for the same stock and date.
     detail = context.request.get(url + "/api/experiments?id=" + child["id"]).json()
+    # Wave metrics are computed by the real backend fixture and retain their
+    # own denominators, independently of the legacy early-exit trade model.
+    waves = detail["result"]["development"]["upward_wave"]
+    assert waves["model"] == "upward_wave_v0"
+    for wave in waves["windows"]:
+        panel = page.locator(f'#wave-{wave["days"]}')
+        expected_rate = f'{wave["success_rate"] * 100:.2f}%' if wave["success_rate"] is not None else "暂无可评估样本"
+        expect(panel.locator('[data-wave="success-rate"]')).to_have_text(expected_rate)
+        if wave["coverage"] is not None:
+            expect(panel.locator('[data-wave="coverage"]')).to_contain_text(f'{wave["coverage"] * 100:.2f}%')
+        expect(panel).to_contain_text(f'已入场 {wave["entered"]}')
+        expect(panel).to_contain_text(f'路径未知 {wave["unknown"]}')
+    page.locator("#upward-wave-review summary").click()
+    expect(page.locator("#wave-comparison-note")).to_contain_text("口径一致")
+    assert any(v != "—" for v in page.locator("#wave-comparison-body td:last-child").all_text_contents())
+    page.locator("#upward-wave-review summary").click()
+    for status in ("success", "failed", "unknown"):
+        expected_trades = [t for t in detail["result"]["development"]["trades"] if t["selected"] and t.get("upward_wave") and next(w for w in t["upward_wave"]["windows"] if w["days"] == 5)["status"] == status]
+        page.locator("#trade-filter").select_option("wave-" + status)
+        expect(page.locator("#trade-page")).to_contain_text(f'{len(expected_trades)} 条')
+        if expected_trades:
+            sample = expected_trades[0]
+            page.locator("#trade-body button").first.click()
+            expect(page.locator("#wave-evidence")).to_contain_text("upward_wave_v0")
+            expect(page.locator("#wave-evidence")).to_contain_text("事后标签")
+            expect(page.locator("#wave-path-body tr")).to_have_count(len(sample["upward_wave"]["days"]))
+            for day in sample["upward_wave"]["days"]:
+                assert day["date"] < detail["result"]["development"]["holdout_from"], "wave path leaked holdout"
+    page.locator("#trade-filter").select_option("rejected")
     frozen = detail["result_snapshot"]
     assert frozen == child["result_snapshot"], "list/detail snapshots differ"
     assert frozen["id"] and frozen["data_snapshot_id"] == detail["data"]["id"]
@@ -134,6 +169,10 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     next_day = next(r for r in records if r["spec"].get("next_day_rule") == "baseline" and not r["spec"].get("entry_mode"))
     page.locator(f'.experiment-item[data-id="{next_day["id"]}"]').click()
     expect(page.locator("#run-title")).to_have_text("次日退出基线")
+    expect(page.locator("#wave-empty")).to_contain_text("未计算")
+    expect(page.locator("#wave-content")).to_be_hidden()
+    expect(page.locator("#validation-rules")).to_be_visible()
+    expect(page.locator("#validation-rules")).to_contain_text("不要求收盘价达标")
     expect(page.locator("#next-day-mode")).to_contain_text("次日退出实验")
     expect(page.locator("#next-day-title")).to_contain_text("≥80%")
     expect(page.locator("#comparison-note")).to_contain_text("口径不同")
@@ -151,7 +190,7 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     page.set_viewport_size({"width": 1440, "height": 1000})
     page.locator("#trade-filter").select_option("selected")
     page.locator(f'.experiment-item[data-id="{child["id"]}"]').click()
-    expect(page.locator("#next-day-mode")).to_contain_text("原持仓期限档案")
+    expect(page.locator("#next-day-review")).to_be_hidden()
     conditional = next(r for r in records if r["spec"].get("entry_mode") and not r["spec"].get("signal_rule"))
     page.locator(f'.experiment-item[data-id="{conditional["id"]}"]').click()
     expect(page.locator("#run-title")).to_have_text("条件低吸 · 买入日浮盈与次日止盈")
@@ -207,6 +246,7 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     expect(page.locator("#evidence-detail")).to_contain_text("信号日指标过滤")
     expect(page.locator("#evidence-indicators")).to_contain_text("布林线(20,2)")
     page.locator(f'.experiment-item[data-id="{child["id"]}"]').click()
+    expect(page.locator("#run-title")).to_have_text(child["spec"]["title"])
     page.locator("#backtest-from").fill(interval["from"])
     page.locator("#backtest-policy").select_option("conditional-macd")
     page.get_by_role("button", name="生成复现命令").click()
@@ -245,9 +285,12 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     page.locator(f'.experiment-item[data-id="{child["id"]}"]').click()
     expect(page.locator("#comparison-note")).to_contain_text("口径不同")
     assert all(v == "—" for v in page.locator("#comparison-body td:last-child").all_text_contents())
+    assert all(v == "—" for v in page.locator("#wave-comparison-body td:last-child").all_text_contents())
     page.unroute(detail_pattern)
     legacy = json.loads(json.dumps(detail))
     legacy.update(engine="development_top_n_v1", verdict="promising")
+    legacy["result"]["development"].pop("upward_wave", None)
+    legacy.pop("upward_wave", None)
     legacy["current_review"]["risk"].update(status="breached", breaches=1, exact_count=True)
     legacy["current_review"]["stats"].update(net_loss_limit_breaches=1, worst_resolved_net_pct=-3.2)
     bad_trade = legacy["result"]["development"]["trades"][0]
@@ -316,6 +359,8 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     no_signals["current_review"]["risk"].update(status="unverified", resolved=0)
     no_signals["current_review"]["stats"].update(samples=0, resolved=0, high_touch_samples=0)
     no_signals["current_review"]["next_day_verdict"] = "risk_unverified"
+    no_signals["result"]["development"].pop("upward_wave", None)
+    no_signals.pop("upward_wave", None)
     no_signals["result"]["groups"] = []
     no_signals["result"]["development"]["trades"] = []
     page.route(detail_pattern, lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps(no_signals)))
@@ -326,12 +371,95 @@ def experiment_checks(context, page, url, root, args, state, stalled_endpoint):
     expect(page.locator("#next-day-25")).to_contain_text("暂无可核实样本")
     expect(page.locator("#next-day-verdict")).to_contain_text("风险待核实")
     page.unroute(detail_pattern)
+    # Four-light conclusions describe waveform observations; an old stop-loss
+    # breach remains visible as a separate result and must not rewrite it.
+    wave_record = json.loads(json.dumps(detail))
+    wave_record["verdict"] = "wave_observed"
+    wave_record["spec"]["four_light_rule"] = "flip-any"
+    wave_record["current_review"]["risk"].update(status="breached", breaches=1)
+    # Inject a declared label to exercise successful-segment rendering even
+    # when this small price fixture has no qualifying waves. Formula behavior
+    # is covered in strategy tests; the browser must display frozen evidence.
+    wave_sample = next(t for t in wave_record["result"]["development"]["trades"] if t["selected"] and len(t.get("upward_wave", {}).get("days", [])) >= 5)
+    wave_record["result"]["development"]["trades"] = [wave_sample]
+    wave_sample["upward_wave"]["days"] = wave_sample["upward_wave"]["days"][:5]
+    short_window = next(w for w in wave_sample["upward_wave"]["windows"] if w["days"] == 5)
+    short_window.update(status="success", segment={"start_day":1,"end_day":3,"duration":3,"up_days":3,"up_ratio":1,"longest_up":3,"longest_down":0,"efficiency":1,"end_net_pct":2.4,"max_loss_pct":0.2,"close_drawdown_pct":0.1})
+    long_window = next(w for w in wave_sample["upward_wave"]["windows"] if w["days"] == 10)
+    long_window.clear()
+    long_window.update(days=10, status="unknown", reason="reserved_boundary")
+    page.route(detail_pattern, lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps(wave_record)))
+    page.locator(f'.experiment-item[data-id="{child["id"]}"]').click()
+    expect(page.locator("#run-tags")).to_contain_text("上涨波段已观察")
+    expect(page.locator("#run-tags")).not_to_contain_text("风险不达标")
+    expect(page.locator("#risk-title")).to_contain_text("旧交易模型旁证 · 风险不达标")
+    expect(page.locator("#wave-5")).to_be_visible()
+    expect(page.locator("#backtest-policy")).to_have_value("four-light-flip-any")
+    page.locator("#backtest-from").fill(detail["result"]["development"]["research"]["development"]["from"])
+    page.locator("#backtest-through").fill(detail["result"]["development"]["research"]["development"]["through"])
+    for policy in ("baseline", "four-light-all-red", "four-light-flip-any", "four-light-flip-all"):
+        page.locator("#backtest-policy").select_option(policy)
+        page.get_by_role("button", name="生成复现命令").click()
+        expect(page.locator("#backtest-command")).to_contain_text("-policy " + policy + " -parent " + child["id"])
+        expect(page.locator("#backtest-command")).not_to_contain_text("-from")
+    expect(page.locator("#backtest-command-status")).to_contain_text("原开发 / 预留划分")
+    page.locator("#backtest-explicit-range").check()
+    page.get_by_role("button", name="生成复现命令").click()
+    expect(page.locator("#backtest-command")).to_contain_text("-from")
+    expect(page.locator("#backtest-command-status")).to_contain_text("不能声称该段未消费")
+
+    page.locator("#trade-filter").select_option("wave-success")
+    expect(page.locator("#trade-page")).to_contain_text("1 条")
+    page.locator("#trade-body button").first.click()
+    expect(page.locator("#wave-evidence")).to_contain_text("合格段 D1～D3")
+    expect(page.locator("#wave-evidence")).to_contain_text("最长连涨 / 连跌 3 / 0")
+    expect(page.locator("#wave-evidence")).to_contain_text("10 日：未知（触及保留区间边界）")
+    expect(page.locator("#wave-path-body tr")).to_have_count(5)
+    expect(page.locator("#wave-evidence")).to_contain_text("不是实际收益或未来卖点")
+    page.locator("#trade-filter").select_option("selected")
+
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), "wave panel mobile overflow"
+    page.locator("#upward-wave-review").screenshot(path=str(screenshots / f"{kind}-upward-wave-mobile.png"))
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    page.unroute(detail_pattern)
+    for mode in ("empty", "missing", "unsupported"):
+        altered = json.loads(json.dumps(wave_record))
+        if mode == "empty":
+            for w in altered["result"]["development"]["upward_wave"]["windows"]:
+                for key in ("selected", "signal_dates", "entered", "not_entered", "entry_unknown", "known", "success", "failed", "unknown"):
+                    w[key] = 0
+                for key in ("coverage", "success_rate", "conservative_rate", "mean_start_day", "mean_duration", "mean_segment_efficiency", "mean_end_net_pct", "mean_giveback_pct", "mean_max_loss_pct", "worst_max_loss_pct"):
+                    w[key] = None
+                w["unknown_reasons"] = {}
+            altered["result"]["development"]["trades"] = []
+        elif mode == "missing":
+            altered["result"]["development"].pop("upward_wave")
+            altered.pop("upward_wave", None)
+        else:
+            altered["result"]["development"]["upward_wave"]["model"] = "future_unsupported_model"
+        page.route(detail_pattern, lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps(altered)))
+        page.locator(f'.experiment-item[data-id="{child["id"]}"]').click()
+        if mode == "empty":
+            for days in (5, 10):
+                expect(page.locator(f'#wave-{days} [data-wave="success-rate"]')).to_have_text("暂无可评估样本")
+                expect(page.locator(f'#wave-{days} [data-wave="coverage"]')).not_to_contain_text("0.00%")
+            expect(page.locator("#trade-body")).to_contain_text("没有交易记录")
+            expect(page.locator("#wave-evidence")).to_be_empty()
+        else:
+            expect(page.locator("#wave-empty")).to_contain_text("未计算")
+            expect(page.locator("#wave-content")).to_be_hidden()
+            expect(page.locator("#wave-5-content")).to_be_empty()
+            expect(page.locator("#wave-comparison-body")).to_be_empty()
+        page.unroute(detail_pattern)
     failed = dict(detail)
     failed.update(status="failed", verdict="pending", result=None, error="实验数据不足，未生成结果。")
     page.route(detail_pattern, lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps(failed)))
     page.locator(f'.experiment-item[data-id="{child["id"]}"]').click()
     expect(page.locator("#run-failure")).to_contain_text("数据不足")
     expect(page.locator("#run-results")).to_be_hidden()
+    expect(page.locator("#upward-wave-review")).to_be_hidden()
+    expect(page.locator("#wave-5-content")).to_be_empty()
     expect(page.locator("#snapshot-content")).to_be_hidden()
     expect(page.locator("#snapshot-download")).to_be_disabled()
     expect(page.locator("#snapshot-empty")).to_contain_text("没有可用")

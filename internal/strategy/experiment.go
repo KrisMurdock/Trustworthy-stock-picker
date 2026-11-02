@@ -13,23 +13,25 @@ import (
 // ExperimentTrade retains the exact signal features and simulated execution.
 // Selected=false records a rejected original top-N candidate for attribution.
 type ExperimentTrade struct {
-	ID        string             `json:"id"`
-	Code      string             `json:"code"`
-	Date      string             `json:"date"`
-	Rank      int                `json:"rank"`
-	Selected  bool               `json:"selected"`
-	Features  Features           `json:"features"`
-	Outcome   Outcome            `json:"outcome"`
-	EntryZone *EntryZone         `json:"entry_zone,omitempty"`
-	Chan      *ChanEvidence      `json:"chan,omitempty"`
-	FourLight *FourLightEvidence `json:"four_light,omitempty"`
+	ID         string             `json:"id"`
+	Code       string             `json:"code"`
+	Date       string             `json:"date"`
+	Rank       int                `json:"rank"`
+	Selected   bool               `json:"selected"`
+	Features   Features           `json:"features"`
+	Outcome    Outcome            `json:"outcome"`
+	EntryZone  *EntryZone         `json:"entry_zone,omitempty"`
+	Chan       *ChanEvidence      `json:"chan,omitempty"`
+	FourLight  *FourLightEvidence `json:"four_light,omitempty"`
+	UpwardWave *UpwardWave        `json:"upward_wave,omitempty"`
 }
 type DevelopmentResult struct {
-	Research       Research          `json:"research"`
-	Trades         []ExperimentTrade `json:"trades"`
-	HoldoutFrom    string            `json:"holdout_from"`
-	HoldoutThrough string            `json:"holdout_through"`
-	Selection      *SignalSelection  `json:"signal_selection,omitempty"`
+	Research       Research           `json:"research"`
+	Trades         []ExperimentTrade  `json:"trades"`
+	HoldoutFrom    string             `json:"holdout_from"`
+	HoldoutThrough string             `json:"holdout_through"`
+	Selection      *SignalSelection   `json:"signal_selection,omitempty"`
+	UpwardWave     *UpwardWaveSummary `json:"upward_wave,omitempty"`
 }
 
 type SignalSelection struct {
@@ -128,6 +130,11 @@ func AnalyzeDevelopment(ctx context.Context, c config.Config, histories, raw []m
 		return result, err
 	}
 	result.Research, result.Trades = x.Research, options.trades
+	if policy.NextDayRule == "" {
+		if err := attachUpwardWaves(ctx, c, data, &result, result.HoldoutFrom, asof); err != nil {
+			return DevelopmentResult{}, err
+		}
+	}
 	return result, nil
 }
 
@@ -175,6 +182,11 @@ func AnalyzeHoldout(ctx context.Context, c config.Config, histories, raw []marke
 		return result, err
 	}
 	result.Research, result.Trades = x.Research, options.trades
+	if policy.NextDayRule == "" {
+		if err := attachUpwardWaves(ctx, c, data, &result, "", asof); err != nil {
+			return DevelopmentResult{}, err
+		}
+	}
 	return result, nil
 }
 

@@ -246,6 +246,7 @@ func (x *ExperimentDB) Finish(ctx context.Context, record experiment.Record) err
 	if old.Status == "completed" {
 		if old.Result != nil {
 			old.ResultSnapshot = experiment.SnapshotResult(old)
+			old.UpwardWave = old.Result.Development.UpwardWave
 		} else {
 			old.ResultSnapshot = record.ResultSnapshot
 		}

@@ -183,6 +183,9 @@ func runHoldout(ctx context.Context, c config.Config, parentID string, log *logg
 	if parent.Status != "completed" || parent.Result == nil || parent.Result.Development.HoldoutFrom == "" {
 		return errors.New("parent experiment has no reserved holdout interval")
 	}
+	if parent.Engine != experiment.Engine || parent.CodeVersion != version {
+		return errors.New("holdout requires the parent's exact engine and build; rerun development with this build before consuming the reserved interval")
+	}
 	snapshot, err := db.Snapshot(ctx, parent.Data.ID)
 	if err != nil {
 		return err
