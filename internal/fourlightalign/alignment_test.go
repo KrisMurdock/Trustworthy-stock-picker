@@ -111,6 +111,9 @@ func TestCompareReportsTransitionLeadOrLagRows(t *testing.T) {
 	if len(report.EventDifferences) == 0 {
 		t.Fatal("lagging target event was not reported")
 	}
+	if report.Transitions[0].Exact != 0 || report.Transitions[0].Missed == 0 {
+		t.Fatalf("shifted transition was counted as a same-day match: %+v", report.Transitions[0])
+	}
 	found := false
 	for _, difference := range report.EventDifferences {
 		if difference.Event == EventFirstAllRed && difference.Relation == "shifted" && difference.OffsetRows != 0 {

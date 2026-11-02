@@ -66,10 +66,12 @@ type TransitionAgreement struct {
 	Compared            int    `json:"compared"`
 	TargetEvents        int    `json:"target_events"`
 	ApproximationEvents int    `json:"approximation_events"`
-	Exact               int    `json:"exact"`
-	Missed              int    `json:"missed"`
-	Extra               int    `json:"extra"`
-	Unknown             int    `json:"unknown"`
+	// Exact counts same-K-line transitions only. Shifted events paired within
+	// the window remain alignment differences and do not contribute here.
+	Exact   int `json:"exact"`
+	Missed  int `json:"missed"`
+	Extra   int `json:"extra"`
+	Unknown int `json:"unknown"`
 }
 
 type Mismatch struct {
