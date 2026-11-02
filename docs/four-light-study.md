@@ -46,6 +46,8 @@ go build -ldflags "-X main.version=$(git rev-parse HEAD)" -o /tmp/four-light-stu
 
 manifest 和 database 必填；events 可省略。默认总超时 10 分钟，允许大于零且不超过 1 小时；SIGINT、SIGTERM、取消或超时都会中止。错误写 stderr，并以非零状态退出；stdout 只有完整成功报告。命令重定向可能留下空报告文件，应以退出状态和 JSON 内容一起判断成功。
 
+v2 可额外成对传入 `-classification` 与 `-classification-sha256`，输出独立的 `sector_context`，保持基础 `report` 不变。分类来源、可见日期、同日同行业基准和两个独立先验强弱诊断的契约见 [同行业对照](four-light-sector-context.md)。不传入分类时不启用该分析。
+
 events 必须是新路径，禁止覆盖任何输入或已有文件。事件先写同目录临时文件，分析和报告序列化成功后才原子发布；发布不会覆盖运行期间被其他进程创建的文件。失败会清理本轮临时文件。输出目录需支持同目录硬链接；这也是本工具应使用独立本地研究目录的原因之一。
 
 输出 JSON 包含 `code_version`、`manifest_file_sha256`、`database_sha256`、`database_schema` 及 `report`。报告保留完整 manifest、逐组/逐日/逐月统计、同日对照和数据审计。v2 报告 schema 为 2、引擎为 `four_light_market_wave_v2`，还输出板块分组、来源组合、候选保留率，以及候选相对未过滤首次全红的同日差值。代码、manifest 与数据库摘要一起标识可复现输入。
@@ -65,7 +67,7 @@ events JSONL 仅输出当前全红的股票日，一行一个 `code/date`，包�
 | `first_price_involved` | 首次全红且至少一个价格灯由绿转红 |
 | `all_red_transition_unknown` | 当前全红，但上一交易日缺失或转换不可判 |
 | `non_all_red` | 当前四灯可判且未全红 |
-| `first_moderate_volume` | v2：首次全红且信号日量比 ≥1.2、<2；本轮唯一过滤候选 |
+| `first_moderate_volume` | v2：首次全红且信号日量比 ≥1.2、<2；基础报告的量比候选 |
 | `first_high_volume` | v2：首次全红且量比 ≥2；候选的互补诊断组 |
 
 `baseline` 包含信号组，故差值是相对当日可评价市场集合的描述，不是信号组与互斥控制组的因果效应。明确未入场、入场未知和路径未知保留在各自漏斗中，不事先按未来可成交或未来数据完整性删除股票日。

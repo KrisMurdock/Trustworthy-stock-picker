@@ -401,3 +401,132 @@ func TestEventPublicationDoesNotReplaceRacingWriter(t *testing.T) {
 		t.Fatal("racing writer data changed")
 	}
 }
+
+func cliClassification(t *testing.T) (string, string) {
+	t.Helper()
+	s := fourlightstudy.SectorSnapshot{Version: 1, Basis: "published_snapshot", Taxonomy: "fixture", Level: "division", SnapshotAsOf: "2025-12-31", PublishedOn: "2026-01-01", ObservedAt: "2026-11-02T00:00:00Z",
+		Sources:     []fourlightstudy.SectorSource{{URL: "https://example.org/frozen.pdf", SHA256: strings.Repeat("a", 64)}},
+		Memberships: []fourlightstudy.SectorMembership{{Code: "sz000001", SectorCode: "J66", SectorName: "货币金融服务"}}}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "classification.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(data)
+	return path, hex.EncodeToString(hash[:])
+}
+
+func TestRunClassificationParityAndOutputProtection(t *testing.T) {
+	manifestPath, databasePath, manifest := cliFixture(t, 3, false)
+	manifest.Version, manifest.WaveModel, manifest.PairingPolicy = 2, strategy.UpwardWaveNoDrawdownModel, fourlightstudy.PairingPolicy
+	writeCLIManifest(t, manifestPath, manifest)
+	classification, digest := cliClassification(t)
+	base := []string{"-manifest", manifestPath, "-database", databasePath}
+	var baseline, actual bytes.Buffer
+	if err := run(context.Background(), base, &baseline, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	args := append(append([]string{}, base...), "-classification", classification, "-classification-sha256", digest)
+	events := filepath.Join(t.TempDir(), "events.jsonl")
+	if err := run(context.Background(), append(append([]string{}, args...), "-events", events), &actual, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var before, after output
+	if err := json.Unmarshal(baseline.Bytes(), &before); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(actual.Bytes(), &after); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(before.Report)
+	a, _ := json.Marshal(after.Report)
+	if !bytes.Equal(a, b) || after.ClassificationSHA256 != digest || after.SectorContext == nil {
+		t.Fatal("classification changed baseline or lost provenance")
+	}
+	data, err := os.ReadFile(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
+		var event fourlightstudy.Event
+		if err := json.Unmarshal(row, &event); err != nil {
+			t.Fatal(err)
+		}
+		if !event.FourLight.AllRed || event.Context == nil {
+			t.Fatal("missing all-red event context")
+		}
+	}
+	original, _ := os.ReadFile(classification)
+	if err := run(context.Background(), append(append([]string{}, args...), "-events", classification), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "input file") {
+		t.Fatalf("classification overwrite: %v", err)
+	}
+	unchanged, _ := os.ReadFile(classification)
+	if !bytes.Equal(original, unchanged) {
+		t.Fatal("classification modified")
+	}
+	failedDir := t.TempDir()
+	if err := run(context.Background(), append(append([]string{}, args...), "-events", filepath.Join(failedDir, "failed.jsonl")), failingWriter{}, io.Discard); err == nil {
+		t.Fatal("failed report accepted")
+	}
+	files, _ := os.ReadDir(failedDir)
+	if len(files) != 0 {
+		t.Fatal("partial events left on failure")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := run(ctx, args, io.Discard, io.Discard); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+}
+
+func TestClassificationInputFailures(t *testing.T) {
+	manifestPath, databasePath, manifest := cliFixture(t, 3, false)
+	classification, digest := cliClassification(t)
+	base := []string{"-manifest", manifestPath, "-database", databasePath}
+	for _, extra := range [][]string{{"-classification", classification}, {"-classification-sha256", digest}, {"-classification", classification, "-classification-sha256", digest}} {
+		if err := run(context.Background(), append(append([]string{}, base...), extra...), io.Discard, io.Discard); err == nil {
+			t.Fatal("accepted missing paired flag or manifest v1")
+		}
+	}
+	manifest.Version, manifest.WaveModel, manifest.PairingPolicy = 2, strategy.UpwardWaveNoDrawdownModel, fourlightstudy.PairingPolicy
+	writeCLIManifest(t, manifestPath, manifest)
+	data, _ := os.ReadFile(classification)
+	for _, tc := range []struct {
+		name string
+		data []byte
+		hash string
+		want string
+	}{
+		{"mismatch", data, strings.Repeat("b", 64), "mismatch"},
+		{"uppercase", data, strings.ToUpper(digest), "lowercase"},
+		{"unknown", append(append([]byte{}, data[:len(data)-1]...), []byte(",\"extra\":1}")...), "", "unknown field"},
+		{"trailing", append(append([]byte{}, data...), []byte(" {}")...), "", "exactly one"},
+		{"invalid", []byte("{}"), "", "version"},
+		{"oversize", bytes.Repeat([]byte(" "), (8<<20)+1), "", "exceeds"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "input.json")
+			if err := os.WriteFile(path, tc.data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			hash := tc.hash
+			if hash == "" {
+				h := sha256.Sum256(tc.data)
+				hash = hex.EncodeToString(h[:])
+			}
+			dir := t.TempDir()
+			args := append(append([]string{}, base...), "-classification", path, "-classification-sha256", hash, "-events", filepath.Join(dir, "events.jsonl"))
+			var stdout bytes.Buffer
+			if err := run(context.Background(), args, &stdout, io.Discard); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want %s got %v", tc.want, err)
+			}
+			files, _ := os.ReadDir(dir)
+			if stdout.Len() != 0 || len(files) != 0 {
+				t.Fatal("failure published results")
+			}
+		})
+	}
+}

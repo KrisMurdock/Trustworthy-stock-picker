@@ -115,6 +115,12 @@ func (groups groupAccumulators) summarize(names []string, date, month string) []
 // all-red observations in stable code/date order; it never receives an invented
 // rank or interprets overlapping groups as a portfolio.
 func Analyze(ctx context.Context, manifest Manifest, source Source, emit func(Event) error) (Report, error) {
+	return analyzeWithObserver(ctx, manifest, source, emit, nil)
+}
+
+// observer sees every current-state-known stock/date, including the baseline.
+// It cannot change selection or cause unknown future outcomes to be discarded.
+func analyzeWithObserver(ctx context.Context, manifest Manifest, source Source, emit, observer func(Event) error) (Report, error) {
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
 	}
@@ -256,11 +262,18 @@ func Analyze(ctx context.Context, manifest Manifest, source Source, emit func(Ev
 			}
 			if evidence.AllRed {
 				report.Audit.AllRedEventRows++
-				if emit != nil {
-					event := Event{Code: stock.Code, Name: stock.Name, Date: date, Groups: groups, FourLight: evidence, Wave: wave}
-					if manifest.Version == 2 {
-						event.Board, event.VolumeRatio = board, volumeRatio
+			}
+			if observer != nil || (evidence.AllRed && emit != nil) {
+				event := Event{Code: stock.Code, Name: stock.Name, Date: date, Groups: groups, FourLight: evidence, Wave: wave}
+				if manifest.Version == 2 {
+					event.Board, event.VolumeRatio = board, volumeRatio
+				}
+				if observer != nil {
+					if err := observer(event); err != nil {
+						return Report{}, fmt.Errorf("observe study event %s at %s: %w", stock.Code, date, err)
 					}
+				}
+				if evidence.AllRed && emit != nil {
 					if err := emit(event); err != nil {
 						return Report{}, fmt.Errorf("write study event %s at %s: %w", stock.Code, date, err)
 					}
