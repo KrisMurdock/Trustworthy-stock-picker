@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/dayrange"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkrecommend"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/predictor"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 )
 
 func runtimeTestConfig(t *testing.T) Config {
@@ -133,6 +135,57 @@ func TestNewWiresDayRangeForecastLoader(t *testing.T) {
 	defer rt.Close()
 	if rt.dayRange == nil || rt.monitor.DayRangeForecasts == nil {
 		t.Fatal("dayrange forecast loader was not wired into the monitor")
+	}
+}
+
+func TestNewWiresHKConnectRecommendationLoader(t *testing.T) {
+	cfg := runtimeTestConfig(t)
+	cfg.HKConnect.Enabled = true
+	cfg.HKConnect.PushEnabled = true
+	recommendation := hkrecommend.Recommendation{
+		Version: hkrecommend.SchemaVersion,
+		ID:      "hk-rec-runtime",
+		Market:  hkrecommend.Market,
+		AsOf:    "2026-10-30",
+		Target:  "2026-11-02",
+	}
+	payload, err := json.Marshal(recommendation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.OpenHKMarket(cfg.DataDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveRecommendation(context.Background(), storage.RecommendationArtifact{
+		Market:  hkrecommend.Market,
+		AsOf:    recommendation.AsOf,
+		ID:      recommendation.ID,
+		Target:  recommendation.Target,
+		BuiltAt: time.Now(),
+		Payload: payload,
+	}); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rt, err := New(Options{Config: &cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	if rt.monitor.HKRecommendations == nil {
+		t.Fatal("HK Connect recommendation loader was not wired into the monitor")
+	}
+	loaded, err := rt.monitor.HKRecommendations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ID != recommendation.ID || loaded.Target != recommendation.Target {
+		t.Fatalf("loaded recommendation = %+v", loaded)
 	}
 }
 

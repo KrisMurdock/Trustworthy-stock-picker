@@ -15,6 +15,8 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/dashboard"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/dayrange"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkconnect"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkrecommend"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/intraday"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
@@ -224,6 +226,11 @@ func New(opts Options) (*Runtime, error) {
 	log.RegisterSecret(cfg.Wechat.AppSecret)
 	r.monitor = monitor.NewWithMarketDB(cfg, store, marketDB, sources, noticeChannels, log)
 	r.monitor.BuildVersion = version
+	if cfg.HKConnect.Enabled && cfg.HKConnect.PushEnabled {
+		r.monitor.HKRecommendations = func(loadCtx context.Context) (hkrecommend.Recommendation, error) {
+			return hkconnect.LoadLatestRecommendation(loadCtx, cfg.DataDir, cfg.RequireCIFS)
+		}
+	}
 	if r.contextSyncer != nil {
 		r.monitor.MarketContextSync = func(ctx context.Context, day string) (marketcontext.SyncResult, error) {
 			result, err := r.contextSyncer.ForDate(ctx, day)
