@@ -80,7 +80,7 @@ func TestFourLightAllCLIWritesWholeMarketArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer view.Close()
-	summary, err := view.LatestFourLightSummary(context.Background(), "2026-10-13", "four_light_approx_v1")
+	summary, err := view.LatestFourLightSummary(context.Background(), "2026-10-13", "four_light_approx_v1", 1, storage.DefaultFourLightPageSize)
 	if err != nil || summary.Run.Status != "complete" || summary.Run.AllRed != 1 || len(summary.First) != 1 {
 		t.Fatalf("summary = %+v, %v", summary, err)
 	}

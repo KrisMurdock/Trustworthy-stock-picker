@@ -72,8 +72,12 @@ func seedAllMarketFourLight(root string) error {
 		{Code: "sh600519", Name: "测试消费", ListedFrom: "2001-08-27"},
 		{Code: "sz000002", Name: "测试退出", ListedFrom: "1991-01-29"},
 		{Code: "sz000004", Name: "测试停牌"},
+		{Code: "sz000005", Name: "测试上一日缺失"},
 	}
-	for index, stock := range stocks[:3] {
+	for index, stock := range stocks {
+		if index == 3 {
+			continue
+		}
 		h := allMarketFixtureHistory(stock, asOf)
 		switch index {
 		case 0:
@@ -86,6 +90,9 @@ func seedAllMarketFourLight(root string) error {
 			previous := h.Bars[len(h.Bars)-2].Close
 			last := &h.Bars[len(h.Bars)-1]
 			last.Open, last.High, last.Low, last.Close, last.Volume = previous*0.6, previous*0.62, previous*0.55, previous*0.6, 2000
+		case 4:
+			h.Bars[len(h.Bars)-1].Volume = 2000
+			h.Bars = append(h.Bars[:len(h.Bars)-2], h.Bars[len(h.Bars)-1:]...)
 		}
 		if err := db.SaveHistory(ctx, stock, h, true); err != nil {
 			return err
@@ -104,7 +111,7 @@ func seedAllMarketFourLight(root string) error {
 	if err != nil {
 		return err
 	}
-	if result.Total != 4 || result.AllRed != 2 || result.FirstAllRed != 1 || result.ContinuingAllRed != 1 || result.ExitAllRed != 1 || result.Unknown != 1 {
+	if result.Total != 5 || result.AllRed != 3 || result.FirstAllRed != 1 || result.ContinuingAllRed != 1 || result.ExitAllRed != 1 || result.StateUnknown != 1 || result.TransitionUnknown != 2 {
 		return fmt.Errorf("unexpected four-light fixture result: %+v", result)
 	}
 	return nil

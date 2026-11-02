@@ -218,7 +218,7 @@ func main() {
 
 港股通分钟采集独立于日线同步，设置 `STOCK_WATCHER_HK_INTRADAY_ENABLED=true` 后由 `run` 按港股时段轮询，也可运行 `sync-hk-minutes -from YYYY-MM-DD -through YYYY-MM-DD -codes hk00700` 补采。东方财富原生不复权 5 分钟线保存在 `hk-market.db`，15/30/60 分钟从同一序列派生；`/api/hk-intraday?code=hk00700&period=5` 只读返回最近最多 640 根和缺口状态，当前没有港股图表页面。来源历史深度、生产限流和全股池覆盖尚需验证，未采集 1 分钟线，不能宣称多年历史完整或所有可获得粒度均已落地。日线和分钟写入共用 `.hk-market.lock`；升级、回滚和补采边界见[行情来源与回退](docs/data-sources.md#港股通分钟数据sync-hk-minutes)。
 
-`four-light-all [-as-of YYYY-MM-DD]` 只读取 `all-market.db` 已保存的前复权日线，按冻结的 `four_light_approx_v1` 为全市场每只活跃股票保存 `red/green/unknown` 灯色和 `first_all_red/continuing_all_red/exit_all_red/non_all_red/unknown` 生命周期。它不会创建空库，不读取候选报告，不改变正式排名、结构门控或飞书；行情不足、上一交易日缺失或数据陈旧会明确记为 `unknown/partial`，数据库读取失败则整轮回滚，不会被解释成“退出全红”。同一日期和规则成功重跑会事务替换当日快照，失败重跑只记录失败状态并保留上次成功归档。systemd 定时任务先执行 `sync-all`，仅在同步成功后才执行 `four-light-all`。
+`four-light-all [-as-of YYYY-MM-DD]` 只读取 `all-market.db` 已保存的前复权日线，按冻结的 `four_light_approx_v1` 为全市场每只活跃股票保存 `red/green/unknown` 灯色和 `first_all_red/continuing_all_red/exit_all_red/non_all_red/unknown` 生命周期。它不会创建空库，不读取候选报告，不改变正式排名、结构门控或飞书；行情不足、上一交易日缺失或数据陈旧会明确记为 `unknown/partial`，数据库读取失败则整轮回滚，不会被解释成“退出全红”。汇总分别记录“当日灯色未知”和“转换状态未知”，列表分页默认 200 条、最多 500 条并返回各列表总数。同一日期和规则成功重跑会事务替换当日快照，失败重跑只记录失败状态并保留上次成功归档。systemd 定时任务先执行 `sync-all`，仅在同步成功后才执行 `four-light-all`；主网页启动时归档尚未创建也不会永久禁用，后续请求会重试打开。
 
 ## 工作原理
 
@@ -307,7 +307,7 @@ func main() {
 | `/review` | 冻结推荐回看、T+1/T+3/T+5 检查点、证据详情和手动 AI 归因 |
 | `/calculator` | 浏览器内仓位、持仓、剩余风险与净止盈价计算 |
 
-行情、报告、复盘、指数方向、分钟预测、全市场四灯和全天高低价预测的读取接口只读，包括 `/healthz`、`/api/dashboard`、`/api/reports?as_of=YYYY-MM-DD`、`/api/history?code=sz000001`、`/api/intraday?code=sz000001&period=5`、`/api/hk-intraday?code=hk00700&period=5`、`/api/four-light?as_of=YYYY-MM-DD`、`/api/four-light/history?code=sz000001&from=YYYY-MM-DD&through=YYYY-MM-DD`、`/api/market-signal?as_of=YYYY-MM-DD`、`/api/predictions?date=YYYY-MM-DD`、`/api/predictor`、`/api/day-range?date=YYYY-MM-DD`、`/api/day-range/status` 和 `/api/day-range/evaluation?date=YYYY-MM-DD`。写入口仅有受保护的 `PUT /api/predictor/config`（飞书预测推送开关）以及 loopback/同源约束下的 LLM 配置与对话/归因接口；公网匿名模式会拒绝全部非 GET/HEAD 请求。摘要页和股票页每分钟刷新，刷新不会触发行情下载或消息推送。
+行情、报告、复盘、指数方向、分钟预测、全市场四灯和全天高低价预测的读取接口只读，包括 `/healthz`、`/api/dashboard`、`/api/reports?as_of=YYYY-MM-DD`、`/api/history?code=sz000001`、`/api/intraday?code=sz000001&period=5`、`/api/hk-intraday?code=hk00700&period=5`、`/api/four-light?as_of=YYYY-MM-DD&page=1&page_size=200`、`/api/four-light/history?code=sz000001&from=YYYY-MM-DD&through=YYYY-MM-DD`、`/api/market-signal?as_of=YYYY-MM-DD`、`/api/predictions?date=YYYY-MM-DD`、`/api/predictor`、`/api/day-range?date=YYYY-MM-DD`、`/api/day-range/status` 和 `/api/day-range/evaluation?date=YYYY-MM-DD`。写入口仅有受保护的 `PUT /api/predictor/config`（飞书预测推送开关）以及 loopback/同源约束下的 LLM 配置与对话/归因接口；公网匿名模式会拒绝全部非 GET/HEAD 请求。摘要页和股票页每分钟刷新，刷新不会触发行情下载或消息推送。
 
 网页没有内置账号或权限系统，默认仅监听 `127.0.0.1:8080`。远程访问必须使用受控网络或已有认证反向代理；代理应保留根路径、`/api/` 和 `/assets/`。
 

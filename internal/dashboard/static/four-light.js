@@ -87,19 +87,60 @@
     setText(id, String(count));
   }
 
+  function renderListRange(id, total, shown, page, pageSize) {
+    const count = Number(total || 0);
+    const visible = Number(shown || 0);
+    if (!count) {
+      setText(id, "共 0 条");
+      return;
+    }
+    const start = (page - 1) * pageSize + 1;
+    const end = start + visible - 1;
+    setText(id, visible ? `显示第 ${number(start)}–${number(end)} 条 · 共 ${number(count)} 条` : `本页无记录 · 共 ${number(count)} 条`);
+  }
+
+  function renderPagination(data) {
+    const page = Number(data.page || 1);
+    const pageSize = Number(data.page_size || 200);
+    const maxTotal = Math.max(
+      Number(data.first_all_red_total || 0),
+      Number(data.continuing_all_red_total || 0),
+      Number(data.exit_all_red_total || 0),
+      Number(data.transition_unknown_total || 0),
+    );
+    const pages = Math.max(1, Math.ceil(maxTotal / pageSize));
+    const prev = byId("four-light-prev");
+    const next = byId("four-light-next");
+    prev.disabled = page <= 1;
+    next.disabled = page >= pages;
+    setText("four-light-page-status", `第 ${number(page)} / ${number(pages)} 页 · 每页 ${number(pageSize)} 条`);
+  }
+
   function renderSummary(data) {
     state.summary = data;
     const run = data.run || {};
+    const page = Number(data.page || 1);
+    const pageSize = Number(data.page_size || 200);
+    const first = list(data.first_all_red);
+    const continuing = list(data.continuing_all_red);
+    const exited = list(data.exit_all_red);
+    const transitionUnknown = list(data.transition_unknown_records);
     setText("four-light-total", number(run.total || 0));
     setText("four-light-all-red", number(run.all_red || 0));
-    summaryTag("four-light-first-count", run.first_all_red || 0);
-    summaryTag("four-light-continuing-count", run.continuing_all_red || 0);
-    summaryTag("four-light-exit-count", run.exit_all_red || 0);
-    summaryTag("four-light-unknown-count", run.unknown || 0);
-    summaryTag("four-light-first-tag", run.first_all_red || 0);
-    summaryTag("four-light-continuing-tag", run.continuing_all_red || 0);
-    summaryTag("four-light-exit-tag", run.exit_all_red || 0);
-    summaryTag("four-light-unknown-tag", run.unknown || 0);
+    summaryTag("four-light-first-count", data.first_all_red_total || 0);
+    summaryTag("four-light-continuing-count", data.continuing_all_red_total || 0);
+    summaryTag("four-light-exit-count", data.exit_all_red_total || 0);
+    summaryTag("four-light-state-unknown-count", run.state_unknown || 0);
+    summaryTag("four-light-transition-unknown-count", data.transition_unknown_total || 0);
+    summaryTag("four-light-first-tag", data.first_all_red_total || 0);
+    summaryTag("four-light-continuing-tag", data.continuing_all_red_total || 0);
+    summaryTag("four-light-exit-tag", data.exit_all_red_total || 0);
+    summaryTag("four-light-transition-unknown-tag", data.transition_unknown_total || 0);
+    renderListRange("four-light-first-range", data.first_all_red_total, first.length, page, pageSize);
+    renderListRange("four-light-continuing-range", data.continuing_all_red_total, continuing.length, page, pageSize);
+    renderListRange("four-light-exit-range", data.exit_all_red_total, exited.length, page, pageSize);
+    renderListRange("four-light-transition-unknown-range", data.transition_unknown_total, transitionUnknown.length, page, pageSize);
+    renderPagination(data);
     byId("four-light-date").value = run.as_of || "";
     const meta = byId("four-light-run-meta");
     meta.replaceChildren(
@@ -109,14 +150,14 @@
       el("span", "", `数据就绪 ${number(run.ready || 0)} / ${number(run.total || 0)}`),
       el("span", "", `运行 ${run.id || "—"}`),
     );
-    renderRows("four-light-first-body", list(data.first_all_red), "当日没有首次全红。");
-    renderRows("four-light-continuing-body", list(data.continuing_all_red), "当日没有持续全红。");
-    renderRows("four-light-exit-body", list(data.exit_all_red), "当日没有退出全红。");
-    renderRows("four-light-unknown-body", list(data.unknown_records), "当日没有无法判断的股票。", true);
+    renderRows("four-light-first-body", first, "当日没有首次全红。");
+    renderRows("four-light-continuing-body", continuing, "当日没有持续全红。");
+    renderRows("four-light-exit-body", exited, "当日没有退出全红。");
+    renderRows("four-light-unknown-body", transitionUnknown, "当日没有转换状态无法判断的股票。", true);
     show("four-light-content", true);
   }
 
-  async function loadSummary(asOf = "") {
+  async function loadSummary(asOf = "", page = 1) {
     const request = ++state.request;
     state.controller?.abort();
     state.controller = new AbortController();
@@ -125,11 +166,14 @@
     show("four-light-empty", false);
     show("four-light-content", false);
     try {
-      const query = asOf ? `?as_of=${encodeURIComponent(asOf)}` : "";
+      const params = new URLSearchParams();
+      if (asOf) params.set("as_of", asOf);
+      params.set("page", String(page));
+      const query = `?${params.toString()}`;
       const data = await requestJSON(`/api/four-light${query}`, state.controller.signal);
       if (request !== state.request) return;
       renderSummary(data);
-      const first = list(data.first_all_red)[0] || list(data.continuing_all_red)[0] || list(data.exit_all_red)[0];
+      const first = list(data.first_all_red)[0] || list(data.continuing_all_red)[0] || list(data.exit_all_red)[0] || list(data.transition_unknown_records)[0];
       byId("four-light-history-from").value = dateOffset(data.run.as_of, -30);
       byId("four-light-history-through").value = data.run.as_of;
       if (first && !byId("four-light-history-code").value) byId("four-light-history-code").value = first.code;
@@ -185,10 +229,18 @@
       show("four-light-error", true);
       return;
     }
-    loadSummary(day);
+    loadSummary(day, 1);
   });
-  byId("four-light-retry").addEventListener("click", () => loadSummary(byId("four-light-date").value));
+  byId("four-light-retry").addEventListener("click", () => loadSummary(byId("four-light-date").value, Number(state.summary?.page || 1)));
+  byId("four-light-prev").addEventListener("click", () => {
+    const page = Number(state.summary?.page || 1);
+    if (page > 1) loadSummary(state.summary?.run?.as_of || byId("four-light-date").value, page - 1);
+  });
+  byId("four-light-next").addEventListener("click", () => {
+    const page = Number(state.summary?.page || 1);
+    loadSummary(state.summary?.run?.as_of || byId("four-light-date").value, page + 1);
+  });
   byId("four-light-history-form").addEventListener("submit", loadHistory);
   const requested = new URLSearchParams(location.search).get("as_of");
-  loadSummary(validDate(requested) ? requested : "");
+  loadSummary(validDate(requested) ? requested : "", 1);
 })();

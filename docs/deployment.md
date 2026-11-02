@@ -68,14 +68,17 @@ PY
 四灯计算失败不会回滚已保存行情或覆盖上次成功归档。验收还需确认 `four_light_run` 最新记录为 `complete`，当天 `four_light_daily` 数量与活跃股票数一致。可用只读 SQL 抽查：
 
 ```sql
-SELECT as_of, status, total, ready, all_red, first_all_red, continuing_all_red, exit_all_red, unknown
+SELECT as_of, status, total, ready, all_red, first_all_red, continuing_all_red, exit_all_red,
+       state_unknown, transition_unknown
 FROM four_light_run ORDER BY started_at DESC LIMIT 3;
 SELECT lifecycle, COUNT(*) FROM four_light_daily
 WHERE as_of = (SELECT MAX(as_of) FROM four_light_daily)
 GROUP BY lifecycle ORDER BY lifecycle;
 ```
 
-若服务以 `cannot persist all-market stock metadata` 或共享盘错误退出，先检查 CIFS 与 `busy_timeout`，不要通过改成本地目录绕过。若同步成功但 `four-light-all` 失败，保留 `sync_run` 成功记录，排查 `four_light_run.error_kind`、日志和数据库 schema 2；修复后可在停止该 timer 的情况下手动重跑同一 `four-light-all`，成功重跑会事务替换当日快照。
+若服务以 `cannot persist all-market stock metadata` 或共享盘错误退出，先检查 CIFS 与 `busy_timeout`，不要通过改成本地目录绕过。若同步成功但 `four-light-all` 失败，保留 `sync_run` 成功记录，排查 `four_light_run.error_kind`、日志和数据库 schema 3；修复后可在停止该 timer 的情况下手动重跑同一 `four-light-all`，成功重跑会事务替换当日快照。主网页在归档数据库晚于服务创建时不会永久返回 503，会在后续 `/api/four-light` 请求中重试只读打开；若持续失败，再检查 schema 版本、文件权限和 CIFS 可见性。
+
+`state_unknown` 是当日四盏灯本身无法判断的数量；`transition_unknown` 还包括当日灯色已知但上一交易日缺失、因而无法判断首次/持续/退出的股票。两者都是研究数据质量指标，不能当作退出共振或通过。
 
 精排线上验收至少检查：`systemctl list-timers stock-watcher-secondstage.timer`、当日 `state/secondstage/<model>/<as_of>.json` 四份文件均存在、`/api/reports?as_of=<date>` 中 `second_stage.degraded=false`、精排稿只在初筛/主报告之后发送。若 `journalctl -u stock-watcher-secondstage.service` 显示模型目录、Python 依赖或 CIFS 挂载错误，先修复离线生成链；不要把缺失 artifact 误判为 Go 精排算法失败。
 

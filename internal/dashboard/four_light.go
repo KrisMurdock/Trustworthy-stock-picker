@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/config"
@@ -16,15 +17,21 @@ import (
 const fourLightHistoryMaxDays = 366 * 5
 
 type fourLightSummaryView struct {
-	Version         int                       `json:"schema_version"`
-	Rule            string                    `json:"rule"`
-	Approximation   bool                      `json:"approximation"`
-	AlignmentStatus string                    `json:"alignment_status"`
-	Run             storage.FourLightRun      `json:"run"`
-	First           []storage.FourLightRecord `json:"first_all_red"`
-	Continuing      []storage.FourLightRecord `json:"continuing_all_red"`
-	Exited          []storage.FourLightRecord `json:"exit_all_red"`
-	Unknown         []storage.FourLightRecord `json:"unknown_records"`
+	Version           int                       `json:"schema_version"`
+	Rule              string                    `json:"rule"`
+	Approximation     bool                      `json:"approximation"`
+	AlignmentStatus   string                    `json:"alignment_status"`
+	Run               storage.FourLightRun      `json:"run"`
+	Page              int                       `json:"page"`
+	PageSize          int                       `json:"page_size"`
+	First             []storage.FourLightRecord `json:"first_all_red"`
+	Continuing        []storage.FourLightRecord `json:"continuing_all_red"`
+	Exited            []storage.FourLightRecord `json:"exit_all_red"`
+	TransitionUnknown []storage.FourLightRecord `json:"transition_unknown_records"`
+	FirstTotal        int                       `json:"first_all_red_total"`
+	ContinuingTotal   int                       `json:"continuing_all_red_total"`
+	ExitTotal         int                       `json:"exit_all_red_total"`
+	TransitionTotal   int                       `json:"transition_unknown_total"`
 }
 
 type fourLightHistoryView struct {
@@ -56,15 +63,20 @@ func (h *handler) serveFourLight(w http.ResponseWriter, r *http.Request) {
 		}
 		asOf = dates[0]
 	}
+	page, pageSize, err := fourLightPagination(values)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
 	for key := range values {
-		if key != "as_of" {
+		if key != "as_of" && key != "page" && key != "page_size" {
 			writeError(w, r, http.StatusBadRequest, "unsupported four-light parameter")
 			return
 		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
-	summary, err := h.fourLight.LatestFourLightSummary(ctx, asOf, strategy.FourLightRule)
+	summary, err := h.fourLight.LatestFourLightSummary(ctx, asOf, strategy.FourLightRule, page, pageSize)
 	if errors.Is(err, fs.ErrNotExist) {
 		writeError(w, r, http.StatusNotFound, "four-light signals not found")
 		return
@@ -75,7 +87,36 @@ func (h *handler) serveFourLight(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, r, http.StatusOK, fourLightSummaryView{Version: 1, Rule: strategy.FourLightRule,
 		Approximation: true, AlignmentStatus: strategy.FourLightAlignmentUnverified, Run: summary.Run,
-		First: summary.First, Continuing: summary.Continuing, Exited: summary.Exited, Unknown: summary.Unknown})
+		Page: summary.Page, PageSize: summary.PageSize, First: summary.First, Continuing: summary.Continuing,
+		Exited: summary.Exited, TransitionUnknown: summary.TransitionUnknown, FirstTotal: summary.FirstTotal,
+		ContinuingTotal: summary.ContinuingTotal, ExitTotal: summary.ExitTotal, TransitionTotal: summary.TransitionTotal})
+}
+
+func fourLightPagination(values url.Values) (int, int, error) {
+	page, pageSize := 1, storage.DefaultFourLightPageSize
+	var err error
+	if page, err = fourLightPositiveInt(values, "page", page, 100000); err != nil {
+		return 0, 0, errors.New("page must be one integer between 1 and 100000")
+	}
+	if pageSize, err = fourLightPositiveInt(values, "page_size", pageSize, storage.MaxFourLightPageSize); err != nil {
+		return 0, 0, errors.New("page_size must be one integer between 1 and 500")
+	}
+	return page, pageSize, nil
+}
+
+func fourLightPositiveInt(values url.Values, key string, fallback, max int) (int, error) {
+	items, present := values[key]
+	if !present {
+		return fallback, nil
+	}
+	if len(items) != 1 || items[0] == "" {
+		return 0, errors.New("invalid pagination")
+	}
+	value, err := strconv.Atoi(items[0])
+	if err != nil || value < 1 || value > max {
+		return 0, errors.New("invalid pagination")
+	}
+	return value, nil
 }
 
 func (h *handler) serveFourLightHistory(w http.ResponseWriter, r *http.Request) {

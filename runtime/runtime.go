@@ -79,7 +79,7 @@ type Runtime struct {
 	log             *Logger
 	store           *storage.Store
 	marketDB        *storage.MarketDB
-	allMarketDB     *storage.AllMarketDB
+	fourLight       *fourLightArchive
 	dayRangeDB      *storage.DayRangeDB
 	contextDB       *storage.ContextDB
 	contextClient   *marketcontext.Client
@@ -203,12 +203,7 @@ func New(opts Options) (*Runtime, error) {
 		return nil, err
 	}
 	r.marketDB = marketDB
-	allMarketDB, err := storage.OpenAllMarketView(cfg.DataDir, cfg.RequireCIFS)
-	if err != nil {
-		log.Debug("Full-market four-light archive is unavailable", "error", err.Error())
-	} else {
-		r.allMarketDB = allMarketDB
-	}
+	r.fourLight = newFourLightArchive(cfg.DataDir, cfg.RequireCIFS)
 	dayRangeDB, err := storage.OpenDayRangeView(cfg.DataDir, cfg.RequireCIFS)
 	if err != nil {
 		return nil, err
@@ -319,11 +314,7 @@ func New(opts Options) (*Runtime, error) {
 	if r.predictor != nil {
 		predictorController = r.predictor
 	}
-	var fourLightReader dashboard.FourLightReader
-	if r.allMarketDB != nil {
-		fourLightReader = r.allMarketDB
-	}
-	r.dashboard = dashboard.NewHandlerWithFourLight(cfg, marketDB, log, predictorController, dayRangeReader, fourLightReader)
+	r.dashboard = dashboard.NewHandlerWithFourLight(cfg, marketDB, log, predictorController, dayRangeReader, r.fourLight)
 	r.runMonitor = r.runMonitors
 	opened = true
 	return r, nil
@@ -565,9 +556,9 @@ func (r *Runtime) release() error {
 		errs = append(errs, r.dayRangeDB.Close())
 		r.dayRangeDB = nil
 	}
-	if r.allMarketDB != nil {
-		errs = append(errs, r.allMarketDB.Close())
-		r.allMarketDB = nil
+	if r.fourLight != nil {
+		errs = append(errs, r.fourLight.Close())
+		r.fourLight = nil
 	}
 	if r.marketDB != nil {
 		errs = append(errs, r.marketDB.Close())

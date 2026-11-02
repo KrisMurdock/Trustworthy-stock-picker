@@ -2,8 +2,12 @@
 .four-light-contract { margin-bottom: 22px; }
 .four-light-contract code { color: var(--jade); font-family: var(--sans); }
 .four-light-run-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 0 2px 18px; color: var(--muted); font-size: 11px; }
+.four-light-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 0 0 18px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255, 255, 255, .018); }
+.four-light-pagination span { color: var(--text); font-size: 12px; }
+.four-light-pagination small { flex-basis: 100%; color: var(--muted); font-size: 10px; }
 .four-light-summary { margin-bottom: 22px; }
 .four-light-summary .summary-card { min-height: 128px; }
+.four-light-list-range { margin: -2px 0 6px; color: var(--muted); font-size: 10px; }
 .four-light-table td { vertical-align: top; }
 .four-light-table .stock-code { display: block; margin-top: 3px; }
 .four-light-lights { display: flex; flex-wrap: wrap; gap: 5px; min-width: 150px; }

@@ -53,11 +53,13 @@ func TestFourLightRunnerCoversActiveUniverseAndRecordsUnknown(t *testing.T) {
 		{Code: "sh600519", Name: "持续"},
 		{Code: "sz000002", Name: "退出"},
 		{Code: "sz000004", Name: "缺失"},
+		{Code: "sz000005", Name: "上一日缺失"},
 	}
 	store := &fakeFourLightStore{stocks: stocks, windows: map[string]storage.AllMarketBarWindow{
 		"sz000001": {Code: "sz000001", Adjust: "qfq", Bars: fourLightBars(asOf, 80, true, false), Source: "tencent", DataField: "qfqday"},
 		"sh600519": {Code: "sh600519", Adjust: "qfq", Bars: fourLightBars(asOf, 80, true, true), Source: "tencent", DataField: "qfqday"},
 		"sz000002": {Code: "sz000002", Adjust: "qfq", Bars: fourLightExitBars(asOf, 80), Source: "tencent", DataField: "qfqday"},
+		"sz000005": {Code: "sz000005", Adjust: "qfq", Bars: withoutPreviousBar(fourLightBars(asOf, 80, true, false)), Source: "tencent", DataField: "qfqday"},
 	}, missing: map[string]error{"sz000004": fs.ErrNotExist}}
 	c := config.Defaults()
 	c.Calendar.ValidFrom, c.Calendar.ValidThrough = "2020-01-01", "2099-12-31"
@@ -68,10 +70,10 @@ func TestFourLightRunnerCoversActiveUniverseAndRecordsUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Total != 4 || result.AllRed != 2 || result.FirstAllRed != 1 || result.ContinuingAllRed != 1 || result.ExitAllRed != 1 || result.Unknown != 1 {
+	if result.Total != 5 || result.AllRed != 3 || result.FirstAllRed != 1 || result.ContinuingAllRed != 1 || result.ExitAllRed != 1 || result.StateUnknown != 1 || result.TransitionUnknown != 2 {
 		t.Fatalf("result = %+v", result)
 	}
-	if store.started.ID == "" || store.completed.ID != store.started.ID || store.failed.ID != "" || len(store.records) != 4 {
+	if store.started.ID == "" || store.completed.ID != store.started.ID || store.failed.ID != "" || len(store.records) != 5 {
 		t.Fatalf("store calls = %+v", store)
 	}
 	missing := store.records[3]
@@ -80,6 +82,10 @@ func TestFourLightRunnerCoversActiveUniverseAndRecordsUnknown(t *testing.T) {
 	}
 	if previous != missing.PreviousTradeDate {
 		t.Fatalf("previous trading date = %q", missing.PreviousTradeDate)
+	}
+	partial := store.records[4]
+	if partial.Code != "sz000005" || partial.State != "all_red" || partial.Lifecycle != "unknown" || partial.DataStatus != "partial" {
+		t.Fatalf("partial stock record = %+v", partial)
 	}
 }
 

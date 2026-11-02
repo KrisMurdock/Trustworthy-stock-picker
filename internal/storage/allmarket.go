@@ -21,7 +21,7 @@ const (
 	allMarketLockName      = ".all-market.lock"
 	hkMarketDBName         = "hk-market.db"
 	hkMarketLockName       = ".hk-market.lock"
-	allMarketSchemaVersion = 2
+	allMarketSchemaVersion = 3
 	hkMarketSchemaVersion  = 3
 	maxRecommendationBytes = 16 << 20
 )
@@ -274,6 +274,23 @@ func (m *AllMarketDB) initSchema() error {
 		}
 	}
 	if m.dbName == allMarketDBName {
+		if version == 2 {
+			if _, err := tx.Exec(`ALTER TABLE four_light_run RENAME COLUMN unknown TO state_unknown`); err != nil {
+				return errors.New("cannot migrate four-light unknown count")
+			}
+			if _, err := tx.Exec(`ALTER TABLE four_light_run ADD COLUMN transition_unknown INTEGER NOT NULL DEFAULT 0 CHECK (transition_unknown >= 0)`); err != nil {
+				return errors.New("cannot add four-light transition count")
+			}
+			if _, err := tx.Exec(`
+			UPDATE four_light_run SET transition_unknown = (
+				SELECT COUNT(*) FROM four_light_daily
+				WHERE four_light_daily.run_id = four_light_run.id AND four_light_daily.lifecycle = 'unknown'
+			)
+		`); err != nil {
+				return errors.New("cannot backfill four-light transition count")
+			}
+		}
+
 		if _, err := tx.Exec(allMarketFourLightSchema); err != nil {
 			return errors.New("cannot initialize four-light archive schema")
 		}

@@ -303,12 +303,18 @@ def four_light_checks(page, url, state, args):
     expect(page.get_by_test_id("four-light-contract")).to_contain_text("量能红仅表示放量")
     expect(page.get_by_test_id("four-light-run-meta")).to_contain_text("four_light_approx_v1")
     expect(page.get_by_test_id("four-light-run-meta")).to_contain_text("未对齐目标软件")
-    expect(page.locator("#four-light-total")).to_have_text("4")
-    expect(page.locator("#four-light-all-red")).to_have_text("2")
+    expect(page.locator("#four-light-total")).to_have_text("5")
+    expect(page.locator("#four-light-all-red")).to_have_text("3")
     expect(page.locator("#four-light-first-count")).to_have_text("1")
     expect(page.locator("#four-light-continuing-count")).to_have_text("1")
     expect(page.locator("#four-light-exit-count")).to_have_text("1")
-    expect(page.locator("#four-light-unknown-count")).to_have_text("1")
+    expect(page.locator("#four-light-state-unknown-count")).to_have_text("1")
+    expect(page.locator("#four-light-transition-unknown-count")).to_have_text("2")
+    expect(page.get_by_test_id("four-light-first-range")).to_contain_text("共 1 条")
+    expect(page.get_by_test_id("four-light-transition-unknown-range")).to_contain_text("共 2 条")
+    expect(page.get_by_test_id("four-light-page-status")).to_contain_text("第 1 / 1 页")
+    expect(page.get_by_test_id("four-light-prev")).to_be_disabled()
+    expect(page.get_by_test_id("four-light-next")).to_be_disabled()
     first = page.get_by_test_id("four-light-row").filter(has_text="测试银行").first
     expect(first).to_contain_text("首次全红")
     expect(first).to_contain_text("趋势红")
@@ -322,6 +328,8 @@ def four_light_checks(page, url, state, args):
     expect(page.locator("#four-light-unknown-body")).to_contain_text("测试停牌")
     expect(page.locator("#four-light-unknown-body")).to_contain_text("无法判断")
     expect(page.locator("#four-light-unknown-body")).to_contain_text("没有已完成日线")
+    expect(page.locator("#four-light-unknown-body")).to_contain_text("测试上一日缺失")
+    expect(page.locator("#four-light-unknown-body")).to_contain_text("上一交易日")
 
     expect(page.locator("#four-light-history-code")).to_have_value("sz000001")
     expect(page.locator("#four-light-history-from")).to_have_value("2026-09-13")
@@ -331,8 +339,13 @@ def four_light_checks(page, url, state, args):
     expect(page.locator("#four-light-history-body")).to_contain_text("首次全红")
 
     assert page.context.request.get(url + "/api/four-light?as_of=bad").status == 400
+    assert page.context.request.get(url + "/api/four-light?page=0").status == 400
+    assert page.context.request.get(url + "/api/four-light?page_size=501").status == 400
     assert page.context.request.get(url + "/api/four-light/history?code=bad&from=2026-10-01&through=2026-10-13").status == 400
     assert page.context.request.post(url + "/api/four-light").status == 405
+    paged = page.context.request.get(url + "/api/four-light?as_of=2026-10-13&page=2&page_size=1").json()
+    assert paged["page"] == 2 and paged["page_size"] == 1 and paged["transition_unknown_total"] == 2
+    assert len(paged["transition_unknown_records"]) == 1
 
     state["injecting"] = True
     page.route("**/api/four-light?as_of=*", lambda route: route.fulfill(status=503, content_type="application/json", body='{"error":"four-light data is temporarily unavailable"}'))

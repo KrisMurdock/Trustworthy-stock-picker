@@ -60,7 +60,7 @@ type DayRangeReader interface {
 // FourLightReader reads the frozen full-market four-light archive. It must not
 // trigger synchronization or mutate any signal state.
 type FourLightReader interface {
-	LatestFourLightSummary(context.Context, string, string) (storage.FourLightSummary, error)
+	LatestFourLightSummary(context.Context, string, string, int, int) (storage.FourLightSummary, error)
 	FourLightHistory(context.Context, string, string, string, string) ([]storage.FourLightRecord, error)
 }
 

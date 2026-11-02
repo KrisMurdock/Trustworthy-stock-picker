@@ -26,7 +26,8 @@ const allMarketFourLightSchema = `
 		continuing_all_red INTEGER NOT NULL DEFAULT 0 CHECK (continuing_all_red >= 0),
 		exit_all_red INTEGER NOT NULL DEFAULT 0 CHECK (exit_all_red >= 0),
 		non_all_red INTEGER NOT NULL DEFAULT 0 CHECK (non_all_red >= 0),
-		unknown INTEGER NOT NULL DEFAULT 0 CHECK (unknown >= 0),
+		state_unknown INTEGER NOT NULL DEFAULT 0 CHECK (state_unknown >= 0),
+		transition_unknown INTEGER NOT NULL DEFAULT 0 CHECK (transition_unknown >= 0),
 		error_kind TEXT NOT NULL DEFAULT ''
 	);
 	CREATE TABLE IF NOT EXISTS four_light_daily (
@@ -80,21 +81,22 @@ type AllMarketBarWindow struct {
 }
 
 type FourLightRun struct {
-	ID               string    `json:"id"`
-	AsOf             string    `json:"as_of"`
-	Rule             string    `json:"rule"`
-	StartedAt        time.Time `json:"started_at"`
-	FinishedAt       time.Time `json:"finished_at"`
-	Status           string    `json:"status"`
-	Total            int       `json:"total"`
-	Ready            int       `json:"ready"`
-	AllRed           int       `json:"all_red"`
-	FirstAllRed      int       `json:"first_all_red"`
-	ContinuingAllRed int       `json:"continuing_all_red"`
-	ExitAllRed       int       `json:"exit_all_red"`
-	NonAllRed        int       `json:"non_all_red"`
-	Unknown          int       `json:"unknown"`
-	ErrorKind        string    `json:"error_kind,omitempty"`
+	ID                string    `json:"id"`
+	AsOf              string    `json:"as_of"`
+	Rule              string    `json:"rule"`
+	StartedAt         time.Time `json:"started_at"`
+	FinishedAt        time.Time `json:"finished_at"`
+	Status            string    `json:"status"`
+	Total             int       `json:"total"`
+	Ready             int       `json:"ready"`
+	AllRed            int       `json:"all_red"`
+	FirstAllRed       int       `json:"first_all_red"`
+	ContinuingAllRed  int       `json:"continuing_all_red"`
+	ExitAllRed        int       `json:"exit_all_red"`
+	NonAllRed         int       `json:"non_all_red"`
+	StateUnknown      int       `json:"state_unknown"`
+	TransitionUnknown int       `json:"transition_unknown"`
+	ErrorKind         string    `json:"error_kind,omitempty"`
 }
 
 type FourLightRecord struct {
@@ -121,14 +123,23 @@ type FourLightRecord struct {
 }
 
 type FourLightSummary struct {
-	Run        FourLightRun      `json:"run"`
-	First      []FourLightRecord `json:"first_all_red"`
-	Continuing []FourLightRecord `json:"continuing_all_red"`
-	Exited     []FourLightRecord `json:"exit_all_red"`
-	Unknown    []FourLightRecord `json:"unknown_records"`
+	Run               FourLightRun      `json:"run"`
+	First             []FourLightRecord `json:"first_all_red"`
+	Continuing        []FourLightRecord `json:"continuing_all_red"`
+	Exited            []FourLightRecord `json:"exit_all_red"`
+	TransitionUnknown []FourLightRecord `json:"transition_unknown_records"`
+	Page              int               `json:"page"`
+	PageSize          int               `json:"page_size"`
+	FirstTotal        int               `json:"first_all_red_total"`
+	ContinuingTotal   int               `json:"continuing_all_red_total"`
+	ExitTotal         int               `json:"exit_all_red_total"`
+	TransitionTotal   int               `json:"transition_unknown_total"`
 }
 
-const fourLightStatusLimit = 200
+const (
+	DefaultFourLightPageSize = 200
+	MaxFourLightPageSize     = 500
+)
 
 func (m *AllMarketDB) ActiveStocks(ctx context.Context) ([]config.Stock, error) {
 	if m == nil || m.db == nil {
@@ -234,9 +245,9 @@ func (m *AllMarketDB) CompleteFourLightRun(ctx context.Context, run FourLightRun
 	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE four_light_run SET finished_at=?, status=?, total=?, ready=?, all_red=?, first_all_red=?,
-			continuing_all_red=?, exit_all_red=?, non_all_red=?, unknown=?, error_kind=? WHERE id=?
+			continuing_all_red=?, exit_all_red=?, non_all_red=?, state_unknown=?, transition_unknown=?, error_kind=? WHERE id=?
 	`, run.FinishedAt.UTC().Format(time.RFC3339Nano), run.Status, run.Total, run.Ready, run.AllRed, run.FirstAllRed,
-		run.ContinuingAllRed, run.ExitAllRed, run.NonAllRed, run.Unknown, run.ErrorKind, run.ID)
+		run.ContinuingAllRed, run.ExitAllRed, run.NonAllRed, run.StateUnknown, run.TransitionUnknown, run.ErrorKind, run.ID)
 	if err != nil {
 		return rollback(errors.New("cannot finish four-light run"))
 	}
@@ -301,7 +312,11 @@ func (m *AllMarketDB) FailFourLightRun(ctx context.Context, run FourLightRun) er
 	return nil
 }
 
-func (m *AllMarketDB) LatestFourLightSummary(ctx context.Context, asOf, rule string) (FourLightSummary, error) {
+func (m *AllMarketDB) LatestFourLightSummary(ctx context.Context, asOf, rule string, page, pageSize int) (FourLightSummary, error) {
+	return m.latestFourLightSummary(ctx, asOf, rule, page, pageSize, nil)
+}
+
+func (m *AllMarketDB) latestFourLightSummary(ctx context.Context, asOf, rule string, page, pageSize int, afterRun func()) (FourLightSummary, error) {
 	var summary FourLightSummary
 	if m == nil || m.db == nil {
 		return summary, fs.ErrNotExist
@@ -309,9 +324,18 @@ func (m *AllMarketDB) LatestFourLightSummary(ctx context.Context, asOf, rule str
 	if rule == "" {
 		return summary, errors.New("four-light rule is required")
 	}
+	if page < 1 || pageSize < 1 || pageSize > MaxFourLightPageSize {
+		return summary, errors.New("invalid four-light pagination")
+	}
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return summary, errors.New("cannot begin four-light summary snapshot")
+	}
+	defer tx.Rollback()
+
 	query := `
 		SELECT id, as_of, rule, started_at, finished_at, status, total, ready, all_red, first_all_red,
-			continuing_all_red, exit_all_red, non_all_red, unknown, error_kind
+			continuing_all_red, exit_all_red, non_all_red, state_unknown, transition_unknown, error_kind
 		FROM four_light_run WHERE rule=? AND status IN ('complete', 'partial')`
 	args := []any{rule}
 	if asOf != "" {
@@ -320,10 +344,10 @@ func (m *AllMarketDB) LatestFourLightSummary(ctx context.Context, asOf, rule str
 	}
 	query += " ORDER BY as_of DESC, finished_at DESC LIMIT 1"
 	var started, finished string
-	err := m.db.QueryRowContext(ctx, query, args...).Scan(&summary.Run.ID, &summary.Run.AsOf, &summary.Run.Rule,
+	err = tx.QueryRowContext(ctx, query, args...).Scan(&summary.Run.ID, &summary.Run.AsOf, &summary.Run.Rule,
 		&started, &finished, &summary.Run.Status, &summary.Run.Total, &summary.Run.Ready, &summary.Run.AllRed,
 		&summary.Run.FirstAllRed, &summary.Run.ContinuingAllRed, &summary.Run.ExitAllRed, &summary.Run.NonAllRed,
-		&summary.Run.Unknown, &summary.Run.ErrorKind)
+		&summary.Run.StateUnknown, &summary.Run.TransitionUnknown, &summary.Run.ErrorKind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return summary, fs.ErrNotExist
 	}
@@ -332,17 +356,45 @@ func (m *AllMarketDB) LatestFourLightSummary(ctx context.Context, asOf, rule str
 	}
 	summary.Run.StartedAt, _ = time.Parse(time.RFC3339Nano, started)
 	summary.Run.FinishedAt, _ = time.Parse(time.RFC3339Nano, finished)
-	for lifecycle, target := range map[string]*[]FourLightRecord{
-		"first_all_red":      &summary.First,
-		"continuing_all_red": &summary.Continuing,
-		"exit_all_red":       &summary.Exited,
-		"unknown":            &summary.Unknown,
-	} {
-		records, err := m.fourLightRecords(ctx, summary.Run.AsOf, rule, lifecycle, fourLightStatusLimit)
+	if afterRun != nil {
+		afterRun()
+	}
+
+	type lifecycleQuery struct {
+		name  string
+		total *int
+		rows  *[]FourLightRecord
+	}
+	lists := []lifecycleQuery{
+		{name: "first_all_red", total: &summary.FirstTotal, rows: &summary.First},
+		{name: "continuing_all_red", total: &summary.ContinuingTotal, rows: &summary.Continuing},
+		{name: "exit_all_red", total: &summary.ExitTotal, rows: &summary.Exited},
+		{name: "unknown", total: &summary.TransitionTotal, rows: &summary.TransitionUnknown},
+	}
+	offset := int64(page-1) * int64(pageSize)
+	for _, list := range lists {
+		total, err := countFourLightLifecycle(ctx, tx, summary.Run.AsOf, rule, list.name)
 		if err != nil {
 			return summary, err
 		}
-		*target = records
+		rows, err := fourLightRecordsPage(ctx, tx, summary.Run.AsOf, rule, list.name, pageSize, offset)
+		if err != nil {
+			return summary, err
+		}
+		*list.total, *list.rows = total, rows
+	}
+	stateUnknown, err := countFourLightState(ctx, tx, summary.Run.AsOf, rule, "unknown")
+	if err != nil {
+		return summary, err
+	}
+	summary.Page, summary.PageSize = page, pageSize
+	summary.Run.FirstAllRed = summary.FirstTotal
+	summary.Run.ContinuingAllRed = summary.ContinuingTotal
+	summary.Run.ExitAllRed = summary.ExitTotal
+	summary.Run.StateUnknown = stateUnknown
+	summary.Run.TransitionUnknown = summary.TransitionTotal
+	if err := tx.Commit(); err != nil {
+		return summary, errors.New("cannot finish four-light summary snapshot")
 	}
 	return summary, nil
 }
@@ -381,13 +433,38 @@ func (m *AllMarketDB) FourLightHistory(ctx context.Context, code, rule, from, th
 	return out, nil
 }
 
-func (m *AllMarketDB) fourLightRecords(ctx context.Context, asOf, rule, lifecycle string, limit int) ([]FourLightRecord, error) {
-	rows, err := m.db.QueryContext(ctx, `
+type fourLightQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func countFourLightLifecycle(ctx context.Context, q fourLightQueryer, asOf, rule, lifecycle string) (int, error) {
+	var total int
+	if err := q.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM four_light_daily WHERE as_of=? AND rule=? AND lifecycle=?
+	`, asOf, rule, lifecycle).Scan(&total); err != nil {
+		return 0, errors.New("cannot count four-light lifecycle records")
+	}
+	return total, nil
+}
+
+func countFourLightState(ctx context.Context, q fourLightQueryer, asOf, rule, state string) (int, error) {
+	var total int
+	if err := q.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM four_light_daily WHERE as_of=? AND rule=? AND state=?
+	`, asOf, rule, state).Scan(&total); err != nil {
+		return 0, errors.New("cannot count four-light state records")
+	}
+	return total, nil
+}
+
+func fourLightRecordsPage(ctx context.Context, q fourLightQueryer, asOf, rule, lifecycle string, limit int, offset int64) ([]FourLightRecord, error) {
+	rows, err := q.QueryContext(ctx, `
 		SELECT as_of, rule, code, name, previous_trade_date, data_status, state, lifecycle, trend, energy,
 			mid_term, short_term, unknown_lights, bar_count, latest_bar_date, source, data_field, reason,
 			computed_at, run_id
-		FROM four_light_daily WHERE as_of=? AND rule=? AND lifecycle=? ORDER BY code LIMIT ?
-	`, asOf, rule, lifecycle, limit)
+		FROM four_light_daily WHERE as_of=? AND rule=? AND lifecycle=? ORDER BY code LIMIT ? OFFSET ?
+	`, asOf, rule, lifecycle, limit, offset)
 	if err != nil {
 		return nil, errors.New("cannot read four-light daily records")
 	}

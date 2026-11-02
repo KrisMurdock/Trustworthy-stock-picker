@@ -41,22 +41,23 @@ type FourLightOptions struct {
 }
 
 type FourLightResult struct {
-	Version          int       `json:"schema_version"`
-	ID               string    `json:"run_id"`
-	AsOf             string    `json:"as_of"`
-	Rule             string    `json:"rule"`
-	StartedAt        time.Time `json:"started_at"`
-	FinishedAt       time.Time `json:"finished_at"`
-	Status           string    `json:"status"`
-	Total            int       `json:"total"`
-	Ready            int       `json:"ready"`
-	AllRed           int       `json:"all_red"`
-	FirstAllRed      int       `json:"first_all_red"`
-	ContinuingAllRed int       `json:"continuing_all_red"`
-	ExitAllRed       int       `json:"exit_all_red"`
-	NonAllRed        int       `json:"non_all_red"`
-	Unknown          int       `json:"unknown"`
-	ErrorKind        string    `json:"error_kind,omitempty"`
+	Version           int       `json:"schema_version"`
+	ID                string    `json:"run_id"`
+	AsOf              string    `json:"as_of"`
+	Rule              string    `json:"rule"`
+	StartedAt         time.Time `json:"started_at"`
+	FinishedAt        time.Time `json:"finished_at"`
+	Status            string    `json:"status"`
+	Total             int       `json:"total"`
+	Ready             int       `json:"ready"`
+	AllRed            int       `json:"all_red"`
+	FirstAllRed       int       `json:"first_all_red"`
+	ContinuingAllRed  int       `json:"continuing_all_red"`
+	ExitAllRed        int       `json:"exit_all_red"`
+	NonAllRed         int       `json:"non_all_red"`
+	StateUnknown      int       `json:"state_unknown"`
+	TransitionUnknown int       `json:"transition_unknown"`
+	ErrorKind         string    `json:"error_kind,omitempty"`
 }
 
 // FourLightRunner calculates the frozen four-light approximation for every
@@ -133,7 +134,7 @@ func (r *FourLightRunner) Run(ctx context.Context, options FourLightOptions) (Fo
 		case fourLightStateNonAllRed:
 			result.NonAllRed++
 		case fourLightStateUnknown:
-			result.Unknown++
+			result.StateUnknown++
 		}
 		switch record.Lifecycle {
 		case fourLightFirstAllRed:
@@ -142,6 +143,8 @@ func (r *FourLightRunner) Run(ctx context.Context, options FourLightOptions) (Fo
 			result.ContinuingAllRed++
 		case fourLightExitAllRed:
 			result.ExitAllRed++
+		case fourLightLifecycleUnknown:
+			result.TransitionUnknown++
 		}
 	}
 	result.Total = len(records)
@@ -150,13 +153,13 @@ func (r *FourLightRunner) Run(ctx context.Context, options FourLightOptions) (Fo
 	run.Status = "complete"
 	run.Total, run.Ready, run.AllRed = result.Total, result.Ready, result.AllRed
 	run.FirstAllRed, run.ContinuingAllRed, run.ExitAllRed = result.FirstAllRed, result.ContinuingAllRed, result.ExitAllRed
-	run.NonAllRed, run.Unknown = result.NonAllRed, result.Unknown
+	run.NonAllRed, run.StateUnknown, run.TransitionUnknown = result.NonAllRed, result.StateUnknown, result.TransitionUnknown
 	if err := r.DB.CompleteFourLightRun(ctx, run, records); err != nil {
 		return r.fail(result, run, "storage", err)
 	}
 	r.Log.Info("Four-light calculation finished", "as_of", result.AsOf, "status", result.Status, "total", result.Total,
 		"ready", result.Ready, "all_red", result.AllRed, "first", result.FirstAllRed, "continuing", result.ContinuingAllRed,
-		"exit", result.ExitAllRed, "unknown", result.Unknown)
+		"exit", result.ExitAllRed, "state_unknown", result.StateUnknown, "transition_unknown", result.TransitionUnknown)
 	return result, nil
 }
 

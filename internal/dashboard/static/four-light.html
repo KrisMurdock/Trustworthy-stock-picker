@@ -52,32 +52,39 @@
 
       <div id="four-light-content" data-testid="four-light-content" hidden>
         <div id="four-light-run-meta" class="four-light-run-meta" data-testid="four-light-run-meta"></div>
+        <nav class="four-light-pagination" aria-label="四灯列表分页" data-testid="four-light-pagination">
+          <button id="four-light-prev" class="button button-secondary" type="button" data-testid="four-light-prev">上一页</button>
+          <span id="four-light-page-status" data-testid="four-light-page-status">第 1 / 1 页 · 每页 200 条</span>
+          <button id="four-light-next" class="button button-secondary" type="button" data-testid="four-light-next">下一页</button>
+          <small>分页只作用于下方列表；汇总始终统计当日完整归档。</small>
+        </nav>
         <section class="summary-grid four-light-summary" aria-label="全市场四灯汇总" data-testid="four-light-summary">
           <article class="summary-card"><span class="card-label">活跃股票</span><p class="card-value"><span id="four-light-total">—</span><small>支</small></p><p class="card-note">本次完整计算覆盖</p></article>
           <article class="summary-card"><span class="card-label">四灯全红</span><p class="card-value"><span id="four-light-all-red">—</span><small>支</small></p><p class="card-note">四条条件同时成立</p></article>
           <article class="summary-card summary-coverage"><span class="card-label">首次全红</span><p class="card-value"><span id="four-light-first-count">—</span><small>支</small></p><p class="card-note">上一有效交易日非全红</p></article>
           <article class="summary-card"><span class="card-label">持续全红</span><p class="card-value"><span id="four-light-continuing-count">—</span><small>支</small></p><p class="card-note">上一有效交易日也是全红</p></article>
           <article class="summary-card"><span class="card-label">退出全红</span><p class="card-value"><span id="four-light-exit-count">—</span><small>支</small></p><p class="card-note">从全红转为非全红</p></article>
-          <article class="summary-card"><span class="card-label">无法判断</span><p class="card-value"><span id="four-light-unknown-count">—</span><small>支</small></p><p class="card-note">缺失不等于退出共振</p></article>
+          <article class="summary-card"><span class="card-label">当日灯色未知</span><p class="card-value"><span id="four-light-state-unknown-count">—</span><small>支</small></p><p class="card-note">当日数据不足，无法判断红绿</p></article>
+          <article class="summary-card"><span class="card-label">转换状态未知</span><p class="card-value"><span id="four-light-transition-unknown-count">—</span><small>支</small></p><p class="card-note">当前或上一交易日缺失，不等于退出</p></article>
         </section>
 
         <section class="panel" aria-labelledby="four-light-first-title">
-          <div class="panel-heading"><div><p class="eyebrow">NEW RESONANCE</p><h2 id="four-light-first-title">当日首次全红 <span id="four-light-first-tag" class="count-tag">—</span></h2><p class="section-description">仅表示从上一有效交易日的非全红转为今日全红；不是买入指令。</p></div></div>
+          <div class="panel-heading"><div><p class="eyebrow">NEW RESONANCE</p><h2 id="four-light-first-title">当日首次全红 <span id="four-light-first-tag" class="count-tag">—</span></h2><p id="four-light-first-range" class="four-light-list-range" data-testid="four-light-first-range"></p><p class="section-description">仅表示从上一有效交易日的非全红转为今日全红；不是买入指令。</p></div></div>
           <div class="table-scroll" role="region" aria-label="首次全红列表，可横向滚动" tabindex="0"><table class="ranking-table four-light-table"><thead><tr><th scope="col">股票</th><th scope="col">四灯</th><th scope="col">生命周期</th><th scope="col">上一交易日</th><th scope="col">数据状态</th><th scope="col">依据</th></tr></thead><tbody id="four-light-first-body"></tbody></table></div>
         </section>
 
         <section class="panel" aria-labelledby="four-light-continuing-title">
-          <div class="panel-heading"><div><p class="eyebrow">CONTINUING</p><h2 id="four-light-continuing-title">持续全红 <span id="four-light-continuing-tag" class="count-tag">—</span></h2><p class="section-description">连续状态不重复算作新的首次事件。</p></div></div>
+          <div class="panel-heading"><div><p class="eyebrow">CONTINUING</p><h2 id="four-light-continuing-title">持续全红 <span id="four-light-continuing-tag" class="count-tag">—</span></h2><p id="four-light-continuing-range" class="four-light-list-range" data-testid="four-light-continuing-range"></p><p class="section-description">连续状态不重复算作新的首次事件。</p></div></div>
           <div class="table-scroll" role="region" aria-label="持续全红列表，可横向滚动" tabindex="0"><table class="ranking-table four-light-table"><thead><tr><th scope="col">股票</th><th scope="col">四灯</th><th scope="col">生命周期</th><th scope="col">上一交易日</th><th scope="col">数据状态</th><th scope="col">依据</th></tr></thead><tbody id="four-light-continuing-body"></tbody></table></div>
         </section>
 
         <section class="panel" aria-labelledby="four-light-exit-title">
-          <div class="panel-heading"><div><p class="eyebrow">RESONANCE ENDED</p><h2 id="four-light-exit-title">退出全红 <span id="four-light-exit-tag" class="count-tag">—</span></h2><p class="section-description">只有上一交易日状态已知且当日日线完整时才判定退出。</p></div></div>
+          <div class="panel-heading"><div><p class="eyebrow">RESONANCE ENDED</p><h2 id="four-light-exit-title">退出全红 <span id="four-light-exit-tag" class="count-tag">—</span></h2><p id="four-light-exit-range" class="four-light-list-range" data-testid="four-light-exit-range"></p><p class="section-description">只有上一交易日状态已知且当日日线完整时才判定退出。</p></div></div>
           <div class="table-scroll" role="region" aria-label="退出全红列表，可横向滚动" tabindex="0"><table class="ranking-table four-light-table"><thead><tr><th scope="col">股票</th><th scope="col">四灯</th><th scope="col">生命周期</th><th scope="col">上一交易日</th><th scope="col">数据状态</th><th scope="col">依据</th></tr></thead><tbody id="four-light-exit-body"></tbody></table></div>
         </section>
 
         <section class="panel" aria-labelledby="four-light-unknown-title">
-          <div class="panel-heading"><div><p class="eyebrow">UNKNOWN DATA</p><h2 id="four-light-unknown-title">无法判断 <span id="four-light-unknown-tag" class="count-tag">—</span></h2><p class="section-description">停牌、缺日线、历史不足或数据异常会保留为 unknown，不会被解释为退出共振。</p></div></div>
+          <div class="panel-heading"><div><p class="eyebrow">UNKNOWN TRANSITION</p><h2 id="four-light-unknown-title">转换状态未知 <span id="four-light-transition-unknown-tag" class="count-tag">—</span></h2><p id="four-light-transition-unknown-range" class="four-light-list-range" data-testid="four-light-transition-unknown-range"></p><p class="section-description">当日灯色无法判断，或上一交易日缺失导致无法判断首次/持续/退出；missing 不等于退出共振。</p></div></div>
           <div class="table-scroll" role="region" aria-label="无法判断列表，可横向滚动" tabindex="0"><table class="ranking-table four-light-table"><thead><tr><th scope="col">股票</th><th scope="col">四灯</th><th scope="col">生命周期</th><th scope="col">上一交易日</th><th scope="col">数据状态</th><th scope="col">原因</th></tr></thead><tbody id="four-light-unknown-body"></tbody></table></div>
         </section>
 

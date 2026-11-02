@@ -16,6 +16,7 @@ import (
 
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/dayrange"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkrecommend"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/predictor"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 )
@@ -76,6 +77,71 @@ func TestNewOpensResourcesAndServesDashboardHandler(t *testing.T) {
 	}
 	if err := rt.Run(context.Background()); !errors.Is(err, ErrClosed) {
 		t.Fatalf("run after close returned %v", err)
+	}
+}
+
+func TestRuntimeRetriesFourLightArchiveAfterLateCreation(t *testing.T) {
+	cfg := runtimeTestConfig(t)
+	rt, err := New(Options{Version: "test", Config: &cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	handler := rt.DashboardHandler()
+	missing := httptest.NewRecorder()
+	handler.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/api/four-light", nil))
+	if missing.Code != http.StatusServiceUnavailable {
+		t.Fatalf("missing archive = %d %s", missing.Code, missing.Body.String())
+	}
+	seedLateFourLightArchive(t, cfg.DataDir)
+	available := httptest.NewRecorder()
+	handler.ServeHTTP(available, httptest.NewRequest(http.MethodGet, "/api/four-light?as_of=2026-10-13", nil))
+	if available.Code != http.StatusOK {
+		t.Fatalf("late archive = %d %s", available.Code, available.Body.String())
+	}
+	var summary struct {
+		Run struct {
+			ID string `json:"id"`
+		} `json:"run"`
+		FirstTotal int `json:"first_all_red_total"`
+	}
+	if err := json.Unmarshal(available.Body.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary.Run.ID != "late-run" || summary.FirstTotal != 1 {
+		t.Fatalf("summary = %+v", summary)
+	}
+}
+
+func seedLateFourLightArchive(t *testing.T, root string) {
+	t.Helper()
+	db, err := storage.OpenAllMarket(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	stock := Stock{Code: "sz000001", Name: "late archive", ListedFrom: "1991-04-03"}
+	history := market.History{Version: 1, Code: stock.Code, Name: stock.Name, Source: "tencent", Adjust: "qfq",
+		DataField: "qfqday", VolumeUnit: "provider_raw", AsOf: "2026-10-13", FetchedAt: time.Date(2026, 10, 13, 18, 40, 0, 0, market.Shanghai)}
+	for _, date := range []string{"2026-10-12", "2026-10-13"} {
+		history.Bars = append(history.Bars, market.Bar{Date: date, Open: 10, High: 11, Low: 9, Close: 10.5, Volume: 1000})
+	}
+	if err := db.SaveHistory(ctx, stock, history, true); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 13, 18, 40, 0, 0, time.UTC)
+	run := storage.FourLightRun{ID: "late-run", AsOf: "2026-10-13", Rule: "four_light_approx_v1", StartedAt: now, FinishedAt: now, Status: "running", Total: 1}
+	if err := db.StartFourLightRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	run.Status, run.Ready, run.AllRed, run.FirstAllRed = "complete", 1, 1, 1
+	record := storage.FourLightRecord{AsOf: run.AsOf, Rule: run.Rule, Code: stock.Code, Name: stock.Name,
+		PreviousTradeDate: "2026-10-12", DataStatus: "ready", State: "all_red", Lifecycle: "first_all_red",
+		Trend: "red", Energy: "red", MidTerm: "red", ShortTerm: "red", BarCount: 80, LatestBarDate: run.AsOf,
+		Source: "tencent", DataField: "qfqday", Reason: "fixture", ComputedAt: now, RunID: run.ID}
+	if err := db.CompleteFourLightRun(ctx, run, []storage.FourLightRecord{record}); err != nil {
+		t.Fatal(err)
 	}
 }
 
