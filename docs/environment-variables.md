@@ -71,7 +71,7 @@
 | STOCK_WATCHER_SECOND_STAGE_PUBLISH_BY | 15:28 | 精排等待离线 artifact 的最晚时刻；到点仍未齐则发送带 `degraded=true` 的中性降级结果 |
 | STOCK_WATCHER_HK_CONNECT_ENABLED | true | 完整同步港股通日线后，是否生成独立日线规则观察快照；不复用 A 股初筛、精排或成交模拟 |
 | STOCK_WATCHER_HK_CONNECT_PUSH_ENABLED | true | 是否由 `run`/`once` 读取最新港股快照并投递到 `hk_connect` 路由；依赖 `hk_connect.enabled` |
-| STOCK_WATCHER_HK_CONNECT_TOP_N | 5 | 港股通观察稿最多展示的候选数，允许 1～20；趋势分降序、同分按代码排序 |
+| STOCK_WATCHER_HK_CONNECT_TOP_N | 10 | 港股通观察稿最多展示的候选数，允许 1～20；趋势分降序、同分按代码排序 |
 | STOCK_WATCHER_STRUCTURE_GUARD_MODE | shadow | shadow 只观察；enforce 才进入可执行推荐 |
 | STOCK_WATCHER_SELECTION_ENABLED | true | 是否启用趋势筛选 |
 | STOCK_WATCHER_SELECTION_MIN_SCORE | 70 | 趋势最低分 |

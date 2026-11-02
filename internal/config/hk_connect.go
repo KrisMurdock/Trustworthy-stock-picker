@@ -11,7 +11,7 @@ type HKConnect struct {
 }
 
 func DefaultHKConnect() HKConnect {
-	return HKConnect{Enabled: false, PushEnabled: false, TopN: 5}
+	return HKConnect{Enabled: false, PushEnabled: false, TopN: 10}
 }
 
 func (h HKConnect) Validate() error {

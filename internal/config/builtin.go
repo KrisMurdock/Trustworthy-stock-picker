@@ -27,7 +27,7 @@ func Builtin() Config {
 	c.SecondStage.RiskEta = 1
 	c.HKConnect.Enabled = true
 	c.HKConnect.PushEnabled = true
-	c.HKConnect.TopN = 5
+	c.HKConnect.TopN = 10
 	c.Feishu.Enabled = true
 	c.Predictor.Enabled = true
 	c.Predictor.PushEnabled = true
