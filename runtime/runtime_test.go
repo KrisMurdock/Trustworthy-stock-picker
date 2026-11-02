@@ -249,6 +249,9 @@ func TestInitCreatesLocalDataDirectory(t *testing.T) {
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
 		t.Fatalf("local data directory was not created: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(root, "fundamentals.db")); err != nil {
+		t.Fatalf("fundamentals database was not initialized: %v", err)
+	}
 }
 
 func TestCloseCancelsRunningRuntime(t *testing.T) {

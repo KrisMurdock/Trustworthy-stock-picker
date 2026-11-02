@@ -135,6 +135,11 @@ func Init(cfg *Config) (string, error) {
 		return "", err
 	}
 	defer marketDB.Close()
+	fundamentalsDB, err := storage.InitFundamentals(resolved.DataDir, resolved.RequireCIFS)
+	if err != nil {
+		return "", err
+	}
+	defer fundamentalsDB.Close()
 	if resolved.MarketContext.Enabled {
 		contextDB, err := storage.InitContext(resolved.DataDir, resolved.RequireCIFS)
 		if err != nil {
