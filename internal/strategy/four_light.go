@@ -157,6 +157,8 @@ func fourLightState(bars []market.Bar) (FourLightState, int, []string) {
 	volumeAverage /= 5
 
 	reasons := []string{}
+	// The energy light currently means volume expansion only. A high-volume
+	// decline can also be red, so it must not be described as bullish flow.
 	if close > ma20 {
 		state.Trend = FourLightRed
 	} else {

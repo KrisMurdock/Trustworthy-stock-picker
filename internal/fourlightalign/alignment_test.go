@@ -58,7 +58,7 @@ func TestCompareExactSampleAndTransitions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Status != StatusSampleCompared || report.ObservedRows != len(rows) || report.ApproximationRule != strategy.FourLightRule || report.FormulaVerified {
+	if report.Version != Version || report.Status != StatusSampleCompared || report.ObservedRows != len(rows) || report.ApproximationRule != strategy.FourLightRule || report.FormulaVerified || report.EventPairWindowRows != EventPairWindowRows {
 		t.Fatalf("unexpected report header: %+v", report)
 	}
 	for _, light := range report.Lights {
@@ -119,6 +119,68 @@ func TestCompareReportsTransitionLeadOrLagRows(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("transition offset is missing: %+v", report.EventDifferences)
+	}
+}
+
+func TestEventDifferencesDoNotReusePairedEvent(t *testing.T) {
+	report := Report{Transitions: []TransitionAgreement{{Event: EventFirstAllRed}}}
+	events := map[string][]eventPoint{
+		EventFirstAllRed: {
+			{date: "2026-01-05", index: 0, target: true, approx: true},
+			{date: "2026-01-16", index: 9, target: true},
+		},
+	}
+	differences := map[string]EventDifference{}
+	collectEventDifferences(&report, "sz000001", events, differences)
+
+	if len(differences) != 1 {
+		t.Fatalf("expected one unmatched target event, got %+v", differences)
+	}
+	for _, difference := range differences {
+		if difference.Relation != "missed" || difference.TargetDate != "2026-01-16" || difference.ApproximationDate != "" || difference.OffsetRows != 0 {
+			t.Fatalf("already paired event was reused: %+v", difference)
+		}
+	}
+}
+
+func TestEventDifferencesPairOneToOneWithinWindow(t *testing.T) {
+	report := Report{Transitions: []TransitionAgreement{{Event: EventFirstAllRed}}}
+	events := map[string][]eventPoint{
+		EventFirstAllRed: {
+			{date: "2026-01-05", index: 0, target: true, approx: true},
+			{date: "2026-01-07", index: 2, target: true},
+			{date: "2026-01-10", index: 5, target: true},
+			{date: "2026-01-16", index: 11, target: true},
+			{date: "2026-01-08", index: 3, approx: true},
+			{date: "2026-01-12", index: 7, approx: true},
+			{date: "2026-02-02", index: 20, approx: true},
+		},
+	}
+	differences := map[string]EventDifference{}
+	collectEventDifferences(&report, "sz000001", events, differences)
+
+	relations := map[string]int{}
+	for _, difference := range differences {
+		relations[difference.Relation]++
+		switch difference.Relation {
+		case "shifted":
+			if difference.OffsetRows != 1 && difference.OffsetRows != 2 {
+				t.Fatalf("unexpected shifted pair: %+v", difference)
+			}
+		case "missed":
+			if difference.TargetDate != "2026-01-16" {
+				t.Fatalf("unexpected missed event: %+v", difference)
+			}
+		case "extra":
+			if difference.ApproximationDate != "2026-02-02" {
+				t.Fatalf("unexpected extra event: %+v", difference)
+			}
+		default:
+			t.Fatalf("unexpected event relation: %+v", difference)
+		}
+	}
+	if relations["shifted"] != 2 || relations["missed"] != 1 || relations["extra"] != 1 {
+		t.Fatalf("unexpected pairing result: %+v", differences)
 	}
 }
 

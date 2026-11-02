@@ -12,11 +12,15 @@ import (
 )
 
 const (
-	Version              = 1
+	Version              = 2
 	StatusSampleCompared = "sample_compared"
 
 	EventFirstAllRed = "first_all_red"
 	EventExitAllRed  = "exit_all_red"
+
+	// EventPairWindowRows bounds one-to-one transition matching after same-day
+	// events have been paired. Events farther apart remain missed or extra.
+	EventPairWindowRows = 3
 
 	maxMismatches       = 2000
 	maxEventDifferences = 2000
@@ -97,26 +101,27 @@ type Quality struct {
 }
 
 type Report struct {
-	Version           int                   `json:"schema_version"`
-	Status            string                `json:"status"`
-	Target            Target                `json:"target"`
-	ApproximationRule string                `json:"approximation_rule"`
-	FormulaVerified   bool                  `json:"formula_verified"`
-	ObservedRows      int                   `json:"observed_rows"`
-	Codes             int                   `json:"codes"`
-	From              string                `json:"from"`
-	Through           string                `json:"through"`
-	DataFrom          string                `json:"data_from"`
-	DataThrough       string                `json:"data_through"`
-	DataSources       []string              `json:"data_sources"`
-	Lights            []LightAgreement      `json:"lights"`
-	AllRed            AllRedAgreement       `json:"all_red"`
-	Transitions       []TransitionAgreement `json:"transitions"`
-	Quality           Quality               `json:"quality"`
-	Mismatches        []Mismatch            `json:"mismatches,omitempty"`
-	MismatchCount     int                   `json:"mismatch_count"`
-	EventDifferences  []EventDifference     `json:"event_differences,omitempty"`
-	Limitations       []string              `json:"limitations"`
+	Version             int                   `json:"schema_version"`
+	Status              string                `json:"status"`
+	Target              Target                `json:"target"`
+	ApproximationRule   string                `json:"approximation_rule"`
+	FormulaVerified     bool                  `json:"formula_verified"`
+	ObservedRows        int                   `json:"observed_rows"`
+	Codes               int                   `json:"codes"`
+	From                string                `json:"from"`
+	Through             string                `json:"through"`
+	DataFrom            string                `json:"data_from"`
+	DataThrough         string                `json:"data_through"`
+	DataSources         []string              `json:"data_sources"`
+	EventPairWindowRows int                   `json:"event_pair_window_rows"`
+	Lights              []LightAgreement      `json:"lights"`
+	AllRed              AllRedAgreement       `json:"all_red"`
+	Transitions         []TransitionAgreement `json:"transitions"`
+	Quality             Quality               `json:"quality"`
+	Mismatches          []Mismatch            `json:"mismatches,omitempty"`
+	MismatchCount       int                   `json:"mismatch_count"`
+	EventDifferences    []EventDifference     `json:"event_differences,omitempty"`
+	Limitations         []string              `json:"limitations"`
 }
 
 type eventPoint struct {
@@ -124,6 +129,11 @@ type eventPoint struct {
 	index  int
 	target bool
 	approx bool
+}
+
+type eventPair struct {
+	target eventPoint
+	approx eventPoint
 }
 
 type groupState struct {
@@ -139,7 +149,8 @@ type groupState struct {
 func Compare(observations []Observation, target Target, histories map[string]market.History) (Report, error) {
 	report := Report{
 		Version: Version, Status: StatusSampleCompared, Target: target,
-		ApproximationRule: strategy.FourLightRule,
+		EventPairWindowRows: EventPairWindowRows,
+		ApproximationRule:   strategy.FourLightRule,
 		Lights: []LightAgreement{
 			{Light: "trend"}, {Light: "energy"}, {Light: "mid_term"}, {Light: "short_term"},
 		},
@@ -373,61 +384,122 @@ func compareTransitions(report *Report, row Observation, rowIndex int, previous 
 
 func collectEventDifferences(report *Report, code string, events map[string][]eventPoint, differences map[string]EventDifference) {
 	for _, transition := range report.Transitions {
-		points := events[transition.Event]
-		for _, source := range points {
-			if !source.target {
+		pairs, missed, extra := pairEventPoints(events[transition.Event])
+		for _, pair := range pairs {
+			if pair.target.index == pair.approx.index {
 				continue
 			}
-			nearest, ok := nearestEvent(points, source.index, false)
-			if ok && nearest.index == source.index {
-				continue
-			}
-			difference := EventDifference{Event: transition.Event, Code: code, TargetDate: source.date, Relation: "missed"}
-			if ok {
-				difference.ApproximationDate = nearest.date
-				difference.OffsetRows = nearest.index - source.index
-				difference.Relation = "shifted"
+			difference := EventDifference{
+				Event: transition.Event, Code: code,
+				TargetDate: pair.target.date, ApproximationDate: pair.approx.date,
+				Relation: "shifted", OffsetRows: pair.approx.index - pair.target.index,
 			}
 			differences[eventDifferenceKey(difference)] = difference
 		}
-		for _, source := range points {
-			if !source.approx {
-				continue
-			}
-			nearest, ok := nearestEvent(points, source.index, true)
-			if ok && nearest.index == source.index {
-				continue
-			}
+		for _, source := range missed {
+			difference := EventDifference{Event: transition.Event, Code: code, TargetDate: source.date, Relation: "missed"}
+			differences[eventDifferenceKey(difference)] = difference
+		}
+		for _, source := range extra {
 			difference := EventDifference{Event: transition.Event, Code: code, ApproximationDate: source.date, Relation: "extra"}
-			if ok {
-				difference.TargetDate = nearest.date
-				difference.OffsetRows = source.index - nearest.index
-				difference.Relation = "shifted"
-			}
 			differences[eventDifferenceKey(difference)] = difference
 		}
 	}
 }
 
-func nearestEvent(points []eventPoint, index int, target bool) (eventPoint, bool) {
-	bestIndex := -1
-	bestDistance := 0
-	for current, point := range points {
-		if (target && !point.target) || (!target && !point.approx) {
+func pairEventPoints(points []eventPoint) ([]eventPair, []eventPoint, []eventPoint) {
+	targets := make(map[int]eventPoint)
+	approximations := make(map[int]eventPoint)
+	targetIndices := make([]int, 0)
+	approximationIndices := make([]int, 0)
+	for _, point := range points {
+		if point.target {
+			targets[point.index] = point
+			targetIndices = append(targetIndices, point.index)
+		}
+		if point.approx {
+			approximations[point.index] = point
+			approximationIndices = append(approximationIndices, point.index)
+		}
+	}
+	sort.Ints(targetIndices)
+	sort.Ints(approximationIndices)
+
+	usedTargets := make(map[int]bool)
+	usedApproximations := make(map[int]bool)
+	pairs := make([]eventPair, 0)
+	for _, targetIndex := range targetIndices {
+		approx, ok := approximations[targetIndex]
+		if !ok {
 			continue
 		}
-		distance := point.index - index
-		if distance < 0 {
-			distance = -distance
+		pairs = append(pairs, eventPair{target: targets[targetIndex], approx: approx})
+		usedTargets[targetIndex] = true
+		usedApproximations[targetIndex] = true
+	}
+
+	candidates := make([]eventPair, 0)
+	for _, targetIndex := range targetIndices {
+		if usedTargets[targetIndex] {
+			continue
 		}
-		if bestIndex < 0 || distance < bestDistance || distance == bestDistance && point.index < points[bestIndex].index {
-			bestIndex, bestDistance = current, distance
+		for offset := -EventPairWindowRows; offset <= EventPairWindowRows; offset++ {
+			if offset == 0 {
+				continue
+			}
+			approx, ok := approximations[targetIndex+offset]
+			if !ok || usedApproximations[approx.index] {
+				continue
+			}
+			candidates = append(candidates, eventPair{target: targets[targetIndex], approx: approx})
 		}
 	}
-	if bestIndex < 0 {
-		return eventPoint{}, false
+	sort.Slice(candidates, func(first, second int) bool {
+		firstDistance := absInt(candidates[first].approx.index - candidates[first].target.index)
+		secondDistance := absInt(candidates[second].approx.index - candidates[second].target.index)
+		if firstDistance != secondDistance {
+			return firstDistance < secondDistance
+		}
+		if candidates[first].target.index != candidates[second].target.index {
+			return candidates[first].target.index < candidates[second].target.index
+		}
+		return candidates[first].approx.index < candidates[second].approx.index
+	})
+	for _, candidate := range candidates {
+		if usedTargets[candidate.target.index] || usedApproximations[candidate.approx.index] {
+			continue
+		}
+		pairs = append(pairs, candidate)
+		usedTargets[candidate.target.index] = true
+		usedApproximations[candidate.approx.index] = true
 	}
-	return points[bestIndex], true
+
+	sort.Slice(pairs, func(first, second int) bool {
+		if pairs[first].target.index != pairs[second].target.index {
+			return pairs[first].target.index < pairs[second].target.index
+		}
+		return pairs[first].approx.index < pairs[second].approx.index
+	})
+	missed := make([]eventPoint, 0)
+	for _, targetIndex := range targetIndices {
+		if !usedTargets[targetIndex] {
+			missed = append(missed, targets[targetIndex])
+		}
+	}
+	extra := make([]eventPoint, 0)
+	for _, approximationIndex := range approximationIndices {
+		if !usedApproximations[approximationIndex] {
+			extra = append(extra, approximations[approximationIndex])
+		}
+	}
+	return pairs, missed, extra
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func sortedEventDifferences(values map[string]EventDifference) []EventDifference {
