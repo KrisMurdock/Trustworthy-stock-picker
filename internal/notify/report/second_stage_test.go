@@ -138,6 +138,46 @@ func TestSecondStageCompactArticleKeepsPhasePipelineAndValidationBoundaries(t *t
 	}
 }
 
+func TestSecondStageArticleIncludesTrappedSignalForEveryCandidate(t *testing.T) {
+	r := articleTestReport(6)
+	r.Ranking[0].Trapped = &strategy.TrappedSignal{
+		Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusTriggered,
+		LookbackSessions: 120, Sessions: 120, CurrentPrice: 15.15, RecentHigh: 16.50, DrawdownFromHighPct: -8.18,
+		TrappedVolumeRatio: 0.36, OverheadCost: 16.10, OverheadLow: 15.90, OverheadHigh: 16.30, OverheadDistancePct: 6.27,
+	}
+	r.Ranking[1].Trapped = &strategy.TrappedSignal{
+		Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusWatch,
+		LookbackSessions: 120, Sessions: 120, CurrentPrice: 15.15, TrappedVolumeRatio: 0.24,
+		OverheadCost: 15.60, OverheadLow: 15.50, OverheadHigh: 15.70, OverheadDistancePct: 2.97,
+	}
+	r.Ranking[2].Trapped = &strategy.TrappedSignal{
+		Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusNone,
+		LookbackSessions: 120, Sessions: 120, CurrentPrice: 15.15, TrappedVolumeRatio: 0.05,
+	}
+	cards, err := FromSelection(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cards.SecondStage) != 1 || cards.SecondStage[0].Article == nil {
+		t.Fatalf("missing second-stage article: %+v", cards.SecondStage)
+	}
+	body := cards.SecondStage[0].Article.Body
+	for _, want := range []string{
+		"套牢盘诊断（120日量价；@后为加权成本，无=无明显，缺=数据不足）：1触发36%@16.10 2观察24%@15.60 3无 4缺 5缺 6缺。触发=量≥30%且成本距现价≥2%，观察=量≥20%且≥1%；仅提示上方成交压力，非交易信号。",
+		"部分对象触发上方套牢盘信号",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("article missing trapped text %q:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(cards.SecondStage[0].PlainText, "套牢盘诊断") {
+		t.Fatalf("plain text missing trapped summary: %s", cards.SecondStage[0].PlainText)
+	}
+	if _, err := wechat.RenderHTML(body); err != nil {
+		t.Fatalf("article with trapped signal does not render: %v", err)
+	}
+}
+
 func TestArticlePhaseValidationNamesRulePhaseAndSupport(t *testing.T) {
 	r := articleTestReport(6)
 	r.PhaseValidation = &strategy.PhaseValidation{
@@ -449,6 +489,11 @@ func TestSecondStageArticleWithTenChartsFitsWechatLimit(t *testing.T) {
 	for index := range r.Ranking {
 		chart := reportChart(r.Ranking[index].Code)
 		r.Ranking[index].Chart = chart
+		r.Ranking[index].Trapped = &strategy.TrappedSignal{
+			Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusTriggered,
+			LookbackSessions: 120, Sessions: 120, CurrentPrice: 15.15, TrappedVolumeRatio: 1,
+			OverheadCost: 1234.56, OverheadLow: 1200, OverheadHigh: 1300, OverheadDistancePct: 8048.91,
+		}
 		images[chart.ID] = wechat.RenderedImage{URL: "https://mmbiz.qpic.cn/mmbiz_png/" + strings.Repeat("a", 160) + "/0?wx_fmt=png", Caption: articleChartCaption(*chart)}
 	}
 	cards, err := FromSelection(r)

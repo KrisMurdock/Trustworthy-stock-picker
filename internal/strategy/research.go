@@ -161,6 +161,7 @@ type Candidate struct {
 	Chan                      *ChanEvidence           `json:"chan,omitempty"`
 	StructureGuard            *StructureGuardEvidence `json:"structure_guard,omitempty"`
 	Wave                      *WaveEvidence           `json:"wave,omitempty"`
+	Trapped                   *TrappedSignal          `json:"trapped_signal,omitempty"`
 	Phase                     *PhaseEvidence          `json:"phase,omitempty"`
 	Chart                     *articlechart.Spec      `json:"article_chart,omitempty"`
 	Continuation              *ContinuationStats      `json:"continuation,omitempty"`

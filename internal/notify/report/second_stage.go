@@ -71,7 +71,7 @@ func secondStageArticleText(r selection.Report, result secondstage.Report) strin
 }
 
 func secondStageArticleDigest(result secondstage.Report) string {
-	digest := fmt.Sprintf("%s三日短线观察：精排 %d 只，附参考买区、明日高低预测、阶段判断与缠论/波浪结构图。", articleMonthDay(result.Target), len(result.Candidates))
+	digest := fmt.Sprintf("%s三日短线观察：精排 %d 只，附参考买区、明日高低预测、套牢盘诊断、阶段判断与缠论/波浪结构图。", articleMonthDay(result.Target), len(result.Candidates))
 	if result.Degraded {
 		digest += "本次模型特征降级。"
 	}
@@ -95,6 +95,7 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 	out.WriteString(fmt.Sprintf("今天的筛选结果显示，策略观察池共 %d 只，精排从中输出 %d 只进入本期观察名单。%s。以下内容仅用于研究和观察，不构成交易建议。\n\n",
 		poolCount, len(rows), articleFormalSentence(formal)))
 	out.WriteString("机会分不代表成功概率，也不代表未来收益。\n\n")
+	writeArticleTrappedSummary(&out, rows)
 	compactPhase := len(rows) > 6
 	writeArticlePhasePipeline(&out, r, rows, compactPhase)
 
@@ -1261,6 +1262,46 @@ func articleBriefTechnical(candidate *strategy.Candidate) []string {
 	return out
 }
 
+func writeArticleTrappedSummary(out *strings.Builder, rows []articleCandidate) {
+	tokens := make([]string, 0, len(rows))
+	for _, row := range rows {
+		tokens = append(tokens, articleTrappedToken(row))
+	}
+	out.WriteString(fmt.Sprintf("套牢盘诊断（%d日量价；@后为加权成本，无=无明显，缺=数据不足）：%s。触发=量≥30%%且成本距现价≥2%%，观察=量≥20%%且≥1%%；仅提示上方成交压力，非交易信号。\n\n",
+		strategy.TrappedLookbackSessions, strings.Join(tokens, " ")))
+}
+
+func articleTrappedToken(row articleCandidate) string {
+	rank := row.rank
+	if rank <= 0 {
+		rank = 1
+	}
+	if row.observation == nil || row.observation.Trapped == nil {
+		return fmt.Sprintf("%d缺", rank)
+	}
+	signal := row.observation.Trapped
+	switch signal.Status {
+	case strategy.TrappedStatusTriggered:
+		return fmt.Sprintf("%d触发%.0f%%@%.2f", rank, signal.TrappedVolumeRatio*100, signal.OverheadCost)
+	case strategy.TrappedStatusWatch:
+		return fmt.Sprintf("%d观察%.0f%%@%.2f", rank, signal.TrappedVolumeRatio*100, signal.OverheadCost)
+	case strategy.TrappedStatusNone:
+		return fmt.Sprintf("%d无", rank)
+	default:
+		return fmt.Sprintf("%d缺", rank)
+	}
+}
+
+func articleTrappedCount(rows []articleCandidate, status string) int {
+	count := 0
+	for _, row := range rows {
+		if row.observation != nil && row.observation.Trapped != nil && row.observation.Trapped.Status == status {
+			count++
+		}
+	}
+	return count
+}
+
 func articleMAState(ma5, ma10, ma20 float64) string {
 	switch {
 	case ma5 > ma10 && ma10 > ma20:
@@ -1403,6 +1444,15 @@ func articleCommonDrivers(rows []articleCandidate) []string {
 func articleCommonRisks(rows []articleCandidate) []string {
 	out := make([]string, 0, 6)
 	seen := map[string]bool{}
+	if articleTrappedCount(rows, strategy.TrappedStatusTriggered) > 0 {
+		label := "部分对象触发上方套牢盘信号"
+		seen[label] = true
+		out = append(out, label)
+	} else if articleTrappedCount(rows, strategy.TrappedStatusWatch) > 0 {
+		label := "部分对象上方存在套牢压力"
+		seen[label] = true
+		out = append(out, label)
+	}
 	for _, row := range rows {
 		if row.observation == nil {
 			continue
