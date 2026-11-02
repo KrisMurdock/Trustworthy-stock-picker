@@ -47,11 +47,7 @@ func Extract(bars []market.Bar) (Features, error) {
 	previousMA /= 20
 	f.MA20Slope = (m.MA20/previousMA - 1) * 100
 	f.VolumeRatio = m.VolumeRatio
-	for i := len(bars) - 14; i < len(bars); i++ {
-		b, prev := bars[i], bars[i-1].Close
-		f.ATR14Pct += math.Max(b.High-b.Low, math.Max(math.Abs(b.High-prev), math.Abs(b.Low-prev)))
-	}
-	f.ATR14Pct = f.ATR14Pct / 14 / close * 100
+	f.ATR14Pct = signalATR14Pct(bars)
 	if last.High > last.Low {
 		f.ClosePosition = (close - last.Low) / (last.High - last.Low)
 		f.UpperWick = (last.High - math.Max(last.Open, close)) / (last.High - last.Low)
@@ -62,6 +58,20 @@ func Extract(bars []market.Bar) (Features, error) {
 	}
 	f.High20Distance = (close/high - 1) * 100
 	return f, nil
+}
+
+// signalATR14Pct keeps the existing simple-mean TR definition shared by
+// ranking features and unranked event observation. Callers validate the bars.
+func signalATR14Pct(bars []market.Bar) float64 {
+	if len(bars) < 15 {
+		return 0
+	}
+	sum := 0.0
+	for i := len(bars) - 14; i < len(bars); i++ {
+		b, previous := bars[i], bars[i-1].Close
+		sum += math.Max(b.High-b.Low, math.Max(math.Abs(b.High-previous), math.Abs(b.Low-previous)))
+	}
+	return sum / 14 / bars[len(bars)-1].Close * 100
 }
 
 // ExtractWithSignals keeps the daily ranking features unchanged while adding
