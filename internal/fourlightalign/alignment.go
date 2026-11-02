@@ -428,6 +428,7 @@ func pairEventPoints(points []eventPoint) ([]eventPair, []eventPoint, []eventPoi
 	usedTargets := make(map[int]bool)
 	usedApproximations := make(map[int]bool)
 	pairs := make([]eventPair, 0)
+	exactIndices := make([]int, 0)
 	for _, targetIndex := range targetIndices {
 		approx, ok := approximations[targetIndex]
 		if !ok {
@@ -436,42 +437,43 @@ func pairEventPoints(points []eventPoint) ([]eventPair, []eventPoint, []eventPoi
 		pairs = append(pairs, eventPair{target: targets[targetIndex], approx: approx})
 		usedTargets[targetIndex] = true
 		usedApproximations[targetIndex] = true
+		exactIndices = append(exactIndices, targetIndex)
 	}
 
-	candidates := make([]eventPair, 0)
-	for _, targetIndex := range targetIndices {
-		if usedTargets[targetIndex] {
-			continue
-		}
-		for offset := -EventPairWindowRows; offset <= EventPairWindowRows; offset++ {
-			if offset == 0 {
-				continue
-			}
-			approx, ok := approximations[targetIndex+offset]
-			if !ok || usedApproximations[approx.index] {
-				continue
-			}
-			candidates = append(candidates, eventPair{target: targets[targetIndex], approx: approx})
-		}
+	end := 1
+	if len(targetIndices) > 0 {
+		end = maxInt(end, targetIndices[len(targetIndices)-1]+1)
 	}
-	sort.Slice(candidates, func(first, second int) bool {
-		firstDistance := absInt(candidates[first].approx.index - candidates[first].target.index)
-		secondDistance := absInt(candidates[second].approx.index - candidates[second].target.index)
-		if firstDistance != secondDistance {
-			return firstDistance < secondDistance
+	if len(approximationIndices) > 0 {
+		end = maxInt(end, approximationIndices[len(approximationIndices)-1]+1)
+	}
+	lower := -1
+	for segment := 0; segment <= len(exactIndices); segment++ {
+		upper := end
+		if segment < len(exactIndices) {
+			upper = exactIndices[segment]
 		}
-		if candidates[first].target.index != candidates[second].target.index {
-			return candidates[first].target.index < candidates[second].target.index
+		segmentTargets := make([]eventPoint, 0)
+		for _, targetIndex := range targetIndices {
+			if !usedTargets[targetIndex] && targetIndex > lower && targetIndex < upper {
+				segmentTargets = append(segmentTargets, targets[targetIndex])
+			}
 		}
-		return candidates[first].approx.index < candidates[second].approx.index
-	})
-	for _, candidate := range candidates {
-		if usedTargets[candidate.target.index] || usedApproximations[candidate.approx.index] {
-			continue
+		segmentApproximations := make([]eventPoint, 0)
+		for _, approximationIndex := range approximationIndices {
+			if !usedApproximations[approximationIndex] && approximationIndex > lower && approximationIndex < upper {
+				segmentApproximations = append(segmentApproximations, approximations[approximationIndex])
+			}
 		}
-		pairs = append(pairs, candidate)
-		usedTargets[candidate.target.index] = true
-		usedApproximations[candidate.approx.index] = true
+		segmentPairs := pairEventSegment(segmentTargets, segmentApproximations)
+		for _, pair := range segmentPairs {
+			usedTargets[pair.target.index] = true
+			usedApproximations[pair.approx.index] = true
+		}
+		pairs = append(pairs, segmentPairs...)
+		if segment < len(exactIndices) {
+			lower = upper
+		}
 	}
 
 	sort.Slice(pairs, func(first, second int) bool {
@@ -495,11 +497,84 @@ func pairEventPoints(points []eventPoint) ([]eventPair, []eventPoint, []eventPoi
 	return pairs, missed, extra
 }
 
-func absInt(value int) int {
-	if value < 0 {
-		return -value
+type eventMatchScore struct {
+	matches  int
+	distance int
+}
+
+const (
+	eventChoiceSkipTarget byte = iota
+	eventChoiceSkipApproximation
+	eventChoicePair
+)
+
+func pairEventSegment(targets, approximations []eventPoint) []eventPair {
+	targetCount := len(targets)
+	approximationCount := len(approximations)
+	if targetCount == 0 || approximationCount == 0 {
+		return nil
 	}
-	return value
+	scores := make([][]eventMatchScore, targetCount+1)
+	choices := make([][]byte, targetCount+1)
+	for index := range scores {
+		scores[index] = make([]eventMatchScore, approximationCount+1)
+		choices[index] = make([]byte, approximationCount+1)
+	}
+	for targetIndex := targetCount - 1; targetIndex >= 0; targetIndex-- {
+		for approximationIndex := approximationCount - 1; approximationIndex >= 0; approximationIndex-- {
+			best := scores[targetIndex+1][approximationIndex]
+			choice := eventChoiceSkipTarget
+			if betterEventMatchScore(scores[targetIndex][approximationIndex+1], best) {
+				best = scores[targetIndex][approximationIndex+1]
+				choice = eventChoiceSkipApproximation
+			}
+			distance := approximations[approximationIndex].index - targets[targetIndex].index
+			if distance < 0 {
+				distance = -distance
+			}
+			if distance <= EventPairWindowRows {
+				candidate := eventMatchScore{
+					matches:  scores[targetIndex+1][approximationIndex+1].matches + 1,
+					distance: scores[targetIndex+1][approximationIndex+1].distance + distance,
+				}
+				if betterEventMatchScore(candidate, best) || candidate == best {
+					best = candidate
+					choice = eventChoicePair
+				}
+			}
+			scores[targetIndex][approximationIndex] = best
+			choices[targetIndex][approximationIndex] = choice
+		}
+	}
+
+	pairs := make([]eventPair, 0)
+	for targetIndex, approximationIndex := 0, 0; targetIndex < targetCount && approximationIndex < approximationCount; {
+		switch choices[targetIndex][approximationIndex] {
+		case eventChoiceSkipApproximation:
+			approximationIndex++
+		case eventChoicePair:
+			pairs = append(pairs, eventPair{target: targets[targetIndex], approx: approximations[approximationIndex]})
+			targetIndex++
+			approximationIndex++
+		default:
+			targetIndex++
+		}
+	}
+	return pairs
+}
+
+func betterEventMatchScore(candidate, current eventMatchScore) bool {
+	if candidate.matches != current.matches {
+		return candidate.matches > current.matches
+	}
+	return candidate.distance < current.distance
+}
+
+func maxInt(first, second int) int {
+	if first > second {
+		return first
+	}
+	return second
 }
 
 func sortedEventDifferences(values map[string]EventDifference) []EventDifference {

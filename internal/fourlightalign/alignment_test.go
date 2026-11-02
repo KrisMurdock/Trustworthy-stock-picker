@@ -184,6 +184,29 @@ func TestEventDifferencesPairOneToOneWithinWindow(t *testing.T) {
 	}
 }
 
+func TestEventDifferencesPairInChronologicalOrder(t *testing.T) {
+	report := Report{Transitions: []TransitionAgreement{{Event: EventFirstAllRed}}}
+	events := map[string][]eventPoint{
+		EventFirstAllRed: {
+			{date: "2026-01-07", index: 2, target: true},
+			{date: "2026-01-10", index: 5, target: true},
+			{date: "2026-01-09", index: 4, approx: true},
+			{date: "2026-01-12", index: 7, approx: true},
+		},
+	}
+	differences := map[string]EventDifference{}
+	collectEventDifferences(&report, "sz000001", events, differences)
+
+	if len(differences) != 2 {
+		t.Fatalf("expected two chronological pairs, got %+v", differences)
+	}
+	for _, difference := range differences {
+		if difference.Relation != "shifted" || difference.OffsetRows != 2 {
+			t.Fatalf("crossing or greedy pair was reported: %+v", difference)
+		}
+	}
+}
+
 func TestCompareRejectsReferenceGapsAndMissingHistory(t *testing.T) {
 	history := syntheticHistory()
 	rows := observationsFrom(history, 59, 69)
