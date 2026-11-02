@@ -176,3 +176,52 @@ func TestBuildRecommendationRejectsInvalidInputs(t *testing.T) {
 		t.Fatalf("invalid top_n error = %v", err)
 	}
 }
+
+type brokenTradingDays struct{}
+
+func (brokenTradingDays) TradingDays(context.Context, string, string) ([]string, error) {
+	return nil, errors.New("calendar unavailable")
+}
+
+func TestGenerateRecommendationFallsBackToNextWeekdayWhenFutureCalendarIsEmpty(t *testing.T) {
+	db, err := storage.OpenHKMarket(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	stock := config.Stock{Code: "hk00700", Name: "腾讯控股"}
+	if err := db.SaveHistory(context.Background(), stock, recommendationHistory(stock.Code, stock.Name, recommendationTestAsOf, true, 2000), true); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 30, 18, 50, 0, 0, market.Shanghai)
+	for name, source := range map[string]TradingDaysSource{
+		"empty": fakeTradingDays{},
+		"error": brokenTradingDays{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec, err := GenerateRecommendation(context.Background(), recommendationTestConfig(5), db, source, recommendationTestAsOf, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rec.Target != "2026-11-02" {
+				t.Fatalf("target = %q, want next weekday 2026-11-02", rec.Target)
+			}
+		})
+	}
+}
+
+func TestNextWeekdayTargetSkipsWeekend(t *testing.T) {
+	for _, tc := range []struct{ asOf, want string }{
+		{"2026-10-29", "2026-10-30"},
+		{"2026-10-30", "2026-11-02"},
+		{"2026-11-01", "2026-11-02"},
+	} {
+		got, err := nextWeekdayTarget(tc.asOf)
+		if err != nil || got != tc.want {
+			t.Fatalf("nextWeekdayTarget(%s) = %q, err=%v; want %q", tc.asOf, got, err, tc.want)
+		}
+	}
+	if _, err := nextWeekdayTarget("invalid"); err == nil {
+		t.Fatal("invalid as-of date accepted")
+	}
+}

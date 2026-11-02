@@ -151,14 +151,21 @@ func GenerateRecommendation(ctx context.Context, c config.Config, db *storage.Al
 	if db == nil || tradingDays == nil {
 		return Recommendation{}, errors.New("HK recommendation dependencies are unavailable")
 	}
-	days, err := tradingDays.TradingDays(ctx, addDays(asOf, 1), addDays(asOf, 21))
-	if err != nil {
-		return Recommendation{}, err
+	target := ""
+	// The HSI calendar only contains sessions that have already produced bars,
+	// so a request entirely in the future is normally empty. Prefer a real
+	// future session when the source can provide one, otherwise fall back to
+	// the next Hong Kong weekday.
+	if days, err := tradingDays.TradingDays(ctx, addDays(asOf, 1), addDays(asOf, 21)); err == nil && len(days) > 0 {
+		target = days[0]
 	}
-	if len(days) == 0 {
-		return Recommendation{}, errors.New("HK trading calendar returned no next session")
+	if target == "" {
+		var err error
+		target, err = nextWeekdayTarget(asOf)
+		if err != nil {
+			return Recommendation{}, err
+		}
 	}
-	target := days[0]
 	stocks, histories, err := db.LoadAdjustedHistories(ctx, asOf, addDays(asOf, -recommendationHistoryDays))
 	if err != nil {
 		return Recommendation{}, err
@@ -204,4 +211,17 @@ func LoadLatestRecommendation(ctx context.Context, root string, requireCIFS bool
 		return rec, errors.New("stored HK recommendation identity mismatch")
 	}
 	return rec, nil
+}
+
+func nextWeekdayTarget(asOf string) (string, error) {
+	day, err := time.Parse("2006-01-02", asOf)
+	if err != nil {
+		return "", errors.New("invalid HK recommendation as-of date")
+	}
+	for {
+		day = day.AddDate(0, 0, 1)
+		if day.Weekday() != time.Saturday && day.Weekday() != time.Sunday {
+			return day.Format("2006-01-02"), nil
+		}
+	}
 }
