@@ -33,7 +33,7 @@ func (m *Monitor) enqueueHKConnect(ctx context.Context, state *State) (bool, err
 	channels := m.channelNamesForRoute(config.NotifyRouteHKConnect)
 	pending := make([]string, 0, len(channels))
 	for _, channel := range channels {
-		if !hkRecommendationDelivered(*state, recommendation.AsOf, channel) {
+		if !hkRecommendationDelivered(*state, message.EventID, channel) {
 			pending = append(pending, channel)
 		}
 	}
@@ -50,9 +50,9 @@ func (m *Monitor) enqueueHKConnect(ctx context.Context, state *State) (bool, err
 	return true, nil
 }
 
-func hkRecommendationDelivered(state State, asOf, channel string) bool {
+func hkRecommendationDelivered(state State, eventID, channel string) bool {
 	for _, event := range state.Events {
-		if event.AsOf != asOf || event.Part != "hk_connect" {
+		if event.Message.EventID != eventID || event.Part != "hk_connect" {
 			continue
 		}
 		if _, ok := event.Channels[channel]; ok {

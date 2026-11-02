@@ -49,8 +49,9 @@ func newHKMonitor(t *testing.T, loader func(context.Context) (hkrecommend.Recomm
 }
 
 func TestHKRecommendationQueuesBesideAShareAndDoesNotDuplicate(t *testing.T) {
+	recommendation := hkMonitorRecommendation("2026-10-13", "2026-10-14")
 	m, aChannel, hkChannel := newHKMonitor(t, func(context.Context) (hkrecommend.Recommendation, error) {
-		return hkMonitorRecommendation("2026-10-13", "2026-10-14"), nil
+		return recommendation, nil
 	})
 	state := notify.NewLedger()
 	aMessage := notify.Message{Version: 2, EventID: "a:main", Title: "A 股文章", PlainText: "A 股内容",
@@ -87,6 +88,25 @@ func TestHKRecommendationQueuesBesideAShareAndDoesNotDuplicate(t *testing.T) {
 	}
 	if aChannel.sent[0].Title != "A 股文章" || hkChannel.sent[0].Title != "港股通精选｜10月14日 日线趋势观察" {
 		t.Fatalf("delivered titles A=%q HK=%q", aChannel.sent[0].Title, hkChannel.sent[0].Title)
+	}
+
+	state, err = m.readState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recommendation.ID = "hk-rec-2026-10-13-v2"
+	queued, err = m.enqueueHKConnect(context.Background(), &state)
+	if err != nil || !queued {
+		t.Fatalf("replacement enqueue: queued=%v err=%v", queued, err)
+	}
+	if _, ok := state.Events["hk-rec-2026-10-13-v2:hk-connect:article"]; !ok {
+		t.Fatalf("replacement event missing: %+v", state.Events)
+	}
+	if err := m.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(hkChannel.sent) != 2 {
+		t.Fatalf("HK deliveries = %d, want 2", len(hkChannel.sent))
 	}
 }
 
