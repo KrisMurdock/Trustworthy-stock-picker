@@ -146,6 +146,9 @@ func parseCompactDate(date string) (string, error) {
 // recording consistent share counts in SQLite. Tencent's STAR board is the
 // legacy exception; BaoStock/Sina report shares, Tushare and Eastmoney report lots.
 func ProviderVolumeShares(source, code string, raw float64) float64 {
+	if source == "tencent_hk" {
+		return raw
+	}
 	if source == "baostock" || source == "sina" {
 		return raw
 	}

@@ -158,10 +158,13 @@ func notifyRouteMatches(configured, route string) bool {
 
 var stockCode = regexp.MustCompile(`^(sh(60|68)[0-9]{4}|sz(00|30)[0-9]{4})$`)
 var indexCode = regexp.MustCompile(`^(sh000[0-9]{3}|sz399[0-9]{3})$`)
+var hkStockCode = regexp.MustCompile(`^hk[0-9]{5}$`)
 
-func ValidCode(s string) bool           { return stockCode.MatchString(s) }
-func ValidIndexCode(s string) bool      { return indexCode.MatchString(s) }
-func ValidInstrumentCode(s string) bool { return ValidCode(s) || ValidIndexCode(s) }
+func ValidCode(s string) bool            { return stockCode.MatchString(s) }
+func ValidHKStockCode(s string) bool     { return hkStockCode.MatchString(s) }
+func ValidMarketStockCode(s string) bool { return ValidCode(s) || ValidHKStockCode(s) }
+func ValidIndexCode(s string) bool       { return indexCode.MatchString(s) }
+func ValidInstrumentCode(s string) bool  { return ValidCode(s) || ValidIndexCode(s) }
 
 func Defaults() Config {
 	c := Config{Version: 1, DataDir: "data", RequireCIFS: false, PollInterval: "5m", Timeout: "10s"}

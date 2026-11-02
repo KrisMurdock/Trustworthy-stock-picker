@@ -18,6 +18,8 @@ import (
 const (
 	allMarketDBName        = "all-market.db"
 	allMarketLockName      = ".all-market.lock"
+	hkMarketDBName         = "hk-market.db"
+	hkMarketLockName       = ".hk-market.lock"
 	allMarketSchemaVersion = 1
 )
 
@@ -27,6 +29,9 @@ const (
 type AllMarketDB struct {
 	db          *sql.DB
 	root        string
+	dbName      string
+	lockName    string
+	kind        string
 	writable    bool
 	requireCIFS bool
 	lock        *os.File
@@ -60,14 +65,25 @@ type AllMarketRun struct {
 }
 
 func OpenAllMarket(root string, requireCIFS bool) (*AllMarketDB, error) {
-	return openAllMarket(root, requireCIFS, true)
+	return openAllMarket(root, requireCIFS, true, allMarketDBName, allMarketLockName, "all-market")
 }
 
 func OpenAllMarketView(root string, requireCIFS bool) (*AllMarketDB, error) {
-	return openAllMarket(root, requireCIFS, false)
+	return openAllMarket(root, requireCIFS, false, allMarketDBName, allMarketLockName, "all-market")
 }
 
-func openAllMarket(root string, requireCIFS, writable bool) (*AllMarketDB, error) {
+// OpenHKMarket opens the Stock Connect daily store. It intentionally shares the
+// full-market schema but uses a separate database and writer lock so a Hong
+// Kong sync can run beside the A-share full-market sync.
+func OpenHKMarket(root string, requireCIFS bool) (*AllMarketDB, error) {
+	return openAllMarket(root, requireCIFS, true, hkMarketDBName, hkMarketLockName, "HK market")
+}
+
+func OpenHKMarketView(root string, requireCIFS bool) (*AllMarketDB, error) {
+	return openAllMarket(root, requireCIFS, false, hkMarketDBName, hkMarketLockName, "HK market")
+}
+
+func openAllMarket(root string, requireCIFS, writable bool, dbName, lockName, kind string) (*AllMarketDB, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -76,21 +92,21 @@ func openAllMarket(root string, requireCIFS, writable bool) (*AllMarketDB, error
 	if err := check.Check(); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(root, allMarketDBName)
+	path := filepath.Join(root, dbName)
 	if !writable {
 		if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return nil, errors.New("all-market database is not initialized")
+			return nil, errors.New(kind + " database is not initialized")
 		}
 	}
-	m := &AllMarketDB{root: root, writable: writable, requireCIFS: requireCIFS}
+	m := &AllMarketDB{root: root, dbName: dbName, lockName: lockName, kind: kind, writable: writable, requireCIFS: requireCIFS}
 	if writable {
-		f, err := os.OpenFile(filepath.Join(root, allMarketLockName), os.O_CREATE|os.O_RDWR, 0600)
+		f, err := os.OpenFile(filepath.Join(root, lockName), os.O_CREATE|os.O_RDWR, 0600)
 		if err != nil {
-			return nil, errors.New("all-market lock is not writable")
+			return nil, errors.New(kind + " lock is not writable")
 		}
 		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 			f.Close()
-			return nil, errors.New("another all-market synchronization owns the data directory")
+			return nil, errors.New("another " + kind + " synchronization owns the data directory")
 		}
 		m.lock = f
 	}
@@ -101,7 +117,7 @@ func openAllMarket(root string, requireCIFS, writable bool) (*AllMarketDB, error
 	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode="+mode)
 	if err != nil {
 		m.unlock()
-		return nil, errors.New("cannot open all-market database")
+		return nil, errors.New("cannot open " + kind + " database")
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
@@ -115,12 +131,12 @@ func openAllMarket(root string, requireCIFS, writable bool) (*AllMarketDB, error
 
 func (m *AllMarketDB) configure() error {
 	if m == nil || m.db == nil {
-		return errors.New("all-market database is unavailable")
+		return errors.New("full-market database is unavailable")
 	}
 	if !m.writable {
 		for _, statement := range []string{"PRAGMA query_only=ON", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=30000"} {
 			if _, err := m.db.Exec(statement); err != nil {
-				return errors.New("cannot configure all-market database view")
+				return errors.New("cannot configure " + m.kind + " database view")
 			}
 		}
 		return nil
@@ -132,7 +148,7 @@ func (m *AllMarketDB) configure() error {
 		"PRAGMA busy_timeout=30000",
 	} {
 		if _, err := m.db.Exec(statement); err != nil {
-			return errors.New("cannot configure all-market database")
+			return errors.New("cannot configure " + m.kind + " database")
 		}
 	}
 	if err := m.initSchema(); err != nil {
@@ -144,10 +160,10 @@ func (m *AllMarketDB) configure() error {
 func (m *AllMarketDB) initSchema() error {
 	var version int
 	if err := m.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
-		return errors.New("cannot read all-market database version")
+		return errors.New("cannot read " + m.kind + " database version")
 	}
 	if version != 0 && version != allMarketSchemaVersion {
-		return errors.New("unsupported all-market database version")
+		return errors.New("unsupported " + m.kind + " database version")
 	}
 	_, err := m.db.Exec(`
 		CREATE TABLE IF NOT EXISTS stock (
@@ -200,7 +216,7 @@ func (m *AllMarketDB) initSchema() error {
 		PRAGMA user_version=1;
 	`)
 	if err != nil {
-		return errors.New("cannot initialize all-market database schema")
+		return errors.New("cannot initialize " + m.kind + " database schema")
 	}
 	return nil
 }
@@ -235,7 +251,7 @@ func (m *AllMarketDB) checkWriter(ctx context.Context) error {
 		return err
 	}
 	if m == nil || !m.writable || m.db == nil {
-		return errors.New("all-market database is read-only")
+		return errors.New("full-market database is read-only")
 	}
 	return (&Store{root: m.root, requireCIFS: m.requireCIFS}).Check()
 }
@@ -244,15 +260,15 @@ func (m *AllMarketDB) SaveHistory(ctx context.Context, stock config.Stock, h mar
 	if err := m.checkWriter(ctx); err != nil {
 		return err
 	}
-	if stock.Code != h.Code || !config.ValidCode(stock.Code) || (h.Adjust != "none" && h.Adjust != "qfq") {
-		return errors.New("invalid all-market history")
+	if stock.Code != h.Code || !config.ValidMarketStockCode(stock.Code) || (h.Adjust != "none" && h.Adjust != "qfq") {
+		return errors.New("invalid " + m.kind + " history")
 	}
 	if err := h.Validate(); err != nil {
-		return fmt.Errorf("invalid all-market history: %w", err)
+		return fmt.Errorf("invalid %s history: %w", m.kind, err)
 	}
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
-		return errors.New("cannot begin all-market transaction")
+		return errors.New("cannot begin " + m.kind + " transaction")
 	}
 	rollback := func(err error) error {
 		_ = tx.Rollback()
@@ -263,7 +279,7 @@ func (m *AllMarketDB) SaveHistory(ctx context.Context, stock config.Stock, h mar
 	}
 	if replace {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM daily_bar WHERE code=? AND adjust=?", stock.Code, h.Adjust); err != nil {
-			return rollback(errors.New("cannot replace all-market history"))
+			return rollback(errors.New("cannot replace " + m.kind + " history"))
 		}
 	}
 	for _, bar := range h.Bars {
@@ -277,14 +293,14 @@ func (m *AllMarketDB) SaveHistory(ctx context.Context, stock config.Stock, h mar
 				data_field=excluded.data_field, source=excluded.source
 		`, h.Code, h.Adjust, bar.Date, micros(bar.Open), micros(bar.Close), micros(bar.High), micros(bar.Low), bar.Volume,
 			int64(providerVolumeShares(h.Source, h.Code, bar.Volume)), h.DataField, h.Source); err != nil {
-			return rollback(errors.New("cannot persist all-market daily history"))
+			return rollback(errors.New("cannot persist " + m.kind + " daily history"))
 		}
 	}
 	if err := upsertAllMarketStatus(ctx, tx, stock, h.Adjust, h.AsOf, h.Bars[0].Date, len(h.Bars), h.Source, h.DataField, h.FetchedAt, "ok", ""); err != nil {
 		return rollback(err)
 	}
 	if err := tx.Commit(); err != nil {
-		return errors.New("cannot commit all-market history")
+		return errors.New("cannot commit " + m.kind + " history")
 	}
 	return nil
 }
@@ -293,15 +309,15 @@ func (m *AllMarketDB) RecordStatus(ctx context.Context, stock config.Stock, adju
 	if err := m.checkWriter(ctx); err != nil {
 		return err
 	}
-	if !config.ValidCode(stock.Code) || (adjust != "none" && adjust != "qfq") || (status != "failed" && status != "stale") {
-		return errors.New("invalid all-market stock status")
+	if !config.ValidMarketStockCode(stock.Code) || (adjust != "none" && adjust != "qfq") || (status != "failed" && status != "stale") {
+		return errors.New("invalid " + m.kind + " stock status")
 	}
 	if _, err := time.Parse("2006-01-02", asOf); err != nil {
-		return errors.New("invalid all-market status date")
+		return errors.New("invalid " + m.kind + " status date")
 	}
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
-		return errors.New("cannot begin all-market status transaction")
+		return errors.New("cannot begin " + m.kind + " status transaction")
 	}
 	rollback := func(err error) error {
 		_ = tx.Rollback()
@@ -314,7 +330,7 @@ func (m *AllMarketDB) RecordStatus(ctx context.Context, stock config.Stock, adju
 		return rollback(err)
 	}
 	if err := tx.Commit(); err != nil {
-		return errors.New("cannot commit all-market stock status")
+		return errors.New("cannot commit " + m.kind + " stock status")
 	}
 	return nil
 }

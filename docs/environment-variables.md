@@ -113,6 +113,11 @@
 | STOCK_WATCHER_MARKET_LISTING_ENDPOINT | 新浪发行资料端点 | 上市日期查询端点覆盖 |
 | STOCK_WATCHER_MARKET_UNIVERSE_ENDPOINT | 新浪沪深 A 股列表端点 | `sync-all` 全市场证券发现端点覆盖 |
 | STOCK_WATCHER_MARKET_UNIVERSE_COUNT_ENDPOINT | 新浪沪深 A 股总数端点 | `sync-all` 分页完整性校验端点覆盖 |
+| STOCK_WATCHER_MARKET_HK_ENDPOINT | https://ifzq.gtimg.cn | 腾讯港股日线端点覆盖；`web.ifzq.gtimg.cn` 的不复权路径可能持续返回 501 |
+| STOCK_WATCHER_MARKET_HK_ENDPOINT_FALLBACK | https://proxy.finance.qq.com/ifzqgtimg | 腾讯港股日线备用端点；主端点网络错误、429 或 5xx 时轮换重试 |
+| STOCK_WATCHER_MARKET_HK_QUOTE_ENDPOINT | https://qt.gtimg.cn/q | 腾讯港股证券类型端点，用于从港股通名单剔除 ETF/产品 |
+| STOCK_WATCHER_MARKET_HK_UNIVERSE_ENDPOINT | 新浪港股通列表端点 | `sync-hk-connect` 主证券发现端点覆盖 |
+| STOCK_WATCHER_MARKET_HK_UNIVERSE_FALLBACK | 东方财富港股通列表端点 | 主证券发现失败时的回退端点覆盖 |
 
 ### 指数与板块同步
 

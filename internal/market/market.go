@@ -46,7 +46,7 @@ type History struct {
 
 // Validate protects the same contract when JSON is read back from Windows.
 func (h History) Validate() error {
-	if h.Version != 1 || !config.ValidCode(h.Code) || h.Name == "" || !validSource(h.Source) || h.VolumeUnit != "provider_raw" || h.FetchedAt.IsZero() {
+	if h.Version != 1 || !config.ValidMarketStockCode(h.Code) || h.Name == "" || !validSource(h.Source) || h.VolumeUnit != "provider_raw" || h.FetchedAt.IsZero() {
 		return errors.New("missing or unsupported history metadata")
 	}
 	if _, err := time.Parse("2006-01-02", h.AsOf); err != nil {
@@ -82,7 +82,7 @@ func (h History) Validate() error {
 
 func validSource(source string) bool {
 	switch source {
-	case "tencent", "sina", "baostock", "tushare", "eastmoney":
+	case "tencent", "tencent_hk", "sina", "baostock", "tushare", "eastmoney":
 		return true
 	}
 	return false

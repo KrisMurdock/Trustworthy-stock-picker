@@ -39,6 +39,17 @@ STOCK_WATCHER_DATA_DIR=/mnt/windows_database \
 
 发现使用新浪 `sh_a`/`sz_a` 并排除 ST、名称含“退”的退市股票、北交所和 B 股；写入独立 `<data_dir>/all-market.db` 与 `.all-market.lock`。每只股票保存 10 年不复权窗口和 `daily.history_days` 前复权窗口；同日已完成的股票重跑时跳过，`-full` 强制刷新。全市场约 5,000 只股票，首次同步通常需要数小时，数据量按实际历史为几 GB 到十余 GB。该命令不生成报告、不发送通知；新浪列表不提供上市日期，实际历史起点受上市日期和上游可用数据限制。
 
+港股通股票日线单独用 `sync-hk-connect` 同步，不进入 A 股全市场库：
+
+```bash
+STOCK_WATCHER_DATA_DIR=/tmp/sw-hk-market \
+STOCK_WATCHER_REQUIRE_CIFS=false \
+./bin/stock-watcher sync-hk-connect -workers 3 -timeout 24h
+./bin/stock-watcher sync-hk-connect -codes hk00700 -workers 1 -timeout 1h
+```
+
+证券发现默认走新浪 `hgt_hk`/`sgt_hk`，再用腾讯行情类型剔除 ETF/产品，只保留 `GP` 股票；东方财富港股通股票行情页作为回退；日线主端点为 `https://ifzq.gtimg.cn`，备用端点为 `https://proxy.finance.qq.com/ifzqgtimg`，遇到 429/5xx 时轮换并指数退避。写入独立 `<data_dir>/hk-market.db` 与 `.hk-market.lock`，平均每只股票保存 10 年不复权日线和 `daily.history_days` 前复权日线。只有 raw 与 QFQ 的最新日线都到达 `as-of` 才跳过；若盘中或收盘后过早执行导致状态成功但日线未更新，后续命令仍会补刷新。默认截止日由恒生指数交易日确定，当前股票快照约 667 只；首次同步通常需要数分钟到数十分钟。该命令不生成报告、不发送通知，也不采集港股历史分钟线。
+
 首次部署完成 `sync` 后，用 `make minute-backfill`（默认 6 并发、最近 200 个交易日）补齐历史 5 分钟线；可用 `MINUTE_ARGS` 覆盖 `-from`、`-as-of`、`-codes`、`-workers`、`-provider`。`-provider auto` 对最近 104 个完整交易日优先使用新浪，更长窗口使用 BaoStock。已有生产实例运行时不要直接写生产库，先按 [行情来源与回退](data-sources.md#分钟数据) 的 staging 流程抓取，再停止 `run` 执行 `-import-from`。
 
 业务配置和凭证全部来自 `.env`，启动不读取 `config.yaml`，默认也不读取 `feishu.config`；观测股池仍独立保存在 `leaders.yaml`。默认使用本地 `data/`，`init` 会自动创建；使用 Windows 挂载盘时设置 `STOCK_WATCHER_REQUIRE_CIFS=true` 和对应 `STOCK_WATCHER_DATA_DIR`。`make run` 用于前台运行，会构建并加载开发 `.env`。若 `stock-watcher.service` 已运行同一个仓库二进制，则先用原生 `check-config` 校验配置与日志环境变量，通过后正常停止后台服务，确认 MainPID 为 0，再进入前台运行。构建或配置校验失败时不停止原服务；停止失败或超时时中止前台启动并报错。

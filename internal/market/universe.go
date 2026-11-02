@@ -29,6 +29,8 @@ var universeNodes = []string{"sh_a", "sz_a"}
 // small recommendation universe, while the full-market feed has its own store.
 type Universe struct {
 	Version          int            `json:"schema_version"`
+	Market           string         `json:"market,omitempty"`
+	Source           string         `json:"source,omitempty"`
 	FetchedAt        time.Time      `json:"fetched_at"`
 	Total            int            `json:"total"`
 	Stocks           []config.Stock `json:"stocks"`

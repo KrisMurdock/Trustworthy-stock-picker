@@ -21,13 +21,17 @@ sudo install -m 644 deploy/stock-watcher-secondstage.service /etc/systemd/system
 sudo install -m 644 deploy/stock-watcher-secondstage.timer /etc/systemd/system/stock-watcher-secondstage.timer
 sudo install -m 644 deploy/stock-watcher-allmarket.service /etc/systemd/system/stock-watcher-allmarket.service
 sudo install -m 644 deploy/stock-watcher-allmarket.timer /etc/systemd/system/stock-watcher-allmarket.timer
+sudo install -m 644 deploy/stock-watcher-hk-market.service /etc/systemd/system/stock-watcher-hk-market.service
+sudo install -m 644 deploy/stock-watcher-hk-market.timer /etc/systemd/system/stock-watcher-hk-market.timer
 sudo systemctl daemon-reload
 sudo systemctl enable --now stock-watcher.service
 sudo systemctl enable --now stock-watcher-secondstage.timer
 sudo systemctl enable --now stock-watcher-allmarket.timer
+sudo systemctl enable --now stock-watcher-hk-market.timer
 sudo systemctl status stock-watcher.service
 sudo systemctl status stock-watcher-secondstage.timer
 sudo systemctl status stock-watcher-allmarket.timer
+sudo systemctl status stock-watcher-hk-market.timer
 journalctl -u stock-watcher.service -n 50 --no-pager
 ```
 
@@ -36,6 +40,23 @@ journalctl -u stock-watcher.service -n 50 --no-pager
 全市场日线由 `stock-watcher-allmarket.timer` 在交易日 `18:40` 触发 `sync-all`，写入独立 `<data_dir>/all-market.db`，使用独立 `.all-market.lock`，可与主服务并行，不参与股池报告、排名或通知。该 unit 固定 `STOCK_WATCHER_DATA_DIR=/mnt/windows_database`、`STOCK_WATCHER_REQUIRE_CIFS=true`、`STOCK_WATCHER_MARKET_REQUEST_INTERVAL=500ms` 和独立日志目录 `logs/all-market/`，避免与主服务共用日志文件；如公共行情源限流，可把请求间隔改回 `1s`。定时器只在周一至周五触发，节假日会按最后一个已完成交易日执行并在已同步时快速跳过。
 
 全市场线上验收至少检查：`systemctl list-timers stock-watcher-allmarket.timer` 显示下一次触发时间；`journalctl -u stock-watcher-allmarket.service -n 50 --no-pager` 最后一行 JSON 为 `status=complete`；`all-market.db` 的 `sync_run` 最新记录 `as_of` 等于最近已完成交易日且 `failed=partial=0`；主服务 `stock-watcher.service` 仍保持 active。若服务以 `cannot persist all-market stock metadata` 或共享盘错误退出，先检查 CIFS 与 `busy_timeout`，不要通过改成本地目录绕过。
+
+港股通股票日线由 `stock-watcher-hk-market.timer` 在交易日 `18:50` 触发 `sync-hk-connect`，写入独立 `<data_dir>/hk-market.db`，使用独立 `.hk-market.lock`，可与主服务和全市场任务并行。该 unit 同样固定生产数据目录、CIFS 校验和独立日志目录，并把腾讯请求间隔固定为 `1s`，避免 350～500ms 高频请求触发 501；首次执行会保存当前约 667 只港股通股票的十年不复权日线和分析窗口前复权日线。新浪名单先按腾讯证券类型剔除 ETF/产品；若腾讯类型请求失败，会尝试东方财富股票板，不能用未分类的新浪 698 条名单直接写入。QFQ 接口对无复权因子的股票可能返回 `day`，此时同日 OHLCV 与原始日线一致，数据库按 `adjust=qfq`、`data_field=day` 保存，不能据此判定同步失败。腾讯复权端点在请求 1000 行时可能返回 1001 行，客户端允许这一行上浮并在窗口裁剪时丢弃窗口外记录。
+
+港股通线上验收至少检查：`systemctl list-timers stock-watcher-hk-market.timer` 显示下一次触发时间；`journalctl -u stock-watcher-hk-market.service -n 80 --no-pager` 最后一行 JSON 为 `status=complete` 且 `universe_source=sina`、`eligible=667`（名单会随交易所调整）；`hk-market.db` 的 `sync_run` 最新记录 `as_of` 等于最近已完成港股交易日，`failed=partial=0`；`stock` 表不应出现 `GP-FUND` 对应的 31 个 ETF 代码；每只股票同时存在 `none` 与 `qfq` 的 `stock_sync` 成功记录。只读 SQL 可用系统自带的 Python SQLite：
+
+```bash
+python3 - <<'PY'
+import sqlite3
+db = sqlite3.connect('file:/mnt/windows_database/hk-market.db?mode=ro', uri=True)
+print('stocks', db.execute('select count(*) from stock').fetchone()[0])
+print('bars', db.execute('select adjust,count(*),min(trade_date),max(trade_date) from daily_bar group by adjust').fetchall())
+print('sync', db.execute('select status,count(*) from stock_sync group by status').fetchall())
+print('runs', db.execute('select as_of,status,total,succeeded,partial,failed,skipped from sync_run order by rowid desc limit 1').fetchall())
+PY
+```
+
+若 `sync-hk-connect` 报 `request_failed_status` 或 `missing_or_invalid_hk_daily_rows`，先确认腾讯日线端点和类型端点可用，再原命令续跑；`stock_sync` 失败记录会重试，已完成股票会跳过。若报 `history_start_incomplete`，必须核对上市日期或上游实际历史，不能把请求了十年当成已验证十年完整性。若当前尚未安装 timer，只能写“CLI/本地验证通过，部署后未验证”，不能宣称线上已按日更新。
 
 精排线上验收至少检查：`systemctl list-timers stock-watcher-secondstage.timer`、当日 `state/secondstage/<model>/<as_of>.json` 四份文件均存在、`/api/reports?as_of=<date>` 中 `second_stage.degraded=false`、精排稿只在初筛/主报告之后发送。若 `journalctl -u stock-watcher-secondstage.service` 显示模型目录、Python 依赖或 CIFS 挂载错误，先修复离线生成链；不要把缺失 artifact 误判为 Go 精排算法失败。
 

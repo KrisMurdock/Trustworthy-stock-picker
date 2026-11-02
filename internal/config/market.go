@@ -27,6 +27,11 @@ type Market struct {
 	ListingEndpoint       string   `yaml:"listing_endpoint"`
 	UniverseEndpoint      string   `yaml:"universe_endpoint"`
 	UniverseCountEndpoint string   `yaml:"universe_count_endpoint"`
+	HKEndpoint            string   `yaml:"hk_endpoint"`
+	HKEndpointFallback    string   `yaml:"hk_endpoint_fallback"`
+	HKQuoteEndpoint       string   `yaml:"hk_quote_endpoint"`
+	HKUniverseEndpoint    string   `yaml:"hk_universe_endpoint"`
+	HKUniverseFallback    string   `yaml:"hk_universe_fallback_endpoint"`
 }
 
 func DefaultMarket() Market {
@@ -39,7 +44,12 @@ func DefaultMarket() Market {
 		SinaDailyEndpoint:     "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData",
 		ListingEndpoint:       "https://vip.stock.finance.sina.com.cn/corp/go.php/vISSUE_NewStock/stockid",
 		UniverseEndpoint:      "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData",
-		UniverseCountEndpoint: "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeStockCount"}
+		UniverseCountEndpoint: "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeStockCount",
+		HKEndpoint:            "https://ifzq.gtimg.cn",
+		HKEndpointFallback:    "https://proxy.finance.qq.com/ifzqgtimg",
+		HKQuoteEndpoint:       "https://qt.gtimg.cn/q",
+		HKUniverseEndpoint:    "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHKStockData",
+		HKUniverseFallback:    "https://push2.eastmoney.com/api/qt/clist/get"}
 }
 
 func (m *Market) loadCredentials() { m.TushareToken = strings.TrimSpace(os.Getenv(m.TushareTokenEnv)) }
@@ -53,6 +63,21 @@ func (m Market) Validate() error {
 	}
 	if !validMarketEndpoint(m.UniverseCountEndpoint) {
 		return errors.New("market.universe_count_endpoint requires HTTPS or loopback HTTP, without credentials or query parameters")
+	}
+	if !validMarketEndpoint(m.HKEndpoint) {
+		return errors.New("market.hk_endpoint requires HTTPS or loopback HTTP, without credentials or query parameters")
+	}
+	if !validMarketEndpoint(m.HKEndpointFallback) {
+		return errors.New("market.hk_endpoint_fallback requires HTTPS or loopback HTTP, without credentials or query parameters")
+	}
+	if !validMarketEndpoint(m.HKQuoteEndpoint) {
+		return errors.New("market.hk_quote_endpoint requires HTTPS or loopback HTTP, without credentials or query parameters")
+	}
+	if !validMarketEndpoint(m.HKUniverseEndpoint) {
+		return errors.New("market.hk_universe_endpoint requires HTTPS or loopback HTTP, without credentials or query parameters")
+	}
+	if !validMarketEndpoint(m.HKUniverseFallback) {
+		return errors.New("market.hk_universe_fallback_endpoint requires HTTPS or loopback HTTP, without credentials or query parameters")
 	}
 	if len(m.Providers) == 0 || len(m.Providers) > 5 {
 		return errors.New("market.providers must contain one to five providers")

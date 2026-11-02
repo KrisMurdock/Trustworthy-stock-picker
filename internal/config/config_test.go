@@ -314,6 +314,11 @@ func TestEnvironmentOnlyConfiguration(t *testing.T) {
 	t.Setenv("STOCK_WATCHER_MARKET_TUSHARE_ENDPOINT", "https://example.com/tushare")
 	t.Setenv("STOCK_WATCHER_MARKET_EASTMONEY_ENDPOINT", "https://example.com/eastmoney")
 	t.Setenv("STOCK_WATCHER_MARKET_LISTING_ENDPOINT", "https://example.com/listing")
+	t.Setenv("STOCK_WATCHER_MARKET_HK_ENDPOINT", "https://example.com/hk-daily")
+	t.Setenv("STOCK_WATCHER_MARKET_HK_ENDPOINT_FALLBACK", "https://example.com/hk-daily-fallback")
+	t.Setenv("STOCK_WATCHER_MARKET_HK_QUOTE_ENDPOINT", "https://example.com/hk-quotes")
+	t.Setenv("STOCK_WATCHER_MARKET_HK_UNIVERSE_ENDPOINT", "https://example.com/hk-universe")
+	t.Setenv("STOCK_WATCHER_MARKET_HK_UNIVERSE_FALLBACK", "https://example.com/hk-universe-fallback")
 	t.Setenv("STOCK_WATCHER_INTRADAY_ENABLED", "false")
 	t.Setenv("STOCK_WATCHER_INTRADAY_POLL_INTERVAL", "2m")
 	t.Setenv("STOCK_WATCHER_INTRADAY_REQUEST_INTERVAL", "500ms")
@@ -346,7 +351,7 @@ func TestEnvironmentOnlyConfiguration(t *testing.T) {
 	if !c.Strategy.Enabled || c.Strategy.TargetNetPct != 2.5 || c.Strategy.StopNetPct != -2 || c.Strategy.MaxHoldingDays != 4 || c.Strategy.TradeCash != 25000 || c.Strategy.MinEvidence != 61 || c.Strategy.HoldoutDays != 42 {
 		t.Fatalf("strategy environment not applied: %+v", c.Strategy)
 	}
-	if len(c.Market.Providers) != 2 || c.Market.FailureThreshold != 4 || c.Market.TushareTokenEnv != "TEST_TUSHARE_TOKEN" || c.Market.TushareToken != "test-token" || c.Market.ListingEndpoint != "https://example.com/listing" || c.Market.SinaDailyEndpoint != "https://example.com/sina-daily" {
+	if len(c.Market.Providers) != 2 || c.Market.FailureThreshold != 4 || c.Market.TushareTokenEnv != "TEST_TUSHARE_TOKEN" || c.Market.TushareToken != "test-token" || c.Market.ListingEndpoint != "https://example.com/listing" || c.Market.SinaDailyEndpoint != "https://example.com/sina-daily" || c.Market.HKEndpoint != "https://example.com/hk-daily" || c.Market.HKEndpointFallback != "https://example.com/hk-daily-fallback" || c.Market.HKQuoteEndpoint != "https://example.com/hk-quotes" || c.Market.HKUniverseEndpoint != "https://example.com/hk-universe" || c.Market.HKUniverseFallback != "https://example.com/hk-universe-fallback" {
 		t.Fatalf("market environment not applied: %+v", c.Market)
 	}
 	if c.Intraday.Enabled || c.Intraday.Workers != 4 || c.Intraday.CalibrationAt != "15:20" || c.Intraday.TencentEndpoint != "https://example.com/minute" {

@@ -1,0 +1,11 @@
+[Unit]
+Description=Trigger daily Stock Connect Hong Kong daily sync after close
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 18:50:00
+Persistent=true
+AccuracySec=1min
+Unit=stock-watcher-hk-market.service
+
+[Install]
+WantedBy=timers.target
