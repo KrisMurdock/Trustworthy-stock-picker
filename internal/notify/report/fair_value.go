@@ -74,12 +74,12 @@ func writeArticleFairValue(out *strings.Builder, r selection.Report, code string
 	if estimate.Confidence == "low" {
 		confidence = "低"
 	}
-	out.WriteString(fmt.Sprintf("- **财务口径**：TTM EPS %.2f 元；每股净资产 %.2f 元；ROE %.1f%%；盈利同比 %s；当前 PE %.1f 倍、PB %.1f 倍；置信度 %s。\n",
-		estimate.EPS, estimate.BookValuePerShare, estimate.ROEPct, growth, estimate.PE, estimate.PB, confidence))
+	method := "盈利倍数与净资产倍数各占一半，按 TTM ROE 与盈利增速调整；宽度随增速和缺失数据扩大。"
 	if estimate.BookValueAnchored {
-		out.WriteString("- **方法**：盈利倍数与净资产倍数各占一半，倍数按 TTM ROE 与盈利增速调整；区间宽度随增速和缺失数据的不确定性扩大。\n")
 	} else {
-		out.WriteString("- **方法**：每股净资产或 ROE 条件不足，本次仅使用盈利倍数；区间按低置信度加宽。\n")
+		method = "净资产或 ROE 条件不足，本次仅使用盈利倍数并按低置信度加宽。"
 	}
-	out.WriteString("- **边界**：这是财务相对估值的研究区间，不是目标价、收益预测或买卖指令；会计口径变化、周期波动和一次性损益都会使结果失真。\n\n")
+	out.WriteString(fmt.Sprintf("- **财务口径**：TTM EPS %.2f 元；每股净资产 %.2f 元；ROE %.1f%%；盈利同比 %s；当前 PE %.1f 倍、PB %.1f 倍；置信度 %s。%s\n",
+		estimate.EPS, estimate.BookValuePerShare, estimate.ROEPct, growth, estimate.PE, estimate.PB, confidence, method))
+	out.WriteString("- **边界**：财务相对估值研究区间，不是目标价、收益预测或买卖指令。\n\n")
 }

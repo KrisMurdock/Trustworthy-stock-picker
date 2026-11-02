@@ -123,7 +123,7 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 	if compactPhase {
 		out.WriteString(fmt.Sprintf("买区=参考价±%.2g×ATR14；估值区间来自财务快照；明日高低点为 dayrange 点估计及名义区间，非收益承诺；缺失标“暂缺”。套牢=近%d日不复权成交按换手率衰减、日内三角分布；触发≥30%%/2%%且浅+中度≥50%%，观察≥20%%/1%%且≥40%%，非信号。\n\n", articleBuyBandATR, strategy.TrappedLookbackSessions))
 	} else {
-		out.WriteString(fmt.Sprintf("推荐买区以参考买价为中枢、ATR14 的 %.2g 倍为半宽生成，保留两位小数；财务研究区间以最近四季度 EPS 对应盈利倍数和每股净资产对应净资产倍数各占一半，倍数按 TTM ROE 与盈利增速调整，只作研究参考，不是目标价。信号日实际区间取 %s 的最高价至最低价。明日高点和低点来自已保存的 dayrange 预测，点估计之外分别给出各自的名义边际区间；高、低区间不是联合覆盖，也不是收益承诺。预测或财务快照缺失时文章会明确标注“暂缺”，不临时编造。\n\n", articleBuyBandATR, articleMonthDay(result.AsOf)))
+		out.WriteString(fmt.Sprintf("推荐买区以参考买价为中枢、ATR14 的 %.2g 倍为半宽；财务研究区间=TTM EPS 盈利倍数与每股净资产倍数各半，按 ROE 与盈利增速调整，仅作研究参考，不是目标价。信号日实际区间取 %s 最高至最低价。明日高低点为 dayrange 点估计及名义边际区间，非联合覆盖或收益承诺；缺失标“暂缺”，不补造。\n\n", articleBuyBandATR, articleMonthDay(result.AsOf)))
 		out.WriteString("## 套牢盘诊断说明\n\n")
 		out.WriteString(fmt.Sprintf("套牢盘按近 %d 个交易日的不复权成交估算：每日成交量先换算为股数，再按低-收-高三角分布展开；历史筹码按当日换手率逐日衰减，零成交日保留为未换手样本。上方套牢量=衰减后价格高于信号日收盘的筹码占比；触发=≥30%%且加权成本高于现价≥2%%且浅+中度套牢区合计≥50%%，观察=≥20%%且≥1%%且合计≥40%%，无明显=未达观察阈值，数据不足=样本少于%d个或换手率缺失。成本带为上方筹码20%%~80%%加权分位；三档区间占比按最大余数法归一化，合计恒为100%%。该指标只描述上方成交压力，成交量不等同真实持仓成本，不构成交易信号，也不改变排名或推荐。\n\n", strategy.TrappedLookbackSessions, strategy.TrappedMinimumSessions))
 	}
@@ -153,7 +153,7 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 	if compactPhase {
 		out.WriteString("本文仅用于数据研究，不构成证券买卖建议、收益承诺或成功概率判断；历史表现不代表未来。\n")
 	} else {
-		out.WriteString("本文仅用于数据研究和信息整理，不构成任何证券买卖建议、收益承诺或成功概率判断。历史统计和模型排序不代表未来表现，市场有风险，决策需独立审慎。\n")
+		out.WriteString("本文仅用于数据研究，不构成任何证券买卖建议、收益承诺或成功概率判断；历史统计和模型排序不代表未来表现。\n")
 	}
 	return out.String()
 }
@@ -1712,7 +1712,7 @@ func writeArticleConclusion(out *strings.Builder, r selection.Report, rows []art
 	out.WriteString("4. 历史样本和未决交易问题能否改善；\n")
 	out.WriteString("5. 次日是否出现有效上涨延续。\n\n")
 	if r.SelectionEnabled {
-		out.WriteString("所有结论均基于截至信号日已保存的数据，历史统计不代表未来收益。\n\n")
+		out.WriteString("结论仅基于截至信号日已保存的数据。\n\n")
 	} else {
 		out.WriteString("本轮筛选未启用，排名只用于研究观察。\n\n")
 	}
