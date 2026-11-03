@@ -46,6 +46,14 @@ func articleFairValueCompactSummary(r selection.Report, code string) string {
 	return summary
 }
 
+func articleFairValuePriceSummary(r selection.Report, code string) string {
+	estimate, ok := articleFairValue(r, code)
+	if !ok || !estimate.Available() {
+		return articleFairValueSummary(r, code)
+	}
+	return articleFairValueCompactSummary(r, code)
+}
+
 func articleFairValueUpside(value float64) string {
 	if value >= 0 {
 		return fmt.Sprintf("较收盘 +%.1f%%", value)
