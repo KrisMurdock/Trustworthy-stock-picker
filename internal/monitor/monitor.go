@@ -21,6 +21,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/valuetrapped"
 )
 
 type Source = market.Source
@@ -63,6 +64,7 @@ type Monitor struct {
 	DayRangeForecasts           func(context.Context, string, []string) (map[string]selection.DayRangeForecast, error)
 	HKRecommendations           func(context.Context) (hkrecommend.Recommendation, error)
 	LowValuationRecommendations func(context.Context) (lowvaluation.Recommendation, error)
+	ValueTrappedRecommendations func(context.Context) (valuetrapped.Recommendation, error)
 	TurnoverSource              TurnoverSource
 	FairValues                  FairValueSource
 	Channels                    []notify.Channel
@@ -1180,13 +1182,18 @@ func (m *Monitor) Cycle(ctx context.Context) error {
 		m.Log.Warn("Low valuation recommendation enqueue failed", "reason", lowErr.Error())
 		deliveryErr = errors.Join(deliveryErr, lowErr)
 	}
+	valueTrappedQueued, valueTrappedErr := m.enqueueValueTrapped(ctx, &state)
+	if valueTrappedErr != nil {
+		m.Log.Warn("Value-trapped recommendation enqueue failed", "reason", valueTrappedErr.Error())
+		deliveryErr = errors.Join(deliveryErr, valueTrappedErr)
+	}
 	now := m.Now()
 	asof, target, due, dueErr := m.Calendar.Due(now, m.Config.Daily.RunAt)
 	if dueErr != nil {
 		return errors.Join(deliveryErr, dueErr)
 	}
 	if !due {
-		if hkQueued || lowQueued {
+		if hkQueued || lowQueued || valueTrappedQueued {
 			deliveryErr = errors.Join(deliveryErr, m.flushState(ctx, &state))
 		}
 		return deliveryErr

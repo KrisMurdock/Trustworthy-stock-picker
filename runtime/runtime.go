@@ -29,6 +29,8 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/predictor"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/selection"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/valuetrapped"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/valuetrappedstore"
 )
 
 // Config is the complete runtime configuration. Use LoadConfig or DefaultConfig
@@ -246,6 +248,11 @@ func New(opts Options) (*Runtime, error) {
 	if cfg.LowValuation.Enabled && cfg.LowValuation.PushEnabled {
 		r.monitor.LowValuationRecommendations = func(loadCtx context.Context) (lowvaluation.Recommendation, error) {
 			return lowvaluationstore.LoadLatestRecommendation(loadCtx, cfg.DataDir, cfg.RequireCIFS)
+		}
+	}
+	if cfg.ValueTrapped.Enabled && cfg.ValueTrapped.PushEnabled {
+		r.monitor.ValueTrappedRecommendations = func(loadCtx context.Context) (valuetrapped.Recommendation, error) {
+			return valuetrappedstore.LoadLatestRecommendation(loadCtx, cfg.DataDir, cfg.RequireCIFS)
 		}
 	}
 	r.turnoverClient = market.NewSohuMetricsClient(20*time.Second, 350*time.Millisecond)

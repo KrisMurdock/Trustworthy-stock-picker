@@ -22,6 +22,8 @@ sync-all 完整同步
 stock-watcher scan-low-valuation [-as-of YYYY-MM-DD] [-workers 1..8] [-timeout 1h..72h]
 ```
 
+若同时启用 `value_trapped.enabled=true`，同一个 `sync-all` 会在低估值快照保存成功后，只对全部“低于区间下沿”的候选执行套牢扫描，并另存 `market=value_trapped` 的交集快照。交集规则、排序、三档套牢区间和独立公众号稿见[低估值低套牢观察](value-trapped.md)。
+
 自动链路失败不会回滚已经完成的全市场日线同步；运行日志和 `sync-all` JSON 的 `low_valuation_error` 字段会记录原因。修复上游或配置后可用 `scan-low-valuation` 重跑。
 
 ## 排名与价格口径

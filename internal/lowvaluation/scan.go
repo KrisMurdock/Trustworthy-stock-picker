@@ -208,11 +208,12 @@ func Scan(ctx context.Context, quotes QuoteSource, fundamentals FundamentalSourc
 		return candidates[i].Code < candidates[j].Code
 	})
 	rec.Eligible = len(candidates)
-	if len(candidates) > rec.TopN {
-		candidates = candidates[:rec.TopN]
-	}
 	for index := range candidates {
 		candidates[index].Rank = index + 1
+	}
+	rec.AllCandidates = append([]Candidate{}, candidates...)
+	if len(candidates) > rec.TopN {
+		candidates = candidates[:rec.TopN]
 	}
 	rec.Candidates = candidates
 	rec.Selected = len(candidates)

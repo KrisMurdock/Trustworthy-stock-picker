@@ -393,7 +393,7 @@ func TestEnvironmentNotifyChannels(t *testing.T) {
 }
 
 func TestNotificationChannelRoutes(t *testing.T) {
-	for _, route := range []string{NotifyRouteFirstStage, NotifyRouteSecondStage, NotifyRouteLowValuation, NotifyRoutePremarketExecution, NotifyRouteSelection, NotifyRoutePredictorRealtime, NotifyRoutePredictorDayrange} {
+	for _, route := range []string{NotifyRouteFirstStage, NotifyRouteSecondStage, NotifyRouteLowValuation, NotifyRouteValueTrapped, NotifyRoutePremarketExecution, NotifyRouteSelection, NotifyRoutePredictorRealtime, NotifyRoutePredictorDayrange} {
 		t.Setenv("TEST_"+strings.ToUpper(route)+"_WEBHOOK", "https://open.feishu.cn/open-apis/bot/v2/hook/"+strings.ReplaceAll(route, "_", "-")+"-test")
 	}
 	p := filepath.Join(t.TempDir(), "config.yaml")
@@ -419,6 +419,11 @@ func TestNotificationChannelRoutes(t *testing.T) {
       enabled: true
       route: low_valuation
       webhook_env: TEST_LOW_VALUATION_WEBHOOK
+    - name: value-trapped
+      type: feishu
+      enabled: true
+      route: value_trapped
+      webhook_env: TEST_VALUE_TRAPPED_WEBHOOK
     - name: premarket-execution
       type: feishu
       enabled: true
@@ -446,6 +451,7 @@ func TestNotificationChannelRoutes(t *testing.T) {
 		NotifyRouteFirstStage:         "first-stage",
 		NotifyRouteSecondStage:        "second-stage",
 		NotifyRouteLowValuation:       "low-valuation",
+		NotifyRouteValueTrapped:       "value-trapped",
 		NotifyRoutePremarketExecution: "premarket-execution",
 		NotifyRouteSelection:          "selection",
 		NotifyRoutePredictorRealtime:  "predictor-realtime",
@@ -520,7 +526,7 @@ second_stage:
 		t.Fatalf("wechat environment not applied: %+v", c.Wechat)
 	}
 	channels := c.NotificationChannels()
-	wantRoute := NotifyRouteSecondStage + "," + NotifyRouteHKConnect + "," + NotifyRouteLowValuation + "," + NotifyRouteWechatPremarket
+	wantRoute := NotifyRouteSecondStage + "," + NotifyRouteHKConnect + "," + NotifyRouteLowValuation + "," + NotifyRouteValueTrapped + "," + NotifyRouteWechatPremarket
 	if len(channels) != 1 || channels[0].Name != WechatDraftChannelName || channels[0].Type != "wechat" || channels[0].Route != wantRoute {
 		t.Fatalf("unexpected wechat channel: %+v", channels)
 	}
@@ -532,6 +538,9 @@ second_stage:
 	}
 	if got := c.ChannelNamesForRoute(NotifyRouteLowValuation); len(got) != 1 || got[0] != WechatDraftChannelName {
 		t.Fatalf("low valuation article route = %v", got)
+	}
+	if got := c.ChannelNamesForRoute(NotifyRouteValueTrapped); len(got) != 1 || got[0] != WechatDraftChannelName {
+		t.Fatalf("value-trapped article route = %v", got)
 	}
 	if got := c.ChannelNamesForRoute(NotifyRouteWechatPremarket); len(got) != 1 || got[0] != WechatDraftChannelName {
 		t.Fatalf("premarket article route = %v", got)
@@ -567,6 +576,9 @@ func TestWechatDraftAllowsPremarketOnlyPush(t *testing.T) {
 	}
 	if got := c.ChannelNamesForRoute(NotifyRouteLowValuation); len(got) != 1 || got[0] != WechatDraftChannelName {
 		t.Fatalf("low valuation article route = %v", got)
+	}
+	if got := c.ChannelNamesForRoute(NotifyRouteValueTrapped); len(got) != 1 || got[0] != WechatDraftChannelName {
+		t.Fatalf("value-trapped article route = %v", got)
 	}
 	if got := c.ChannelNamesForRoute(NotifyRouteWechatPremarket); len(got) != 1 || got[0] != WechatDraftChannelName {
 		t.Fatalf("premarket article route = %v", got)

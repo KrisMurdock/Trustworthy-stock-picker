@@ -33,6 +33,7 @@ type Config struct {
 	SecondStage    SecondStage    `yaml:"second_stage"`
 	HKConnect      HKConnect      `yaml:"hk_connect"`
 	LowValuation   LowValuation   `yaml:"low_valuation"`
+	ValueTrapped   ValueTrapped   `yaml:"value_trapped"`
 	Predictor      Predictor      `yaml:"predictor"`
 	LLM            LLM            `yaml:"llm"`
 	Market         Market         `yaml:"market"`
@@ -123,6 +124,7 @@ const (
 	NotifyRouteSecondStage        = "second_stage"
 	NotifyRouteHKConnect          = "hk_connect"
 	NotifyRouteLowValuation       = "low_valuation"
+	NotifyRouteValueTrapped       = "value_trapped"
 	NotifyRoutePremarketExecution = "premarket_execution"
 	NotifyRoutePredictorRealtime  = "predictor_realtime"
 	NotifyRoutePredictorDayrange  = "predictor_dayrange"
@@ -137,6 +139,7 @@ var notifyRoutes = map[string]bool{
 	NotifyRouteSecondStage:        true,
 	NotifyRouteHKConnect:          true,
 	NotifyRouteLowValuation:       true,
+	NotifyRouteValueTrapped:       true,
 	NotifyRoutePremarketExecution: true,
 	NotifyRoutePredictorRealtime:  true,
 	NotifyRoutePredictorDayrange:  true,
@@ -186,6 +189,7 @@ func Defaults() Config {
 	c.SecondStage = DefaultSecondStage()
 	c.HKConnect = DefaultHKConnect()
 	c.LowValuation = DefaultLowValuation()
+	c.ValueTrapped = DefaultValueTrapped()
 	c.Predictor = DefaultPredictor()
 	c.Web.Enabled = true
 	c.Web.Listen = "127.0.0.1:8080"
@@ -386,6 +390,9 @@ func (c Config) Validate() error {
 	if err := c.LowValuation.Validate(); err != nil {
 		return err
 	}
+	if err := c.ValueTrapped.Validate(c.LowValuation.Enabled); err != nil {
+		return err
+	}
 	if err := c.Market.Validate(); err != nil {
 		return err
 	}
@@ -466,8 +473,8 @@ func (c Config) Validate() error {
 		if utf8.RuneCountInString(strings.TrimSpace(c.Wechat.Author)) > 16 {
 			return errors.New("wechat author must be at most 16 characters")
 		}
-		if !(c.SecondStage.Enabled && c.SecondStage.PushEnabled) && !(c.HKConnect.Enabled && c.HKConnect.PushEnabled) && !(c.DayRange.Enabled && c.DayRange.PushEnabled) {
-			return errors.New("wechat draft requires second_stage, hk_connect or dayrange push")
+		if !(c.SecondStage.Enabled && c.SecondStage.PushEnabled) && !(c.HKConnect.Enabled && c.HKConnect.PushEnabled) && !(c.LowValuation.Enabled && c.LowValuation.PushEnabled) && !(c.ValueTrapped.Enabled && c.ValueTrapped.PushEnabled) && !(c.DayRange.Enabled && c.DayRange.PushEnabled) {
+			return errors.New("wechat draft requires second_stage, hk_connect, low_valuation, value_trapped or dayrange push")
 		}
 		if channelNames[WechatDraftChannelName] {
 			return errors.New("notify channel name wechat-draft is reserved")
@@ -527,7 +534,7 @@ func (c Config) Validate() error {
 				return errors.New("enabled Feishu requires a valid HTTPS custom bot webhook")
 			}
 		case "wechat":
-			if !c.Wechat.Enabled || channel.Name != WechatDraftChannelName || !notifyRouteMatches(channel.Route, NotifyRouteSecondStage) || !notifyRouteMatches(channel.Route, NotifyRouteHKConnect) || !notifyRouteMatches(channel.Route, NotifyRouteLowValuation) || !notifyRouteMatches(channel.Route, NotifyRouteWechatPremarket) {
+			if !c.Wechat.Enabled || channel.Name != WechatDraftChannelName || !notifyRouteMatches(channel.Route, NotifyRouteSecondStage) || !notifyRouteMatches(channel.Route, NotifyRouteHKConnect) || !notifyRouteMatches(channel.Route, NotifyRouteLowValuation) || !notifyRouteMatches(channel.Route, NotifyRouteValueTrapped) || !notifyRouteMatches(channel.Route, NotifyRouteWechatPremarket) {
 				return errors.New("enabled WeChat draft channel is invalid")
 			}
 		default:
@@ -563,7 +570,7 @@ func (c Config) NotificationChannels() []NotifyChannel {
 		out = append(out, NotifyChannel{Name: "feishu-main", Type: "feishu", Enabled: true, Webhook: c.Feishu.Webhook, Secret: c.Feishu.Secret})
 	}
 	if c.Wechat.Enabled {
-		out = append(out, NotifyChannel{Name: WechatDraftChannelName, Type: "wechat", Enabled: true, Route: NotifyRouteSecondStage + "," + NotifyRouteHKConnect + "," + NotifyRouteLowValuation + "," + NotifyRouteWechatPremarket})
+		out = append(out, NotifyChannel{Name: WechatDraftChannelName, Type: "wechat", Enabled: true, Route: NotifyRouteSecondStage + "," + NotifyRouteHKConnect + "," + NotifyRouteLowValuation + "," + NotifyRouteValueTrapped + "," + NotifyRouteWechatPremarket})
 	}
 	return out
 }

@@ -66,6 +66,9 @@ func TestScanRanksClosestLowerBoundAndFilters(t *testing.T) {
 	if len(rec.Candidates) != 2 || rec.Candidates[0].Code != "sh600001" || rec.Candidates[1].Code != "sh600002" {
 		t.Fatalf("ranking = %+v", rec.Candidates)
 	}
+	if len(rec.AllCandidates) != 2 || rec.AllCandidates[0].Rank != 1 || rec.AllCandidates[1].Rank != 2 {
+		t.Fatalf("complete candidate set = %+v", rec.AllCandidates)
+	}
 	if rec.Candidates[0].GapToLowerPct <= 0 || rec.Candidates[0].GapToLowerPct >= rec.Candidates[1].GapToLowerPct {
 		t.Fatalf("gap ranking = %+v", rec.Candidates)
 	}

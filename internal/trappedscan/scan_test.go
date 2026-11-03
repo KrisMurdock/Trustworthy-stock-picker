@@ -151,6 +151,33 @@ func TestScanAppliesEligibilityFilters(t *testing.T) {
 	}
 }
 
+func TestScanCodesLimitMetricsToRequestedStocks(t *testing.T) {
+	const asOf = "2026-11-02"
+	first := testHistory("sh600010", "请求股", asOf, 130, func(int) float64 { return 10 })
+	second := testHistory("sh600011", "未请求股", asOf, 130, func(int) float64 { return 10 })
+	ignoredInvalid := testHistory("sh600012", "未请求无效历史", asOf, 130, func(int) float64 { return 10 })
+	ignoredInvalid.Adjust = "qfq"
+	store := fakeStore{asOf: asOf, stocks: []config.Stock{
+		{Code: first.Code, Name: first.Name}, {Code: second.Code, Name: second.Name}, {Code: ignoredInvalid.Code, Name: ignoredInvalid.Name},
+	}, histories: []market.History{first, second, ignoredInvalid}}
+	source := &fakeMetrics{byCode: map[string]market.DailyMetricHistory{first.Code: testMetrics(first, 2)}}
+	result, err := (&Scanner{Store: store, Metrics: source}).Scan(context.Background(), Options{
+		AsOf: asOf, TopN: 10, Codes: []string{first.Code}, MinHistorySessions: 120,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.EligibleStocks != 1 || result.ScannedStocks != 1 || len(result.Top) != 1 || result.Top[0].Code != first.Code {
+		t.Fatalf("filtered result = %+v", result)
+	}
+	if source.callCount() != 1 {
+		t.Fatalf("metrics calls = %d, want 1", source.callCount())
+	}
+	if result.Excluded["invalid_history"] != 0 {
+		t.Fatalf("unrequested invalid history leaked into exclusions: %+v", result.Excluded)
+	}
+}
+
 func TestScanMarksIncompleteMetricsAsUnknown(t *testing.T) {
 	const asOf = "2026-11-02"
 	history := testHistory("sh600020", "测试股", asOf, 130, func(int) float64 { return 10 })

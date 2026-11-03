@@ -39,9 +39,13 @@ STOCK_WATCHER_DATA_DIR=/mnt/windows_database \
 # 日线已同步后，单独重跑低估值扫描并保存 recommendation 快照
 STOCK_WATCHER_DATA_DIR=/mnt/windows_database \
 ./bin/stock-watcher scan-low-valuation -workers 3 -timeout 6h
+
+# 日线已同步后，重跑低估值与低套牢交集观察
+STOCK_WATCHER_DATA_DIR=/mnt/windows_database \
+./bin/stock-watcher scan-value-trapped -workers 3 -timeout 6h
 ```
 
-发现使用新浪 `sh_a`/`sz_a` 并排除 ST、名称含“退”的退市股票、北交所和 B 股；写入独立 `<data_dir>/all-market.db` 与 `.all-market.lock`。每只股票保存 10 年不复权窗口和 `daily.history_days` 前复权窗口；同日已完成的股票重跑时跳过，`-full` 强制刷新。全市场约 5,000 只股票，首次同步通常需要数小时，数据量按实际历史为几 GB 到十余 GB。完整且未使用 `-codes` 的同步会在启用 `low_valuation` 时自动拉取新浪 TTM 财务快照、计算财务研究区间并保存低估值快照；单独扫描只读取已保存日线，不重新下载行情。`sync-all` 和 `scan-low-valuation` 都不直接发送通知，主 `run`/`once` 读取快照后投递公众号稿。新浪列表不提供上市日期，实际历史起点受上市日期和上游可用数据限制；全市场财务请求受 `market.request_interval` 限速，通常需要数十分钟。
+发现使用新浪 `sh_a`/`sz_a` 并排除 ST、名称含“退”的退市股票、北交所和 B 股；写入独立 `<data_dir>/all-market.db` 与 `.all-market.lock`。每只股票保存 10 年不复权窗口和 `daily.history_days` 前复权窗口；同日已完成的股票重跑时跳过，`-full` 强制刷新。全市场约 5,000 只股票，首次同步通常需要数小时，数据量按实际历史为几 GB 到十余 GB。完整且未使用 `-codes` 的同步会在启用 `low_valuation` 时自动拉取新浪 TTM 财务快照、计算财务研究区间并保存低估值快照；启用 `value_trapped` 时只对低估值候选复用套牢 V3 并保存交集快照。单独扫描只读取已保存日线，不重新下载行情；`scan-value-trapped` 会先重算低估值，再只为低估值候选请求换手率。`sync-all`、`scan-low-valuation` 和 `scan-value-trapped` 都不直接发送通知，主 `run`/`once` 读取快照后投递公众号稿。新浪列表不提供上市日期，实际历史起点受上市日期和上游可用数据限制；全市场财务请求受 `market.request_interval` 限速，通常需要数十分钟。
 
 港股通股票日线单独用 `sync-hk-connect` 同步，不进入 A 股全市场库：
 

@@ -61,6 +61,15 @@ func runScanLowValuation(ctx context.Context, c config.Config, log *logging.Logg
 
 func scanLowValuationWithDB(ctx context.Context, c config.Config, log *logging.Logger, db *storage.AllMarketDB,
 	asOf string, workers int, now time.Time) (lowvaluation.Recommendation, error) {
+	rec, err := scanLowValuationCandidatesWithDB(ctx, c, log, db, asOf, workers, now)
+	if err != nil {
+		return rec, err
+	}
+	return persistLowValuationRecommendation(ctx, db, rec)
+}
+
+func scanLowValuationCandidatesWithDB(ctx context.Context, c config.Config, log *logging.Logger, db *storage.AllMarketDB,
+	asOf string, workers int, now time.Time) (lowvaluation.Recommendation, error) {
 	if log == nil {
 		log = logging.Nop()
 	}
@@ -68,10 +77,20 @@ func scanLowValuationWithDB(ctx context.Context, c config.Config, log *logging.L
 	sina.Endpoint = c.Market.SinaEndpoint
 	defer sina.Close()
 	sectors := loadLowValuationSectors(ctx, c, log)
-	return generateLowValuationRecommendation(ctx, c, log, db, lowvaluationstore.Quotes{DB: db}, sina, sectors, asOf, workers, now)
+	return generateLowValuationCandidates(ctx, c, log, db, lowvaluationstore.Quotes{DB: db}, sina, sectors, asOf, workers, now)
 }
 
 func generateLowValuationRecommendation(ctx context.Context, c config.Config, log *logging.Logger,
+	db *storage.AllMarketDB, quotes lowvaluation.QuoteSource, fundamentals lowvaluation.FundamentalSource,
+	sectors map[string]string, asOf string, workers int, now time.Time) (lowvaluation.Recommendation, error) {
+	rec, err := generateLowValuationCandidates(ctx, c, log, db, quotes, fundamentals, sectors, asOf, workers, now)
+	if err != nil {
+		return rec, err
+	}
+	return persistLowValuationRecommendation(ctx, db, rec)
+}
+
+func generateLowValuationCandidates(ctx context.Context, c config.Config, log *logging.Logger,
 	db *storage.AllMarketDB, quotes lowvaluation.QuoteSource, fundamentals lowvaluation.FundamentalSource,
 	sectors map[string]string, asOf string, workers int, now time.Time) (lowvaluation.Recommendation, error) {
 	if db == nil || quotes == nil || fundamentals == nil {
@@ -99,6 +118,10 @@ func generateLowValuationRecommendation(ctx context.Context, c config.Config, lo
 	if err != nil {
 		return rec, err
 	}
+	return rec, nil
+}
+
+func persistLowValuationRecommendation(ctx context.Context, db *storage.AllMarketDB, rec lowvaluation.Recommendation) (lowvaluation.Recommendation, error) {
 	payload, err := json.Marshal(rec)
 	if err != nil {
 		return rec, errors.New("cannot encode low valuation recommendation")

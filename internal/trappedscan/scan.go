@@ -43,6 +43,7 @@ type MetricsSource interface {
 type Options struct {
 	AsOf               string
 	TopN               int
+	Codes              []string
 	MinHistorySessions int
 	MinAmountCNY       float64
 	Workers            int
@@ -191,9 +192,16 @@ func (s *Scanner) Scan(ctx context.Context, options Options) (Result, error) {
 	for _, stock := range stocks {
 		stockByCode[stock.Code] = stock
 	}
+	allowed := make(map[string]bool, len(options.Codes))
+	for _, code := range options.Codes {
+		allowed[code] = true
+	}
 	items := make([]workItem, 0, len(histories))
 	for _, history := range histories {
 		stock, ok := stockByCode[history.Code]
+		if len(allowed) > 0 && !allowed[history.Code] {
+			continue
+		}
 		if !ok || history.Adjust != "none" || len(history.Bars) == 0 {
 			result.Excluded["invalid_history"]++
 			continue

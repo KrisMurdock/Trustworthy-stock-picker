@@ -31,6 +31,10 @@ func Builtin() Config {
 	c.LowValuation.Enabled = true
 	c.LowValuation.PushEnabled = true
 	c.LowValuation.TopN = 20
+	c.ValueTrapped.Enabled = true
+	c.ValueTrapped.PushEnabled = true
+	c.ValueTrapped.TopN = 20
+	c.ValueTrapped.MaxTrappedRatio = 0.30
 	c.Feishu.Enabled = true
 	c.Predictor.Enabled = true
 	c.Predictor.PushEnabled = true

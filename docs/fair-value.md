@@ -95,7 +95,7 @@ upside   = (central / P - 1) × 100
 
 ## 全市场低估值观察
 
-`sync-all` 完整同步后会用同一套 v1 公式扫描全市场：只读取信号日不复权收盘价，只为满足 `close < lower` 的股票排序，按距下沿折价 `(lower - close) / lower` 升序展示，最多保留 `low_valuation.top_n` 只，保存为 `all-market.db` 的 `low_valuation` 快照。该链路独立于股池、初筛、精排和成交模拟，文章标题形如《全市场低估值股｜11月02日 财务折价观察》；可用 `scan-low-valuation` 单独重跑。已定价股票不少于 100 只但可用估值不足 50% 时不保存快照，避免把数据源故障误写成“没有低估值股”。完整方法、数据保护和部署验收见[全市场低估值观察](low-valuation.md)。
+`sync-all` 完整同步后会用同一套 v1 公式扫描全市场：只读取信号日不复权收盘价，只为满足 `close < lower` 的股票排序，按距下沿折价 `(lower - close) / lower` 升序展示，最多保留 `low_valuation.top_n` 只，保存为 `all-market.db` 的 `low_valuation` 快照。该链路独立于股池、初筛、精排和成交模拟，文章标题形如《全市场低估值股｜11月02日 财务折价观察》；可用 `scan-low-valuation` 单独重跑。已定价股票不少于 100 只但可用估值不足 50% 时不保存快照，避免把数据源故障误写成“没有低估值股”。完整方法、数据保护和部署验收见[全市场低估值观察](low-valuation.md)。启用 `value_trapped` 时，同一批低于下沿的候选还会与套牢 V3 求交集，另行保存并发布《低估值且低套牢》，详见[低估值低套牢观察](value-trapped.md)。
 
 ## 已知限制
 

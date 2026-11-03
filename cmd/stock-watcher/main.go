@@ -21,12 +21,16 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkrecommend"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/intraday"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/lowvaluation"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/lowvaluationstore"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/marketcontext"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/monitor"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/predictor"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/valuetrapped"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/valuetrappedstore"
 	stockruntime "github.com/KrisMurdock/Trustworthy-stock-picker/runtime"
 )
 
@@ -40,7 +44,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-all|scan-low-valuation|sync-fundamentals|audit-fundamentals|fair-value|sync-hk-connect|sync-context|sync-index-minutes|sync-korea-context|sync-hang-seng-context|sync-korea-minutes|sync-intraday|backfill-minutes|status-backfill|status-refresh|status-audit|preview|research|experiment|study-yang-pullback|plan|run|once|status|retry|train-predictor|predictor-status|predictor-eval|market-signal|train-dayrange|predict-dayrange|reconcile-dayrange|status-dayrange|replay-dayrange [channel] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-all|scan-low-valuation|scan-value-trapped|sync-fundamentals|audit-fundamentals|fair-value|sync-hk-connect|sync-context|sync-index-minutes|sync-korea-context|sync-hang-seng-context|sync-korea-minutes|sync-intraday|backfill-minutes|status-backfill|status-refresh|status-audit|preview|research|experiment|study-yang-pullback|plan|run|once|status|retry|train-predictor|predictor-status|predictor-eval|market-signal|train-dayrange|predict-dayrange|reconcile-dayrange|status-dayrange|replay-dayrange [channel] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -57,11 +61,11 @@ func run(args []string) error {
 	policy := f.String("policy", "baseline", "conditional-{entry,rsi,macd,bollinger,confluence,all-three,guard,confluence-guard,chan-5-15-30}, baseline, upper-wick, risk-qualified or next-day-{baseline,upper-wick,low-volatility,pullback,breakout,momentum,volume-recovery,balanced,risk-qualified} (experiment only)")
 	from := f.String("from", "", "inclusive start date (experiment; pair with -through, or backfill/index-minute sync)")
 	through := f.String("through", "", "inclusive backtest signal end date (experiment only; pair with -from)")
-	backfillWorkers := f.Int("workers", 3, "concurrent workers (backfill-minutes, sync-all, scan-low-valuation or sync-hk-connect, 1..8)")
+	backfillWorkers := f.Int("workers", 3, "concurrent workers (backfill-minutes, sync-all, scan-low-valuation, scan-value-trapped or sync-hk-connect, 1..8)")
 	backfillProvider := f.String("provider", "auto", "minute history provider: auto, baostock or sina (backfill-minutes only)")
 	backfillCodes := f.String("codes", "", "comma-separated codes (backfill-minutes, sync-all, sync-fundamentals or sync-hk-connect; default all)")
 	allFull := f.Bool("full", false, "force a full 10-year raw refresh (sync-all or sync-hk-connect only)")
-	allTimeout := f.Duration("timeout", 24*time.Hour, "overall synchronization timeout (sync-all, scan-low-valuation or sync-hk-connect only)")
+	allTimeout := f.Duration("timeout", 24*time.Hour, "overall synchronization timeout (sync-all, scan-low-valuation, scan-value-trapped or sync-hk-connect only)")
 	importFrom := f.String("import-from", "", "staging data directory to merge without network access (backfill-minutes only)")
 	referenceDir := f.String("reference-dir", "", "read-only production data directory used for resume coverage (backfill-minutes fetch only)")
 	entry := f.Float64("entry-price", 0, "actual buy fill price (plan only)")
@@ -84,7 +88,7 @@ func run(args []string) error {
 		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
-	case "check-config", "init", "check", "health", "replay", "sync", "sync-all", "scan-low-valuation", "sync-fundamentals", "audit-fundamentals", "fair-value", "sync-hk-connect", "sync-context", "sync-index-minutes", "sync-korea-context", "sync-hang-seng-context", "sync-korea-minutes", "sync-intraday", "backfill-minutes", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "study-yang-pullback", "plan", "run", "once", "status", "retry", "train-predictor", "predictor-status", "predictor-eval", "market-signal", "train-dayrange", "predict-dayrange", "reconcile-dayrange", "status-dayrange", "replay-dayrange":
+	case "check-config", "init", "check", "health", "replay", "sync", "sync-all", "scan-low-valuation", "scan-value-trapped", "sync-fundamentals", "audit-fundamentals", "fair-value", "sync-hk-connect", "sync-context", "sync-index-minutes", "sync-korea-context", "sync-hang-seng-context", "sync-korea-minutes", "sync-intraday", "backfill-minutes", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "study-yang-pullback", "plan", "run", "once", "status", "retry", "train-predictor", "predictor-status", "predictor-eval", "market-signal", "train-dayrange", "predict-dayrange", "reconcile-dayrange", "status-dayrange", "replay-dayrange":
 	default:
 		return errors.New("unknown command")
 	}
@@ -94,17 +98,17 @@ func run(args []string) error {
 	if command != "replay" && *revision != "" {
 		return errors.New("revision requires replay")
 	}
-	if *asof != "" && command != "sync" && command != "sync-all" && command != "scan-low-valuation" && command != "sync-fundamentals" && command != "audit-fundamentals" && command != "fair-value" && command != "sync-hk-connect" && command != "sync-context" && command != "sync-index-minutes" && command != "sync-korea-context" && command != "sync-hang-seng-context" && command != "sync-korea-minutes" && command != "backfill-minutes" && command != "status-backfill" && command != "status-refresh" && command != "status-audit" && command != "preview" && command != "research" && command != "experiment" && command != "study-yang-pullback" && command != "predictor-eval" && command != "market-signal" && command != "train-dayrange" && command != "predict-dayrange" && command != "reconcile-dayrange" && command != "status-dayrange" && command != "replay-dayrange" {
-		return errors.New("as-of is supported by sync, sync-all, scan-low-valuation, fundamentals, fair-value, sync-hk-connect, context sync, minute backfill, status commands, preview, research, experiment, yang-pullback, predictor-eval, market-signal and dayrange commands only")
+	if *asof != "" && command != "sync" && command != "sync-all" && command != "scan-low-valuation" && command != "scan-value-trapped" && command != "sync-fundamentals" && command != "audit-fundamentals" && command != "fair-value" && command != "sync-hk-connect" && command != "sync-context" && command != "sync-index-minutes" && command != "sync-korea-context" && command != "sync-hang-seng-context" && command != "sync-korea-minutes" && command != "backfill-minutes" && command != "status-backfill" && command != "status-refresh" && command != "status-audit" && command != "preview" && command != "research" && command != "experiment" && command != "study-yang-pullback" && command != "predictor-eval" && command != "market-signal" && command != "train-dayrange" && command != "predict-dayrange" && command != "reconcile-dayrange" && command != "status-dayrange" && command != "replay-dayrange" {
+		return errors.New("as-of is supported by sync, sync-all, scan-low-valuation, scan-value-trapped, fundamentals, fair-value, sync-hk-connect, context sync, minute backfill, status commands, preview, research, experiment, yang-pullback, predictor-eval, market-signal and dayrange commands only")
 	}
 	if command != "sync-all" && command != "sync-hk-connect" && *allFull {
 		return errors.New("full is supported by sync-all and sync-hk-connect only")
 	}
-	if command != "sync-all" && command != "sync-hk-connect" && command != "scan-low-valuation" && *allTimeout != 24*time.Hour {
-		return errors.New("timeout is supported by sync-all, scan-low-valuation and sync-hk-connect only")
+	if command != "sync-all" && command != "sync-hk-connect" && command != "scan-low-valuation" && command != "scan-value-trapped" && *allTimeout != 24*time.Hour {
+		return errors.New("timeout is supported by sync-all, scan-low-valuation, scan-value-trapped and sync-hk-connect only")
 	}
-	if (command == "sync-all" || command == "sync-hk-connect" || command == "scan-low-valuation") && (*allTimeout < time.Hour || *allTimeout > 72*time.Hour) {
-		return errors.New("sync-all, scan-low-valuation or sync-hk-connect timeout must be between 1h and 72h")
+	if (command == "sync-all" || command == "sync-hk-connect" || command == "scan-low-valuation" || command == "scan-value-trapped") && (*allTimeout < time.Hour || *allTimeout > 72*time.Hour) {
+		return errors.New("sync-all, scan-low-valuation, scan-value-trapped or sync-hk-connect timeout must be between 1h and 72h")
 	}
 	if command != "predictor-eval" && (*windows != "40,60,120" || *validationDays != 20 || *halfLife != 60) {
 		return errors.New("predictor-eval flags require the predictor-eval command")
@@ -142,8 +146,8 @@ func run(args []string) error {
 	if command != "experiment" && command != "backfill-minutes" && command != "sync-index-minutes" && command != "sync-korea-context" && *from != "" {
 		return errors.New("from requires the experiment, backfill-minutes, sync-index-minutes or sync-korea-context command")
 	}
-	if command != "backfill-minutes" && command != "sync-all" && command != "scan-low-valuation" && command != "sync-hk-connect" && *backfillWorkers != 3 {
-		return errors.New("workers requires the backfill-minutes, sync-all, scan-low-valuation or sync-hk-connect command")
+	if command != "backfill-minutes" && command != "sync-all" && command != "scan-low-valuation" && command != "scan-value-trapped" && command != "sync-hk-connect" && *backfillWorkers != 3 {
+		return errors.New("workers requires the backfill-minutes, sync-all, scan-low-valuation, scan-value-trapped or sync-hk-connect command")
 	}
 	if command != "backfill-minutes" && command != "sync-all" && command != "sync-fundamentals" && command != "sync-hk-connect" && *backfillCodes != "" {
 		return errors.New("codes requires the backfill-minutes, sync-all, sync-fundamentals or sync-hk-connect command")
@@ -247,6 +251,9 @@ func run(args []string) error {
 	}
 	if command == "scan-low-valuation" {
 		return runScanLowValuation(ctx, c, log, *asof, *backfillWorkers, *allTimeout)
+	}
+	if command == "scan-value-trapped" {
+		return runScanValueTrapped(ctx, c, log, *asof, *backfillWorkers, *allTimeout)
 	}
 	if command == "sync-fundamentals" {
 		return runSyncFundamentals(ctx, c, log, *asof, *backfillCodes)
@@ -386,6 +393,16 @@ func run(args []string) error {
 	if c.HKConnect.Enabled && c.HKConnect.PushEnabled {
 		m.HKRecommendations = func(loadCtx context.Context) (hkrecommend.Recommendation, error) {
 			return hkconnect.LoadLatestRecommendation(loadCtx, c.DataDir, c.RequireCIFS)
+		}
+	}
+	if c.LowValuation.Enabled && c.LowValuation.PushEnabled {
+		m.LowValuationRecommendations = func(loadCtx context.Context) (lowvaluation.Recommendation, error) {
+			return lowvaluationstore.LoadLatestRecommendation(loadCtx, c.DataDir, c.RequireCIFS)
+		}
+	}
+	if c.ValueTrapped.Enabled && c.ValueTrapped.PushEnabled {
+		m.ValueTrappedRecommendations = func(loadCtx context.Context) (valuetrapped.Recommendation, error) {
+			return valuetrappedstore.LoadLatestRecommendation(loadCtx, c.DataDir, c.RequireCIFS)
 		}
 	}
 	turnoverClient := market.NewSohuMetricsClient(20*time.Second, 350*time.Millisecond)

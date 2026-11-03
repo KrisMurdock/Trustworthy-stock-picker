@@ -56,6 +56,9 @@ type Recommendation struct {
 	TopN              int         `json:"top_n"`
 	SectorCoveragePct float64     `json:"sector_coverage_pct"`
 	Candidates        []Candidate `json:"candidates"`
-	Filtered          []Filtered  `json:"filtered,omitempty"`
-	Limitations       []string    `json:"limitations"`
+	// AllCandidates is kept in memory for downstream intersection research. It
+	// is deliberately excluded from the persisted low-valuation payload.
+	AllCandidates []Candidate `json:"-"`
+	Filtered      []Filtered  `json:"filtered,omitempty"`
+	Limitations   []string    `json:"limitations"`
 }

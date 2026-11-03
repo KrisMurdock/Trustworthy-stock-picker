@@ -75,6 +75,10 @@
 | STOCK_WATCHER_LOW_VALUATION_ENABLED | true | 完整全市场同步后，是否用不复权收盘价和财务研究区间生成低估值快照；不复用初筛、精排或成交模拟 |
 | STOCK_WATCHER_LOW_VALUATION_PUSH_ENABLED | true | 是否由 `run`/`once` 读取低估值快照并投递到 `low_valuation` 路由；依赖 `low_valuation.enabled` |
 | STOCK_WATCHER_LOW_VALUATION_TOP_N | 20 | 全市场低估值文章最多展示的候选数，允许 1～50；距区间下沿折价升序、同分按中枢空间降序和代码排序 |
+| STOCK_WATCHER_VALUE_TRAPPED_ENABLED | true | 是否在低估值扫描成功后，只对低估值候选生成“低估值且低套牢”交集快照；依赖 `low_valuation.enabled` |
+| STOCK_WATCHER_VALUE_TRAPPED_PUSH_ENABLED | true | 是否由 `run`/`once` 读取交集快照并投递到 `value_trapped` 路由；依赖 `value_trapped.enabled` |
+| STOCK_WATCHER_VALUE_TRAPPED_TOP_N | 20 | 交集文章最多展示的候选数，允许 1～50；距下沿折价、套牢量、20 日成交额和代码依次排序 |
+| STOCK_WATCHER_VALUE_TRAPPED_MAX_TRAPPED_RATIO | 0.30 | 允许进入交集的最大上方套牢量比例，默认 30%；范围 0.05～1 |
 | STOCK_WATCHER_STRUCTURE_GUARD_MODE | shadow | shadow 只观察；enforce 才进入可执行推荐 |
 | STOCK_WATCHER_SELECTION_ENABLED | true | 是否启用趋势筛选 |
 | STOCK_WATCHER_SELECTION_MIN_SCORE | 70 | 趋势最低分 |
@@ -96,6 +100,8 @@
 港股通观察稿独立于 A 股第一层初筛和第二层精排：`sync-hk-connect` 完整同步后，按收盘价 > MA20、MA5 > MA10 > MA20、量比、MACD DIF > DEA、RSI14 50～80、日涨跌幅 -3%～7% 和 `selection.min_score` 筛选，最多保留 `hk_connect.top_n` 只，并把快照写入 `hk-market.db` 的 `recommendation` 表。主 `run`/`once` 读取最新快照后生成《港股通精选》公众号稿，与 A 股文章一同进入投递账本，但使用独立事件 ID `"<推荐ID>:hk-connect:article"` 和 `hk_connect` 路由，目标港股交易日 09:30 过期。稿件明确说明港股没有 A 股式涨跌停、T+0 制度不参与成交模拟，机会分不是成功概率；港股文件缺失、加载失败或推荐过期不会阻塞 A 股循环。
 
 全市场低估值稿独立于股池、初筛和精排：`sync-all` 完整同步且未使用 `-codes` 时，读取每只股票信号日的不复权收盘价，用新浪 TTM 财务快照计算 v1 财务研究区间，只保留 `close < lower` 的股票，并按 `(lower - close) / lower` 升序排名，最多保留 `low_valuation.top_n` 只，保存到 `all-market.db` 的 `recommendation` 表。主 `run`/`once` 读取最新快照后生成《全市场低估值股》公众号稿，使用独立事件 ID `"<推荐ID>:low_valuation"` 和 `low_valuation` 路由，下一交易日 09:30 过期。行业快照来自 Tushare `stock_basic`，仅用于金融/非金融估值边界；行业覆盖率会写入文章。已定价股票不少于 100 只但可用估值低于 50% 时不保存快照，避免上游整体故障生成“没有低估值股”的错误文章。日线已同步后可用 `scan-low-valuation` 单独重跑，详见[全市场低估值观察](low-valuation.md)。
+
+`value_trapped.enabled=true` 时，低估值扫描成功后会复用同一份全市场不复权日线和全部“低于区间下沿”候选，只对这些股票抓取换手率并运行套牢 V3 诊断。历史少于 250 个交易日、信号日无成交、20 日成交额低于 2,000 万元、套牢状态 `unknown` 或上方套牢量超过 `max_trapped_ratio` 的股票剔除。结果按距下沿折价升序、套牢量升序、20 日成交额降序和代码升序保存为 `market='value_trapped'`；主 `run`/`once` 使用独立事件 ID `"<推荐ID>:value_trapped"` 和 `value_trapped` 路由投递《低估值且低套牢》稿。交集为空时明确说明，不从任意一边递补。日线已同步后可用 `scan-value-trapped` 单独重跑，详见[低估值低套牢观察](value-trapped.md)。
 
 ## 同步、日历与行情源
 
@@ -209,27 +215,27 @@
 | FEISHU_*_WEBHOOK | 空 | 命名通道路由引用的独立 webhook 环境变量，例如 `FEISHU_PREMARKET_EXECUTION_WEBHOOK` |
 | STOCK_WATCHER_FEISHU_CREDENTIALS_FILE | 空 | 显式启用旧版 `feishu.config` 兼容；新部署应改用环境变量 |
 | STOCK_WATCHER_NOTIFY_CHANNELS | 空 | 可选多通道；格式见下 |
-| STOCK_WATCHER_WECHAT_ENABLED | false | 是否把第二层精排文章、港股通观察稿和盘前观察稿写入微信公众号草稿箱；只创建草稿，不发布、不群发 |
+| STOCK_WATCHER_WECHAT_ENABLED | false | 是否把第二层精排、港股通、低估值、低估值低套牢和盘前观察稿写入微信公众号草稿箱；只创建草稿，不发布、不群发 |
 | STOCK_WATCHER_WECHAT_CREDENTIALS_FILE | 空 | 可选的私有凭证文件；支持 `AppID`/`AppSecret` 成对格式或 `app_id=...` 形式，相对路径按配置基准目录解析 |
 | WECHAT_APP_ID | 空 | 公众号 AppID；优先从环境读取，也可由凭证文件提供 |
 | WECHAT_APP_SECRET | 空 | 公众号 AppSecret；优先从环境读取，也可由凭证文件提供，必须保持私密 |
 | WECHAT_THUMB_MEDIA_ID | 空 | 可选封面永久素材 media_id；留空时首次发送自动上传内置封面 |
 | STOCK_WATCHER_WECHAT_AUTHOR | 空 | 可选草稿作者名，最多 16 个字符 |
 | TUSHARE_TOKEN | 空 | Tushare Token；缺失时跳过 Tushare |
-命名通道使用 `name|type|enabled|webhook_env|secret_env|route`，条目之间用 `;` 分隔；命名通道的 `type` 当前只支持 `feishu`，微信公众号草稿由 `STOCK_WATCHER_WECHAT_ENABLED` 自动创建为内置 `wechat-draft` 渠道。`route` 可选 `all`、`selection`、`first_stage`、`second_stage`、`hk_connect`、`low_valuation`、`premarket_execution`、`predictor_realtime`、`predictor_dayrange`、`wechat_premarket`；多个路由可用英文逗号分隔，留空表示兼容旧配置并向所有阶段广播：
+命名通道使用 `name|type|enabled|webhook_env|secret_env|route`，条目之间用 `;` 分隔；命名通道的 `type` 当前只支持 `feishu`，微信公众号草稿由 `STOCK_WATCHER_WECHAT_ENABLED` 自动创建为内置 `wechat-draft` 渠道。`route` 可选 `all`、`selection`、`first_stage`、`second_stage`、`hk_connect`、`low_valuation`、`value_trapped`、`premarket_execution`、`predictor_realtime`、`predictor_dayrange`、`wechat_premarket`；多个路由可用英文逗号分隔，留空表示兼容旧配置并向所有阶段广播：
 
 ```dotenv
 STOCK_WATCHER_FEISHU_ENABLED=false
 STOCK_WATCHER_NOTIFY_CHANNELS="first-stage|feishu|true|FEISHU_FIRST_STAGE_WEBHOOK||first_stage;second-stage|feishu|true|FEISHU_SECOND_STAGE_WEBHOOK||second_stage;selection|feishu|true|FEISHU_SELECTION_WEBHOOK||selection;premarket-execution|feishu|true|FEISHU_PREMARKET_EXECUTION_WEBHOOK||premarket_execution;predictor-realtime|feishu|true|FEISHU_PREDICTOR_REALTIME_WEBHOOK||predictor_realtime;predictor-dayrange|feishu|true|FEISHU_PREDICTOR_DAYRANGE_WEBHOOK||predictor_dayrange"
 ```
 
-路由含义：`first_stage` 只接收第一层初筛池及回看卡；`second_stage` 只接收第二层精排公众号稿；`hk_connect` 只接收独立港股通日线规则观察稿；`selection` 只接收正式日报主卡和详情卡；`premarket_execution` 只接收盘前执行确认卡；`predictor_realtime` 接收 5 分钟实时预测及偏差卡；`predictor_dayrange` 只接收全天高低价盘前预测；`wechat_premarket` 只接收盘前公众号草稿。不同路由的投递依赖彼此独立，不会因为另一个机器人失败而互相阻塞。微信公众号草稿使用内置的 `wechat-draft` 渠道，同时绑定 `second_stage`、`hk_connect` 与 `wechat_premarket`，不会接收初筛、正式日报、实时预测或飞书专用执行卡。
+路由含义：`first_stage` 只接收第一层初筛池及回看卡；`second_stage` 只接收第二层精排公众号稿；`hk_connect` 只接收独立港股通日线规则观察稿；`low_valuation` 只接收全市场低估值稿；`value_trapped` 只接收低估值且低套牢交集稿；`selection` 只接收正式日报主卡和详情卡；`premarket_execution` 只接收盘前执行确认卡；`predictor_realtime` 接收 5 分钟实时预测及偏差卡；`predictor_dayrange` 只接收全天高低价盘前预测；`wechat_premarket` 只接收盘前公众号草稿。不同路由的投递依赖彼此独立，不会因为另一个机器人失败而互相阻塞。微信公众号草稿使用内置的 `wechat-draft` 渠道，同时绑定 `second_stage`、`hk_connect`、`low_valuation`、`value_trapped` 与 `wechat_premarket`，不会接收初筛、正式日报、实时预测或飞书专用执行卡。
 
 凭证只来自环境变量或权限受控的私有文件，不写入日志、镜像或仓库。关闭通知时显式设置 `STOCK_WATCHER_FEISHU_ENABLED=false` 和 `STOCK_WATCHER_WECHAT_ENABLED=false`，并确保没有设置 `STOCK_WATCHER_NOTIFY_CHANNELS` 的启用通道。
 
 ### 微信公众号草稿
 
-`STOCK_WATCHER_WECHAT_ENABLED=true` 时，系统会通过 `draft/add` 写入三类公众号草稿：收盘后的第二层精排文章、港股通日线规则观察稿，以及盘前 08:45 保存预测后生成的“盘前观察”稿。盘前稿把精排候选、执行状态、预测高/低点、边际区间、技术指标、缠论与波浪视角合并为一篇；每只进入文章的候选还会附带一张最近 80 个交易日的日 K 结构图，叠加顶/底分型、缠论笔、笔重叠区和简化波浪关键价位，图内摘要同步展示分型/笔数量、重叠区、波浪阶段、回撤和最近上下方结构位。图表由原生 Go 渲染成 PNG，经 `media/uploadimg` 上传后嵌入草稿正文；单图超过 1 MiB、渲染失败或上传失败都不会降级为无图稿。精排队列暂缺时按已保存预测降级生成，并明确标注序号不是推荐排名。初筛、正式日报、实时预测和飞书专用执行卡不会进入草稿箱。启用该通道要求第二层精排推送、港股通观察稿推送或 dayrange 盘前推送至少有一个开启，否则 `check-config` 会拒绝启动。
+`STOCK_WATCHER_WECHAT_ENABLED=true` 时，系统会通过 `draft/add` 写入五类公众号草稿：收盘后的第二层精排文章、港股通日线规则观察稿、全市场低估值稿、低估值且低套牢交集稿，以及盘前 08:45 保存预测后生成的“盘前观察”稿。盘前稿把精排候选、执行状态、预测高/低点、边际区间、技术指标、缠论与波浪视角合并为一篇；每只进入文章的候选还会附带一张最近 80 个交易日的日 K 结构图，叠加顶/底分型、缠论笔、笔重叠区和简化波浪关键价位，图内摘要同步展示分型/笔数量、重叠区、波浪阶段、回撤和最近上下方结构位。图表由原生 Go 渲染成 PNG，经 `media/uploadimg` 上传后嵌入草稿正文；单图超过 1 MiB、渲染失败或上传失败都不会降级为无图稿。精排队列暂缺时按已保存预测降级生成，并明确标注序号不是推荐排名。初筛、正式日报、实时预测和飞书专用执行卡不会进入草稿箱。启用该通道要求第二层精排推送、港股通观察稿推送、低估值推送、低估值低套牢推送或 dayrange 盘前推送至少有一个开启，否则 `check-config` 会拒绝启动。
 
 公众号后台需要提供 AppID 和 AppSecret，可放入 `WECHAT_APP_ID`/`WECHAT_APP_SECRET` 环境变量，或设置 `STOCK_WATCHER_WECHAT_CREDENTIALS_FILE` 指向权限为 `0600` 的私有文件；环境变量优先于文件。凭证文件支持 `AppID` 下一行 `AppSecret` 两段式，也支持 `app_id=...` 配 `app_secret=...` 的形式，单个文件最多读取 64 KiB。`wechat.config` 已被 Git 忽略，不得提交。
 
