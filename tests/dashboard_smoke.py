@@ -351,7 +351,7 @@ def four_light_checks(page, url, state, args):
     pattern = "**/api/four-light?as_of=*"
     # Authentication is supplied by a gateway; exercise its denied responses.
     for status, message in ((401, "授权"), (403, "授权"), (503, "暂时不可用")):
-        page.route(pattern, lambda route, *, status=status: route.fulfill(status=status, content_type="application/json", body='{"error":"test_unavailable"}'))
+        page.route(pattern, lambda route, *, status=status: route.fulfill(status=status, content_type="application/json", body='{"error":"market data is temporarily unavailable"}'))
         page.get_by_test_id("four-light-refresh").click()
         expect(page.get_by_test_id("four-light-error")).to_contain_text(message)
         expect(page.get_by_test_id("four-light-content")).to_be_hidden()
