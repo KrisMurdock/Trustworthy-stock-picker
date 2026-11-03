@@ -208,7 +208,7 @@ func TestHorizonIndustryMatchingUsesCandidateCompositionThenEqualDates(t *testin
 func TestHorizonNamesIncludeSignalTimeRelativeGroups(t *testing.T) {
 	h := &strategy.WaveHorizons{EntryStatus: "entered", StartupFive: strategy.UpwardWaveWindow{Status: "success"}}
 	e := Event{
-		Groups:   []string{"first_all_red", moderateVolumeGroup, stockOutperformSector, sectorNotOutperformMarket},
+		Groups:   []string{"first_all_red", moderateVolumeGroup},
 		Episode:  &PriceEpisodeContext{Group: "first"},
 		Context:  &SectorSignalContext{Policy: SectorContextPolicy, StockStage: "outperform", SectorStage: "not_outperform"},
 		Horizons: h,
@@ -226,5 +226,78 @@ func TestHorizonNamesIncludeSignalTimeRelativeGroups(t *testing.T) {
 		if hasSectorGroup(names, absent) {
 			t.Fatalf("unexpected context group %q in %v", absent, names)
 		}
+	}
+}
+
+func TestHorizonContextCountsMatchSignalTimeSectorReport(t *testing.T) {
+	for _, mode := range []string{"published", "current_only", "not_yet_public", "missing_member", "missing_future"} {
+		t.Run(mode, func(t *testing.T) {
+			m, source, sectors := sectorStudyFixture(t)
+			m.Through = m.From
+			_, originalSector, err := AnalyzeSectorContext(context.Background(), m, source, sectors, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "current_only":
+				sectors.Basis, sectors.PublishedOn = "current_only", ""
+			case "not_yet_public":
+				sectors.PublishedOn = m.From
+			case "missing_member":
+				sectors.Memberships = sectors.Memberships[1:]
+			case "missing_future":
+				for code, pair := range source.pairs {
+					end := 0
+					for end < len(pair.Adjusted) && pair.Adjusted[end].Date <= m.From {
+						end++
+					}
+					pair.Adjusted, pair.Raw = pair.Adjusted[:end], pair.Raw[:end]
+					pair.AdjustedShares, pair.RawShares = pair.AdjustedShares[:end], pair.RawShares[:end]
+					source.pairs[code] = pair
+				}
+			}
+			_, sector, _, _, horizons, err := AnalyzeWaveHorizons(context.Background(), m, source, sectors, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range horizonContextGroups {
+				want := groupWindow(t, Report{Groups: sector.Groups}, name, 5).Selected
+				if mode == "missing_future" && want != groupWindow(t, Report{Groups: originalSector.Groups}, name, 5).Selected {
+					t.Fatalf("future missingness changed signal-time group %s", name)
+				}
+				found := 0
+				for _, row := range horizons.Groups {
+					if row.Name != name || row.StartupFive != "all" {
+						continue
+					}
+					found++
+					if row.Selected != want {
+						t.Fatalf("%s D%d: selected=%d, signal-time count=%d", name, row.Days, row.Selected, want)
+					}
+					if mode == "missing_future" && (row.Known != 0 || row.EntryUnknown != row.Selected) {
+						t.Fatalf("future unknown removed or fabricated outcomes: %+v", row)
+					}
+				}
+				if found != 3 {
+					t.Fatalf("missing long windows for %s", name)
+				}
+			}
+			first := groupWindow(t, Report{Groups: sector.Groups}, "first_all_red", 5).Selected
+			if first != 12 {
+				t.Fatal("fixture must contain twelve first triggers")
+			}
+			if mode == "published" || mode == "missing_future" {
+				for _, name := range horizonContextGroups[:4] {
+					if groupWindow(t, Report{Groups: sector.Groups}, name, 5).Selected == 0 {
+						t.Fatalf("fixture must exercise both relative states: %s", name)
+					}
+				}
+			}
+			if mode == "current_only" || mode == "not_yet_public" {
+				if groupWindow(t, Report{Groups: sector.Groups}, contextUnknown, 5).Selected != first {
+					t.Fatal("unavailable historical classification escaped unknown group")
+				}
+			}
+		})
 	}
 }
