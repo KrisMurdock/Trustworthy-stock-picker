@@ -60,7 +60,7 @@ GROUP BY lifecycle ORDER BY lifecycle;
 
 港股通股票日线由 `stock-watcher-hk-market.timer` 在交易日 `18:50` 触发 `sync-hk-connect`，写入独立 `<data_dir>/hk-market.db`，使用独立 `.hk-market.lock`，可与主服务和全市场任务并行。该 unit 同样固定生产数据目录、CIFS 校验和独立日志目录，并把腾讯请求间隔固定为 `1s`，避免 350～500ms 高频请求触发 501；首次执行会保存当前约 667 只港股通股票的十年不复权日线和分析窗口前复权日线。完整同步后还会按 A 股日线趋势门槛独立生成港股通观察快照，写入 `recommendation` 表；`sync-hk-connect` 不直接发送消息，主 `stock-watcher.service` 的 `run` 在下一轮 Cycle 读取快照并投递到 `hk_connect`，所以升级后必须替换并重启主服务，只重启 timer 不会推送港股稿。新浪名单先按腾讯证券类型剔除 ETF/产品；若腾讯类型请求失败，会尝试东方财富股票板，不能用未分类的新浪 698 条名单直接写入。QFQ 接口对无复权因子的股票可能返回 `day`，此时同日 OHLCV 与原始日线一致，数据库按 `adjust=qfq`、`data_field=day` 保存，不能据此判定同步失败。腾讯复权端点在请求 1000 行时可能返回 1001 行，客户端允许这一行上浮并在窗口裁剪时丢弃窗口外记录。
 
-港股分钟默认关闭。部署前停止港股日线 timer、正在运行的港股同步和可能写分钟的主服务，确认锁释放并完整备份 `hk-market.db` 及 SQLite 相关文件。新版本第一次通过 `sync-hk-connect` 或 `sync-hk-minutes` 打开港股写库时，即使分钟功能关闭，也会事务性将港股 schema 2 升至 3；`init` 不负责迁移该库。旧版港股写程序不支持 schema 3，回滚前必须停写并恢复迁移前完整备份，不能只替换旧二进制。A 股库和 `all-market.db` 的 schema 不因该变更升级。
+港股分钟默认关闭。部署前停止港股日线 timer、正在运行的港股同步和可能写分钟的主服务，确认锁释放并完整备份 `hk-market.db` 及 SQLite 相关文件。新版本第一次通过 `sync-hk-connect` 或 `sync-hk-minutes` 打开港股写库时，即使分钟功能关闭，也会事务性将港股 schema 2 升至 3；`init` 不负责迁移该库。旧版港股写程序不支持 schema 3，回滚前必须停写并恢复迁移前完整备份，不能只替换旧二进制。A 股 `market.db` schema 不因港股分钟变更升级；`all-market.db` 的四灯 schema 由全市场写入口独立迁移。
 
 先在隔离目录执行 `make hk-intraday-smoke` 和 `make docker-hk-intraday-smoke`，另行确认生产 HTTPS 行情端点、CIFS 挂载与锁行为，再按[环境变量](environment-variables.md#分钟行情)核实港股日历覆盖与半日市日期，并设置 `STOCK_WATCHER_HK_INTRADAY_ENABLED=true`。从单股、有限日期开始执行 `sync-hk-minutes`，检查退出码和 `intraday_sync`，再按需逐步扩大；请求窗口相差最多 62 天，现有缺口可从边缘分段重试。主服务的分钟轮询和日线任务使用同一 `.hk-market.lock`，不会并发写入；手动补采前应停止竞争任务或等待锁释放。共享盘、上游拒绝、截断、超时或缺根时保留旧数据并报告失败/缺口，不能以旧数据存在或 HTTP 200 证明补采完整。
 
