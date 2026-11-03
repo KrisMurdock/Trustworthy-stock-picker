@@ -81,3 +81,5 @@
 生产镜像 `stock-watcher:four-light-trigger-8a26c45` 的完整容器smoke两次在首个Docker启动阶段超时（退出124、状态created，应用未开始），本轮未通过该检查；现场有其他并行构建，直接原因未确定。失败证据已保存，本轮临时容器已清理，部署前需重跑 `bash tests/smoke.sh --image stock-watcher:four-light-trigger-8a26c45`。
 
 本次在独立 worktree `feat/four-light-shadow` 交付研究代码与结果，未合并、未推送、未部署，无真实部署URL；本地研究验证通过，部署后未验证。固定股池、事后复权、分类滞后、重复事件和多次开发比较的限制仍在。
+
+后续价格段首次／再次诊断见[价格段结果](four-light-price-episode-results.md)：按段保留首次没有提高波段率，旧6+中95.77%可确认是再次触发。
