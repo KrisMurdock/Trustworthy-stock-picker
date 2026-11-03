@@ -59,10 +59,10 @@ type TriggerTimingReport struct {
 }
 
 func AnalyzeTriggerTiming(ctx context.Context, m Manifest, source Source, sectors SectorSnapshot, emit func(Event) error) (Report, *SectorContextReport, *TriggerTimingReport, error) {
-	return analyzeTriggerObserved(ctx, m, source, sectors, emit, nil, false)
+	return analyzeTriggerObserved(ctx, m, source, sectors, emit, nil, studyFeatures{})
 }
 
-func analyzeTriggerObserved(ctx context.Context, m Manifest, source Source, sectors SectorSnapshot, emit, extraObserver func(Event) error, priceEpisodes bool) (Report, *SectorContextReport, *TriggerTimingReport, error) {
+func analyzeTriggerObserved(ctx context.Context, m Manifest, source Source, sectors SectorSnapshot, emit, extraObserver func(Event) error, features studyFeatures) (Report, *SectorContextReport, *TriggerTimingReport, error) {
 	if err := ctx.Err(); err != nil {
 		return Report{}, nil, nil, err
 	}
@@ -138,7 +138,8 @@ func analyzeTriggerObserved(ctx context.Context, m Manifest, source Source, sect
 		}
 		return nil
 	}
-	base, sectorReport, err := analyzeSectorObserved(ctx, m, source, sectors, emit, observer, studyFeatures{triggerTiming: true, priceEpisodes: priceEpisodes})
+	features.triggerTiming = true
+	base, sectorReport, err := analyzeSectorObserved(ctx, m, source, sectors, emit, observer, features)
 	if err != nil {
 		return Report{}, nil, nil, err
 	}

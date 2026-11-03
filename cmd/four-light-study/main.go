@@ -25,6 +25,7 @@ import (
 var version = "development"
 
 type output struct {
+	WaveHorizons         *fourlightstudy.HorizonReport       `json:"wave_horizons,omitempty"`
 	PriceEpisodes        *fourlightstudy.PriceEpisodeReport  `json:"price_episodes,omitempty"`
 	TriggerTiming        *fourlightstudy.TriggerTimingReport `json:"trigger_timing,omitempty"`
 	ClassificationSHA256 string                              `json:"classification_file_sha256,omitempty"`
@@ -45,6 +46,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	classificationSHA := flags.String("classification-sha256", "", "expected lowercase SHA256 of classification JSON (required with -classification)")
 	triggerTiming := flags.Bool("trigger-timing", false, "diagnose first-all-red timing with frozen classification; requires manifest v2")
 	priceEpisodes := flags.Bool("price-episodes", false, "compare first and repeated triggers in continuous price-red episodes; includes trigger-timing")
+	waveHorizons := flags.Bool("wave-horizons", false, "describe complete 20/40/60-session paths and five-day startup; includes price-episodes")
 	eventsPath := flags.String("events", "", "new JSONL file for all-red events; existing files are never overwritten")
 	timeout := flags.Duration("timeout", 10*time.Minute, "complete run timeout, greater than zero and at most 1h")
 	if err := flags.Parse(args); err != nil {
@@ -61,6 +63,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if *priceEpisodes && *classificationPath == "" {
 		return errors.New("price-episodes requires classification and classification-sha256")
+	}
+	if *waveHorizons && *classificationPath == "" {
+		return errors.New("wave-horizons requires classification and classification-sha256")
 	}
 	if *timeout <= 0 || *timeout > time.Hour {
 		return errors.New("timeout must be greater than zero and at most 1h")
@@ -111,7 +116,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	var sectorContext *fourlightstudy.SectorContextReport
 	var triggerReport *fourlightstudy.TriggerTimingReport
 	var episodeReport *fourlightstudy.PriceEpisodeReport
-	if *priceEpisodes {
+	var horizonReport *fourlightstudy.HorizonReport
+	if *waveHorizons {
+		report, sectorContext, triggerReport, episodeReport, horizonReport, err = fourlightstudy.AnalyzeWaveHorizons(ctx, manifest, source, sectors, emit)
+	} else if *priceEpisodes {
 		report, sectorContext, triggerReport, episodeReport, err = fourlightstudy.AnalyzePriceEpisodeStudy(ctx, manifest, source, sectors, emit)
 	} else if *triggerTiming {
 		report, sectorContext, triggerReport, err = fourlightstudy.AnalyzeTriggerTiming(ctx, manifest, source, sectors, emit)
@@ -128,6 +136,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		DatabaseSchema: source.SchemaVersion(), Report: report,
 		ClassificationSHA256: *classificationSHA, SectorContext: sectorContext, TriggerTiming: triggerReport,
 		PriceEpisodes: episodeReport,
+		WaveHorizons:  horizonReport,
 	}
 	if err := source.Close(); err != nil {
 		return fmt.Errorf("close snapshot: %w", err)

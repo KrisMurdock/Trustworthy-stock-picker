@@ -142,37 +142,45 @@ func validUpwardWaveModel(model string) bool {
 }
 
 func (e *OpeningWaveEvaluator) Evaluate(ctx context.Context, code, signalDate string, adjusted, raw []market.Bar, boundary, asof string) (*UpwardWave, error) {
+	w, _, err := e.evaluatePath(ctx, code, signalDate, adjusted, raw, boundary, asof, 10)
+	return w, err
+}
+
+// evaluatePath establishes one opening fill and observes at most maxDays.
+// Its returned stop reason belongs to the incomplete suffix only; completed
+// five/ten-day windows retain their original independent classifications.
+func (e *OpeningWaveEvaluator) evaluatePath(ctx context.Context, code, signalDate string, adjusted, raw []market.Bar, boundary, asof string, maxDays int) (*UpwardWave, string, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if e == nil || e.calendar == nil {
-		return nil, errors.New("opening wave evaluator is unavailable")
+		return nil, "", errors.New("opening wave evaluator is unavailable")
 	}
 	var pairReference *WavePricePairReference
-	unknown := func(reason string) *UpwardWave {
+	unknown := func(reason string) (*UpwardWave, string, error) {
 		w := unknownOpeningWaveForModel(reason, e.model)
 		w.PricePairReference = pairReference
-		return w
+		return w, reason, nil
 	}
 	if !config.ValidCode(code) {
-		return nil, errors.New("invalid stock code for upward-wave observation")
+		return nil, "", errors.New("invalid stock code for upward-wave observation")
 	}
 	for _, date := range []string{signalDate, asof} {
 		if parsed, err := time.Parse(time.DateOnly, date); err != nil || parsed.Format(time.DateOnly) != date {
-			return nil, errors.New("upward-wave dates must be YYYY-MM-DD")
+			return nil, "", errors.New("upward-wave dates must be YYYY-MM-DD")
 		}
 	}
 	if boundary != "" {
 		if parsed, err := time.Parse(time.DateOnly, boundary); err != nil || parsed.Format(time.DateOnly) != boundary {
-			return nil, errors.New("upward-wave boundary must be YYYY-MM-DD")
+			return nil, "", errors.New("upward-wave boundary must be YYYY-MM-DD")
 		}
 	}
 	if signalDate > asof || (boundary != "" && signalDate >= boundary) {
-		return nil, errors.New("signal is outside the permitted observation interval")
+		return nil, "", errors.New("signal is outside the permitted observation interval")
 	}
 	cal := e.calendar
 	if trading, err := cal.Trading(signalDate); err != nil || !trading {
-		return nil, errors.New("signal date is outside the trading calendar")
+		return nil, "", errors.New("signal date is outside the trading calendar")
 	}
 	ai := sort.Search(len(adjusted), func(i int) bool { return adjusted[i].Date >= signalDate })
 	ri := sort.Search(len(raw), func(i int) bool { return raw[i].Date >= signalDate })
@@ -181,47 +189,47 @@ func (e *OpeningWaveEvaluator) Evaluate(ctx context.Context, code, signalDate st
 		validFeatureBar = validWavePriceBar
 	}
 	if ai >= len(adjusted) || adjusted[ai].Date != signalDate || ai < 59 || !validFeatureBar(adjusted[ai]) || ri >= len(raw) || raw[ri].Date != signalDate || !validFeatureBar(raw[ri]) {
-		return unknown("signal_data_missing"), nil
+		return unknown("signal_data_missing")
 	}
 	for _, bar := range adjusted[ai-14 : ai+1] {
 		if !validFeatureBar(bar) {
-			return unknown("atr_unknown"), nil
+			return unknown("atr_unknown")
 		}
 	}
 	atr := signalATR14Pct(adjusted[:ai+1])
 	if e.model == UpwardWaveNoDrawdownModel {
 		reference, reason := NewWavePricePairReference(adjusted[:ai+1], raw[:ri+1])
 		if reason != "" {
-			return unknown(reason), nil
+			return unknown(reason)
 		}
 		pairReference = &reference
 	}
 	next, err := cal.Next(signalDate)
 	if err != nil {
-		return unknown("calendar_missing"), nil
+		return unknown("calendar_missing")
 	}
 	if boundary != "" && next >= boundary {
-		return unknown("reserved_boundary"), nil
+		return unknown("reserved_boundary")
 	}
 	if next > asof {
-		return unknown("future_window_incomplete"), nil
+		return unknown("future_window_incomplete")
 	}
 	if ri+1 >= len(raw) || raw[ri+1].Date != next {
-		return unknown("session_missing"), nil
+		return unknown("session_missing")
 	}
 	if !validWaveBar(raw[ri+1]) {
-		return unknown("bar_invalid_or_suspended"), nil
+		return unknown("bar_invalid_or_suspended")
 	}
 	// Passing only D1 lets the existing simulator establish its actual opening
 	// fill and cost, then stop with an unresolved legacy exit. No D2 price is
 	// consulted; the full future path is evaluated independently below.
 	outcome, err := Simulate(e.parameters, cal, code, raw[ri], raw[ri+1:ri+2], 1)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	t := ExperimentTrade{Code: code, Date: signalDate, Selected: true, Features: Features{ATR14Pct: atr}, Outcome: outcome}
 	d := Dataset{Adjusted: market.History{Bars: adjusted}, Raw: market.History{Bars: raw}}
-	return labelUpwardWaveForModel(e.parameters, cal, t, d, boundary, asof, e.model, pairReference), nil
+	return labelUpwardWavePath(ctx, e.parameters, cal, t, d, boundary, asof, e.model, pairReference, maxDays)
 }
 
 func unknownOpeningWave(reason string) *UpwardWave {
@@ -265,6 +273,14 @@ func labelUpwardWave(s config.Strategy, cal *calendar.Calendar, t ExperimentTrad
 }
 
 func labelUpwardWaveForModel(s config.Strategy, cal *calendar.Calendar, t ExperimentTrade, d Dataset, boundary, asof, model string, pairReference *WavePricePairReference) *UpwardWave {
+	w, _, _ := labelUpwardWavePath(context.Background(), s, cal, t, d, boundary, asof, model, pairReference, 10)
+	return w
+}
+
+func labelUpwardWavePath(ctx context.Context, s config.Strategy, cal *calendar.Calendar, t ExperimentTrade, d Dataset, boundary, asof, model string, pairReference *WavePricePairReference, maxDays int) (*UpwardWave, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	w := &UpwardWave{Model: model, EntryStatus: "unknown", ATR14Pct: t.Features.ATR14Pct, Days: []UpwardWaveDay{}, Windows: []UpwardWaveWindow{}, PricePairReference: pairReference}
 	entry := t.Outcome.EntryDay
 	if entry == nil || entry.Mode != "opening_price" || entry.Version != 1 || !positiveFinite(entry.Fill) || !positiveFinite(entry.BuyCost) || entry.Shares <= 0 || t.Outcome.EntryDate == "" {
@@ -278,7 +294,7 @@ func labelUpwardWaveForModel(s config.Strategy, cal *calendar.Calendar, t Experi
 		for _, n := range []int{5, 10} {
 			w.Windows = append(w.Windows, UpwardWaveWindow{Days: n, Status: w.EntryStatus, Reason: w.EntryReason})
 		}
-		return w
+		return w, w.EntryReason, nil
 	}
 	w.EntryStatus, w.EntryDate, w.EntryPrice = "entered", t.Outcome.EntryDate, entry.Fill
 	p := Plan{EntryPrice: entry.Fill, BuyCost: entry.BuyCost, Shares: entry.Shares}
@@ -292,7 +308,10 @@ func labelUpwardWaveForModel(s config.Strategy, cal *calendar.Calendar, t Experi
 		reason = "atr_unknown"
 	} else {
 		factor, previous, date := adj[ai].Close/raw[i].Close, entry.Fill, t.Date
-		for day := 1; day <= 10; day++ {
+		for day := 1; day <= maxDays; day++ {
+			if err := ctx.Err(); err != nil {
+				return nil, "", err
+			}
 			expected, err := cal.Next(date)
 			if err != nil {
 				reason = "calendar_missing"
@@ -345,7 +364,10 @@ func labelUpwardWaveForModel(s config.Strategy, cal *calendar.Calendar, t Experi
 		}
 		w.Windows = append(w.Windows, x)
 	}
-	return w
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+	return w, reason, nil
 }
 
 func positiveFinite(v float64) bool { return v > 0 && !math.IsInf(v, 0) && !math.IsNaN(v) }

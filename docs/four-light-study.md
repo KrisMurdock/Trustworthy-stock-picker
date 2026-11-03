@@ -105,3 +105,5 @@ events JSONL 仅输出当前全红的股票日，一行一个 `code/date`，包�
 本次冻结开发期的实际数据与覆盖变化见 [v2 全市场对照结果](four-light-wave-v2-results.md)。
 
 价格三灯连续全红段内的首次与再次触发诊断见[价格段研究](four-light-price-episodes.md)，通过 `-price-episodes` 单独启用。
+
+五日启动与20/40/60日延续可通过 `-wave-horizons` 研究，口径见[长期波段诊断](four-light-wave-horizons.md)；新窗口仅描述，不设回撤或成功门槛。

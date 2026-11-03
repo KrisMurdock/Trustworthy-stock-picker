@@ -60,6 +60,10 @@ type PriceEpisodeReport struct {
 // AnalyzePriceEpisodeStudy partitions the existing first-all-red events by
 // past-only price-episode evidence. It preserves every prior report and event.
 func AnalyzePriceEpisodeStudy(ctx context.Context, m Manifest, source Source, sectors SectorSnapshot, emit func(Event) error) (Report, *SectorContextReport, *TriggerTimingReport, *PriceEpisodeReport, error) {
+	return analyzeEpisodeObserved(ctx, m, source, sectors, emit, nil, false)
+}
+
+func analyzeEpisodeObserved(ctx context.Context, m Manifest, source Source, sectors SectorSnapshot, emit, extraObserver func(Event) error, waveHorizons bool) (Report, *SectorContextReport, *TriggerTimingReport, *PriceEpisodeReport, error) {
 	if err := ctx.Err(); err != nil {
 		return Report{}, nil, nil, nil, err
 	}
@@ -112,6 +116,11 @@ func AnalyzePriceEpisodeStudy(ctx context.Context, m Manifest, source Source, se
 		daily[e.Date].add(e.Date, groups, e.Wave)
 		monthly[e.Date[:7]].add(e.Date, groups, e.Wave)
 		matching.add(e.Date, e.Context.SectorCode, groups, e.Wave)
+		if extraObserver != nil {
+			if err := extraObserver(e); err != nil {
+				return err
+			}
+		}
 		if e.FourLight.AllRed {
 			r.Audit.AllRedEvents++
 		}
@@ -149,7 +158,7 @@ func AnalyzePriceEpisodeStudy(ctx context.Context, m Manifest, source Source, se
 		}
 		return nil
 	}
-	base, sector, trigger, err := analyzeTriggerObserved(ctx, m, source, sectors, emit, observer, true)
+	base, sector, trigger, err := analyzeTriggerObserved(ctx, m, source, sectors, emit, observer, studyFeatures{priceEpisodes: true, waveHorizons: waveHorizons})
 	if err != nil {
 		return Report{}, nil, nil, nil, err
 	}

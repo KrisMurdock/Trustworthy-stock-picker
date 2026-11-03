@@ -127,6 +127,7 @@ func analyzeWithObserver(ctx context.Context, manifest Manifest, source Source, 
 type studyFeatures struct {
 	triggerTiming bool
 	priceEpisodes bool
+	waveHorizons  bool
 }
 
 func analyzeObserved(ctx context.Context, manifest Manifest, source Source, emit, observer func(Event) error, features studyFeatures) (Report, error) {
@@ -266,7 +267,13 @@ func analyzeObserved(ctx context.Context, manifest Manifest, source Source, emit
 				volumeRatio = signalVolumeRatio(pair.Adjusted[:index+1])
 				groups = classifyVolume(groups, volumeRatio)
 			}
-			wave, err := evaluator.Evaluate(ctx, stock.Code, date, evalAdjusted, evalRaw, manifest.ReservedFrom, manifest.AsOf)
+			var wave *strategy.UpwardWave
+			var horizons *strategy.WaveHorizons
+			if features.waveHorizons {
+				wave, horizons, err = evaluator.EvaluateWithHorizons(ctx, stock.Code, date, evalAdjusted, evalRaw, manifest.ReservedFrom, manifest.AsOf)
+			} else {
+				wave, err = evaluator.Evaluate(ctx, stock.Code, date, evalAdjusted, evalRaw, manifest.ReservedFrom, manifest.AsOf)
+			}
 			if err != nil {
 				return Report{}, fmt.Errorf("evaluate study stock %s at %s: %w", stock.Code, date, err)
 			}
@@ -280,7 +287,7 @@ func analyzeObserved(ctx context.Context, manifest Manifest, source Source, emit
 				report.Audit.AllRedEventRows++
 			}
 			if observer != nil || (evidence.AllRed && emit != nil) {
-				event := Event{Code: stock.Code, Name: stock.Name, Date: date, Groups: groups, FourLight: evidence, Wave: wave}
+				event := Event{Code: stock.Code, Name: stock.Name, Date: date, Groups: groups, FourLight: evidence, Wave: wave, Horizons: horizons}
 				if manifest.Version == 2 {
 					event.Board, event.VolumeRatio = board, volumeRatio
 				}

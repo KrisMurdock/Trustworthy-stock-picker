@@ -662,3 +662,72 @@ func TestRunPriceEpisodesOptInAndFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestRunWaveHorizonsOptInAndCleanup(t *testing.T) {
+	manifestPath, databasePath, m := cliFixture(t, 3, false)
+	m.Version, m.WaveModel, m.PairingPolicy = 2, strategy.UpwardWaveNoDrawdownModel, fourlightstudy.PairingPolicy
+	writeCLIManifest(t, manifestPath, m)
+	classification, digest := cliClassification(t)
+	base := []string{"-manifest", manifestPath, "-database", databasePath}
+	if err := run(context.Background(), append(append([]string{}, base...), "-wave-horizons"), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "requires classification") {
+		t.Fatal("accepted missing classification")
+	}
+	common := append(base, "-classification", classification, "-classification-sha256", digest)
+	var old, new bytes.Buffer
+	if err := run(context.Background(), append(append([]string{}, common...), "-price-episodes"), &old, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	args := append(append([]string{}, common...), "-wave-horizons", "-events", path)
+	if err := run(context.Background(), args, &new, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var a, b output
+	if err := json.Unmarshal(old.Bytes(), &a); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(new.Bytes(), &b); err != nil {
+		t.Fatal(err)
+	}
+	if a.WaveHorizons != nil || b.WaveHorizons == nil || b.WaveHorizons.Status != "complete" || b.PriceEpisodes == nil || b.TriggerTiming == nil {
+		t.Fatal("missing opt-in/dependency report")
+	}
+	b.WaveHorizons = nil
+	aj, _ := json.Marshal(a)
+	bj, _ := json.Marshal(b)
+	if !bytes.Equal(aj, bj) {
+		t.Fatal("horizons changed prior reports")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
+		var e fourlightstudy.Event
+		if err := json.Unmarshal(row, &e); err != nil {
+			t.Fatal(err)
+		}
+		if e.Horizons == nil || len(e.Horizons.Windows) != 3 {
+			t.Fatal("missing event horizons")
+		}
+	}
+	for _, mode := range []string{"stdout", "timeout"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			bad := append([]string{}, args...)
+			bad[len(bad)-1] = filepath.Join(dir, "failed.jsonl")
+			var w io.Writer = failingWriter{}
+			if mode == "timeout" {
+				bad = append(bad, "-timeout", "1ns")
+				w = io.Discard
+			}
+			if err := run(context.Background(), bad, w, io.Discard); err == nil {
+				t.Fatal("failure accepted")
+			}
+			files, _ := os.ReadDir(dir)
+			if len(files) != 0 {
+				t.Fatal("failure published partial events")
+			}
+		})
+	}
+}
