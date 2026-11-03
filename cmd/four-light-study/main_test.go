@@ -295,7 +295,7 @@ func TestRunInputFailuresPublishNothing(t *testing.T) {
 	badHash := filepath.Join(t.TempDir(), "hash.json")
 	manifest.DatabaseSHA256 = strings.Repeat("a", 64)
 	writeCLIManifest(t, badHash, manifest)
-	unknownSchemaManifest, unknownSchemaDatabase, _ := cliFixture(t, 4, false)
+	unknownSchemaManifest, unknownSchemaDatabase, _ := cliFixture(t, 5, false)
 	emptyManifest, emptyDatabase, _ := cliFixture(t, 1, true)
 	base := []string{"-manifest", manifestPath, "-database", databasePath}
 	for _, tc := range []struct {
@@ -312,7 +312,7 @@ func TestRunInputFailuresPublishNothing(t *testing.T) {
 		{"unknown field", "unknown field", []string{"-manifest", unknownManifest, "-database", databasePath}},
 		{"oversize", "exceeds", []string{"-manifest", oversize, "-database", databasePath}},
 		{"hash", "SHA256", []string{"-manifest", badHash, "-database", databasePath}},
-		{"schema", "schema 4", []string{"-manifest", unknownSchemaManifest, "-database", unknownSchemaDatabase}},
+		{"schema", "schema 5", []string{"-manifest", unknownSchemaManifest, "-database", unknownSchemaDatabase}},
 		{"empty", "no active", []string{"-manifest", emptyManifest, "-database", emptyDatabase}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
