@@ -508,6 +508,37 @@ func (m *AllMarketDB) LatestQuotes(ctx context.Context, asOf string) ([]AllMarke
 	return out, nil
 }
 
+// LatestUnadjustedAsOf returns the newest date covering at least 90% of the
+// stored universe with successful unadjusted syncs. This keeps a small
+// -codes-only refresh from becoming the default cross-sectional snapshot.
+func (m *AllMarketDB) LatestUnadjustedAsOf(ctx context.Context) (string, error) {
+	if m == nil || m.db == nil {
+		return "", fs.ErrNotExist
+	}
+	var date sql.NullString
+	if err := m.db.QueryRowContext(ctx, `
+		SELECT as_of FROM stock_sync
+		WHERE adjust='none' AND status='ok'
+		GROUP BY as_of
+		HAVING COUNT(*) * 100 >= (
+			SELECT MAX(daily_count) * 90 FROM (
+				SELECT COUNT(*) AS daily_count FROM stock_sync
+				WHERE adjust='none' AND status='ok' GROUP BY as_of
+			)
+		)
+		ORDER BY as_of DESC LIMIT 1
+	`).Scan(&date); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fs.ErrNotExist
+		}
+		return "", errors.New("cannot read latest unadjusted all-market date")
+	}
+	if !date.Valid || date.String == "" {
+		return "", fs.ErrNotExist
+	}
+	return date.String, nil
+}
+
 func (m *AllMarketDB) LoadBars(ctx context.Context, code, adjust, from, through string) ([]market.Bar, error) {
 	if m == nil || m.db == nil {
 		return nil, fs.ErrNotExist
@@ -538,25 +569,39 @@ func (m *AllMarketDB) LoadBars(ctx context.Context, code, adjust, from, through 
 // independent rule-based reports. It only includes stocks whose QFQ snapshot
 // for the requested as-of date completed successfully.
 func (m *AllMarketDB) LoadAdjustedHistories(ctx context.Context, asOf, from string) ([]config.Stock, []market.History, error) {
+	return m.loadHistories(ctx, asOf, from, "qfq")
+}
+
+// LoadUnadjustedHistories returns raw-price histories from the same frozen
+// all-market snapshot. The trapped diagnostic uses these prices so historical
+// cost levels are not distorted by the adjusted analysis series.
+func (m *AllMarketDB) LoadUnadjustedHistories(ctx context.Context, asOf, from string) ([]config.Stock, []market.History, error) {
+	return m.loadHistories(ctx, asOf, from, "none")
+}
+
+func (m *AllMarketDB) loadHistories(ctx context.Context, asOf, from, adjust string) ([]config.Stock, []market.History, error) {
 	if m == nil || m.db == nil {
 		return nil, nil, fs.ErrNotExist
 	}
 	if _, err := time.Parse("2006-01-02", asOf); err != nil {
-		return nil, nil, errors.New("invalid recommendation as-of date")
+		return nil, nil, errors.New("invalid all-market as-of date")
 	}
 	if _, err := time.Parse("2006-01-02", from); err != nil || from > asOf {
-		return nil, nil, errors.New("invalid recommendation history start")
+		return nil, nil, errors.New("invalid all-market history start")
+	}
+	if adjust != "none" && adjust != "qfq" {
+		return nil, nil, errors.New("invalid all-market history adjustment")
 	}
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT st.code, st.name, st.listed_from, ss.source, ss.data_field, ss.fetched_at,
 			d.trade_date, d.open_micros, d.close_micros, d.high_micros, d.low_micros, d.volume_raw
 		FROM stock st
-		JOIN stock_sync ss ON ss.code=st.code AND ss.adjust='qfq' AND ss.as_of=? AND ss.status='ok'
-		JOIN daily_bar d ON d.code=st.code AND d.adjust='qfq' AND d.trade_date>=? AND d.trade_date<=?
+		JOIN stock_sync ss ON ss.code=st.code AND ss.adjust=? AND ss.as_of=? AND ss.status='ok'
+		JOIN daily_bar d ON d.code=st.code AND d.adjust=? AND d.trade_date>=? AND d.trade_date<=?
 		ORDER BY st.code, d.trade_date
-	`, asOf, from, asOf)
+	`, adjust, asOf, adjust, from, asOf)
 	if err != nil {
-		return nil, nil, errors.New("cannot read recommendation histories")
+		return nil, nil, errors.New("cannot read all-market histories")
 	}
 	defer rows.Close()
 	type stockState struct {
@@ -574,13 +619,13 @@ func (m *AllMarketDB) LoadAdjustedHistories(ctx context.Context, asOf, from stri
 		var volume float64
 		if err := rows.Scan(&code, &name, &listedFrom, &source, &dataField, &fetched,
 			&date, &open, &close, &high, &low, &volume); err != nil {
-			return nil, nil, errors.New("cannot decode recommendation histories")
+			return nil, nil, errors.New("cannot decode all-market histories")
 		}
 		state := states[code]
 		if state == nil {
 			fetchedAt, err := time.Parse(time.RFC3339Nano, fetched)
 			if err != nil {
-				return nil, nil, errors.New("invalid recommendation history timestamp")
+				return nil, nil, errors.New("invalid all-market history timestamp")
 			}
 			state = &stockState{stock: config.Stock{Code: code, Name: name, ListedFrom: listedFrom}, source: source, dataField: dataField, fetchedAt: fetchedAt}
 			states[code] = state
@@ -590,7 +635,7 @@ func (m *AllMarketDB) LoadAdjustedHistories(ctx context.Context, asOf, from stri
 			High: float64(high) / 1_000_000, Low: float64(low) / 1_000_000, Volume: volume})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, errors.New("cannot read recommendation histories")
+		return nil, nil, errors.New("cannot read all-market histories")
 	}
 	stocks := make([]config.Stock, 0, len(order))
 	histories := make([]market.History, 0, len(order))
@@ -598,7 +643,7 @@ func (m *AllMarketDB) LoadAdjustedHistories(ctx context.Context, asOf, from stri
 		state := states[code]
 		stocks = append(stocks, state.stock)
 		histories = append(histories, market.History{Version: 1, Code: code, Name: state.stock.Name,
-			Source: state.source, DataField: state.dataField, Adjust: "qfq", VolumeUnit: "provider_raw",
+			Source: state.source, DataField: state.dataField, Adjust: adjust, VolumeUnit: "provider_raw",
 			AsOf: asOf, FetchedAt: state.fetchedAt, Bars: state.bars})
 	}
 	return stocks, histories, nil

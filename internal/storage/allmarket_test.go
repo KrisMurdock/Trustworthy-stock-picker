@@ -130,6 +130,66 @@ func TestAllMarketLatestQuotesUsesUnadjustedCloseAndAsOfSync(t *testing.T) {
 	}
 }
 
+func TestAllMarketLoadsRawHistoriesAndLatestDate(t *testing.T) {
+	db, err := OpenAllMarket(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	stock := config.Stock{Code: "sh600000", Name: "测试股票"}
+	raw := allMarketHistoryTest(stock.Code, "none", "2026-10-28", "2026-10-29", "2026-10-30")
+	adjusted := allMarketHistoryTest(stock.Code, "qfq", "2026-10-28", "2026-10-29", "2026-10-30")
+	if err := db.SaveHistory(ctx, stock, raw, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveHistory(ctx, stock, adjusted, true); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := db.LatestUnadjustedAsOf(ctx)
+	if err != nil || latest != "2026-10-30" {
+		t.Fatalf("latest unadjusted date = %q, %v", latest, err)
+	}
+	stocks, histories, err := db.LoadUnadjustedHistories(ctx, "2026-10-30", "2026-10-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stocks) != 1 || stocks[0].Code != stock.Code || stocks[0].Name != stock.Name {
+		t.Fatalf("stocks = %+v", stocks)
+	}
+	if len(histories) != 1 || histories[0].Adjust != "none" || len(histories[0].Bars) != 3 || histories[0].Bars[2].Volume != 1002 {
+		t.Fatalf("histories = %+v", histories)
+	}
+	if histories[0].Source != "tencent" || histories[0].VolumeUnit != "provider_raw" {
+		t.Fatalf("history metadata = %+v", histories[0])
+	}
+}
+
+func TestAllMarketLatestDateIgnoresCodesOnlyRefresh(t *testing.T) {
+	db, err := OpenAllMarket(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	full := []config.Stock{{Code: "sh600000", Name: "股票一"}, {Code: "sh600004", Name: "股票二"}}
+	for _, stock := range full {
+		history := allMarketHistoryTest(stock.Code, "none", "2026-10-29", "2026-10-30")
+		if err := db.SaveHistory(ctx, stock, history, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	single := config.Stock{Code: "sh600000", Name: "股票一"}
+	history := allMarketHistoryTest(single.Code, "none", "2026-10-30", "2026-11-02")
+	if err := db.SaveHistory(ctx, single, history, true); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := db.LatestUnadjustedAsOf(ctx)
+	if err != nil || latest != "2026-10-30" {
+		t.Fatalf("latest = %q, %v; codes-only refresh must not win", latest, err)
+	}
+}
+
 func TestAllMarketRejectsSecondWriterAndMissingView(t *testing.T) {
 	root := t.TempDir()
 	first, err := OpenAllMarket(root, false)

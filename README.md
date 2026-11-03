@@ -415,6 +415,7 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | `cmd/stock-watcher` | 唯一生产入口和命令编排 |
 | `runtime` | 可被其他 Go 项目导入的运行时、初始化与看板 handler |
 | `cmd/bottom-study` | 底部形态与止损/持有期研究工具 |
+| `cmd/trapped-scan` | 全市场低套牢观察池离线扫描工具 |
 | `cmd/resolve-pool` | 股池名称与代码核对辅助工具 |
 | `internal/config` | 内置生产配置、环境变量覆盖和严格校验 |
 | `internal/calendar` | 北京时间交易日、节假日、T+1 与过期窗口 |
