@@ -216,6 +216,10 @@ func (s sectorFrozenSource) Stocks(ctx context.Context) ([]config.Stock, error) 
 // AnalyzeSectorContext adds an independent research report. The returned base
 // report is the unchanged v2 evaluation, and no legacy gate or light is edited.
 func AnalyzeSectorContext(ctx context.Context, m Manifest, source Source, sectors SectorSnapshot, emit func(Event) error) (Report, *SectorContextReport, error) {
+	return analyzeSectorObserved(ctx, m, source, sectors, emit, nil, false)
+}
+
+func analyzeSectorObserved(ctx context.Context, m Manifest, source Source, sectors SectorSnapshot, emit, extraObserver func(Event) error, triggerTiming bool) (Report, *SectorContextReport, error) {
 	if err := ctx.Err(); err != nil {
 		return Report{}, nil, err
 	}
@@ -289,12 +293,17 @@ func AnalyzeSectorContext(ctx context.Context, m Manifest, source Source, sector
 		addSectorSummary(sectorMonthly[event.Date[:7]], code, m.waveModel(), event.Date, names, event.Wave)
 		matching.add(event.Date, code, names, event.Wave)
 		addSectorContextAudit(&r.Audit, event, contextValue)
+		if extraObserver != nil {
+			if err := extraObserver(event); err != nil {
+				return err
+			}
+		}
 		if emit != nil && event.FourLight.AllRed {
 			return emit(event)
 		}
 		return nil
 	}
-	base, err := analyzeWithObserver(ctx, m, sectorFrozenSource{Source: source, stocks: stocks}, nil, observer)
+	base, err := analyzeObserved(ctx, m, sectorFrozenSource{Source: source, stocks: stocks}, nil, observer, triggerTiming)
 	if err != nil {
 		return Report{}, nil, err
 	}

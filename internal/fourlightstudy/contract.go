@@ -126,6 +126,7 @@ type Source interface {
 // Event contains only one code/date. Groups overlap intentionally (flip_all is
 // a subset of first_all_red); reports must never add these rows as disjoint sets.
 type Event struct {
+	Trigger     *TriggerContext            `json:"trigger_context,omitempty"`
 	Context     *SectorSignalContext       `json:"sector_context,omitempty"`
 	Code        string                     `json:"code"`
 	Name        string                     `json:"name"`

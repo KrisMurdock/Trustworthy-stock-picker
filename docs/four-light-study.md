@@ -48,6 +48,8 @@ manifest 和 database 必填；events 可省略。默认总超时 10 分钟，�
 
 v2 可额外成对传入 `-classification` 与 `-classification-sha256`，输出独立的 `sector_context`，保持基础 `report` 不变。分类来源、可见日期、同日同行业基准和两个独立先验强弱诊断的契约见 [同行业对照](four-light-sector-context.md)。不传入分类时不启用该分析。
 
+在上述分类输入上增加 `-trigger-timing`，可独立诊断首次全红前的价格三灯红龄与截至前一天的5/20日价格路径，输出 `trigger_timing`；原基础及行业报告不变。口径见[触发时点诊断](four-light-trigger-timing.md)。
+
 events 必须是新路径，禁止覆盖任何输入或已有文件。事件先写同目录临时文件，分析和报告序列化成功后才原子发布；发布不会覆盖运行期间被其他进程创建的文件。失败会清理本轮临时文件。输出目录需支持同目录硬链接；这也是本工具应使用独立本地研究目录的原因之一。
 
 输出 JSON 包含 `code_version`、`manifest_file_sha256`、`database_sha256`、`database_schema` 及 `report`。报告保留完整 manifest、逐组/逐日/逐月统计、同日对照和数据审计。v2 报告 schema 为 2、引擎为 `four_light_market_wave_v2`，还输出板块分组、来源组合、候选保留率，以及候选相对未过滤首次全红的同日差值。代码、manifest 与数据库摘要一起标识可复现输入。

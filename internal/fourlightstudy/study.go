@@ -121,6 +121,10 @@ func Analyze(ctx context.Context, manifest Manifest, source Source, emit func(Ev
 // observer sees every current-state-known stock/date, including the baseline.
 // It cannot change selection or cause unknown future outcomes to be discarded.
 func analyzeWithObserver(ctx context.Context, manifest Manifest, source Source, emit, observer func(Event) error) (Report, error) {
+	return analyzeObserved(ctx, manifest, source, emit, observer, false)
+}
+
+func analyzeObserved(ctx context.Context, manifest Manifest, source Source, emit, observer func(Event) error, triggerTiming bool) (Report, error) {
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
 	}
@@ -267,6 +271,10 @@ func analyzeWithObserver(ctx context.Context, manifest Manifest, source Source, 
 				event := Event{Code: stock.Code, Name: stock.Name, Date: date, Groups: groups, FourLight: evidence, Wave: wave}
 				if manifest.Version == 2 {
 					event.Board, event.VolumeRatio = board, volumeRatio
+				}
+				if triggerTiming && evidence.AllRed {
+					trigger := AnalyzeTriggerContext(pair.Adjusted[:index+1], manifest.Calendar.Days, evidence)
+					event.Trigger = &trigger
 				}
 				if observer != nil {
 					if err := observer(event); err != nil {

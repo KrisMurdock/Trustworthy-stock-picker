@@ -530,3 +530,62 @@ func TestClassificationInputFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestRunTriggerTimingOptInAndCompatibility(t *testing.T) {
+	manifestPath, databasePath, m := cliFixture(t, 3, false)
+	m.Version, m.WaveModel, m.PairingPolicy = 2, strategy.UpwardWaveNoDrawdownModel, fourlightstudy.PairingPolicy
+	writeCLIManifest(t, manifestPath, m)
+	classification, digest := cliClassification(t)
+	base := []string{"-manifest", manifestPath, "-database", databasePath}
+	if err := run(context.Background(), append(append([]string{}, base...), "-trigger-timing"), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "requires classification") {
+		t.Fatal("timing accepted without classification", err)
+	}
+	args := append(append([]string{}, base...), "-classification", classification, "-classification-sha256", digest)
+	var old, new bytes.Buffer
+	if err := run(context.Background(), args, &old, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	events := filepath.Join(t.TempDir(), "events.jsonl")
+	args = append(args, "-trigger-timing", "-events", events)
+	if err := run(context.Background(), args, &new, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var a, b output
+	if err := json.Unmarshal(old.Bytes(), &a); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(new.Bytes(), &b); err != nil {
+		t.Fatal(err)
+	}
+	if a.TriggerTiming != nil || b.TriggerTiming == nil || b.TriggerTiming.Status != "complete" {
+		t.Fatal("missing opt-in timing report")
+	}
+	b.TriggerTiming = nil
+	aj, _ := json.Marshal(a)
+	bj, _ := json.Marshal(b)
+	if !bytes.Equal(aj, bj) {
+		t.Fatal("timing option changed existing reports")
+	}
+	data, err := os.ReadFile(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
+		var e fourlightstudy.Event
+		if err := json.Unmarshal(row, &e); err != nil {
+			t.Fatal(err)
+		}
+		if e.Trigger == nil || e.Context == nil {
+			t.Fatal("missing frozen contexts")
+		}
+	}
+	failedDir := t.TempDir()
+	args[len(args)-1] = filepath.Join(failedDir, "failed.jsonl")
+	if err := run(context.Background(), args, failingWriter{}, io.Discard); err == nil {
+		t.Fatal("stdout failure accepted")
+	}
+	files, _ := os.ReadDir(failedDir)
+	if len(files) != 0 {
+		t.Fatal("failed report left events")
+	}
+}
