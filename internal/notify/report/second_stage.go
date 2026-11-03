@@ -1156,10 +1156,9 @@ func articlePriceLines(r selection.Report, code string, candidate *strategy.Cand
 	if code == "" && candidate != nil {
 		code = candidate.Code
 	}
-	valuation := articleFairValueSummary(r, code)
+	valuation := articleFairValueCompactSummary(r, code)
 	valuationLabel := "财务研究区间"
 	if compact {
-		valuation = articleFairValueCompactSummary(r, code)
 		valuationLabel = "估值"
 	}
 	lines = append(lines, articlePriceLine{label: valuationLabel, value: valuation})
