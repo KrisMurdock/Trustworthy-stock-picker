@@ -94,13 +94,13 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 	if poolCount == 0 {
 		poolCount = result.InputCount
 	}
-	out.WriteString(fmt.Sprintf("今天的筛选结果显示，策略观察池共 %d 只，精排从中输出 %d 只进入本期观察名单。%s。以下内容仅用于研究和观察，不构成交易建议。\n\n",
+	out.WriteString(fmt.Sprintf("今天的筛选结果显示，策略观察池共 %d 只，精排从中选出 %d 只进入本期观察名单。名单内的股票同等重要，不按分数区分优先级，请结合各项信息自行比较。%s。以下内容仅用于研究和观察，不构成交易建议。\n\n",
 		poolCount, len(rows), articleFormalSentence(formal)))
 	out.WriteString("机会分不代表成功概率，也不代表未来收益。\n\n")
 	compactPhase := len(rows) > 6
 	writeArticlePhasePipeline(&out, r, rows, compactPhase)
 
-	out.WriteString("## 一、排名靠前的观察对象\n\n")
+	out.WriteString("## 一、观察对象\n\n")
 	detailCount := minInt(articleDetailCount, len(rows))
 	if compactPhase {
 		detailCount = minInt(articleCompactDetailCount, len(rows))
@@ -110,7 +110,7 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 	}
 
 	if len(rows) > detailCount {
-		out.WriteString("## 二、其他进入观察排名的对象\n\n")
+		out.WriteString("## 二、其余观察对象\n\n")
 		for i := detailCount; i < len(rows); i++ {
 			writeArticleBrief(&out, r, rows[i], compactPhase)
 		}
@@ -125,7 +125,7 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 	} else {
 		out.WriteString(fmt.Sprintf("推荐买区以参考买价为中枢、ATR14 的 %.2g 倍为半宽；财务研究区间=TTM EPS 盈利倍数与每股净资产倍数各半，按 ROE 与盈利增速调整，仅作研究参考，不是目标价。信号日实际区间取 %s 最高至最低价。明日高低点为 dayrange 点估计及名义边际区间，非联合覆盖或收益承诺；缺失标“暂缺”，不补造。\n\n", articleBuyBandATR, articleMonthDay(result.AsOf)))
 		out.WriteString("## 套牢盘诊断说明\n\n")
-		out.WriteString(fmt.Sprintf("套牢盘按近 %d 个交易日的不复权成交估算：每日成交量先换算为股数，再按低-收-高三角分布展开并在现价及 5%%/15%% 分档边界切分；历史筹码按当日换手率逐日衰减，零成交日保留为未换手样本，并校验由成交量与换手率推算的流通股本口径是否稳定。上方套牢量=衰减后价格高于信号日收盘的筹码占比；触发=≥30%%且加权成本高于现价≥2%%且浅+中度套牢区合计≥50%%，观察=≥20%%且≥1%%且合计≥40%%，无明显=未达观察阈值，数据不足=样本少于%d个、换手率缺失或推算流通股本发生显著变化。成本带为上方筹码20%%~80%%加权分位；三档区间占比按最大余数法归一化，合计恒为100%%。该指标只描述上方成交压力，成交量不等同真实持仓成本，不构成交易信号，也不改变排名或推荐。\n\n", strategy.TrappedLookbackSessions, strategy.TrappedMinimumSessions))
+		out.WriteString(fmt.Sprintf("套牢盘按近 %d 个交易日的不复权成交估算：每日成交量先换算为股数，再按低-收-高三角分布展开并在现价及 5%%/15%% 分档边界切分；历史筹码按当日换手率逐日衰减，零成交日保留为未换手样本，并校验由成交量与换手率推算的流通股本口径是否稳定。上方套牢量=衰减后价格高于信号日收盘的筹码占比；触发=≥30%%且加权成本高于现价≥2%%且浅+中度套牢区合计≥50%%，观察=≥20%%且≥1%%且合计≥40%%，无明显=未达观察阈值，数据不足=样本少于%d个、换手率缺失或推算流通股本发生显著变化。成本带为上方筹码20%%~80%%加权分位；三档区间占比按最大余数法归一化，合计恒为100%%。该指标只描述上方成交压力，成交量不等同真实持仓成本，不构成交易信号，也不改变是否入选。\n\n", strategy.TrappedLookbackSessions, strategy.TrappedMinimumSessions))
 	}
 
 	out.WriteString("## 理论与方法边界\n\n")
@@ -179,8 +179,8 @@ func writeArticleDetail(out *strings.Builder, r selection.Report, row articleCan
 	name := articleStockLabel(code, row.candidate.Name)
 	sector := articleValue(row.candidate.Sector, "行业未记录")
 	out.WriteString(":::card " + articleCardTone(row) + "\n")
-	out.WriteString(fmt.Sprintf("### %d. %s（%s）\n\n", row.rank, name, code))
-	out.WriteString("**" + articleRankLabel(row) + " · " + sector + "**\n\n")
+	out.WriteString(fmt.Sprintf("### %s（%s）\n\n", name, code))
+	out.WriteString("**观察对象 · " + sector + "**\n\n")
 
 	writeArticleChart(out, row.observation)
 
@@ -240,8 +240,8 @@ func writeArticleBrief(out *strings.Builder, r selection.Report, row articleCand
 	name := articleStockLabel(code, row.candidate.Name)
 	sector := articleValue(row.candidate.Sector, "行业未记录")
 	out.WriteString(":::card " + articleCardTone(row) + "\n")
-	out.WriteString(fmt.Sprintf("### %d. %s（%s）\n\n", row.rank, name, code))
-	out.WriteString("**" + articleRankLabel(row) + " · " + sector + "**\n\n")
+	out.WriteString(fmt.Sprintf("### %s（%s）\n\n", name, code))
+	out.WriteString("**观察对象 · " + sector + "**\n\n")
 	writeArticleChart(out, row.observation)
 	out.WriteString("- **价格**：" + strings.Join(articlePriceLineTexts(r, code, row.observation, compactPhase), "；") + "；套牢：" + articleBriefTrapped(row.observation) + "。\n")
 	out.WriteString("- **指标**：" + strings.Join(articleBriefTechnical(row.observation), "；") + "。\n")
@@ -283,14 +283,6 @@ func articleCardTone(row articleCandidate) string {
 	default:
 		return "grey"
 	}
-}
-
-func articleRankLabel(row articleCandidate) string {
-	parts := []string{fmt.Sprintf("精排第%d名", row.rank)}
-	if row.observation != nil && row.observation.ObservationRank > 0 {
-		parts = append(parts, fmt.Sprintf("观察第%d名", row.observation.ObservationRank))
-	}
-	return strings.Join(parts, " · ")
 }
 
 func articleStructureStatus(candidate *strategy.Candidate) string {
@@ -1694,7 +1686,7 @@ func articleBuyRange(candidate *strategy.Candidate) (float64, float64, bool) {
 }
 
 func writeArticleConclusion(out *strings.Builder, r selection.Report, rows []articleCandidate, formal int) {
-	out.WriteString("本轮排名靠前的对象，主要受以下因素推动：\n\n")
+	out.WriteString("本期观察对象的共同特征主要有：\n\n")
 	drivers := articleCommonDrivers(rows)
 	for _, driver := range drivers {
 		out.WriteString("- " + driver + "；\n")
@@ -1719,7 +1711,7 @@ func writeArticleConclusion(out *strings.Builder, r selection.Report, rows []art
 	if r.SelectionEnabled {
 		out.WriteString("结论仅基于截至信号日已保存的数据。\n\n")
 	} else {
-		out.WriteString("本轮筛选未启用，排名只用于研究观察。\n\n")
+		out.WriteString("本轮筛选未启用，名单只用于研究观察。\n\n")
 	}
 }
 
@@ -1743,7 +1735,7 @@ func articleCommonDrivers(rows []articleCandidate) []string {
 		out = append(out, "部分对象通过了日线结构过滤")
 	}
 	if len(out) == 0 {
-		out = append(out, "精排综合分相对靠前")
+		out = append(out, "进入本期精排观察名单")
 	}
 	if len(out) > 4 {
 		out = out[:4]
@@ -1815,14 +1807,14 @@ func articleFormalSentence(formal int) string {
 	if formal == 0 {
 		return "本轮没有对象通过完整的历史证据和风险门槛"
 	}
-	return fmt.Sprintf("本轮有 %d 只进入正式推荐，其余对象仍只作观察", formal)
+	return fmt.Sprintf("本轮有 %d 只同时通过正式推荐门槛，名单内不区分优先级", formal)
 }
 
 func articleLead(formal int) string {
 	if formal == 0 {
-		return "排名靠前，但暂未形成正式推荐"
+		return "10 只观察对象同等重要，暂未形成正式推荐"
 	}
-	return fmt.Sprintf("排名靠前，其中 %d 只进入正式推荐", formal)
+	return fmt.Sprintf("观察对象同等重要，其中 %d 只进入正式推荐", formal)
 }
 
 func articleMonthDay(date string) string {

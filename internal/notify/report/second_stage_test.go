@@ -35,11 +35,11 @@ func TestSecondStageArticleUsesReferenceStyleAndPriceAnnotations(t *testing.T) {
 	}
 	body := article.Article.Body
 	for _, want := range []string{
-		"# 10月22日 三日短线观察：排名靠前，但暂未形成正式推荐",
-		"## 一、排名靠前的观察对象",
+		"# 10月22日 三日短线观察：10 只观察对象同等重要，暂未形成正式推荐",
+		"## 一、观察对象",
 		":::card blue",
-		"### 1. YLWL（sz300628）",
-		"**精排第1名 · 观察第1名 · 测试行业**",
+		"### YLWL（sz300628）",
+		"**观察对象 · 测试行业**",
 		"#### 价格与明日区间",
 		"- **推荐买区**：15.00~15.30 购入",
 		"- **明日高点**：16.20；区间 15.90~16.50（名义覆盖 80%）",
@@ -81,8 +81,8 @@ func TestSecondStageArticleUsesReferenceStyleAndPriceAnnotations(t *testing.T) {
 		"- **触发规则**：样本池基准、突破、动量、放量恢复",
 		":::card amber",
 		":::card grey",
-		"## 二、其他进入观察排名的对象",
-		"### 6. HXL（sz000006）",
+		"## 二、其余观察对象",
+		"### HXL（sz000006）",
 		"明日高低预测 暂缺（dayrange 模型未生成目标日预测）",
 		"**阶段**：上涨（72/100，中）；失效位 14.70",
 		"## 三、今天的整体结论",
