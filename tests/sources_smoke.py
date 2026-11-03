@@ -182,8 +182,12 @@ def main():
                 api = f"http://127.0.0.1:{http.server_port}"
                 mount = "/fixture" if args.image else str(root)
                 env = os.environ.copy()
-                for name in ("FEISHU_WEBHOOK", "FEISHU_SECRET", "STOCK_WATCHER_DATA_DIR", "STOCK_WATCHER_WEB_ADDR"):
-                    env.pop(name, None)
+                # This fixture owns the application configuration. Do not let
+                # a developer's production overrides enable model, context or
+                # notification work and make the native/container runs differ.
+                for name in list(env):
+                    if name.startswith(("STOCK_WATCHER_", "FEISHU_", "WECHAT_")) or name == "TUSHARE_TOKEN":
+                        env.pop(name, None)
                 env.update({
                     "TUSHARE_TOKEN": TOKEN,
                     "STOCK_WATCHER_DATA_DIR": f"{mount}/data",
@@ -192,8 +196,25 @@ def main():
                     "STOCK_WATCHER_REQUIRE_CIFS": "false",
                     "STOCK_WATCHER_WEB_ENABLED": "false",
                     "STOCK_WATCHER_FEISHU_ENABLED": "false",
+                    "STOCK_WATCHER_WECHAT_ENABLED": "false",
                     "STOCK_WATCHER_INTRADAY_ENABLED": "false",
                     "STOCK_WATCHER_STRATEGY_ENABLED": "false",
+                    "STOCK_WATCHER_SELECTION_ENABLED": "false",
+                    "STOCK_WATCHER_CONTEXT_ENABLED": "false",
+                    "STOCK_WATCHER_FIRST_STAGE_ENABLED": "false",
+                    "STOCK_WATCHER_FIRST_STAGE_PUSH_ENABLED": "false",
+                    "STOCK_WATCHER_SECOND_STAGE_ENABLED": "false",
+                    "STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED": "false",
+                    "STOCK_WATCHER_HK_CONNECT_ENABLED": "false",
+                    "STOCK_WATCHER_HK_CONNECT_PUSH_ENABLED": "false",
+                    "STOCK_WATCHER_LOW_VALUATION_ENABLED": "false",
+                    "STOCK_WATCHER_LOW_VALUATION_PUSH_ENABLED": "false",
+                    "STOCK_WATCHER_VALUE_TRAPPED_ENABLED": "false",
+                    "STOCK_WATCHER_VALUE_TRAPPED_PUSH_ENABLED": "false",
+                    "STOCK_WATCHER_PREDICTOR_ENABLED": "false",
+                    "STOCK_WATCHER_PREDICTOR_PUSH_ENABLED": "false",
+                    "STOCK_WATCHER_DAYRANGE_ENABLED": "false",
+                    "STOCK_WATCHER_DAYRANGE_PUSH_ENABLED": "false",
                     "STOCK_WATCHER_REQUEST_TIMEOUT": "1s",
                     "STOCK_WATCHER_MARKET_REQUEST_INTERVAL": "350ms",
                     "STOCK_WATCHER_POOL_FILE": f"{mount}/leaders.yaml",
@@ -226,7 +247,16 @@ def main():
                         for key in ("TUSHARE_TOKEN", "STOCK_WATCHER_DATA_DIR", "STOCK_WATCHER_LOG_DIR",
                                     "STOCK_WATCHER_LOG_COLOR", "STOCK_WATCHER_REQUIRE_CIFS",
                                     "STOCK_WATCHER_WEB_ENABLED", "STOCK_WATCHER_FEISHU_ENABLED",
-                                    "STOCK_WATCHER_INTRADAY_ENABLED", "STOCK_WATCHER_REQUEST_TIMEOUT",
+                                    "STOCK_WATCHER_WECHAT_ENABLED", "STOCK_WATCHER_INTRADAY_ENABLED",
+                                    "STOCK_WATCHER_STRATEGY_ENABLED", "STOCK_WATCHER_SELECTION_ENABLED",
+                                    "STOCK_WATCHER_CONTEXT_ENABLED", "STOCK_WATCHER_FIRST_STAGE_ENABLED",
+                                    "STOCK_WATCHER_FIRST_STAGE_PUSH_ENABLED", "STOCK_WATCHER_SECOND_STAGE_ENABLED",
+                                    "STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED", "STOCK_WATCHER_HK_CONNECT_ENABLED",
+                                    "STOCK_WATCHER_HK_CONNECT_PUSH_ENABLED", "STOCK_WATCHER_LOW_VALUATION_ENABLED",
+                                    "STOCK_WATCHER_LOW_VALUATION_PUSH_ENABLED", "STOCK_WATCHER_VALUE_TRAPPED_ENABLED",
+                                    "STOCK_WATCHER_VALUE_TRAPPED_PUSH_ENABLED", "STOCK_WATCHER_PREDICTOR_ENABLED",
+                                    "STOCK_WATCHER_PREDICTOR_PUSH_ENABLED", "STOCK_WATCHER_DAYRANGE_ENABLED",
+                                    "STOCK_WATCHER_DAYRANGE_PUSH_ENABLED", "STOCK_WATCHER_REQUEST_TIMEOUT",
                                     "STOCK_WATCHER_MARKET_REQUEST_INTERVAL", "STOCK_WATCHER_POOL_FILE",
                                     "STOCK_WATCHER_CALENDAR_VALID_FROM", "STOCK_WATCHER_CALENDAR_VALID_THROUGH",
                                     "STOCK_WATCHER_CALENDAR_HOLIDAYS", "STOCK_WATCHER_MARKET_PROVIDERS",
