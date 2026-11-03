@@ -61,7 +61,7 @@ func run(args []string) error {
 	policy := f.String("policy", "baseline", "conditional-{entry,rsi,macd,bollinger,confluence,all-three,guard,confluence-guard,chan-5-15-30}, baseline, upper-wick, risk-qualified, next-day-{baseline,upper-wick,low-volatility,pullback,breakout,momentum,volume-recovery,balanced,risk-qualified} or four-light-{all-red,flip-any,flip-all} (experiment only)")
 	from := f.String("from", "", "inclusive start date (experiment, sync-hk-minutes, backfill/index-minute sync)")
 	through := f.String("through", "", "inclusive end date (experiment or sync-hk-minutes; pair with -from)")
-	backfillWorkers := f.Int("workers", 3, "concurrent workers (backfill-minutes, sync-all, four-light-all, scan-low-valuation, scan-value-trapped, sync-hk-connect or sync-hk-minutes, 1..8)")
+	backfillWorkers := f.Int("workers", 3, "concurrent workers (backfill-minutes, sync-all, scan-low-valuation, scan-value-trapped, sync-hk-connect or sync-hk-minutes, 1..8)")
 	backfillProvider := f.String("provider", "auto", "minute history provider: auto, baostock or sina (backfill-minutes only)")
 	backfillCodes := f.String("codes", "", "comma-separated codes (backfill-minutes, sync-all, sync-fundamentals, sync-hk-connect or sync-hk-minutes; default all)")
 	allFull := f.Bool("full", false, "force a full 10-year raw refresh (sync-all or sync-hk-connect only)")
@@ -159,8 +159,8 @@ func run(args []string) error {
 	if command != "experiment" && command != "sync-hk-minutes" && command != "backfill-minutes" && command != "sync-index-minutes" && command != "sync-korea-context" && *from != "" {
 		return errors.New("from requires the experiment, sync-hk-minutes, backfill-minutes, sync-index-minutes or sync-korea-context command")
 	}
-	if command != "backfill-minutes" && command != "sync-all" && command != "four-light-all" && command != "scan-low-valuation" && command != "scan-value-trapped" && command != "sync-hk-connect" && command != "sync-hk-minutes" && *backfillWorkers != 3 {
-		return errors.New("workers requires the backfill-minutes, sync-all, four-light-all, scan-low-valuation, scan-value-trapped, sync-hk-connect or sync-hk-minutes command")
+	if command != "backfill-minutes" && command != "sync-all" && command != "scan-low-valuation" && command != "scan-value-trapped" && command != "sync-hk-connect" && command != "sync-hk-minutes" && *backfillWorkers != 3 {
+		return errors.New("workers requires the backfill-minutes, sync-all, scan-low-valuation, scan-value-trapped, sync-hk-connect or sync-hk-minutes command")
 	}
 	if command != "backfill-minutes" && command != "sync-all" && command != "sync-fundamentals" && command != "sync-hk-connect" && command != "sync-hk-minutes" && *backfillCodes != "" {
 		return errors.New("codes requires the backfill-minutes, sync-all, sync-fundamentals, sync-hk-connect or sync-hk-minutes command")

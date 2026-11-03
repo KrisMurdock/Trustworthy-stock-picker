@@ -8,7 +8,7 @@
 
 输入由独立 `all-market.db` 备份和 manifest JSON 组成。先使用 SQLite 备份接口获得一致的独立文件；也可以停止全部写入、关闭连接后复制完整数据库。不能直接复制正在写入的 SQLite 主文件，也不要把生产原库当研究输出目录。
 
-备份必须是普通文件，使用 `DELETE` journal mode，不携带 `-journal`、`-wal` 或 `-shm`。工具只读支持 all-market schema 1、2、3，既不迁移旧库，也不创建缺失库。打开后保持单个只读事务，先取得 SQLite 读快照，再计算整个文件的 SHA256 并与 manifest 核对；源库被替换、摘要不一致或版本不支持均立即失败。
+备份必须是普通文件，使用 `DELETE` journal mode，不携带 `-journal`、`-wal` 或 `-shm`。工具只读支持 all-market schema 1、2、3、4，既不迁移旧库，也不创建缺失库。打开后保持单个只读事务，先取得 SQLite 读快照，再计算整个文件的 SHA256 并与 manifest 核对；源库被替换、摘要不一致或版本不支持均立即失败。
 
 manifest 最大 1 MiB，只允许一个 JSON 对象，未知字段拒绝。必填字段如下：
 

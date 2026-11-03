@@ -348,13 +348,27 @@ def four_light_checks(page, url, state, args):
     assert len(paged["transition_unknown_records"]) == 1
 
     state["injecting"] = True
-    page.route("**/api/four-light?as_of=*", lambda route: route.fulfill(status=503, content_type="application/json", body='{"error":"four-light data is temporarily unavailable"}'))
-    page.get_by_test_id("four-light-refresh").click()
-    expect(page.get_by_test_id("four-light-error")).to_be_visible()
-    page.unroute("**/api/four-light?as_of=*")
-    state["injecting"] = False
+    pattern = "**/api/four-light?as_of=*"
+    # Authentication is supplied by a gateway; exercise its denied responses.
+    for status, message in ((401, "授权"), (403, "授权"), (503, "暂时不可用")):
+        page.route(pattern, lambda route, status=status: route.fulfill(status=status, content_type="application/json", body='{"error":"test_unavailable"}'))
+        page.get_by_test_id("four-light-refresh").click()
+        expect(page.get_by_test_id("four-light-error")).to_contain_text(message)
+        expect(page.get_by_test_id("four-light-content")).to_be_hidden()
+        page.unroute(pattern)
+        page.get_by_test_id("four-light-retry").click()
+        expect(page.get_by_test_id("four-light-error")).to_be_hidden()
+        expect(page.get_by_test_id("four-light-content")).to_be_visible()
+    with stalled_endpoint() as stalled_url:
+        page.route(pattern, lambda route: route.continue_(url=stalled_url))
+        page.get_by_test_id("four-light-refresh").click()
+        expect(page.get_by_test_id("four-light-error")).to_contain_text("超时", timeout=15000)
+        expect(page.get_by_test_id("four-light-content")).to_be_hidden()
+        page.unroute(pattern)
     page.get_by_test_id("four-light-retry").click()
+    expect(page.get_by_test_id("four-light-error")).to_be_hidden()
     expect(page.get_by_test_id("four-light-content")).to_be_visible()
+    state["injecting"] = False
     state["injecting"] = True
     page.route("**/api/four-light?as_of=*", lambda route: route.fulfill(status=404, content_type="application/json", body='{"error":"four-light signals not found"}'))
     page.locator("#four-light-date").fill("2026-10-10")

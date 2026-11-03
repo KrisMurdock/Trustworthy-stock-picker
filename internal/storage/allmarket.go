@@ -21,15 +21,15 @@ const (
 	allMarketLockName      = ".all-market.lock"
 	hkMarketDBName         = "hk-market.db"
 	hkMarketLockName       = ".hk-market.lock"
-	allMarketSchemaVersion = 3
+	allMarketSchemaVersion = 4
 	hkMarketSchemaVersion  = 3
 	maxRecommendationBytes = 16 << 20
 )
 
 // AllMarketDB is a deliberately separate store. The A-share instance holds the
-// current Shanghai/Shenzhen universe and never participates in selection,
-// reports or notification delivery. The same implementation also backs the
-// independent HK Connect database, including its recommendation snapshots.
+// current Shanghai/Shenzhen universe, four-light archive and valuation
+// recommendation snapshots. The same implementation also backs the independent
+// HK Connect database, with its own schema version and minute tables.
 type AllMarketDB struct {
 	db          *sql.DB
 	root        string
@@ -98,8 +98,8 @@ func OpenAllMarketView(root string, requireCIFS bool) (*AllMarketDB, error) {
 }
 
 // OpenHKMarket opens the Stock Connect daily store. It intentionally shares the
-// full-market schema but uses a separate database and writer lock so a Hong
-// Kong sync can run beside the A-share full-market sync.
+// daily-history schema but uses its own schema version, database and writer
+// lock so a Hong Kong sync can run beside the A-share full-market sync.
 func OpenHKMarket(root string, requireCIFS bool) (*AllMarketDB, error) {
 	return openAllMarket(root, requireCIFS, true, true, hkMarketDBName, hkMarketLockName, "HK market")
 }
@@ -171,6 +171,19 @@ func (m *AllMarketDB) configure() error {
 			if _, err := m.db.Exec(statement); err != nil {
 				return errors.New("cannot configure " + m.kind + " database view")
 			}
+		}
+		var version int
+		if err := m.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+			return errors.New("cannot read " + m.kind + " database version")
+		}
+		if m.dbName == hkMarketDBName {
+			// Daily readers remain compatible with HK versions preceding the
+			// recommendation and minute tables; views never migrate a database.
+			if version < 1 || version > hkMarketSchemaVersion {
+				return errors.New("unsupported HK market database version")
+			}
+		} else if version != allMarketSchemaVersion {
+			return errors.New("all-market database requires schema migration before read-only access")
 		}
 		return nil
 	}
@@ -274,21 +287,8 @@ func (m *AllMarketDB) initSchema() error {
 		}
 	}
 	if m.dbName == allMarketDBName {
-		if version == 2 {
-			if _, err := tx.Exec(`ALTER TABLE four_light_run RENAME COLUMN unknown TO state_unknown`); err != nil {
-				return errors.New("cannot migrate four-light unknown count")
-			}
-			if _, err := tx.Exec(`ALTER TABLE four_light_run ADD COLUMN transition_unknown INTEGER NOT NULL DEFAULT 0 CHECK (transition_unknown >= 0)`); err != nil {
-				return errors.New("cannot add four-light transition count")
-			}
-			if _, err := tx.Exec(`
-			UPDATE four_light_run SET transition_unknown = (
-				SELECT COUNT(*) FROM four_light_daily
-				WHERE four_light_daily.run_id = four_light_run.id AND four_light_daily.lifecycle = 'unknown'
-			)
-		`); err != nil {
-				return errors.New("cannot backfill four-light transition count")
-			}
+		if err := migrateAllMarketFourLightCounts(tx); err != nil {
+			return err
 		}
 
 		if _, err := tx.Exec(allMarketFourLightSchema); err != nil {
@@ -300,6 +300,56 @@ func (m *AllMarketDB) initSchema() error {
 	}
 	if err := tx.Commit(); err != nil {
 		return errors.New("cannot commit " + m.kind + " database migration")
+	}
+	return nil
+}
+
+// Version 2 was independently used for recommendation snapshots and the first
+// four-light archive. Inspect the actual columns instead of assuming either
+// shape from user_version. All DDL and backfill share the caller's transaction.
+func migrateAllMarketFourLightCounts(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT name FROM pragma_table_info('four_light_run')`)
+	if err != nil {
+		return errors.New("cannot inspect four-light archive schema")
+	}
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return errors.New("cannot decode four-light archive schema")
+		}
+		columns[name] = true
+	}
+	err = errors.Join(rows.Err(), rows.Close())
+	if err != nil {
+		return errors.New("cannot read four-light archive schema")
+	}
+	if len(columns) == 0 {
+		// Main's version 2 has only recommendation snapshots; CREATE TABLE
+		// below supplies a new four-light archive without touching them.
+		return nil
+	}
+	if columns["unknown"] == columns["state_unknown"] {
+		return errors.New("unsupported four-light unknown count schema")
+	}
+	if columns["unknown"] {
+		if _, err := tx.Exec(`ALTER TABLE four_light_run RENAME COLUMN unknown TO state_unknown`); err != nil {
+			return errors.New("cannot migrate four-light unknown count")
+		}
+	}
+	if !columns["transition_unknown"] {
+		if _, err := tx.Exec(`ALTER TABLE four_light_run ADD COLUMN transition_unknown INTEGER NOT NULL DEFAULT 0 CHECK (transition_unknown >= 0)`); err != nil {
+			return errors.New("cannot add four-light transition count")
+		}
+		if _, err := tx.Exec(`
+			UPDATE four_light_run SET transition_unknown = (
+				SELECT COUNT(*) FROM four_light_daily
+				WHERE four_light_daily.run_id = four_light_run.id AND four_light_daily.lifecycle = 'unknown'
+			)
+		`); err != nil {
+			return errors.New("cannot backfill four-light transition count")
+		}
 	}
 	return nil
 }

@@ -77,7 +77,7 @@ STOCK_WATCHER_HK_INTRADAY_ENABLED=true \
 
 `make hk-intraday-smoke` 和 `make docker-hk-intraday-smoke` 使用临时数据、本地行情 mock、单个 Chromium 与模拟网关验证迁移、补采、缺口、异常、只读 API、身份拒绝和退出；它们不验证真实上游、CIFS、生产账号或部署 URL。
 
-`four-light-all` 不访问行情源，只读取 `all-market.db` 中信号日及之前的前复权日线，按冻结的 `four_light_approx_v1` 为每只活跃股票归档 `red/green/unknown` 灯色、数据状态和生命周期。它要求数据库已存在且 schema 为 3，不会先创建空库；非交易日、未完成交易日、少于 60 根日线、信号日无行情、上一交易日无行情或行情陈旧都会明确记录为无法判断。运行记录分别保存 `state_unknown`（当日灯色未知）和 `transition_unknown`（无法判断首次/持续/退出），二者不能互相替代。成功重跑会在同一事务中替换该日期和规则的全部日记录与事件，失败重跑保留上次成功快照。输出 JSON 中的 `status=complete` 只表示计算与落库完成，不表示选股有效或与任何商业软件对齐。
+`four-light-all` 不访问行情源，只读取 `all-market.db` 中信号日及之前的前复权日线，按冻结的 `four_light_approx_v1` 为每只活跃股票归档 `red/green/unknown` 灯色、数据状态和生命周期。它要求数据库已存在且 schema 为 4，不会先创建空库；非交易日、未完成交易日、少于 60 根日线、信号日无行情、上一交易日无行情或行情陈旧都会明确记录为无法判断。运行记录分别保存 `state_unknown`（当日灯色未知）和 `transition_unknown`（无法判断首次/持续/退出），二者不能互相替代。成功重跑会在同一事务中替换该日期和规则的全部日记录与事件，失败重跑保留上次成功快照。输出 JSON 中的 `status=complete` 只表示计算与落库完成，不表示选股有效或与任何商业软件对齐。
 
 `/api/four-light` 使用同一只读事务读取运行汇总、四类列表和各列表总数，避免重跑期间汇总与明细跨批次。列表默认每页 200 条，`page_size` 最大 500；`page` 超过末页时返回空记录但保留总数，页面必须显示“当前显示范围/总数”而不能把一页误认为全部。`/four-light` 的汇总使用当日完整归档计数，分页只影响下方列表。
 

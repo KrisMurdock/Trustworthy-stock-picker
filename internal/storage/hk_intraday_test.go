@@ -64,7 +64,7 @@ func TestHKMinuteSchemaMigratesWithoutChangingOtherMarket(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer aShares.Close()
-	if err := aShares.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
+	if err := aShares.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != allMarketSchemaVersion {
 		t.Fatalf("A-share full-market schema changed: %d, %v", version, err)
 	}
 }

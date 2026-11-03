@@ -110,7 +110,7 @@ func OpenSnapshot(ctx context.Context, path string, manifest Manifest) (_ *Snaps
 	if err := source.tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&source.schema); err != nil {
 		return nil, fmt.Errorf("read snapshot schema: %w", err)
 	}
-	if source.schema < 1 || source.schema > 3 {
+	if source.schema < 1 || source.schema > 4 {
 		return nil, fmt.Errorf("unsupported all-market snapshot schema %d", source.schema)
 	}
 	current, err := os.Stat(path)

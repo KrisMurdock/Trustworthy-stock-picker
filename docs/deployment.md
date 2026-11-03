@@ -39,7 +39,24 @@ journalctl -u stock-watcher.service -n 50 --no-pager
 
 全市场日线由 `stock-watcher-allmarket.timer` 在交易日 `18:40` 先触发 `sync-all`，成功后再运行 `four-light-all` 归档近似四灯；`sync-all` 写入独立 `<data_dir>/all-market.db`，使用独立 `.all-market.lock`，可与主服务并行，不参与股池排名或直接通知。完整且未使用 `-codes` 的同步会在 `low_valuation.enabled=true` 时继续扫描全市场财务研究区间，只保留现价低于区间下沿的股票并按距下沿折价升序保存为 `recommendation` 快照；启用 `value_trapped.enabled=true` 时再只对低估值候选抓取换手率，保存上方套牢量不超过 `max_trapped_ratio` 的交集快照。主服务在下一轮 Cycle 读取并分别投递《全市场低估值股》和《低估值且低套牢》公众号稿。该 unit 固定 `STOCK_WATCHER_DATA_DIR=/mnt/windows_database`、`STOCK_WATCHER_REQUIRE_CIFS=true`、`STOCK_WATCHER_MARKET_REQUEST_INTERVAL=500ms` 和独立日志目录 `logs/all-market/`，避免与主服务共用日志文件；如公共行情源限流，可把请求间隔改回 `1s`。财务扫描逐只请求新浪，受该间隔限速通常需要数十分钟；交集扫描只对低估值候选请求搜狐换手率，耗时取决于交集候选数。任务超时由 `-timeout`（默认 24h）覆盖，不能用高频轮询替代。定时器只在周一至周五触发，节假日会按最后一个已完成交易日执行并在已同步时快速跳过。
 
-全市场线上验收至少检查：`systemctl list-timers stock-watcher-allmarket.timer` 显示下一次触发时间；`journalctl -u stock-watcher-allmarket.service -n 80 --no-pager` 最后一行 JSON 为 `status=complete`，启用低估值时包含 `low_valuation` 摘要且日志出现 `Low valuation recommendation generated`；启用交集时包含 `value_trapped` 摘要且日志出现 `Value-trapped recommendation generated`。`all-market.db` 的 `sync_run` 最新记录 `as_of` 等于最近已完成交易日且 `failed=partial=0`，`recommendation` 表存在 `market='low_valuation'` 和 `market='value_trapped'` 的最新快照，`target` 均为下一交易日；主服务 `stock-watcher.service` 仍保持 active，日志出现 `Low valuation recommendation queued` 与 `Value-trapped recommendation queued`，`state/delivery.json` 或公众号草稿箱存在对应 `"<推荐ID>:low_valuation"` 和 `"<推荐ID>:value_trapped"`。若 JSON 只有 `low_valuation_error`，检查新浪财务接口、Tushare Token/行业权限和估值覆盖率，修复后用 `scan-low-valuation` 重跑；若只有 `value_trapped_error`，检查搜狐换手率接口、套牢历史完整性和 `max_trapped_ratio`，修复后用 `scan-value-trapped` 重跑。不要手工补造区间或套牢量。若服务以 `cannot persist all-market stock metadata` 或共享盘错误退出，先检查 CIFS 与 `busy_timeout`，不要通过改成本地目录绕过。
+全市场线上验收至少检查：`systemctl list-timers stock-watcher-allmarket.timer` 显示下一次触发时间；`journalctl -u stock-watcher-allmarket.service -n 80 --no-pager` `sync-all` 输出 JSON 为 `status=complete`，其后的 `four-light-all` 也须为 `complete`；同步输出在启用低估值时包含 `low_valuation` 摘要且日志出现 `Low valuation recommendation generated`；启用交集时包含 `value_trapped` 摘要且日志出现 `Value-trapped recommendation generated`。`all-market.db` 的 `sync_run` 最新记录 `as_of` 等于最近已完成交易日且 `failed=partial=0`，`recommendation` 表存在 `market='low_valuation'` 和 `market='value_trapped'` 的最新快照，`target` 均为下一交易日；主服务 `stock-watcher.service` 仍保持 active，日志出现 `Low valuation recommendation queued` 与 `Value-trapped recommendation queued`，`state/delivery.json` 或公众号草稿箱存在对应 `"<推荐ID>:low_valuation"` 和 `"<推荐ID>:value_trapped"`。若 JSON 只有 `low_valuation_error`，检查新浪财务接口、Tushare Token/行业权限和估值覆盖率，修复后用 `scan-low-valuation` 重跑；若只有 `value_trapped_error`，检查搜狐换手率接口、套牢历史完整性和 `max_trapped_ratio`，修复后用 `scan-value-trapped` 重跑。不要手工补造区间或套牢量。若服务以 `cannot persist all-market stock metadata` 或共享盘错误退出，先检查 CIFS 与 `busy_timeout`，不要通过改成本地目录绕过。
+
+全市场库本次统一为 schema 4，同时保存 `recommendation` 和四灯三张归档表。升级前停止全市场 timer、正在写全市场库的 CLI 以及主服务并完整备份；由新二进制的 `sync-all`、`four-light-all` 或其他全市场写入口事务迁移，`init` 不负责该库。迁移按表和列区分主干 schema 2（推荐快照）与旧四灯 schema 2（`unknown` 列），并支持 schema 1 和旧四灯 schema 3，保留已有行情、推荐和四灯记录。A 股只读入口要求完成迁移；港股库仍使用独立 schema 3。回滚前停止所有写入并恢复升级前完整备份，不能用旧二进制直接打开 schema 4。
+
+四灯计算失败不会回滚已保存行情或覆盖上次成功归档。验收还需确认 `four_light_run` 最新记录为 `complete`，当天 `four_light_daily` 数量与活跃股票数一致。可用只读 SQL 抽查：
+
+```sql
+SELECT as_of, status, total, ready, all_red, first_all_red, continuing_all_red, exit_all_red,
+       state_unknown, transition_unknown
+FROM four_light_run ORDER BY started_at DESC LIMIT 3;
+SELECT lifecycle, COUNT(*) FROM four_light_daily
+WHERE as_of = (SELECT MAX(as_of) FROM four_light_daily)
+GROUP BY lifecycle ORDER BY lifecycle;
+```
+
+若服务以 `cannot persist all-market stock metadata` 或共享盘错误退出，先检查 CIFS 与 `busy_timeout`，不要通过改成本地目录绕过。若同步成功但 `four-light-all` 失败，保留 `sync_run` 成功记录，排查 `four_light_run.error_kind`、日志和数据库 schema 4；修复后可在停止该 timer 的情况下手动重跑同一 `four-light-all`，成功重跑会事务替换当日快照。主网页在归档数据库晚于服务创建时不会永久返回 503，会在后续 `/api/four-light` 请求中重试只读打开；若持续失败，再检查 schema 版本、文件权限和 CIFS 可见性。
+
+`state_unknown` 是当日四盏灯本身无法判断的数量；`transition_unknown` 还包括当日灯色已知但上一交易日缺失、因而无法判断首次/持续/退出的股票。两者都是研究数据质量指标，不能当作退出共振或通过。
 
 港股通股票日线由 `stock-watcher-hk-market.timer` 在交易日 `18:50` 触发 `sync-hk-connect`，写入独立 `<data_dir>/hk-market.db`，使用独立 `.hk-market.lock`，可与主服务和全市场任务并行。该 unit 同样固定生产数据目录、CIFS 校验和独立日志目录，并把腾讯请求间隔固定为 `1s`，避免 350～500ms 高频请求触发 501；首次执行会保存当前约 667 只港股通股票的十年不复权日线和分析窗口前复权日线。完整同步后还会按 A 股日线趋势门槛独立生成港股通观察快照，写入 `recommendation` 表；`sync-hk-connect` 不直接发送消息，主 `stock-watcher.service` 的 `run` 在下一轮 Cycle 读取快照并投递到 `hk_connect`，所以升级后必须替换并重启主服务，只重启 timer 不会推送港股稿。新浪名单先按腾讯证券类型剔除 ETF/产品；若腾讯类型请求失败，会尝试东方财富股票板，不能用未分类的新浪 698 条名单直接写入。QFQ 接口对无复权因子的股票可能返回 `day`，此时同日 OHLCV 与原始日线一致，数据库按 `adjust=qfq`、`data_field=day` 保存，不能据此判定同步失败。腾讯复权端点在请求 1000 行时可能返回 1001 行，客户端允许这一行上浮并在窗口裁剪时丢弃窗口外记录。
 
@@ -64,21 +81,6 @@ PY
 ```
 
 若 `sync-hk-connect` 报 `request_failed_status` 或 `missing_or_invalid_hk_daily_rows`，先确认腾讯日线端点和类型端点可用，再原命令续跑；`stock_sync` 失败记录会重试，已完成股票会跳过。若报 `history_start_incomplete`，必须核对上市日期或上游实际历史，不能把请求了十年当成已验证十年完整性。若当前尚未安装 timer，只能写“CLI/本地验证通过，部署后未验证”，不能宣称线上已按日更新。
-
-四灯计算失败不会回滚已保存行情或覆盖上次成功归档。验收还需确认 `four_light_run` 最新记录为 `complete`，当天 `four_light_daily` 数量与活跃股票数一致。可用只读 SQL 抽查：
-
-```sql
-SELECT as_of, status, total, ready, all_red, first_all_red, continuing_all_red, exit_all_red,
-       state_unknown, transition_unknown
-FROM four_light_run ORDER BY started_at DESC LIMIT 3;
-SELECT lifecycle, COUNT(*) FROM four_light_daily
-WHERE as_of = (SELECT MAX(as_of) FROM four_light_daily)
-GROUP BY lifecycle ORDER BY lifecycle;
-```
-
-若服务以 `cannot persist all-market stock metadata` 或共享盘错误退出，先检查 CIFS 与 `busy_timeout`，不要通过改成本地目录绕过。若同步成功但 `four-light-all` 失败，保留 `sync_run` 成功记录，排查 `four_light_run.error_kind`、日志和数据库 schema 3；修复后可在停止该 timer 的情况下手动重跑同一 `four-light-all`，成功重跑会事务替换当日快照。主网页在归档数据库晚于服务创建时不会永久返回 503，会在后续 `/api/four-light` 请求中重试只读打开；若持续失败，再检查 schema 版本、文件权限和 CIFS 可见性。
-
-`state_unknown` 是当日四盏灯本身无法判断的数量；`transition_unknown` 还包括当日灯色已知但上一交易日缺失、因而无法判断首次/持续/退出的股票。两者都是研究数据质量指标，不能当作退出共振或通过。
 
 精排线上验收至少检查：`systemctl list-timers stock-watcher-secondstage.timer`、当日 `state/secondstage/<model>/<as_of>.json` 四份文件均存在、`/api/reports?as_of=<date>` 中 `second_stage.degraded=false`、精排稿只在初筛/主报告之后发送。若 `journalctl -u stock-watcher-secondstage.service` 显示模型目录、Python 依赖或 CIFS 挂载错误，先修复离线生成链；不要把缺失 artifact 误判为 Go 精排算法失败。
 

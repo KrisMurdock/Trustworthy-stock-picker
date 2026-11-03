@@ -92,7 +92,7 @@ func snapshotTestDatabase(t *testing.T, version int, edits string) (string, Mani
 }
 
 func TestSnapshotSchemasBoundsAndReadOnly(t *testing.T) {
-	for _, version := range []int{1, 2, 3} {
+	for _, version := range []int{1, 2, 3, 4} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path, manifest := snapshotTestDatabase(t, version, "")
 			source, err := OpenSnapshot(context.Background(), path, manifest)
@@ -136,7 +136,7 @@ func TestSnapshotRejectsUnsafeInputs(t *testing.T) {
 	path, manifest := snapshotTestDatabase(t, 1, "")
 	badHash := manifest
 	badHash.DatabaseSHA256 = strings.Repeat("a", 64)
-	badVersion, versionManifest := snapshotTestDatabase(t, 4, "")
+	badVersion, versionManifest := snapshotTestDatabase(t, 5, "")
 	walPath, walManifest := snapshotTestDatabase(t, 1, "PRAGMA journal_mode=WAL")
 	link := filepath.Join(t.TempDir(), "link.db")
 	if err := os.Symlink(path, link); err != nil {
@@ -147,7 +147,7 @@ func TestSnapshotRejectsUnsafeInputs(t *testing.T) {
 		manifest         Manifest
 	}{
 		{"hash", path, "SHA256", badHash},
-		{"schema", badVersion, "schema 4", versionManifest},
+		{"schema", badVersion, "schema 5", versionManifest},
 		{"wal", walPath, "WAL", walManifest},
 		{"missing", path + ".missing", "no such file", manifest},
 		{"symlink", link, "regular file", manifest},

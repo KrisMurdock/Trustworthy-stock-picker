@@ -85,3 +85,25 @@ func TestFourLightAllCLIWritesWholeMarketArchive(t *testing.T) {
 		t.Fatalf("summary = %+v, %v", summary, err)
 	}
 }
+
+func TestFourLightAllCLIFlagsRemainIndependentFromHKSync(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"four-light-all", "-timeout", "59s"}, "between 1m and 72h"},
+		{[]string{"four-light-all", "-timeout", "73h"}, "between 1m and 72h"},
+		{[]string{"four-light-all", "-full"}, "full is supported by sync-all and sync-hk-connect"},
+		{[]string{"four-light-all", "-workers", "4"}, "workers requires"},
+		{[]string{"four-light-all", "-codes", "sz000001"}, "codes requires"},
+		{[]string{"sync-hk-minutes", "-timeout", "61m"}, "at most 1h"},
+		{[]string{"sync-hk-connect", "-timeout", "59m"}, "between 1h and 72h"},
+		{[]string{"sync-all", "-timeout", "59m"}, "between 1h and 72h"},
+	} {
+		t.Run(strings.Join(tc.args, "_"), func(t *testing.T) {
+			if err := run(tc.args); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("run(%v) = %v, want %q", tc.args, err, tc.want)
+			}
+		})
+	}
+}
