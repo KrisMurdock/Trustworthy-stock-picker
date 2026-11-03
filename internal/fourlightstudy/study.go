@@ -121,10 +121,15 @@ func Analyze(ctx context.Context, manifest Manifest, source Source, emit func(Ev
 // observer sees every current-state-known stock/date, including the baseline.
 // It cannot change selection or cause unknown future outcomes to be discarded.
 func analyzeWithObserver(ctx context.Context, manifest Manifest, source Source, emit, observer func(Event) error) (Report, error) {
-	return analyzeObserved(ctx, manifest, source, emit, observer, false)
+	return analyzeObserved(ctx, manifest, source, emit, observer, studyFeatures{})
 }
 
-func analyzeObserved(ctx context.Context, manifest Manifest, source Source, emit, observer func(Event) error, triggerTiming bool) (Report, error) {
+type studyFeatures struct {
+	triggerTiming bool
+	priceEpisodes bool
+}
+
+func analyzeObserved(ctx context.Context, manifest Manifest, source Source, emit, observer func(Event) error, features studyFeatures) (Report, error) {
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
 	}
@@ -215,6 +220,13 @@ func analyzeObserved(ctx context.Context, manifest Manifest, source Source, emit
 				return Report{}, fmt.Errorf("study stock %s: %w", stock.Code, err)
 			}
 		}
+		var episodes map[string]PriceEpisodeContext
+		if features.priceEpisodes {
+			episodes, err = AnalyzePriceEpisodes(ctx, pair.Adjusted, manifest.Calendar.Days, manifest.Through)
+			if err != nil {
+				return Report{}, fmt.Errorf("analyze price episodes for %s: %w", stock.Code, err)
+			}
+		}
 		index := sort.Search(len(pair.Adjusted), func(i int) bool { return pair.Adjusted[i].Date >= manifest.From })
 		for _, date := range dates {
 			if err := ctx.Err(); err != nil {
@@ -272,9 +284,16 @@ func analyzeObserved(ctx context.Context, manifest Manifest, source Source, emit
 				if manifest.Version == 2 {
 					event.Board, event.VolumeRatio = board, volumeRatio
 				}
-				if triggerTiming && evidence.AllRed {
+				if features.triggerTiming && evidence.AllRed {
 					trigger := AnalyzeTriggerContext(pair.Adjusted[:index+1], manifest.Calendar.Days, evidence)
 					event.Trigger = &trigger
+				}
+				if features.priceEpisodes && evidence.AllRed {
+					episode, ok := episodes[date]
+					if !ok {
+						return Report{}, fmt.Errorf("missing price episode for %s at %s", stock.Code, date)
+					}
+					event.Episode = &episode
 				}
 				if observer != nil {
 					if err := observer(event); err != nil {

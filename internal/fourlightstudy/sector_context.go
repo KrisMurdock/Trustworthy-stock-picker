@@ -216,10 +216,10 @@ func (s sectorFrozenSource) Stocks(ctx context.Context) ([]config.Stock, error) 
 // AnalyzeSectorContext adds an independent research report. The returned base
 // report is the unchanged v2 evaluation, and no legacy gate or light is edited.
 func AnalyzeSectorContext(ctx context.Context, m Manifest, source Source, sectors SectorSnapshot, emit func(Event) error) (Report, *SectorContextReport, error) {
-	return analyzeSectorObserved(ctx, m, source, sectors, emit, nil, false)
+	return analyzeSectorObserved(ctx, m, source, sectors, emit, nil, studyFeatures{})
 }
 
-func analyzeSectorObserved(ctx context.Context, m Manifest, source Source, sectors SectorSnapshot, emit, extraObserver func(Event) error, triggerTiming bool) (Report, *SectorContextReport, error) {
+func analyzeSectorObserved(ctx context.Context, m Manifest, source Source, sectors SectorSnapshot, emit, extraObserver func(Event) error, features studyFeatures) (Report, *SectorContextReport, error) {
 	if err := ctx.Err(); err != nil {
 		return Report{}, nil, err
 	}
@@ -303,7 +303,7 @@ func analyzeSectorObserved(ctx context.Context, m Manifest, source Source, secto
 		}
 		return nil
 	}
-	base, err := analyzeObserved(ctx, m, sectorFrozenSource{Source: source, stocks: stocks}, nil, observer, triggerTiming)
+	base, err := analyzeObserved(ctx, m, sectorFrozenSource{Source: source, stocks: stocks}, nil, observer, features)
 	if err != nil {
 		return Report{}, nil, err
 	}

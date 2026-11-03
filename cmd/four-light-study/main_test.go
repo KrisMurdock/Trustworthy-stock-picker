@@ -589,3 +589,76 @@ func TestRunTriggerTimingOptInAndCompatibility(t *testing.T) {
 		t.Fatal("failed report left events")
 	}
 }
+
+func TestRunPriceEpisodesOptInAndFailures(t *testing.T) {
+	manifestPath, databasePath, m := cliFixture(t, 3, false)
+	m.Version, m.WaveModel, m.PairingPolicy = 2, strategy.UpwardWaveNoDrawdownModel, fourlightstudy.PairingPolicy
+	writeCLIManifest(t, manifestPath, m)
+	classification, digest := cliClassification(t)
+	base := []string{"-manifest", manifestPath, "-database", databasePath}
+	if err := run(context.Background(), append(append([]string{}, base...), "-price-episodes"), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "requires classification") {
+		t.Fatal("accepted missing classification", err)
+	}
+	args := append(base, "-classification", classification, "-classification-sha256", digest, "-trigger-timing")
+	var old, new bytes.Buffer
+	if err := run(context.Background(), args, &old, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	events := filepath.Join(t.TempDir(), "events.jsonl")
+	// price-episodes alone must include trigger-timing, without requiring both flags.
+	args = append(args[:len(args)-1], "-price-episodes", "-events", events)
+	if err := run(context.Background(), args, &new, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var a, b output
+	if err := json.Unmarshal(old.Bytes(), &a); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(new.Bytes(), &b); err != nil {
+		t.Fatal(err)
+	}
+	if a.PriceEpisodes != nil || b.PriceEpisodes == nil || b.PriceEpisodes.Status != "complete" {
+		t.Fatal("missing optional episode report")
+	}
+	b.PriceEpisodes = nil
+	aj, _ := json.Marshal(a)
+	bj, _ := json.Marshal(b)
+	if !bytes.Equal(aj, bj) {
+		t.Fatal("episode option changed previous reports")
+	}
+	data, err := os.ReadFile(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
+		var e fourlightstudy.Event
+		if err := json.Unmarshal(row, &e); err != nil {
+			t.Fatal(err)
+		}
+		if e.Episode == nil || e.Trigger == nil || e.Context == nil {
+			t.Fatal("missing episode context")
+		}
+	}
+	if err := run(context.Background(), args, io.Discard, io.Discard); err == nil {
+		t.Fatal("overwrote existing events")
+	}
+	for _, mode := range []string{"stdout", "timeout"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			badArgs := append([]string{}, args...)
+			badArgs[len(badArgs)-1] = filepath.Join(dir, "failed.jsonl")
+			var writer io.Writer = failingWriter{}
+			if mode == "timeout" {
+				badArgs = append(badArgs, "-timeout", "1ns")
+				writer = io.Discard
+			}
+			if err := run(context.Background(), badArgs, writer, io.Discard); err == nil {
+				t.Fatal("accepted failure")
+			}
+			files, _ := os.ReadDir(dir)
+			if len(files) != 0 {
+				t.Fatal("failure left published/temporary events")
+			}
+		})
+	}
+}

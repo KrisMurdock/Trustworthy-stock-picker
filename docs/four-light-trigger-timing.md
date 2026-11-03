@@ -40,3 +40,5 @@ four-light-study -manifest manifest.json -database all-market.frozen.db \
 ```
 
 省略新参数时保持原行为。输入、摘要、版本、错误、取消、超时及事件原子发布沿用[全市场研究](four-light-study.md)和[行业对照](four-light-sector-context.md)的契约。工具离线运行，不修改行情、分类或实验档案。
+
+价格三灯连续全红段内的首次与再次触发诊断见[价格段研究](four-light-price-episodes.md)，通过 `-price-episodes` 单独启用。
