@@ -28,6 +28,9 @@ func Builtin() Config {
 	c.HKConnect.Enabled = true
 	c.HKConnect.PushEnabled = true
 	c.HKConnect.TopN = 10
+	c.LowValuation.Enabled = true
+	c.LowValuation.PushEnabled = true
+	c.LowValuation.TopN = 20
 	c.Feishu.Enabled = true
 	c.Predictor.Enabled = true
 	c.Predictor.PushEnabled = true

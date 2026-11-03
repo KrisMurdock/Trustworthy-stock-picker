@@ -32,6 +32,7 @@ type Config struct {
 	FirstStage     FirstStage     `yaml:"first_stage"`
 	SecondStage    SecondStage    `yaml:"second_stage"`
 	HKConnect      HKConnect      `yaml:"hk_connect"`
+	LowValuation   LowValuation   `yaml:"low_valuation"`
 	Predictor      Predictor      `yaml:"predictor"`
 	LLM            LLM            `yaml:"llm"`
 	Market         Market         `yaml:"market"`
@@ -121,6 +122,7 @@ const (
 	NotifyRouteFirstStage         = "first_stage"
 	NotifyRouteSecondStage        = "second_stage"
 	NotifyRouteHKConnect          = "hk_connect"
+	NotifyRouteLowValuation       = "low_valuation"
 	NotifyRoutePremarketExecution = "premarket_execution"
 	NotifyRoutePredictorRealtime  = "predictor_realtime"
 	NotifyRoutePredictorDayrange  = "predictor_dayrange"
@@ -134,6 +136,7 @@ var notifyRoutes = map[string]bool{
 	NotifyRouteFirstStage:         true,
 	NotifyRouteSecondStage:        true,
 	NotifyRouteHKConnect:          true,
+	NotifyRouteLowValuation:       true,
 	NotifyRoutePremarketExecution: true,
 	NotifyRoutePredictorRealtime:  true,
 	NotifyRoutePredictorDayrange:  true,
@@ -182,6 +185,7 @@ func Defaults() Config {
 	c.FirstStage = DefaultFirstStage()
 	c.SecondStage = DefaultSecondStage()
 	c.HKConnect = DefaultHKConnect()
+	c.LowValuation = DefaultLowValuation()
 	c.Predictor = DefaultPredictor()
 	c.Web.Enabled = true
 	c.Web.Listen = "127.0.0.1:8080"
@@ -379,6 +383,9 @@ func (c Config) Validate() error {
 	if err := c.HKConnect.Validate(); err != nil {
 		return err
 	}
+	if err := c.LowValuation.Validate(); err != nil {
+		return err
+	}
 	if err := c.Market.Validate(); err != nil {
 		return err
 	}
@@ -520,7 +527,7 @@ func (c Config) Validate() error {
 				return errors.New("enabled Feishu requires a valid HTTPS custom bot webhook")
 			}
 		case "wechat":
-			if !c.Wechat.Enabled || channel.Name != WechatDraftChannelName || !notifyRouteMatches(channel.Route, NotifyRouteSecondStage) || !notifyRouteMatches(channel.Route, NotifyRouteHKConnect) || !notifyRouteMatches(channel.Route, NotifyRouteWechatPremarket) {
+			if !c.Wechat.Enabled || channel.Name != WechatDraftChannelName || !notifyRouteMatches(channel.Route, NotifyRouteSecondStage) || !notifyRouteMatches(channel.Route, NotifyRouteHKConnect) || !notifyRouteMatches(channel.Route, NotifyRouteLowValuation) || !notifyRouteMatches(channel.Route, NotifyRouteWechatPremarket) {
 				return errors.New("enabled WeChat draft channel is invalid")
 			}
 		default:
@@ -556,7 +563,7 @@ func (c Config) NotificationChannels() []NotifyChannel {
 		out = append(out, NotifyChannel{Name: "feishu-main", Type: "feishu", Enabled: true, Webhook: c.Feishu.Webhook, Secret: c.Feishu.Secret})
 	}
 	if c.Wechat.Enabled {
-		out = append(out, NotifyChannel{Name: WechatDraftChannelName, Type: "wechat", Enabled: true, Route: NotifyRouteSecondStage + "," + NotifyRouteHKConnect + "," + NotifyRouteWechatPremarket})
+		out = append(out, NotifyChannel{Name: WechatDraftChannelName, Type: "wechat", Enabled: true, Route: NotifyRouteSecondStage + "," + NotifyRouteHKConnect + "," + NotifyRouteLowValuation + "," + NotifyRouteWechatPremarket})
 	}
 	return out
 }

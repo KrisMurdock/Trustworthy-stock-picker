@@ -15,6 +15,12 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/storage"
 )
 
+type syncAllOutput struct {
+	allmarket.Result
+	LowValuation      *lowValuationSummary `json:"low_valuation,omitempty"`
+	LowValuationError string               `json:"low_valuation_error,omitempty"`
+}
+
 func runSyncAll(ctx context.Context, c config.Config, log *logging.Logger, asOf string, full bool, workers int, timeout time.Duration, codes string) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -38,11 +44,28 @@ func runSyncAll(ctx context.Context, c config.Config, log *logging.Logger, asOf 
 	if err != nil {
 		return err
 	}
-	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
-		return err
-	}
+	output := syncAllOutput{Result: result}
 	if result.Status != "complete" {
+		if err := json.NewEncoder(os.Stdout).Encode(output); err != nil {
+			return err
+		}
 		return errors.New("all-market synchronization is incomplete; rerun sync-all to resume")
+	}
+	if c.LowValuation.Enabled && strings.TrimSpace(codes) == "" {
+		recommendation, scanErr := scanLowValuationWithDB(ctx, c, log, db, result.AsOf, workers, time.Now())
+		if scanErr != nil {
+			output.LowValuationError = scanErr.Error()
+			log.Warn("Low valuation recommendation generation failed", "as_of", result.AsOf, "reason", scanErr.Error())
+		} else {
+			summary := lowValuationSummaryOf(recommendation)
+			output.LowValuation = &summary
+			log.Info("Low valuation recommendation generated", "as_of", recommendation.AsOf, "target", recommendation.Target,
+				"id", recommendation.ID, "priced", recommendation.Priced, "valued", recommendation.Valued,
+				"eligible", recommendation.Eligible, "selected", recommendation.Selected)
+		}
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(output); err != nil {
+		return err
 	}
 	return nil
 }

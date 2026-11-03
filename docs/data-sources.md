@@ -32,6 +32,14 @@ Token 仅从 `TUSHARE_TOKEN` 读取。未配置时跳过 Tushare；若它是唯�
 
 可使用 `STOCK_WATCHER_MARKET_*_ENDPOINT` 和 `STOCK_WATCHER_MARKET_BAOSTOCK_ADDRESS` 覆盖端点。HTTP 端点只接受 HTTPS，回环地址允许 HTTP 供本地测试；禁止 URL 内嵌凭证、查询参数和重定向。所有响应体、TCP 解压和页数都有大小上限，供应商原始错误正文不写日志。
 
+### 全市场财务估值附加来源
+
+- 收盘价：读取 `all-market.db` 中 `daily_bar.adjust='none'` 的最新日线，并要求 `trade_date` 等于扫描信号日；前复权价格不参与财务估值。
+- 财务快照：逐只股票请求新浪 `https://finance.sina.com.cn/realstock/company/<code>/jsvar.js`，只解析 TTM EPS、前一年 EPS、每股净资产、四季度净利润、总股本和上市状态。请求受 `market.request_interval` 全局限速，全市场扫描通常需要数十分钟。
+- 行业快照：配置 `TUSHARE_TOKEN` 后调用 Tushare `stock_basic` 的 `list_status=L`，读取 `ts_code,name,industry`，仅用于区分金融/非金融估值边界。该接口失败或 Token 缺失时仍可扫描，但文章必须展示行业覆盖率下降；行业标签不是历史 PIT 数据。
+
+该链路是财务研究观察，不是行情回退或推荐门槛；方法和排名见[全市场低估值观察](low-valuation.md)。
+
 ## 回退与数据一致性
 
 1. 同一窗口依次尝试来源，每个来源尝试一次。单请求超时由 `request_timeout` 控制，每源间隔由 `market.request_interval` 控制；多页请求同时受 `market.attempt_timeout` 和调用者取消信号控制。冷却中的来源暂时跳过，详见下文。

@@ -13,6 +13,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/fairvalue"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkrecommend"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/lowvaluation"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/marketcontext"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/notify"
@@ -58,16 +59,17 @@ type Monitor struct {
 	// MarketContextSync synchronizes index and sector-board snapshots together
 	// with the stock pool. A failure is logged but never blocks stock data or
 	// report publication; the context database records its own partial status.
-	MarketContextSync  func(context.Context, string) (marketcontext.SyncResult, error)
-	DayRangeForecasts  func(context.Context, string, []string) (map[string]selection.DayRangeForecast, error)
-	HKRecommendations  func(context.Context) (hkrecommend.Recommendation, error)
-	TurnoverSource     TurnoverSource
-	FairValues         FairValueSource
-	Channels           []notify.Channel
-	Log                *logging.Logger
-	Calendar           *calendar.Calendar
-	Now                func() time.Time
-	secondStagePending bool
+	MarketContextSync           func(context.Context, string) (marketcontext.SyncResult, error)
+	DayRangeForecasts           func(context.Context, string, []string) (map[string]selection.DayRangeForecast, error)
+	HKRecommendations           func(context.Context) (hkrecommend.Recommendation, error)
+	LowValuationRecommendations func(context.Context) (lowvaluation.Recommendation, error)
+	TurnoverSource              TurnoverSource
+	FairValues                  FairValueSource
+	Channels                    []notify.Channel
+	Log                         *logging.Logger
+	Calendar                    *calendar.Calendar
+	Now                         func() time.Time
+	secondStagePending          bool
 }
 
 type FairValueSource interface {
@@ -1173,13 +1175,18 @@ func (m *Monitor) Cycle(ctx context.Context) error {
 		m.Log.Warn("HK Connect recommendation enqueue failed", "reason", hkErr.Error())
 		deliveryErr = errors.Join(deliveryErr, hkErr)
 	}
+	lowQueued, lowErr := m.enqueueLowValuation(ctx, &state)
+	if lowErr != nil {
+		m.Log.Warn("Low valuation recommendation enqueue failed", "reason", lowErr.Error())
+		deliveryErr = errors.Join(deliveryErr, lowErr)
+	}
 	now := m.Now()
 	asof, target, due, dueErr := m.Calendar.Due(now, m.Config.Daily.RunAt)
 	if dueErr != nil {
 		return errors.Join(deliveryErr, dueErr)
 	}
 	if !due {
-		if hkQueued {
+		if hkQueued || lowQueued {
 			deliveryErr = errors.Join(deliveryErr, m.flushState(ctx, &state))
 		}
 		return deliveryErr

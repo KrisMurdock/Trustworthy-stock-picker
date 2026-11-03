@@ -72,6 +72,9 @@
 | STOCK_WATCHER_HK_CONNECT_ENABLED | true | 完整同步港股通日线后，是否生成独立日线规则观察快照；不复用 A 股初筛、精排或成交模拟 |
 | STOCK_WATCHER_HK_CONNECT_PUSH_ENABLED | true | 是否由 `run`/`once` 读取最新港股快照并投递到 `hk_connect` 路由；依赖 `hk_connect.enabled` |
 | STOCK_WATCHER_HK_CONNECT_TOP_N | 10 | 港股通观察稿最多展示的候选数，允许 1～20；趋势分降序、同分按代码排序 |
+| STOCK_WATCHER_LOW_VALUATION_ENABLED | true | 完整全市场同步后，是否用不复权收盘价和财务研究区间生成低估值快照；不复用初筛、精排或成交模拟 |
+| STOCK_WATCHER_LOW_VALUATION_PUSH_ENABLED | true | 是否由 `run`/`once` 读取低估值快照并投递到 `low_valuation` 路由；依赖 `low_valuation.enabled` |
+| STOCK_WATCHER_LOW_VALUATION_TOP_N | 20 | 全市场低估值文章最多展示的候选数，允许 1～50；距区间下沿折价升序、同分按中枢空间降序和代码排序 |
 | STOCK_WATCHER_STRUCTURE_GUARD_MODE | shadow | shadow 只观察；enforce 才进入可执行推荐 |
 | STOCK_WATCHER_SELECTION_ENABLED | true | 是否启用趋势筛选 |
 | STOCK_WATCHER_SELECTION_MIN_SCORE | 70 | 趋势最低分 |
@@ -91,6 +94,8 @@
 `second_stage.push_enabled=true` 时，同一数据日期会生成一份可直接复制的公众号纯文本稿，包含公众号标题、正文、精排名单、逐只数据解读、行业分布、使用边界和风险提示。稿件以纯文本飞书消息投递到独立的 `second_stage` 路由，不会混入 `selection` 的日报卡片或 `first_stage` 的初筛卡。启用微信公众号草稿后，同一份结构化文章还会写入公众号草稿箱，但仍不会自动发布或群发。精排降级时标题和正文都会明确标注，未通过第一层或没有候选时不生成文章。文章与精排报告共享稳定事件 ID 和 T+1 09:30 过期时间，重启不会重复发送。
 
 港股通观察稿独立于 A 股第一层初筛和第二层精排：`sync-hk-connect` 完整同步后，按收盘价 > MA20、MA5 > MA10 > MA20、量比、MACD DIF > DEA、RSI14 50～80、日涨跌幅 -3%～7% 和 `selection.min_score` 筛选，最多保留 `hk_connect.top_n` 只，并把快照写入 `hk-market.db` 的 `recommendation` 表。主 `run`/`once` 读取最新快照后生成《港股通精选》公众号稿，与 A 股文章一同进入投递账本，但使用独立事件 ID `"<推荐ID>:hk-connect:article"` 和 `hk_connect` 路由，目标港股交易日 09:30 过期。稿件明确说明港股没有 A 股式涨跌停、T+0 制度不参与成交模拟，机会分不是成功概率；港股文件缺失、加载失败或推荐过期不会阻塞 A 股循环。
+
+全市场低估值稿独立于股池、初筛和精排：`sync-all` 完整同步且未使用 `-codes` 时，读取每只股票信号日的不复权收盘价，用新浪 TTM 财务快照计算 v1 财务研究区间，只保留 `close < lower` 的股票，并按 `(lower - close) / lower` 升序排名，最多保留 `low_valuation.top_n` 只，保存到 `all-market.db` 的 `recommendation` 表。主 `run`/`once` 读取最新快照后生成《全市场低估值股》公众号稿，使用独立事件 ID `"<推荐ID>:low_valuation"` 和 `low_valuation` 路由，下一交易日 09:30 过期。行业快照来自 Tushare `stock_basic`，仅用于金融/非金融估值边界；行业覆盖率会写入文章。已定价股票不少于 100 只但可用估值低于 50% 时不保存快照，避免上游整体故障生成“没有低估值股”的错误文章。日线已同步后可用 `scan-low-valuation` 单独重跑，详见[全市场低估值观察](low-valuation.md)。
 
 ## 同步、日历与行情源
 
@@ -211,7 +216,7 @@
 | WECHAT_THUMB_MEDIA_ID | 空 | 可选封面永久素材 media_id；留空时首次发送自动上传内置封面 |
 | STOCK_WATCHER_WECHAT_AUTHOR | 空 | 可选草稿作者名，最多 16 个字符 |
 | TUSHARE_TOKEN | 空 | Tushare Token；缺失时跳过 Tushare |
-命名通道使用 `name|type|enabled|webhook_env|secret_env|route`，条目之间用 `;` 分隔；命名通道的 `type` 当前只支持 `feishu`，微信公众号草稿由 `STOCK_WATCHER_WECHAT_ENABLED` 自动创建为内置 `wechat-draft` 渠道。`route` 可选 `all`、`selection`、`first_stage`、`second_stage`、`hk_connect`、`premarket_execution`、`predictor_realtime`、`predictor_dayrange`、`wechat_premarket`；多个路由可用英文逗号分隔，留空表示兼容旧配置并向所有阶段广播：
+命名通道使用 `name|type|enabled|webhook_env|secret_env|route`，条目之间用 `;` 分隔；命名通道的 `type` 当前只支持 `feishu`，微信公众号草稿由 `STOCK_WATCHER_WECHAT_ENABLED` 自动创建为内置 `wechat-draft` 渠道。`route` 可选 `all`、`selection`、`first_stage`、`second_stage`、`hk_connect`、`low_valuation`、`premarket_execution`、`predictor_realtime`、`predictor_dayrange`、`wechat_premarket`；多个路由可用英文逗号分隔，留空表示兼容旧配置并向所有阶段广播：
 
 ```dotenv
 STOCK_WATCHER_FEISHU_ENABLED=false

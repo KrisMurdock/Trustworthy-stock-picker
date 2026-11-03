@@ -96,6 +96,40 @@ func TestAllMarketReplaceRemovesOldBarsAndRunLifecycle(t *testing.T) {
 	}
 }
 
+func TestAllMarketLatestQuotesUsesUnadjustedCloseAndAsOfSync(t *testing.T) {
+	db, err := OpenAllMarket(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	stock := config.Stock{Code: "sh600000", Name: "测试股票"}
+	adjusted := allMarketHistoryTest(stock.Code, "qfq", "2026-10-28", "2026-10-29", "2026-10-30")
+	if err := db.SaveHistory(ctx, stock, adjusted, true); err != nil {
+		t.Fatal(err)
+	}
+	if quotes, err := db.LatestQuotes(ctx, "2026-10-30"); err != nil || len(quotes) != 0 {
+		t.Fatalf("adjusted-only quotes were treated as valuation prices: %+v, err=%v", quotes, err)
+	}
+	raw := allMarketHistoryTest(stock.Code, "none", "2026-10-28", "2026-10-29", "2026-10-30")
+	if err := db.SaveHistory(ctx, stock, raw, true); err != nil {
+		t.Fatal(err)
+	}
+	quotes, err := db.LatestQuotes(ctx, "2026-10-30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(quotes) != 1 || quotes[0].Code != stock.Code || quotes[0].Name != "测试股票" || quotes[0].PriceDate != "2026-10-30" || quotes[0].Close != 12.5 {
+		t.Fatalf("latest quotes = %+v", quotes)
+	}
+	if _, err := db.LatestQuotes(ctx, "not-a-date"); err == nil {
+		t.Fatal("invalid as-of date was accepted")
+	}
+	if quotes, err := db.LatestQuotes(ctx, "2026-10-31"); err != nil || len(quotes) != 0 {
+		t.Fatalf("quotes without matching raw sync = %+v, err=%v", quotes, err)
+	}
+}
+
 func TestAllMarketRejectsSecondWriterAndMissingView(t *testing.T) {
 	root := t.TempDir()
 	first, err := OpenAllMarket(root, false)

@@ -53,6 +53,18 @@ type AllMarketSync struct {
 	Reason      string    `json:"reason,omitempty"`
 }
 
+// AllMarketQuote is the latest persisted unadjusted close for one full-market
+// stock. The financial valuation model requires an unadjusted price anchor.
+// PriceDate can be older than the requested as-of for a suspended stock; the
+// valuation scanner must reject those rows instead of treating them as fresh.
+type AllMarketQuote struct {
+	Code      string  `json:"code"`
+	Name      string  `json:"name"`
+	PriceDate string  `json:"price_date"`
+	Close     float64 `json:"close"`
+	Volume    float64 `json:"volume_shares"`
+}
+
 type AllMarketRun struct {
 	ID         string    `json:"id"`
 	AsOf       string    `json:"as_of"`
@@ -448,6 +460,52 @@ func (m *AllMarketDB) LastBarDate(ctx context.Context, code, adjust string) (str
 		return "", fs.ErrNotExist
 	}
 	return date.String, nil
+}
+
+// LatestQuotes returns one latest unadjusted close per active stock whose raw
+// synchronization completed for asOf. It does not silently carry a prior
+// as-of snapshot: callers receive the actual bar date and decide whether the
+// stock was suspended or stale.
+func (m *AllMarketDB) LatestQuotes(ctx context.Context, asOf string) ([]AllMarketQuote, error) {
+	if m == nil || m.db == nil {
+		return nil, fs.ErrNotExist
+	}
+	if _, err := time.Parse("2006-01-02", asOf); err != nil {
+		return nil, errors.New("invalid quote as-of date")
+	}
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT st.code, st.name, b.trade_date, b.close_micros, b.volume_shares
+		FROM stock st
+		JOIN stock_sync ss ON ss.code=st.code AND ss.adjust='none' AND ss.as_of=? AND ss.status='ok'
+		JOIN daily_bar b ON b.code=st.code AND b.adjust='none'
+		  AND b.trade_date=(
+			SELECT MAX(b2.trade_date) FROM daily_bar b2
+			WHERE b2.code=st.code AND b2.adjust='none' AND b2.trade_date<=?
+		  )
+		WHERE st.active=1
+		ORDER BY st.code
+	`, asOf, asOf)
+	if err != nil {
+		return nil, errors.New("cannot load all-market quotes")
+	}
+	defer rows.Close()
+	out := []AllMarketQuote{}
+	for rows.Next() {
+		var quote AllMarketQuote
+		var closeMicros int64
+		if err := rows.Scan(&quote.Code, &quote.Name, &quote.PriceDate, &closeMicros, &quote.Volume); err != nil {
+			return nil, errors.New("cannot decode all-market quotes")
+		}
+		if closeMicros <= 0 {
+			return nil, errors.New("all-market quote contains a non-positive close")
+		}
+		quote.Close = float64(closeMicros) / 1_000_000
+		out = append(out, quote)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("cannot read all-market quotes")
+	}
+	return out, nil
 }
 
 func (m *AllMarketDB) LoadBars(ctx context.Context, code, adjust, from, through string) ([]market.Bar, error) {

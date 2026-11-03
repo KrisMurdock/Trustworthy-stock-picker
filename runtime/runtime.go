@@ -20,6 +20,8 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkrecommend"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/intraday"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/lowvaluation"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/lowvaluationstore"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/market"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/marketcontext"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/monitor"
@@ -239,6 +241,11 @@ func New(opts Options) (*Runtime, error) {
 	if cfg.HKConnect.Enabled && cfg.HKConnect.PushEnabled {
 		r.monitor.HKRecommendations = func(loadCtx context.Context) (hkrecommend.Recommendation, error) {
 			return hkconnect.LoadLatestRecommendation(loadCtx, cfg.DataDir, cfg.RequireCIFS)
+		}
+	}
+	if cfg.LowValuation.Enabled && cfg.LowValuation.PushEnabled {
+		r.monitor.LowValuationRecommendations = func(loadCtx context.Context) (lowvaluation.Recommendation, error) {
+			return lowvaluationstore.LoadLatestRecommendation(loadCtx, cfg.DataDir, cfg.RequireCIFS)
 		}
 	}
 	r.turnoverClient = market.NewSohuMetricsClient(20*time.Second, 350*time.Millisecond)
