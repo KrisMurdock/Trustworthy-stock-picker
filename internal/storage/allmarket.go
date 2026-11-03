@@ -22,6 +22,7 @@ const (
 	hkMarketDBName         = "hk-market.db"
 	hkMarketLockName       = ".hk-market.lock"
 	allMarketSchemaVersion = 2
+	hkMarketSchemaVersion  = 3
 	maxRecommendationBytes = 16 << 20
 )
 
@@ -186,10 +187,19 @@ func (m *AllMarketDB) initSchema() error {
 	if err := m.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return errors.New("cannot read " + m.kind + " database version")
 	}
-	if version != 0 && version != 1 && version != allMarketSchemaVersion {
+	schemaVersion := allMarketSchemaVersion
+	if m.dbName == hkMarketDBName {
+		schemaVersion = hkMarketSchemaVersion
+	}
+	if version < 0 || version > schemaVersion {
 		return errors.New("unsupported " + m.kind + " database version")
 	}
-	_, err := m.db.Exec(`
+	tx, err := m.db.Begin()
+	if err != nil {
+		return errors.New("cannot start " + m.kind + " database migration")
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS stock (
 			code TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -246,10 +256,20 @@ func (m *AllMarketDB) initSchema() error {
 			payload BLOB NOT NULL CHECK (length(payload) > 0),
 			PRIMARY KEY (market, as_of)
 		);
-		PRAGMA user_version=2;
 	`)
 	if err != nil {
 		return errors.New("cannot initialize " + m.kind + " database schema")
+	}
+	if m.dbName == hkMarketDBName {
+		if _, err := tx.Exec(hkMinuteSchema); err != nil {
+			return errors.New("cannot initialize HK minute schema")
+		}
+	}
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
+		return errors.New("cannot update " + m.kind + " database version")
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("cannot commit " + m.kind + " database migration")
 	}
 	return nil
 }

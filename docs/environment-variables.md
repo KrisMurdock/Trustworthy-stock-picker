@@ -125,7 +125,7 @@
 | STOCK_WATCHER_MARKET_BAOSTOCK_ADDRESS | public-api.baostock.com:10030 | BaoStock TCP 地址 |
 | STOCK_WATCHER_MARKET_TUSHARE_ENDPOINT | https://api.tushare.pro | Tushare 端点覆盖 |
 | STOCK_WATCHER_MARKET_TUSHARE_TOKEN_ENV | TUSHARE_TOKEN | Tushare Token 所在环境变量名 |
-| STOCK_WATCHER_MARKET_EASTMONEY_ENDPOINT | 东方财富公开端点 | 东方财富日线端点覆盖 |
+| STOCK_WATCHER_MARKET_EASTMONEY_ENDPOINT | 东方财富公开端点 | 东方财富日线及港股通分钟端点覆盖；启用港股分钟时即使日线源列表不含东方财富也会校验该端点 |
 | STOCK_WATCHER_MARKET_LISTING_ENDPOINT | 新浪发行资料端点 | 上市日期查询端点覆盖 |
 | STOCK_WATCHER_MARKET_UNIVERSE_ENDPOINT | 新浪沪深 A 股列表端点 | `sync-all` 全市场证券发现端点覆盖 |
 | STOCK_WATCHER_MARKET_UNIVERSE_COUNT_ENDPOINT | 新浪沪深 A 股总数端点 | `sync-all` 分页完整性校验端点覆盖 |
@@ -162,6 +162,21 @@
 | STOCK_WATCHER_INTRADAY_WORKERS | 3 | 分钟采集并发数 |
 | STOCK_WATCHER_INTRADAY_CALIBRATION_AT | 15:10 | 每日分钟数据校准时间 |
 | STOCK_WATCHER_INTRADAY_TENCENT_ENDPOINT | 腾讯分钟端点 | 分钟行情端点覆盖 |
+
+港股通分钟配置独立于 A 股分钟开关，默认关闭：
+
+| 变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| STOCK_WATCHER_HK_INTRADAY_ENABLED | false | 启用港股通 5 分钟采集与手工补采 |
+| STOCK_WATCHER_HK_INTRADAY_POLL_INTERVAL | 5m | 轮询间隔，允许 5m～30m |
+| STOCK_WATCHER_HK_INTRADAY_REQUEST_INTERVAL | 350ms | 全部港股分钟 worker 共用的请求间隔，允许 350ms～10s |
+| STOCK_WATCHER_HK_INTRADAY_WORKERS | 3 | 并发数，允许 1～8 |
+| STOCK_WATCHER_HK_INTRADAY_CYCLE_TIMEOUT | 15m | 常驻采集单轮时限，允许 5m～1h |
+| STOCK_WATCHER_HK_INTRADAY_VALID_FROM | 2026-01-01 | 港股半日市配置覆盖起始日 |
+| STOCK_WATCHER_HK_INTRADAY_VALID_THROUGH | 2026-12-31 | 港股半日市配置覆盖结束日 |
+| STOCK_WATCHER_HK_INTRADAY_EARLY_CLOSES | 2026-02-16,2026-12-24,2026-12-31 | 逗号分隔的半日市日期，空串表示覆盖区间内没有半日市 |
+
+港股交易日由恒生指数日线确认，不使用 A 股 `STOCK_WATCHER_CALENDAR_HOLIDAYS`。使用 2026 年以外的数据前，须核实并同时扩展港股覆盖区间和全部半日市日期；读取既有历史时也须覆盖其日期。缺失、超出覆盖或与已保存时段冲突时港股分钟 API 返回 503，不能把未知日历当普通交易日。手动命令的 `-timeout` 单独设置，默认 15m、最大 1h；上游单次请求使用 `STOCK_WATCHER_REQUEST_TIMEOUT`。完整补采、缺口和回滚规则见[港股通分钟数据](data-sources.md#港股通分钟数据sync-hk-minutes)。
 
 ## 5 分钟预测
 

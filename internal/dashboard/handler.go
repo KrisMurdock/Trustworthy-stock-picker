@@ -259,6 +259,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, r, http.StatusOK, history)
+	case "/api/hk-intraday":
+		h.serveHKMinutes(w, r)
 	case "/api/reports":
 		query, err := parseReportDate(r)
 		if err != nil {

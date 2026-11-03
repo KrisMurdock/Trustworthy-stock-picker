@@ -57,6 +57,11 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_INTRADAY_REQUEST_INTERVAL":        &c.Intraday.RequestInterval,
 		"STOCK_WATCHER_INTRADAY_CALIBRATION_AT":          &c.Intraday.CalibrationAt,
 		"STOCK_WATCHER_INTRADAY_TENCENT_ENDPOINT":        &c.Intraday.TencentEndpoint,
+		"STOCK_WATCHER_HK_INTRADAY_POLL_INTERVAL":        &c.HKIntraday.PollInterval,
+		"STOCK_WATCHER_HK_INTRADAY_REQUEST_INTERVAL":     &c.HKIntraday.RequestInterval,
+		"STOCK_WATCHER_HK_INTRADAY_CYCLE_TIMEOUT":        &c.HKIntraday.CycleTimeout,
+		"STOCK_WATCHER_HK_INTRADAY_VALID_FROM":           &c.HKIntraday.ValidFrom,
+		"STOCK_WATCHER_HK_INTRADAY_VALID_THROUGH":        &c.HKIntraday.ValidThrough,
 		"STOCK_WATCHER_PREDICTOR_TRAIN_AT":               &c.Predictor.TrainAt,
 		"STOCK_WATCHER_PREDICTOR_WRITE_MODE":             &c.Predictor.WriteMode,
 		"STOCK_WATCHER_DAYRANGE_TRAIN_AT":                &c.DayRange.TrainAt,
@@ -74,6 +79,7 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_FEISHU_ENABLED":             &c.Feishu.Enabled,
 		"STOCK_WATCHER_WECHAT_ENABLED":             &c.Wechat.Enabled,
 		"STOCK_WATCHER_INTRADAY_ENABLED":           &c.Intraday.Enabled,
+		"STOCK_WATCHER_HK_INTRADAY_ENABLED":        &c.HKIntraday.Enabled,
 		"STOCK_WATCHER_STRATEGY_ENABLED":           &c.Strategy.Enabled,
 		"STOCK_WATCHER_SELECTION_ENABLED":          &c.Selection.Enabled,
 		"STOCK_WATCHER_CONTEXT_ENABLED":            &c.MarketContext.Enabled,
@@ -117,6 +123,7 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_SYNC_STATUS_REFRESH_DAYS":    &c.Sync.StatusRefreshDays,
 		"STOCK_WATCHER_MARKET_FAILURE_THRESHOLD":    &c.Market.FailureThreshold,
 		"STOCK_WATCHER_INTRADAY_WORKERS":            &c.Intraday.Workers,
+		"STOCK_WATCHER_HK_INTRADAY_WORKERS":         &c.HKIntraday.Workers,
 		"STOCK_WATCHER_CONTEXT_WORKERS":             &c.MarketContext.Workers,
 		"STOCK_WATCHER_CONTEXT_HISTORY_LIMIT":       &c.MarketContext.HistoryLimit,
 		"STOCK_WATCHER_STRATEGY_MAX_HOLDING_DAYS":   &c.Strategy.MaxHoldingDays,
@@ -221,6 +228,9 @@ func applyEnvironment(c *Config) error {
 	}
 	if value, ok := os.LookupEnv("STOCK_WATCHER_CALENDAR_HOLIDAYS"); ok {
 		c.Calendar.Holidays = splitList(value)
+	}
+	if value, ok := os.LookupEnv("STOCK_WATCHER_HK_INTRADAY_EARLY_CLOSES"); ok {
+		c.HKIntraday.EarlyCloses = splitList(value)
 	}
 	if value, ok := os.LookupEnv("STOCK_WATCHER_MARKET_PROVIDERS"); ok {
 		c.Market.Providers = splitList(value)

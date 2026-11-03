@@ -17,6 +17,7 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/dayrange"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/fairvalue"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkconnect"
+	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkintraday"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/hkrecommend"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/intraday"
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/logging"
@@ -90,6 +91,8 @@ type Runtime struct {
 	minuteClient    *market.MinuteClient
 	turnoverClient  *market.SohuMetricsClient
 	minuteMonitor   *intraday.Monitor
+	hkMinutes       *hkintraday.Monitor
+	closeHKMinute   func()
 	predictor       *predictor.Monitor
 	dayRange        *dayrange.Service
 	dashboard       http.Handler
@@ -277,6 +280,9 @@ func New(opts Options) (*Runtime, error) {
 		r.minuteClient = market.NewMinuteClient(cfg)
 		r.minuteMonitor = intraday.New(cfg, store, marketDB, r.minuteClient, log)
 	}
+	if cfg.HKIntraday.Enabled {
+		r.hkMinutes, r.closeHKMinute = hkintraday.NewProduction(cfg, log)
+	}
 	if cfg.Predictor.Enabled {
 		predictorMonitor, err := predictor.New(cfg, store, marketDB, noticeChannels, log)
 		if err != nil {
@@ -376,6 +382,9 @@ func (r *Runtime) runMonitors(ctx context.Context) error {
 	runners := []func(context.Context) error{r.monitor.Run}
 	if r.minuteMonitor != nil {
 		runners = append(runners, r.minuteMonitor.Run)
+	}
+	if r.hkMinutes != nil {
+		runners = append(runners, r.hkMinutes.Run)
 	}
 	if r.predictor != nil {
 		runners = append(runners, r.predictor.Run)
@@ -519,6 +528,11 @@ func (r *Runtime) release() error {
 	if r.minuteClient != nil {
 		r.minuteClient.Close()
 		r.minuteClient = nil
+	}
+	if r.closeHKMinute != nil {
+		r.closeHKMinute()
+		r.closeHKMinute = nil
+		r.hkMinutes = nil
 	}
 	if r.contextClient != nil {
 		r.contextClient.Close()

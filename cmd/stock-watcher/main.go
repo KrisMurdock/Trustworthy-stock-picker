@@ -44,7 +44,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-all|scan-low-valuation|scan-value-trapped|sync-fundamentals|audit-fundamentals|fair-value|sync-hk-connect|sync-context|sync-index-minutes|sync-korea-context|sync-hang-seng-context|sync-korea-minutes|sync-intraday|backfill-minutes|status-backfill|status-refresh|status-audit|preview|research|experiment|study-yang-pullback|plan|run|once|status|retry|train-predictor|predictor-status|predictor-eval|market-signal|train-dayrange|predict-dayrange|reconcile-dayrange|status-dayrange|replay-dayrange [channel] [-as-of YYYY-MM-DD]")
+		return errors.New("usage: stock-watcher check-config|init|check|health|replay|sync|sync-all|scan-low-valuation|scan-value-trapped|sync-fundamentals|audit-fundamentals|fair-value|sync-hk-connect|sync-hk-minutes|sync-context|sync-index-minutes|sync-korea-context|sync-hang-seng-context|sync-korea-minutes|sync-intraday|backfill-minutes|status-backfill|status-refresh|status-audit|preview|research|experiment|study-yang-pullback|plan|run|once|status|retry|train-predictor|predictor-status|predictor-eval|market-signal|train-dayrange|predict-dayrange|reconcile-dayrange|status-dayrange|replay-dayrange [channel] [-as-of YYYY-MM-DD]")
 	}
 	command := args[0]
 	if command == "version" {
@@ -59,13 +59,17 @@ func run(args []string) error {
 	parent := f.String("parent", "", "parent experiment ID (experiment only)")
 	holdout := f.Bool("holdout", false, "consume the parent experiment's reserved holdout interval once (experiment only)")
 	policy := f.String("policy", "baseline", "conditional-{entry,rsi,macd,bollinger,confluence,all-three,guard,confluence-guard,chan-5-15-30}, baseline, upper-wick, risk-qualified or next-day-{baseline,upper-wick,low-volatility,pullback,breakout,momentum,volume-recovery,balanced,risk-qualified} (experiment only)")
-	from := f.String("from", "", "inclusive start date (experiment; pair with -through, or backfill/index-minute sync)")
-	through := f.String("through", "", "inclusive backtest signal end date (experiment only; pair with -from)")
-	backfillWorkers := f.Int("workers", 3, "concurrent workers (backfill-minutes, sync-all, scan-low-valuation, scan-value-trapped or sync-hk-connect, 1..8)")
+	from := f.String("from", "", "inclusive start date (experiment, sync-hk-minutes, backfill/index-minute sync)")
+	through := f.String("through", "", "inclusive end date (experiment or sync-hk-minutes; pair with -from)")
+	backfillWorkers := f.Int("workers", 3, "concurrent workers (backfill-minutes, sync-all, scan-low-valuation, scan-value-trapped, sync-hk-connect or sync-hk-minutes, 1..8)")
 	backfillProvider := f.String("provider", "auto", "minute history provider: auto, baostock or sina (backfill-minutes only)")
-	backfillCodes := f.String("codes", "", "comma-separated codes (backfill-minutes, sync-all, sync-fundamentals or sync-hk-connect; default all)")
+	backfillCodes := f.String("codes", "", "comma-separated codes (backfill-minutes, sync-all, sync-fundamentals, sync-hk-connect or sync-hk-minutes; default all)")
 	allFull := f.Bool("full", false, "force a full 10-year raw refresh (sync-all or sync-hk-connect only)")
-	allTimeout := f.Duration("timeout", 24*time.Hour, "overall synchronization timeout (sync-all, scan-low-valuation, scan-value-trapped or sync-hk-connect only)")
+	timeoutDefault := 24 * time.Hour
+	if command == "sync-hk-minutes" {
+		timeoutDefault = 15 * time.Minute
+	}
+	allTimeout := f.Duration("timeout", timeoutDefault, "overall synchronization timeout (sync-all, scan-low-valuation, scan-value-trapped, sync-hk-connect or sync-hk-minutes)")
 	importFrom := f.String("import-from", "", "staging data directory to merge without network access (backfill-minutes only)")
 	referenceDir := f.String("reference-dir", "", "read-only production data directory used for resume coverage (backfill-minutes fetch only)")
 	entry := f.Float64("entry-price", 0, "actual buy fill price (plan only)")
@@ -88,7 +92,7 @@ func run(args []string) error {
 		return errors.New("retry accepts at most one channel")
 	}
 	switch command {
-	case "check-config", "init", "check", "health", "replay", "sync", "sync-all", "scan-low-valuation", "scan-value-trapped", "sync-fundamentals", "audit-fundamentals", "fair-value", "sync-hk-connect", "sync-context", "sync-index-minutes", "sync-korea-context", "sync-hang-seng-context", "sync-korea-minutes", "sync-intraday", "backfill-minutes", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "study-yang-pullback", "plan", "run", "once", "status", "retry", "train-predictor", "predictor-status", "predictor-eval", "market-signal", "train-dayrange", "predict-dayrange", "reconcile-dayrange", "status-dayrange", "replay-dayrange":
+	case "check-config", "init", "check", "health", "replay", "sync", "sync-all", "scan-low-valuation", "scan-value-trapped", "sync-fundamentals", "audit-fundamentals", "fair-value", "sync-hk-connect", "sync-hk-minutes", "sync-context", "sync-index-minutes", "sync-korea-context", "sync-hang-seng-context", "sync-korea-minutes", "sync-intraday", "backfill-minutes", "status-backfill", "status-refresh", "status-audit", "preview", "research", "experiment", "study-yang-pullback", "plan", "run", "once", "status", "retry", "train-predictor", "predictor-status", "predictor-eval", "market-signal", "train-dayrange", "predict-dayrange", "reconcile-dayrange", "status-dayrange", "replay-dayrange":
 	default:
 		return errors.New("unknown command")
 	}
@@ -104,11 +108,14 @@ func run(args []string) error {
 	if command != "sync-all" && command != "sync-hk-connect" && *allFull {
 		return errors.New("full is supported by sync-all and sync-hk-connect only")
 	}
-	if command != "sync-all" && command != "sync-hk-connect" && command != "scan-low-valuation" && command != "scan-value-trapped" && *allTimeout != 24*time.Hour {
-		return errors.New("timeout is supported by sync-all, scan-low-valuation, scan-value-trapped and sync-hk-connect only")
+	if command != "sync-all" && command != "sync-hk-connect" && command != "scan-low-valuation" && command != "scan-value-trapped" && command != "sync-hk-minutes" && *allTimeout != timeoutDefault {
+		return errors.New("timeout is supported by sync-all, scan-low-valuation, scan-value-trapped, sync-hk-connect and sync-hk-minutes only")
 	}
 	if (command == "sync-all" || command == "sync-hk-connect" || command == "scan-low-valuation" || command == "scan-value-trapped") && (*allTimeout < time.Hour || *allTimeout > 72*time.Hour) {
 		return errors.New("sync-all, scan-low-valuation, scan-value-trapped or sync-hk-connect timeout must be between 1h and 72h")
+	}
+	if command == "sync-hk-minutes" && (*allTimeout <= 0 || *allTimeout > time.Hour) {
+		return errors.New("sync-hk-minutes timeout must be greater than zero and at most 1h")
 	}
 	if command != "predictor-eval" && (*windows != "40,60,120" || *validationDays != 20 || *halfLife != 60) {
 		return errors.New("predictor-eval flags require the predictor-eval command")
@@ -140,17 +147,20 @@ func run(args []string) error {
 	if command == "fair-value" && *visibility != "observed" && *visibility != "vendor_backfill" {
 		return errors.New("fair-value visibility must be observed or vendor_backfill")
 	}
-	if command != "experiment" && (*parent != "" || *holdout || *policy != "baseline" || *through != "") {
+	if command != "experiment" && (*parent != "" || *holdout || *policy != "baseline") {
 		return errors.New("experiment flags require the experiment command")
 	}
-	if command != "experiment" && command != "backfill-minutes" && command != "sync-index-minutes" && command != "sync-korea-context" && *from != "" {
-		return errors.New("from requires the experiment, backfill-minutes, sync-index-minutes or sync-korea-context command")
+	if command != "experiment" && command != "sync-hk-minutes" && *through != "" {
+		return errors.New("through requires the experiment or sync-hk-minutes command")
 	}
-	if command != "backfill-minutes" && command != "sync-all" && command != "scan-low-valuation" && command != "scan-value-trapped" && command != "sync-hk-connect" && *backfillWorkers != 3 {
-		return errors.New("workers requires the backfill-minutes, sync-all, scan-low-valuation, scan-value-trapped or sync-hk-connect command")
+	if command != "experiment" && command != "sync-hk-minutes" && command != "backfill-minutes" && command != "sync-index-minutes" && command != "sync-korea-context" && *from != "" {
+		return errors.New("from requires the experiment, sync-hk-minutes, backfill-minutes, sync-index-minutes or sync-korea-context command")
 	}
-	if command != "backfill-minutes" && command != "sync-all" && command != "sync-fundamentals" && command != "sync-hk-connect" && *backfillCodes != "" {
-		return errors.New("codes requires the backfill-minutes, sync-all, sync-fundamentals or sync-hk-connect command")
+	if command != "backfill-minutes" && command != "sync-all" && command != "scan-low-valuation" && command != "scan-value-trapped" && command != "sync-hk-connect" && command != "sync-hk-minutes" && *backfillWorkers != 3 {
+		return errors.New("workers requires the backfill-minutes, sync-all, scan-low-valuation, scan-value-trapped, sync-hk-connect or sync-hk-minutes command")
+	}
+	if command != "backfill-minutes" && command != "sync-all" && command != "sync-fundamentals" && command != "sync-hk-connect" && command != "sync-hk-minutes" && *backfillCodes != "" {
+		return errors.New("codes requires the backfill-minutes, sync-all, sync-fundamentals, sync-hk-connect or sync-hk-minutes command")
 	}
 	if command != "backfill-minutes" && (*backfillProvider != "auto" || *importFrom != "" || *referenceDir != "") {
 		return errors.New("minute backfill flags require the backfill-minutes command")
@@ -166,6 +176,9 @@ func run(args []string) error {
 	}
 	if command == "experiment" && (*from == "") != (*through == "") {
 		return errors.New("experiment -from and -through must be supplied together")
+	}
+	if command == "sync-hk-minutes" && (*from == "") != (*through == "") {
+		return errors.New("sync-hk-minutes -from and -through must be supplied together")
 	}
 	if *holdout && (*parent == "" || *from != "" || *through != "") {
 		return errors.New("experiment -holdout requires -parent and cannot be combined with -from/-through")
@@ -266,6 +279,14 @@ func run(args []string) error {
 	}
 	if command == "sync-hk-connect" {
 		return runSyncHKConnect(ctx, c, log, *asof, *allFull, *backfillWorkers, *allTimeout, *backfillCodes)
+	}
+	if command == "sync-hk-minutes" {
+		f.Visit(func(item *flag.Flag) {
+			if item.Name == "workers" {
+				c.HKIntraday.Workers = *backfillWorkers
+			}
+		})
+		return runSyncHKMinutes(ctx, c, log, *from, *through, *backfillCodes, *allTimeout)
 	}
 	if command == "predictor-status" {
 		return predictorStatus(c)

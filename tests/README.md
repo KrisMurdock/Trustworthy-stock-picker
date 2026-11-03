@@ -67,6 +67,10 @@ CI 不具备 Windows 挂载；真实 CIFS 需要在服务器上人工验收：�
 
 `make intraday-smoke` 以真实 Go CLI 对接本地 HTTP fixture，验证 schema 2 → 3 迁移、5 分钟落库及四周期 API、日线接口失败时分钟仍继续采集、403/超时保留数据、SIGTERM 和写锁释放。容器使用 `python3 tests/intraday_smoke.py --image stock-watcher:<SHA>` 运行同一断言，生产 entrypoint、只读根目录、资源限制及临时数据挂载；Linux host 网络仅用于访问回环 mock。
 
+`make hk-intraday-smoke` 对独立港股库运行真实 CLI、HTTP fixture 和单个 Chromium，检查 schema 2 → 3 迁移保留日线、5 分钟补采、15/30/60 分钟派生、午休及末根、403/超时保留已有数据、历史缺口与恢复、缺配置、只读 API 和 SIGTERM。浏览器核对 DOM、URL、标题、网络与控制台，并由本地模拟网关串行检查未登录 401、无权限 403、普通用户和管理员放行、代理 503/恢复；这些身份仅属于测试网关，应用没有内置账号。`make docker-hk-intraday-smoke` 使用生产镜像入口、只读根文件系统、资源限制和隔离临时目录运行同一组断言。
+
+`go test -race ./internal/config ./internal/market ./internal/hkintraday ./internal/storage ./internal/dashboard ./cmd/stock-watcher` 另验港股时段和半日市、配置及端点安全、覆盖不足、取消、数据修订、历史缺口分段修复和日历配置冲突。这些测试不使用真实账号、行情公网、CIFS 或生产数据；浏览器入口是现有仓位计算页和只读 API，不代表已有港股分钟图表。
+
 Go 测试覆盖形成中更新、OHLC/时间校验、午休边界、缺根不补造、滞后窗口保留较新数据、校准修订与重启去重、过期日历、配置错误、单股隔离、取消与存储失联。已有日线和报告在迁移后可重读，空库初始化、只读连接写入拒绝与 CIFS 类型限制另有断言。
 
 `dashboard-smoke` 在同一个 Chromium 中增加四周期切换、真实 SVG 蜡烛/成交量/MA 数值、形成中状态、校准日期、只有分钟数据的股票、移动布局、无数据/403/503/超时/取消与恢复。固定图表 fixture 关闭分钟轮询避免被网络失败状态覆盖；采集调度由 intraday-smoke 独立验证。应用无账号体系，匿名只读成功、POST 405 与网关 403 分别验证，不虚构普通用户/管理员角色。

@@ -118,7 +118,7 @@ func TestHKMarketSchemaMigrationAddsRecommendationAndPreservesBars(t *testing.T)
 	}
 	defer reopened.Close()
 	var version int
-	if err := reopened.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
+	if err := reopened.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 3 {
 		t.Fatalf("schema version = %d, err=%v", version, err)
 	}
 	if _, err := reopened.db.Exec("SELECT market FROM recommendation LIMIT 1"); err != nil {

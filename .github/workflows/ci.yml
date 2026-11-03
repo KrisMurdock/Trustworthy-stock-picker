@@ -32,11 +32,11 @@ jobs:
           python -m pip install playwright==1.61.0
           python -m playwright install --with-deps chromium
       - name: Verify browser behavior
-        run: make dashboard-smoke
+        run: make dashboard-smoke hk-intraday-smoke
       - name: Build and smoke-test container
         run: make docker-smoke
       - name: Verify container browser behavior
-        run: make docker-dashboard-smoke
+        run: make docker-dashboard-smoke docker-hk-intraday-smoke
       - name: Upload Linux package
         uses: actions/upload-artifact@v4
         with:

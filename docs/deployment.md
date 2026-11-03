@@ -43,6 +43,12 @@ journalctl -u stock-watcher.service -n 50 --no-pager
 
 港股通股票日线由 `stock-watcher-hk-market.timer` 在交易日 `18:50` 触发 `sync-hk-connect`，写入独立 `<data_dir>/hk-market.db`，使用独立 `.hk-market.lock`，可与主服务和全市场任务并行。该 unit 同样固定生产数据目录、CIFS 校验和独立日志目录，并把腾讯请求间隔固定为 `1s`，避免 350～500ms 高频请求触发 501；首次执行会保存当前约 667 只港股通股票的十年不复权日线和分析窗口前复权日线。完整同步后还会按 A 股日线趋势门槛独立生成港股通观察快照，写入 `recommendation` 表；`sync-hk-connect` 不直接发送消息，主 `stock-watcher.service` 的 `run` 在下一轮 Cycle 读取快照并投递到 `hk_connect`，所以升级后必须替换并重启主服务，只重启 timer 不会推送港股稿。新浪名单先按腾讯证券类型剔除 ETF/产品；若腾讯类型请求失败，会尝试东方财富股票板，不能用未分类的新浪 698 条名单直接写入。QFQ 接口对无复权因子的股票可能返回 `day`，此时同日 OHLCV 与原始日线一致，数据库按 `adjust=qfq`、`data_field=day` 保存，不能据此判定同步失败。腾讯复权端点在请求 1000 行时可能返回 1001 行，客户端允许这一行上浮并在窗口裁剪时丢弃窗口外记录。
 
+港股分钟默认关闭。部署前停止港股日线 timer、正在运行的港股同步和可能写分钟的主服务，确认锁释放并完整备份 `hk-market.db` 及 SQLite 相关文件。新版本第一次通过 `sync-hk-connect` 或 `sync-hk-minutes` 打开港股写库时，即使分钟功能关闭，也会事务性将港股 schema 2 升至 3；`init` 不负责迁移该库。旧版港股写程序不支持 schema 3，回滚前必须停写并恢复迁移前完整备份，不能只替换旧二进制。A 股库和 `all-market.db` 的 schema 不因该变更升级。
+
+先在隔离目录执行 `make hk-intraday-smoke` 和 `make docker-hk-intraday-smoke`，另行确认生产 HTTPS 行情端点、CIFS 挂载与锁行为，再按[环境变量](environment-variables.md#分钟行情)核实港股日历覆盖与半日市日期，并设置 `STOCK_WATCHER_HK_INTRADAY_ENABLED=true`。从单股、有限日期开始执行 `sync-hk-minutes`，检查退出码和 `intraday_sync`，再按需逐步扩大；请求窗口相差最多 62 天，现有缺口可从边缘分段重试。主服务的分钟轮询和日线任务使用同一 `.hk-market.lock`，不会并发写入；手动补采前应停止竞争任务或等待锁释放。共享盘、上游拒绝、截断、超时或缺根时保留旧数据并报告失败/缺口，不能以旧数据存在或 HTTP 200 证明补采完整。
+
+部署后对实际受控 URL 检查 `/healthz`、`/api/hk-intraday?code=hk00700&period=5` 与 `period=15/30/60`，核对 `source`、最新时间、`sync.status` 和未解决区间；按真实代理分别验证未登录、无权限及有权限会话，检查只读方法、Cookie、浏览器控制台和网络请求。应用没有内置角色，代理身份结果不能用本地模拟替代；当前也没有港股分钟图表页面。确认滚动发布完成、旧实例退出、有效日历与开关生效且日志无持续失败，再核对 `PRAGMA user_version=3` 和 `intraday_sync` 状态。若生产源、真实 CIFS、账号或部署 URL 不可用，只能记录“本地验证通过，部署后未验证”，不得宣称线上覆盖完成。
+
 港股通线上验收至少检查：`systemctl list-timers stock-watcher-hk-market.timer` 显示下一次触发时间；`journalctl -u stock-watcher-hk-market.service -n 80 --no-pager` 最后一行 JSON 为 `status=complete` 且 `universe_source=sina`、`eligible=667`（名单会随交易所调整），日志包含 `HK Connect recommendation generated`；`hk-market.db` 的 `sync_run` 最新记录 `as_of` 等于最近已完成港股交易日，`failed=partial=0`；`recommendation` 表最新快照的 `target` 是下一预期观察日（优先未来港股会话，未来日历为空时回退下一工作日）；`stock` 表不应出现 `GP-FUND` 对应的 31 个 ETF 代码；每只股票同时存在 `none` 与 `qfq` 的 `stock_sync` 成功记录。主服务验收还要确认运行的是包含本改动的 commit、`journalctl -u stock-watcher.service` 出现 `HK Connect recommendation queued`，并在 `state/delivery.json` 或微信公众号草稿箱看到对应 `"<推荐ID>:hk-connect:article"`。只读 SQL 可用系统自带的 Python SQLite：
 
 ```bash
@@ -127,6 +133,6 @@ curl --fail http://127.0.0.1:8080/api/status
 
 整池采集时，每只股票只有完整通过校验后才进入检查点；尚未完成的批次不能发布推荐。重启后同日期、同参数任务复用已完成股票，覆盖失败会重新尝试隔离股票。行情发布和分析分离，分析失败可基于已采集窗口重试。成功任务之后的新启动仍刷新全池。默认整轮期限 90 分钟、分析期限 10 分钟，每 30 秒更新心跳；算法须遵守 context 取消，框架不在进程内强杀任意 Go 函数。
 
-备份必须覆盖 `market.db`、`fundamentals.db`、`context.db`、`experiments.db`、`calendar.db`、`dayrange.db`（启用时）、`predictions.db`、`models/intraday/`、`state/`、上市信息缓存及私有配置，保留权限；本地模式备份到指定备份盘，共享盘模式在 Windows 端完整复制，不复制到服务器行情目录。财务写命令使用独立 `.fundamentals.lock`，但备份仍应在停止所有写入进程后完成。安全的最小流程是停止所有 systemd／容器／CLI 写入进程，确认数据库连接关闭，再完整复制数据目录，记录构建 SHA、库版本和校验和。不要在线仅复制一个 SQLite 主文件或删除 journal 文件。恢复先到隔离目录，在通知关闭、独占锁、匹配构建的环境执行 `init/check/health`，抽查 `replay` 与 K 线，再走 `predictor-status`、`status-dayrange` 和 `replay-dayrange` 及一次只读网页检查，再停服务替换生产目录并恢复挂载。Windows 断线／重挂载和真实备份恢复需在部署环境演练；本地 mock 不能证明网络文件系统锁和 fsync 可靠。
+备份必须覆盖 `market.db`、`fundamentals.db`、`all-market.db`、`hk-market.db`、`context.db`、`experiments.db`、`calendar.db`、`dayrange.db`（启用时）、`predictions.db`、`models/intraday/`、`state/`、上市信息缓存及私有配置，保留权限；本地模式备份到指定备份盘，共享盘模式在 Windows 端完整复制，不复制到服务器行情目录。财务写命令使用独立 `.fundamentals.lock`，但备份仍应在停止所有写入进程后完成。安全的最小流程是停止所有 systemd／容器／CLI 写入进程，确认数据库连接关闭，再完整复制数据目录，记录构建 SHA、库版本和校验和。不要在线仅复制一个 SQLite 主文件或删除 journal 文件。恢复先到隔离目录，在通知关闭、独占锁、匹配构建的环境执行 `init/check/health`，抽查 `replay` 与 K 线，再走 `predictor-status`、`status-dayrange` 和 `replay-dayrange` 及一次只读网页检查，再停服务替换生产目录并恢复挂载。Windows 断线／重挂载和真实备份恢复需在部署环境演练；本地 mock 不能证明网络文件系统锁和 fsync 可靠。
 
 不可变窗口会增加磁盘占用；目前不自动删除历史修订，运维需监测容量并制定归档策略。不要在 CIFS 上开启 WAL，也不要在共享故障时退回服务器本地数据目录。

@@ -184,6 +184,7 @@ func main() {
 | `audit-fundamentals` | 只读审计财务覆盖、可见性和 stale 状态 | 否 | 否 |
 | `fair-value -code C` | 用本地 PIT 财务与不复权收盘价计算 v3 研究区间；默认严格 observed，可选显式 vendor_backfill | 否 | 否 |
 | `sync-hk-connect` | 独立同步当前港股通股票日线到 `hk-market.db` | 是（独立库） | 否 |
+| `sync-hk-minutes` | 采集或补采港股通 5 分钟线到 `hk-market.db`，默认关闭 | 是（独立库） | 否 |
 | `sync-context` | 只补跑指数与板块同步，用于排障 | 是 | 否 |
 | `sync-index-minutes` | 补采上证/创业板指数 5/30 分钟线到 `context.db`，用于上午/下午树模型 | 是 | 否 |
 | `sync-korea-context` | 补采 KOSPI/KOSDAQ 日线到 `context.db`，作为可选盘前特征 | 是 | 否 |
@@ -211,7 +212,9 @@ func main() {
 
 `sync-all` 是独立的全市场日线链路：通过新浪 `sh_a` + `sz_a` 节点发现当前沪深 A 股，排除 ST、名称含“退”的退市股票、北交所和 B 股，只保存 10 年不复权日线与分析窗口前复权日线到 `<data_dir>/all-market.db`。它使用独立 `.all-market.lock`，可与常驻 `run` 并行，不读取或写入 `market.db`，不参与股池排名、报告或直接通知。首次运行会全量抓取，之后同日已完成股票自动跳过；`-full` 强制全量刷新，`-codes` 用于小范围冒烟，`-workers` 控制 1～8 并发。新浪列表不提供上市日期，因此实际历史起点仍受上市日期和上游可用数据限制，不能把“请求了 10 年”表述为“已验证十年完整性”。完整且未使用 `-codes` 的同步会在启用 `low_valuation` 时自动生成全市场低估值快照：只保留现价低于财务研究区间下沿的股票，按距下沿折价升序排名并保存到 `all-market.db`；主 `run`/`once` 读取后投递《全市场低估值股》公众号文章。启用 `value_trapped` 时，同一轮扫描还会只对低估值候选复用套牢 V3 算法，保留上方套牢量不超过 30% 的股票，按折价、套牢量、20 日成交额和代码排序保存为 `value_trapped` 快照，并投递独立《低估值且低套牢》公众号稿。两条链路都不复用初筛、精排或成交模拟，低估值和低套牢都不等于上涨或买卖建议。日线已同步后可用 `scan-low-valuation` 单独重跑低估值，或用 `scan-value-trapped` 重跑交集观察，详见[全市场低估值观察](docs/low-valuation.md)和[低估值低套牢观察](docs/value-trapped.md)。
 
-`sync-hk-connect` 使用当前港股通股票快照，通过新浪 `hgt_hk`/`sgt_hk` 港通板块发现证券，再用腾讯行情类型剔除 ETF/产品，只保留 `GP` 股票（当前约 667 只），并以东方财富港股通股票行情页作为回退；只接受 `hk` 前缀的五位代码。每只股票保存最近十个自然年的不复权日线和 `daily.history_days` 前复权窗口，港股交易日由恒生指数日线推导，默认截止最近一个 16:00 后已完成的港股交易日。数据写入独立 `<data_dir>/hk-market.db`，使用独立 `.hk-market.lock`，不读取或写入 `market.db`。完整同步后会按同一套 A 股日线趋势规则独立复算港股通观察名单，保存到 `hk-market.db` 的 `recommendation` 表；常驻 `run` 或 `once` 在下一轮调度中读取最新快照，生成单独的《港股通精选》公众号稿，并与 A 股文章一起进入 `hk_connect` 投递路由。港股稿不复用 A 股初筛、精排模型或成交模拟，也不模拟港股 T+0 和无涨跌停制度；当前不做港股历史分钟线，因此不能宣称与 A 股的多年分钟粒度等价。列表是当前成分快照，已移出港股通的股票不会被重新加入，但已保存历史仍保留。
+`sync-hk-connect` 使用当前港股通股票快照，通过新浪 `hgt_hk`/`sgt_hk` 港通板块发现证券，再用腾讯行情类型剔除 ETF/产品，只保留 `GP` 股票（当前约 667 只），并以东方财富港股通股票行情页作为回退；只接受 `hk` 前缀的五位代码。每只股票保存最近十个自然年的不复权日线和 `daily.history_days` 前复权窗口，港股交易日由恒生指数日线推导，默认截止最近一个 16:00 后已完成的港股交易日。数据写入独立 `<data_dir>/hk-market.db`，使用独立 `.hk-market.lock`，不读取或写入 `market.db`。完整同步后会按同一套 A 股日线趋势规则独立复算港股通观察名单，保存到 `hk-market.db` 的 `recommendation` 表；常驻 `run` 或 `once` 在下一轮调度中读取最新快照，生成单独的《港股通精选》公众号稿，并与 A 股文章一起进入 `hk_connect` 投递路由。港股稿不复用 A 股初筛、精排模型或成交模拟，也不模拟港股 T+0 和无涨跌停制度。列表是当前成分快照，已移出港股通的股票不会被重新加入，但已保存历史仍保留。
+
+港股通分钟采集独立于日线同步，设置 `STOCK_WATCHER_HK_INTRADAY_ENABLED=true` 后由 `run` 按港股时段轮询，也可运行 `sync-hk-minutes -from YYYY-MM-DD -through YYYY-MM-DD -codes hk00700` 补采。东方财富原生不复权 5 分钟线保存在 `hk-market.db`，15/30/60 分钟从同一序列派生；`/api/hk-intraday?code=hk00700&period=5` 只读返回最近最多 640 根和缺口状态，当前没有港股图表页面。来源历史深度、生产限流和全股池覆盖尚需验证，未采集 1 分钟线，不能宣称多年历史完整或所有可获得粒度均已落地。日线和分钟写入共用 `.hk-market.lock`；升级、回滚和补采边界见[行情来源与回退](docs/data-sources.md#港股通分钟数据sync-hk-minutes)。
 
 ## 工作原理
 
@@ -299,7 +302,7 @@ func main() {
 | `/review` | 冻结推荐回看、T+1/T+3/T+5 检查点、证据详情和手动 AI 归因 |
 | `/calculator` | 浏览器内仓位、持仓、剩余风险与净止盈价计算 |
 
-行情、报告、复盘、指数方向、分钟预测和全天高低价预测的读取接口只读，包括 `/healthz`、`/api/dashboard`、`/api/reports?as_of=YYYY-MM-DD`、`/api/history?code=sz000001`、`/api/intraday?code=sz000001&period=5`、`/api/market-signal?as_of=YYYY-MM-DD`、`/api/predictions?date=YYYY-MM-DD`、`/api/predictor`、`/api/day-range?date=YYYY-MM-DD`、`/api/day-range/status` 和 `/api/day-range/evaluation?date=YYYY-MM-DD`。写入口仅有受保护的 `PUT /api/predictor/config`（飞书预测推送开关）以及 loopback/同源约束下的 LLM 配置与对话/归因接口；公网匿名模式会拒绝全部非 GET/HEAD 请求。摘要页和股票页每分钟刷新，刷新不会触发行情下载或消息推送。
+行情、报告、复盘、指数方向、分钟预测和全天高低价预测的读取接口只读，包括 `/healthz`、`/api/dashboard`、`/api/reports?as_of=YYYY-MM-DD`、`/api/history?code=sz000001`、`/api/intraday?code=sz000001&period=5`、`/api/hk-intraday?code=hk00700&period=5`、`/api/market-signal?as_of=YYYY-MM-DD`、`/api/predictions?date=YYYY-MM-DD`、`/api/predictor`、`/api/day-range?date=YYYY-MM-DD`、`/api/day-range/status` 和 `/api/day-range/evaluation?date=YYYY-MM-DD`。写入口仅有受保护的 `PUT /api/predictor/config`（飞书预测推送开关）以及 loopback/同源约束下的 LLM 配置与对话/归因接口；公网匿名模式会拒绝全部非 GET/HEAD 请求。摘要页和股票页每分钟刷新，刷新不会触发行情下载或消息推送。
 
 网页没有内置账号或权限系统，默认仅监听 `127.0.0.1:8080`。远程访问必须使用受控网络或已有认证反向代理；代理应保留根路径、`/api/` 和 `/assets/`。
 
@@ -343,6 +346,7 @@ Quick Tunnel 的地址在进程重启、机器休眠或隧道重连后可能变�
 | `STOCK_WATCHER_SECOND_STAGE_TOP_N` | 精排输出数量，默认 `10` |
 | `STOCK_WATCHER_SECOND_STAGE_PUBLISH_BY` | 精排等待 artifact 的最晚时刻，默认 `15:28`；到点未齐则降级发布 |
 | `STOCK_WATCHER_INTRADAY_ENABLED` | 是否启用 5 分钟采集 |
+| `STOCK_WATCHER_HK_INTRADAY_ENABLED` | 是否启用独立港股通分钟采集，默认关闭 |
 | `STOCK_WATCHER_PREDICTOR_ENABLED` | 是否启用 5 分钟实验预测 |
 | `STOCK_WATCHER_PREDICTOR_PUSH_ENABLED` | 是否推送聚合预测卡；关闭后仍保存预测 |
 | `STOCK_WATCHER_PREDICTOR_TRAIN_AT` | 收盘后训练时间，默认 `15:30` |
@@ -401,9 +405,11 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | `make smoke` | 真实 CLI、脚本和仓位计算模型 |
 | `make sources-smoke` | 本地 HTTP/TCP 模拟行情源与回退 |
 | `make intraday-smoke` | 分钟采集、schema 迁移、只读 API 和 SIGTERM |
+| `make hk-intraday-smoke` | 港股分钟补采、缺口、只读 API 与真实浏览器冒烟 |
 | `make dashboard-smoke` | 真实 Chromium 页面、DOM、URL、网络和错误恢复 |
 | `make docker-smoke` | 容器 CLI、权限、Compose 健康检查和生命周期 |
 | `make docker-dashboard-smoke` | 容器形态浏览器验收 |
+| `make docker-hk-intraday-smoke` | 容器形态港股分钟与浏览器验收 |
 | `make ci` | 格式、静态检查、竞态测试、构建、CLI/行情/分钟冒烟和发布包 |
 | `make package` | Linux 发布包；`BUILD_GOARCH=amd64` 或 `arm64` |
 
@@ -463,8 +469,8 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 
 ## 已知边界
 
-- 仅覆盖沪深 A 股，不提供逐笔行情、盘口深度或自动交易。
-- 日线来自多个上游，分钟线当前只采集腾讯 5 分钟原始线并派生 15/30/60 分钟；上游窗口和修订规则可能变化。
+- 正式股池为沪深 A 股，港股通通过独立库和观察链路处理；不提供逐笔行情、盘口深度或自动交易。
+- A 股分钟线采集腾讯 5 分钟原始线，港股通可选采集东方财富 5 分钟线，均派生 15/30/60 分钟；港股历史深度及源稳定性尚未验证，上游窗口和修订规则可能变化。
 - 高召回初筛只用于第二层候选，历史召回率和模型分都不代表未来收益；它不改变正式推荐，初筛失败也不会阻断主报告。
 - 全天最高/最低价预测已接入盘前模型、区间校准、CLI、网页、调度、`predictor_dayrange` 飞书推送和独立 `premarket_execution` 盘前执行确认卡；阶段六盘中剩余时段模型尚未实现，网页不会把盘前结果当作盘中更新。
 - 指数方向信号只读取本地 `context.db`，每次按截止日重训；当前 40 日样本外结果未显示稳定优势，不能把上涨概率当作可执行结论。

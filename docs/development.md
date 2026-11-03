@@ -56,7 +56,22 @@ STOCK_WATCHER_REQUIRE_CIFS=false \
 ./bin/stock-watcher sync-hk-connect -codes hk00700 -workers 1 -timeout 1h
 ```
 
-证券发现默认走新浪 `hgt_hk`/`sgt_hk`，再用腾讯行情类型剔除 ETF/产品，只保留 `GP` 股票；东方财富港股通股票行情页作为回退；日线主端点为 `https://ifzq.gtimg.cn`，备用端点为 `https://proxy.finance.qq.com/ifzqgtimg`，遇到 429/5xx 时轮换并指数退避。写入独立 `<data_dir>/hk-market.db` 与 `.hk-market.lock`，平均每只股票保存 10 年不复权日线和 `daily.history_days` 前复权日线。只有 raw 与 QFQ 的最新日线都到达 `as-of` 才跳过；若盘中或收盘后过早执行导致状态成功但日线未更新，后续命令仍会补刷新。默认截止日由恒生指数交易日确定，当前股票快照约 667 只；首次同步通常需要数分钟到数十分钟。完整同步后会生成港股通日线规则观察快照（`recommendation` 表），不会直接发送通知，也不采集港股历史分钟线；常驻 `run` 或 `once` 读取快照后才会投递独立公众号稿。
+证券发现默认走新浪 `hgt_hk`/`sgt_hk`，再用腾讯行情类型剔除 ETF/产品，只保留 `GP` 股票；东方财富港股通股票行情页作为回退；日线主端点为 `https://ifzq.gtimg.cn`，备用端点为 `https://proxy.finance.qq.com/ifzqgtimg`，遇到 429/5xx 时轮换并指数退避。写入独立 `<data_dir>/hk-market.db` 与 `.hk-market.lock`，平均每只股票保存 10 年不复权日线和 `daily.history_days` 前复权日线。只有 raw 与 QFQ 的最新日线都到达 `as-of` 才跳过；若盘中或收盘后过早执行导致状态成功但日线未更新，后续命令仍会补刷新。默认截止日由恒生指数交易日确定，当前股票快照约 667 只；首次同步通常需要数分钟到数十分钟。完整同步后会生成港股通日线规则观察快照（`recommendation` 表），不会直接发送通知或触发港股分钟采集；常驻 `run` 或 `once` 读取快照后才会投递独立公众号稿。
+
+港股通分钟线默认关闭。先在隔离目录用一只股票验证，以下日期仅为示例；实际覆盖受来源保留窗口限制，示例不能证明生产源可用：
+
+```bash
+mkdir -p /tmp/sw-hk-minute/data /tmp/sw-hk-minute/logs
+STOCK_WATCHER_DATA_DIR=/tmp/sw-hk-minute/data \
+STOCK_WATCHER_LOG_DIR=/tmp/sw-hk-minute/logs \
+STOCK_WATCHER_REQUIRE_CIFS=false STOCK_WATCHER_FEISHU_ENABLED=false \
+STOCK_WATCHER_HK_INTRADAY_ENABLED=true \
+./bin/stock-watcher sync-hk-minutes -from 2026-10-29 -through 2026-10-30 -codes hk00700 -workers 1 -timeout 15m
+```
+
+`-from`、`-through` 必须成对且相差不超过 62 个自然日，不能超出配置的港股半日市覆盖；不指定日期时自动选择窗口。输出 `partial` 或 `failed` 时命令非零退出，检查 `hk-market.db` 的 `intraday_sync`，不要把已有旧线当作补采成功。历史缺口超过单次请求时从缺口边缘分段重跑。港股日线和分钟共用写锁，手工补采前应停止可能竞争的常驻分钟采集及港股日线任务；采集失败保留已保存数据。正常启动服务后可通过 `GET /api/hk-intraday?code=hk00700&period=5` 读取，当前没有港股图表。配置、时段和来源限制见[港股通分钟数据](data-sources.md#港股通分钟数据sync-hk-minutes)。
+
+`make hk-intraday-smoke` 和 `make docker-hk-intraday-smoke` 使用临时数据、本地行情 mock、单个 Chromium 与模拟网关验证迁移、补采、缺口、异常、只读 API、身份拒绝和退出；它们不验证真实上游、CIFS、生产账号或部署 URL。
 
 首次部署完成 `sync` 后，用 `make minute-backfill`（默认 6 并发、最近 200 个交易日）补齐历史 5 分钟线；可用 `MINUTE_ARGS` 覆盖 `-from`、`-as-of`、`-codes`、`-workers`、`-provider`。`-provider auto` 对最近 104 个完整交易日优先使用新浪，更长窗口使用 BaoStock。已有生产实例运行时不要直接写生产库，先按 [行情来源与回退](data-sources.md#分钟数据) 的 staging 流程抓取，再停止 `run` 执行 `-import-from`。
 

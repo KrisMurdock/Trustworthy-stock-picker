@@ -28,6 +28,7 @@ type Stock struct {
 type Config struct {
 	Analysis       Analysis       `yaml:"analysis"`
 	Intraday       Intraday       `yaml:"intraday"`
+	HKIntraday     HKIntraday     `yaml:"hk_intraday"`
 	DayRange       DayRange       `yaml:"dayrange"`
 	FirstStage     FirstStage     `yaml:"first_stage"`
 	SecondStage    SecondStage    `yaml:"second_stage"`
@@ -184,6 +185,7 @@ func Defaults() Config {
 	c.Market = DefaultMarket()
 	c.MarketContext = DefaultMarketContext()
 	c.Intraday = DefaultIntraday()
+	c.HKIntraday = DefaultHKIntraday()
 	c.DayRange = DefaultDayRange()
 	c.FirstStage = DefaultFirstStage()
 	c.SecondStage = DefaultSecondStage()
@@ -371,6 +373,12 @@ func (c Config) Validate() error {
 	}
 	if err := c.Intraday.Validate(); err != nil {
 		return err
+	}
+	if err := c.HKIntraday.Validate(); err != nil {
+		return err
+	}
+	if c.HKIntraday.Enabled && !validMarketEndpoint(c.Market.EastmoneyEndpoint) {
+		return errors.New("market.eastmoney_endpoint requires HTTPS or loopback HTTP for HK minutes, without credentials or query parameters")
 	}
 	if err := c.DayRange.Validate(); err != nil {
 		return err

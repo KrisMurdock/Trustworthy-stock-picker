@@ -4,10 +4,10 @@ IMAGE ?= stock-watcher:$(VERSION)
 BUILD_GOARCH ?= amd64
 .DEFAULT_GOAL := help
 
-.PHONY: help fmt-check test vet build run check status minute-backfill secondstage-laya-test secondstage-chinese-decision-test secondstage-deepseek-test secondstage-generate-daily-test smoke sources-smoke intraday-smoke dashboard-smoke review-smoke docker-dashboard-smoke docker-review-smoke ci package image docker-build docker-smoke clean
+.PHONY: help fmt-check test vet build run check status minute-backfill secondstage-laya-test secondstage-chinese-decision-test secondstage-deepseek-test secondstage-generate-daily-test smoke sources-smoke intraday-smoke hk-intraday-smoke docker-hk-intraday-smoke dashboard-smoke review-smoke docker-dashboard-smoke docker-review-smoke ci package image docker-build docker-smoke clean
 
 help:
-	@printf '%s\n' 'make build / run / check / status  构建与本地运行（内置配置）' 'make run                        同时启动监控与网页 http://127.0.0.1:8080' 'STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=true make run  显式开启临时 Cloudflare 公网只读入口' 'make minute-backfill            补齐历史 5 分钟线（MINUTE_ARGS 可覆盖参数）' 'make ci                         格式、静态检查、竞态测试、CLI 冒烟、发布包' 'make image / docker-smoke       构建镜像 / 验证容器（IMAGE、VERSION 可覆盖）' 'make package                   Linux 发布包（BUILD_GOARCH=amd64 或 arm64）' 'make clean                     清理 bin 和 .builds'
+	@printf '%s\n' 'make build / run / check / status  构建与本地运行（内置配置）' 'make run                        同时启动监控与网页 http://127.0.0.1:8080' 'STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED=true make run  显式开启临时 Cloudflare 公网只读入口' 'make minute-backfill            补齐历史 5 分钟线（MINUTE_ARGS 可覆盖参数）' 'make hk-intraday-smoke          验证港股分钟采集和浏览器只读接口' 'make ci                         格式、静态检查、竞态测试、CLI 冒烟、发布包' 'make image / docker-smoke       构建镜像 / 验证容器（IMAGE、VERSION 可覆盖）' 'make package                   Linux 发布包（BUILD_GOARCH=amd64 或 arm64）' 'make clean                     清理 bin 和 .builds'
 
 fmt-check:
 	@files="$$(gofmt -l cmd internal)"; if [ -n "$$files" ]; then printf '%s\n' "$$files"; exit 1; fi
@@ -66,6 +66,12 @@ review-smoke: build
 
 intraday-smoke: build
 	python3 tests/intraday_smoke.py "$(CURDIR)/bin/stock-watcher"
+
+hk-intraday-smoke: build
+	python3 tests/hk_intraday_smoke.py "$(CURDIR)/bin/stock-watcher"
+
+docker-hk-intraday-smoke: image
+	python3 tests/hk_intraday_smoke.py --image "$(IMAGE)"
 
 sources-smoke: build
 	python3 tests/sources_smoke.py "$(CURDIR)/bin/stock-watcher"
