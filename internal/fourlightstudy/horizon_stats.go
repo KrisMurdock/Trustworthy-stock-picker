@@ -7,7 +7,8 @@ import (
 	"github.com/KrisMurdock/Trustworthy-stock-picker/internal/strategy"
 )
 
-var horizonGroups = []string{"baseline", "first_all_red", "episode_first", "episode_repeat", "episode_unknown", moderateVolumeGroup}
+var horizonContextGroups = []string{stockOutperformSector, stockNotOutperformSector, sectorOutperformMarket, sectorNotOutperformMarket, contextUnknown}
+var horizonGroups = append([]string{"baseline", "first_all_red", "episode_first", "episode_repeat", "episode_unknown", moderateVolumeGroup}, horizonContextGroups...)
 var horizonLengths = []int{20, 40, 60}
 var horizonStartupStates = []string{"all", "success", "failed", "unknown", "not_entered"}
 
@@ -165,6 +166,23 @@ func horizonNamesForEvent(e Event) ([]string, error) {
 	names = append(names, "first_all_red", "episode_"+e.Episode.Group)
 	if hasSectorGroup(e.Groups, moderateVolumeGroup) {
 		names = append(names, moderateVolumeGroup)
+	}
+	if c := e.Context; c != nil && c.Policy == SectorContextPolicy {
+		switch c.StockStage {
+		case "outperform":
+			names = append(names, stockOutperformSector)
+		case "not_outperform":
+			names = append(names, stockNotOutperformSector)
+		}
+		switch c.SectorStage {
+		case "outperform":
+			names = append(names, sectorOutperformMarket)
+		case "not_outperform":
+			names = append(names, sectorNotOutperformMarket)
+		}
+		if c.StockStage == "unknown" || c.SectorStage == "unknown" {
+			names = append(names, contextUnknown)
+		}
 	}
 	return names, nil
 }

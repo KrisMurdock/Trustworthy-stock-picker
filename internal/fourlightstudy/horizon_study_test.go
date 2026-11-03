@@ -204,3 +204,27 @@ func TestHorizonIndustryMatchingUsesCandidateCompositionThenEqualDates(t *testin
 	}
 	t.Fatal("missing industry comparison")
 }
+
+func TestHorizonNamesIncludeSignalTimeRelativeGroups(t *testing.T) {
+	h := &strategy.WaveHorizons{EntryStatus: "entered", StartupFive: strategy.UpwardWaveWindow{Status: "success"}}
+	e := Event{
+		Groups:   []string{"first_all_red", moderateVolumeGroup, stockOutperformSector, sectorNotOutperformMarket},
+		Episode:  &PriceEpisodeContext{Group: "first"},
+		Context:  &SectorSignalContext{Policy: SectorContextPolicy, StockStage: "outperform", SectorStage: "not_outperform"},
+		Horizons: h,
+	}
+	names, err := horizonNamesForEvent(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"baseline", "first_all_red", "episode_first", moderateVolumeGroup, stockOutperformSector, sectorNotOutperformMarket} {
+		if !hasSectorGroup(names, want) {
+			t.Fatalf("missing context group %q in %v", want, names)
+		}
+	}
+	for _, absent := range []string{stockNotOutperformSector, sectorOutperformMarket, contextUnknown} {
+		if hasSectorGroup(names, absent) {
+			t.Fatalf("unexpected context group %q in %v", absent, names)
+		}
+	}
+}
