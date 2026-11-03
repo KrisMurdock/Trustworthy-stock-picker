@@ -20,6 +20,7 @@ type fakeTurnoverSource struct {
 	lastStart string
 	lastEnd   string
 	omitDate  string
+	lastRate  float64
 }
 
 func (f *fakeTurnoverSource) FetchDailyMetrics(_ context.Context, stock config.Stock, start, end string) (market.DailyMetricHistory, error) {
@@ -36,7 +37,11 @@ func (f *fakeTurnoverSource) FetchDailyMetrics(_ context.Context, stock config.S
 		if date == f.omitDate {
 			continue
 		}
-		history.Metrics = append(history.Metrics, market.DailyMetric{Date: date, TurnoverRatePct: 1, AmountCNY: 1e8})
+		rate := 1.0
+		if date == end && f.lastRate > 0 {
+			rate = f.lastRate
+		}
+		history.Metrics = append(history.Metrics, market.DailyMetric{Date: date, TurnoverRatePct: rate, AmountCNY: 1e8})
 	}
 	return history, nil
 }
@@ -295,7 +300,7 @@ func TestPreviewLeaderDailyUsesAdjustedRawForTurnover(t *testing.T) {
 	c.Strategy.Enabled = false
 	m := New(c, store, nil, nil, logging.Nop())
 	m.Market = db
-	source := &fakeTurnoverSource{}
+	source := &fakeTurnoverSource{lastRate: 1.5}
 	m.TurnoverSource = source
 	item := storage.SyncItem{Stock: c.Stocks[0], Adjusted: &history, Status: "ok", Analyzable: true, Complete: true}
 	run := storage.SyncRun{ID: "preview-turnover", AsOf: history.AsOf, StartedAt: m.Now(), FinishedAt: m.Now(), CoveragePct: 100}

@@ -964,6 +964,21 @@ func TestSecondStageArticleShowsV3UnknownAndLegacySignal(t *testing.T) {
 	}
 }
 
+func TestArticleTrappedLinesExplainsShareBaseChange(t *testing.T) {
+	candidate := &strategy.Candidate{Code: "sz000001", Name: "测试", Trapped: &strategy.TrappedSignal{
+		Version: strategy.TrappedSignalVersion, Method: strategy.TrappedSignalMethod, Status: strategy.TrappedStatusUnknown,
+		Sessions: 120, VolumeSessions: 120, BaselineTrappedVolumeRatio: 0.42,
+		ShareBaseComparisons: 118, ShareBaseMaxChangePct: 48.5,
+		Reasons: []string{"turnover_share_base_changed"},
+	}}
+	text := strings.Join(articleTrappedLines(candidate), "\n")
+	for _, want := range []string{"数据不足（推算流通股本口径变化）", "衰减前上方套牢量**：42.0%", "相邻日最大变化 48.5%", "阈值 10%"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("share-base explanation missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestArticleTrappedRatioTextKeepsSubOnePercentVisible(t *testing.T) {
 	for _, test := range []struct {
 		value float64

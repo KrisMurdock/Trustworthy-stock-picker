@@ -14,6 +14,8 @@ const (
 	TrappedLookbackSessions = 120
 	TrappedMinimumSessions  = 60
 
+	TrappedShareBaseChangeThresholdPct = 10.0
+
 	TrappedObserveVolumeRatio         = 0.20
 	TrappedTriggerVolumeRatio         = 0.30
 	TrappedObserveOverheadDistancePct = 1.0
@@ -26,6 +28,9 @@ const (
 
 	trappedIntradayBuckets = 24
 	trappedEpsilon         = 1e-9
+	// Daily turnover feeds commonly round to 0.01 percentage points. Treat
+	// that half-step as measurement noise when inferring the share base.
+	trappedTurnoverHalfStepPct = 0.01 / 2
 )
 
 const (
@@ -67,6 +72,8 @@ type TrappedSignal struct {
 	TurnoverSessions            int           `json:"turnover_sessions,omitempty"`
 	TurnoverCoveragePct         float64       `json:"turnover_coverage_pct,omitempty"`
 	TurnoverSource              string        `json:"turnover_source,omitempty"`
+	ShareBaseComparisons        int           `json:"share_base_comparisons,omitempty"`
+	ShareBaseMaxChangePct       float64       `json:"share_base_max_change_pct,omitempty"`
 	VolumeSource                string        `json:"volume_source,omitempty"`
 	VolumeUnit                  string        `json:"volume_unit,omitempty"`
 	TotalVolumeShares           float64       `json:"total_volume_shares,omitempty"`
@@ -168,13 +175,22 @@ func AnalyzeTrappedSignalV3(history market.History, metrics *market.DailyMetricH
 
 	baseline, baselineTotal := trappedObservations(history, window, nil)
 	signal.TotalVolumeShares = baselineTotal
-	current, _ := trappedObservations(history, window, turnover)
 	baselineRatio, baselineCost, baselineDistance, _ := summarizeTrapped(baseline, signal.CurrentPrice)
-	currentRatio, currentCost, currentDistance, _ := summarizeTrapped(current, signal.CurrentPrice)
-	trapped := trappedOverhead(current, signal.CurrentPrice)
 	signal.BaselineTrappedVolumeRatio = baselineRatio
 	signal.BaselineOverheadCost = baselineCost
 	signal.BaselineOverheadDistancePct = baselineDistance
+
+	shareChanged, comparisons, maxShareChange := turnoverShareBaseChanged(history, window, turnover)
+	signal.ShareBaseComparisons = comparisons
+	signal.ShareBaseMaxChangePct = maxShareChange
+	if shareChanged {
+		signal.Reasons = []string{"turnover_share_base_changed"}
+		return signal
+	}
+
+	current, _ := trappedObservations(history, window, turnover)
+	currentRatio, currentCost, currentDistance, _ := summarizeTrapped(current, signal.CurrentPrice)
+	trapped := trappedOverhead(current, signal.CurrentPrice)
 	signal.TrappedVolumeRatio = currentRatio
 	signal.OverheadCost = currentCost
 	signal.OverheadDistancePct = currentDistance
@@ -299,13 +315,61 @@ func turnoverByDate(metrics *market.DailyMetricHistory, window trappedWindow) (m
 	return out, true
 }
 
+// turnoverShareBaseChanged detects corporate actions or free-float changes
+// that make the turnover denominator incomparable across the window. Daily
+// turnover is rounded by upstream providers, so the relative tolerance grows
+// when either observed turnover rate is small.
+func turnoverShareBaseChanged(history market.History, window trappedWindow, turnover map[string]float64) (bool, int, float64) {
+	var previousShares, previousRate float64
+	comparisons := 0
+	maxChange := 0.0
+	for _, bar := range window.bars {
+		if !validTrappedBar(bar) || bar.Volume <= 0 {
+			continue
+		}
+		rate, ok := turnover[bar.Date]
+		if !ok || rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+			continue
+		}
+		volumeShares := market.ProviderVolumeShares(history.Source, history.Code, bar.Volume)
+		if volumeShares <= 0 || math.IsNaN(volumeShares) || math.IsInf(volumeShares, 0) {
+			continue
+		}
+		impliedShares := volumeShares / (rate / 100)
+		if impliedShares <= 0 || math.IsNaN(impliedShares) || math.IsInf(impliedShares, 0) {
+			return true, comparisons, maxChange
+		}
+		if previousShares > 0 {
+			changePct := math.Abs(impliedShares/previousShares-1) * 100
+			comparisons++
+			if changePct > maxChange {
+				maxChange = changePct
+			}
+			quantizationPct := trappedTurnoverHalfStepPct * (1/previousRate + 1/rate) * 100
+			tolerancePct := math.Max(TrappedShareBaseChangeThresholdPct, quantizationPct)
+			if changePct > tolerancePct {
+				return true, comparisons, maxChange
+			}
+		}
+		previousShares = impliedShares
+		previousRate = rate
+	}
+	return false, comparisons, maxChange
+}
+
 func trappedObservations(history market.History, window trappedWindow, turnover map[string]float64) ([]trappedPricedVolume, float64) {
 	chips := make([]trappedPricedVolume, 0, len(window.bars)*trappedIntradayBuckets)
 	var total float64
+	var distributionBoundaries []float64
+	if len(window.bars) > 0 {
+		distributionBoundaries = trappedDistributionBoundaries(window.bars[len(window.bars)-1].Close)
+	}
 	for _, bar := range window.bars {
 		if !validTrappedBar(bar) {
 			continue
 		}
+		// remaining = prior remaining * (1 - today's turnover) + today's new
+		// volume. The decay therefore applies only to chips from earlier days.
 		if turnover != nil {
 			rate := 0.0
 			if bar.Volume > 0 {
@@ -323,7 +387,7 @@ func trappedObservations(history market.History, window trappedWindow, turnover 
 		if shares <= 0 {
 			continue
 		}
-		for _, point := range triangularDistribution(bar, shares) {
+		for _, point := range triangularDistributionWithBoundaries(bar, shares, distributionBoundaries) {
 			chips = append(chips, point)
 			total += point.volume
 		}
@@ -377,17 +441,49 @@ func trappedOverhead(observations []trappedPricedVolume, currentPrice float64) [
 }
 
 func triangularDistribution(bar market.Bar, shares float64) []trappedPricedVolume {
+	return triangularDistributionWithBoundaries(bar, shares, nil)
+}
+
+func trappedDistributionBoundaries(currentPrice float64) []float64 {
+	if currentPrice <= 0 {
+		return nil
+	}
+	return []float64{
+		currentPrice,
+		currentPrice * (1 + TrappedShallowMaxDistancePct/100),
+		currentPrice * (1 + TrappedModerateMaxDistancePct/100),
+	}
+}
+
+// triangularDistributionWithBoundaries splits the triangular mass at both the
+// regular intraday buckets and all supplied zone boundaries. This keeps one
+// bucket from straddling the current price, 5% band or 15% band, so downstream
+// classification never has to move volume between zones after the fact.
+func triangularDistributionWithBoundaries(bar market.Bar, shares float64, extraBounds []float64) []trappedPricedVolume {
 	low, high, mode := bar.Low, bar.High, bar.Close
 	if high-low <= trappedEpsilon {
 		return []trappedPricedVolume{{price: mode, low: low, high: high, volume: shares}}
 	}
-	bounds := make([]float64, trappedIntradayBuckets+1)
+	bounds := make([]float64, 0, trappedIntradayBuckets+1+len(extraBounds))
 	for i := 0; i <= trappedIntradayBuckets; i++ {
-		bounds[i] = low + (high-low)*float64(i)/float64(trappedIntradayBuckets)
+		bounds = append(bounds, low+(high-low)*float64(i)/float64(trappedIntradayBuckets))
 	}
-	out := make([]trappedPricedVolume, 0, trappedIntradayBuckets)
+	for _, boundary := range extraBounds {
+		if boundary > low+trappedEpsilon && boundary < high-trappedEpsilon {
+			bounds = append(bounds, boundary)
+		}
+	}
+	sort.Float64s(bounds)
+	deduped := bounds[:0]
+	for _, boundary := range bounds {
+		if len(deduped) == 0 || boundary-deduped[len(deduped)-1] > trappedEpsilon {
+			deduped = append(deduped, boundary)
+		}
+	}
+	bounds = deduped
+	out := make([]trappedPricedVolume, 0, len(bounds)-1)
 	var massSum float64
-	for i := 0; i < trappedIntradayBuckets; i++ {
+	for i := 0; i < len(bounds)-1; i++ {
 		mass := triangularCDF(bounds[i+1], low, high, mode) - triangularCDF(bounds[i], low, high, mode)
 		if mass < 0 || math.IsNaN(mass) || math.IsInf(mass, 0) {
 			mass = 0

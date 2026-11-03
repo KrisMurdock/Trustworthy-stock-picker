@@ -287,7 +287,7 @@ func TestBuildTrappedZonesNormalizesSharesTo100(t *testing.T) {
 	}
 }
 
-func TestTrappedObservationsDecaysExistingChipsBeforeAddingCurrentDay(t *testing.T) {
+func TestTrappedObservationsKeepsSignalDayChipsUndecayed(t *testing.T) {
 	bars := []market.Bar{
 		{Date: "2026-01-01", Open: 12, High: 12, Low: 12, Close: 12, Volume: 100},
 		{Date: "2026-01-02", Open: 10, High: 10, Low: 10, Close: 10, Volume: 100},
@@ -303,6 +303,113 @@ func TestTrappedObservationsDecaysExistingChipsBeforeAddingCurrentDay(t *testing
 	}
 	if math.Abs(cost-12) > 1e-9 {
 		t.Fatalf("overhead cost = %.9f, want 12", cost)
+	}
+	var remaining float64
+	for _, observation := range observations {
+		remaining += observation.volume
+	}
+	if math.Abs(remaining-175) > 1e-9 {
+		t.Fatalf("remaining chips = %.9f, want 175: signal-day chips were decayed", remaining)
+	}
+}
+
+func TestAnalyzeTrappedSignalV3MarksUnknownWhenShareBaseChanges(t *testing.T) {
+	history := trappedHistory(120, 80, 10.3, 10)
+	metrics := trappedMetrics(history, 1)
+	for i := range metrics.Metrics {
+		if metrics.Metrics[i].Date >= history.Bars[60].Date {
+			metrics.Metrics[i].TurnoverRatePct = 0.5
+		}
+	}
+	signal := AnalyzeTrappedSignalV3(history, metrics)
+	if signal.Status != TrappedStatusUnknown || len(signal.Reasons) == 0 || signal.Reasons[0] != "turnover_share_base_changed" {
+		t.Fatalf("share-base change should be unknown: %+v", signal)
+	}
+	if signal.ShareBaseComparisons == 0 || signal.ShareBaseMaxChangePct < 90 {
+		t.Fatalf("share-base diagnostics missing: comparisons=%d max=%.2f", signal.ShareBaseComparisons, signal.ShareBaseMaxChangePct)
+	}
+	if signal.BaselineTrappedVolumeRatio <= 0 {
+		t.Fatalf("baseline should remain visible: %+v", signal)
+	}
+	if signal.DecayApplied {
+		t.Fatalf("decay must not be applied across an unstable share base: %+v", signal)
+	}
+}
+
+func TestTurnoverShareBaseToleratesLowTurnoverRounding(t *testing.T) {
+	history := market.History{Code: "sz000001", Source: "sina"}
+	window := trappedWindow{bars: []market.Bar{
+		{Date: "2026-01-01", Open: 10, High: 10, Low: 10, Close: 10, Volume: 100},
+		{Date: "2026-01-02", Open: 10, High: 10, Low: 10, Close: 10, Volume: 100},
+	}}
+	changed, comparisons, maxChange := turnoverShareBaseChanged(history, window, map[string]float64{
+		"2026-01-01": 0.02,
+		"2026-01-02": 0.03,
+	})
+	if changed {
+		t.Fatalf("low-turnover rounding was mistaken for a share change: max=%.2f", maxChange)
+	}
+	if comparisons != 1 {
+		t.Fatalf("comparisons = %d, want 1", comparisons)
+	}
+}
+
+func TestTrappedObservationsSplitsTriangularVolumeAtZoneBoundaries(t *testing.T) {
+	tests := []struct {
+		name      string
+		current   float64
+		low       float64
+		high      float64
+		close     float64
+		boundary  float64
+		zoneIndex int
+		nextZone  int
+	}{
+		{name: "shallow", current: 10, low: 10.43, high: 10.63, close: 10.53, boundary: 10.5, zoneIndex: 0, nextZone: 1},
+		{name: "moderate", current: 10, low: 11.43, high: 11.63, close: 11.53, boundary: 11.5, zoneIndex: 1, nextZone: 2},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			bars := []market.Bar{
+				{Date: "2026-01-01", Open: test.close, Low: test.low, High: test.high, Close: test.close, Volume: 100},
+				{Date: "2026-01-02", Open: test.current, Low: test.current, High: test.current, Close: test.current, Volume: 0},
+			}
+			history := market.History{Code: "sz000001", Source: "sina"}
+			observations, _ := trappedObservations(history, trappedWindow{bars: bars}, nil)
+			for _, observation := range observations {
+				if observation.low < test.boundary-trappedEpsilon && observation.high > test.boundary+trappedEpsilon {
+					t.Fatalf("bucket %.9f~%.9f straddles boundary %.2f", observation.low, observation.high, test.boundary)
+				}
+			}
+			zones, _, _ := buildTrappedZones(observations, test.current)
+			want := triangularCDF(test.boundary, test.low, test.high, test.close)
+			if math.Abs(zones[test.zoneIndex].VolumeShare-want) > 1e-8 {
+				t.Fatalf("zone %d share = %.9f, want %.9f (zones %+v)", test.zoneIndex, zones[test.zoneIndex].VolumeShare, want, zones)
+			}
+			if zones[test.nextZone].VolumeShare <= 0 {
+				t.Fatalf("volume above boundary was not assigned to the next zone: %+v", zones)
+			}
+		})
+	}
+}
+
+func TestTrappedObservationsSplitsTriangularVolumeAtCurrentPrice(t *testing.T) {
+	low, high, mode, current := 9.90, 10.10, 10.05, 10.0
+	bars := []market.Bar{
+		{Date: "2026-01-01", Open: mode, Low: low, High: high, Close: mode, Volume: 100},
+		{Date: "2026-01-02", Open: current, Low: current, High: current, Close: current, Volume: 0},
+	}
+	history := market.History{Code: "sz000001", Source: "sina"}
+	observations, _ := trappedObservations(history, trappedWindow{bars: bars}, nil)
+	for _, observation := range observations {
+		if observation.low < current-trappedEpsilon && observation.high > current+trappedEpsilon {
+			t.Fatalf("bucket %.9f~%.9f straddles current price %.2f", observation.low, observation.high, current)
+		}
+	}
+	ratio, _, _, _ := summarizeTrapped(observations, current)
+	want := 1 - triangularCDF(current, low, high, mode)
+	if math.Abs(ratio-want) > 1e-8 {
+		t.Fatalf("overhead ratio = %.9f, want %.9f", ratio, want)
 	}
 }
 

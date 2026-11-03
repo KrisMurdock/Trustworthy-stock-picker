@@ -125,7 +125,7 @@ func secondStageArticleBody(r selection.Report, result secondstage.Report) strin
 	} else {
 		out.WriteString(fmt.Sprintf("推荐买区以参考买价为中枢、ATR14 的 %.2g 倍为半宽；财务研究区间=TTM EPS 盈利倍数与每股净资产倍数各半，按 ROE 与盈利增速调整，仅作研究参考，不是目标价。信号日实际区间取 %s 最高至最低价。明日高低点为 dayrange 点估计及名义边际区间，非联合覆盖或收益承诺；缺失标“暂缺”，不补造。\n\n", articleBuyBandATR, articleMonthDay(result.AsOf)))
 		out.WriteString("## 套牢盘诊断说明\n\n")
-		out.WriteString(fmt.Sprintf("套牢盘按近 %d 个交易日的不复权成交估算：每日成交量先换算为股数，再按低-收-高三角分布展开；历史筹码按当日换手率逐日衰减，零成交日保留为未换手样本。上方套牢量=衰减后价格高于信号日收盘的筹码占比；触发=≥30%%且加权成本高于现价≥2%%且浅+中度套牢区合计≥50%%，观察=≥20%%且≥1%%且合计≥40%%，无明显=未达观察阈值，数据不足=样本少于%d个或换手率缺失。成本带为上方筹码20%%~80%%加权分位；三档区间占比按最大余数法归一化，合计恒为100%%。该指标只描述上方成交压力，成交量不等同真实持仓成本，不构成交易信号，也不改变排名或推荐。\n\n", strategy.TrappedLookbackSessions, strategy.TrappedMinimumSessions))
+		out.WriteString(fmt.Sprintf("套牢盘按近 %d 个交易日的不复权成交估算：每日成交量先换算为股数，再按低-收-高三角分布展开并在现价及 5%%/15%% 分档边界切分；历史筹码按当日换手率逐日衰减，零成交日保留为未换手样本，并校验由成交量与换手率推算的流通股本口径是否稳定。上方套牢量=衰减后价格高于信号日收盘的筹码占比；触发=≥30%%且加权成本高于现价≥2%%且浅+中度套牢区合计≥50%%，观察=≥20%%且≥1%%且合计≥40%%，无明显=未达观察阈值，数据不足=样本少于%d个、换手率缺失或推算流通股本发生显著变化。成本带为上方筹码20%%~80%%加权分位；三档区间占比按最大余数法归一化，合计恒为100%%。该指标只描述上方成交压力，成交量不等同真实持仓成本，不构成交易信号，也不改变排名或推荐。\n\n", strategy.TrappedLookbackSessions, strategy.TrappedMinimumSessions))
 	}
 
 	out.WriteString("## 理论与方法边界\n\n")
@@ -1310,6 +1310,9 @@ func articleTrappedLines(candidate *strategy.Candidate) []string {
 		if signal.BaselineTrappedVolumeRatio > 0 {
 			lines = append(lines, fmt.Sprintf("**衰减前上方套牢量**：%.1f%%（未应用换手衰减，不据此判断状态）", signal.BaselineTrappedVolumeRatio*100))
 		}
+		if len(signal.Reasons) > 0 && signal.Reasons[0] == "turnover_share_base_changed" && signal.ShareBaseMaxChangePct > 0 {
+			lines = append(lines, fmt.Sprintf("**推算流通股本**：相邻日最大变化 %.1f%%，阈值 %.0f%%；不跨该变化应用换手衰减", signal.ShareBaseMaxChangePct, strategy.TrappedShareBaseChangeThresholdPct))
+		}
 		return lines
 	}
 	lines := []string{}
@@ -1526,6 +1529,8 @@ func articleTrappedUnknownReason(signal *strategy.TrappedSignal) string {
 	switch signal.Reasons[0] {
 	case "turnover_history_unavailable":
 		return "换手率缺失"
+	case "turnover_share_base_changed":
+		return "推算流通股本口径变化"
 	case "unadjusted_history_unavailable":
 		return "缺少不复权历史"
 	case "unadjusted_history_required":
