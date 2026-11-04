@@ -30,6 +30,7 @@ func runtimeTestConfig(t *testing.T) Config {
 	t.Setenv("STOCK_WATCHER_FEISHU_ENABLED", "false")
 	t.Setenv("STOCK_WATCHER_WEB_ENABLED", "false")
 	t.Setenv("STOCK_WATCHER_INTRADAY_ENABLED", "false")
+	t.Setenv("STOCK_WATCHER_HK_SYNC_ENABLED", "false")
 	t.Setenv("STOCK_WATCHER_CALENDAR_VALID_FROM", "2020-01-01")
 	t.Setenv("STOCK_WATCHER_CALENDAR_VALID_THROUGH", "2099-12-31")
 	t.Setenv("STOCK_WATCHER_CALENDAR_HOLIDAYS", "")
@@ -252,6 +253,32 @@ func TestNewWiresHKConnectRecommendationLoader(t *testing.T) {
 	}
 	if loaded.ID != recommendation.ID || loaded.Target != recommendation.Target {
 		t.Fatalf("loaded recommendation = %+v", loaded)
+	}
+}
+
+func TestNewWiresHKDailySyncOnlyWhenEnabled(t *testing.T) {
+	configuration := runtimeTestConfig(t)
+	configuration.HKConnect.SyncEnabled = true
+	t.Setenv("STOCK_WATCHER_HK_SYNC_ENABLED", "true")
+	rt, err := New(Options{Config: &configuration})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.hkDaily == nil {
+		t.Fatal("HK daily synchronization was not wired into the runtime")
+	}
+	if err := rt.Close(); err != nil {
+		t.Fatal(err)
+	}
+	configuration.HKConnect.SyncEnabled = false
+	t.Setenv("STOCK_WATCHER_HK_SYNC_ENABLED", "false")
+	rt, err = New(Options{Config: &configuration})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	if rt.hkDaily != nil {
+		t.Fatal("disabled HK daily synchronization was wired into the runtime")
 	}
 }
 

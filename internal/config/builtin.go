@@ -27,6 +27,7 @@ func Builtin() Config {
 	c.SecondStage.RiskEta = 1
 	c.HKConnect.Enabled = true
 	c.HKConnect.PushEnabled = true
+	c.HKConnect.SyncEnabled = true
 	c.HKConnect.TopN = 10
 	c.LowValuation.Enabled = true
 	c.LowValuation.PushEnabled = true

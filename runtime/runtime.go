@@ -92,6 +92,8 @@ type Runtime struct {
 	minuteClient    *market.MinuteClient
 	turnoverClient  *market.SohuMetricsClient
 	minuteMonitor   *intraday.Monitor
+	hkDaily         *hkconnect.DailyMonitor
+	hkDailySource   *hkconnect.Production
 	hkMinutes       *hkintraday.Monitor
 	closeHKMinute   func()
 	predictor       *predictor.Monitor
@@ -282,6 +284,14 @@ func New(opts Options) (*Runtime, error) {
 		r.minuteClient = market.NewMinuteClient(cfg)
 		r.minuteMonitor = intraday.New(cfg, store, marketDB, r.minuteClient, log)
 	}
+	if cfg.HKConnect.SyncEnabled {
+		hkConfig := cfg
+		if config.Duration(hkConfig.Market.RequestInterval) < time.Second {
+			hkConfig.Market.RequestInterval = "1s"
+		}
+		r.hkDailySource = hkconnect.NewProduction(hkConfig, log)
+		r.hkDaily = hkconnect.NewDailyMonitor(r.hkDailySource, log)
+	}
 	if cfg.HKIntraday.Enabled {
 		r.hkMinutes, r.closeHKMinute = hkintraday.NewProduction(cfg, log)
 	}
@@ -384,6 +394,9 @@ func (r *Runtime) runMonitors(ctx context.Context) error {
 	runners := []func(context.Context) error{r.monitor.Run}
 	if r.minuteMonitor != nil {
 		runners = append(runners, r.minuteMonitor.Run)
+	}
+	if r.hkDaily != nil {
+		runners = append(runners, r.hkDaily.Run)
 	}
 	if r.hkMinutes != nil {
 		runners = append(runners, r.hkMinutes.Run)
@@ -530,6 +543,11 @@ func (r *Runtime) release() error {
 	if r.minuteClient != nil {
 		r.minuteClient.Close()
 		r.minuteClient = nil
+	}
+	if r.hkDailySource != nil {
+		r.hkDailySource.Close()
+		r.hkDailySource = nil
+		r.hkDaily = nil
 	}
 	if r.closeHKMinute != nil {
 		r.closeHKMinute()

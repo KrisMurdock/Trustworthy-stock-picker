@@ -21,17 +21,13 @@ sudo install -m 644 deploy/stock-watcher-secondstage.service /etc/systemd/system
 sudo install -m 644 deploy/stock-watcher-secondstage.timer /etc/systemd/system/stock-watcher-secondstage.timer
 sudo install -m 644 deploy/stock-watcher-allmarket.service /etc/systemd/system/stock-watcher-allmarket.service
 sudo install -m 644 deploy/stock-watcher-allmarket.timer /etc/systemd/system/stock-watcher-allmarket.timer
-sudo install -m 644 deploy/stock-watcher-hk-market.service /etc/systemd/system/stock-watcher-hk-market.service
-sudo install -m 644 deploy/stock-watcher-hk-market.timer /etc/systemd/system/stock-watcher-hk-market.timer
 sudo systemctl daemon-reload
 sudo systemctl enable --now stock-watcher.service
 sudo systemctl enable --now stock-watcher-secondstage.timer
 sudo systemctl enable --now stock-watcher-allmarket.timer
-sudo systemctl enable --now stock-watcher-hk-market.timer
 sudo systemctl status stock-watcher.service
 sudo systemctl status stock-watcher-secondstage.timer
 sudo systemctl status stock-watcher-allmarket.timer
-sudo systemctl status stock-watcher-hk-market.timer
 journalctl -u stock-watcher.service -n 50 --no-pager
 ```
 
@@ -58,15 +54,26 @@ GROUP BY lifecycle ORDER BY lifecycle;
 
 `state_unknown` 是当日四盏灯本身无法判断的数量；`transition_unknown` 还包括当日灯色已知但上一交易日缺失、因而无法判断首次/持续/退出的股票。两者都是研究数据质量指标，不能当作退出共振或通过。
 
-港股通股票日线由 `stock-watcher-hk-market.timer` 在交易日 `18:50` 触发 `sync-hk-connect`，写入独立 `<data_dir>/hk-market.db`，使用独立 `.hk-market.lock`，可与主服务和全市场任务并行。该 unit 同样固定生产数据目录、CIFS 校验和独立日志目录，并把腾讯请求间隔固定为 `1s`，避免 350～500ms 高频请求触发 501；首次执行会保存当前约 667 只港股通股票的十年不复权日线和分析窗口前复权日线。完整同步后还会按 A 股日线趋势门槛独立生成港股通观察快照，写入 `recommendation` 表；`sync-hk-connect` 不直接发送消息，主 `stock-watcher.service` 的 `run` 在下一轮 Cycle 读取快照并投递到 `hk_connect`，所以升级后必须替换并重启主服务，只重启 timer 不会推送港股稿。新浪名单先按腾讯证券类型剔除 ETF/产品；若腾讯类型请求失败，会尝试东方财富股票板，不能用未分类的新浪 698 条名单直接写入。QFQ 接口对无复权因子的股票可能返回 `day`，此时同日 OHLCV 与原始日线一致，数据库按 `adjust=qfq`、`data_field=day` 保存，不能据此判定同步失败。腾讯复权端点在请求 1000 行时可能返回 1001 行，客户端允许这一行上浮并在窗口裁剪时丢弃窗口外记录。
+港股通日线默认由主服务 `run` 进程内的独立循环在周一至周五 `18:50` 后同步，启动会补查最近已到期工作日；恒生指数日线决定实际港股交易日。数据写入主服务 `<data_dir>/hk-market.db`，使用 `.hk-market.lock`，与 A 股和全市场任务隔离。单轮 3 个 worker、24 小时上限，腾讯请求间隔至少 `1s`；失败不退出主进程，从 5 分钟开始退避，最长每小时重试。可设置 `STOCK_WATCHER_HK_SYNC_ENABLED=false` 关闭自动日线同步。完整同步后仍会生成港股通观察快照，主循环在后续 Cycle 读取并投递；手工 `sync-hk-connect` 不直接发送消息。新浪名单先按腾讯证券类型剔除 ETF/产品，失败时回退东方财富股票板；QFQ 可能返回实际字段 `day`，不能据此判定失败。
 
-港股分钟默认关闭。部署前停止港股日线 timer、正在运行的港股同步和可能写分钟的主服务，确认锁释放并完整备份 `hk-market.db` 及 SQLite 相关文件。新版本第一次通过 `sync-hk-connect` 或 `sync-hk-minutes` 打开港股写库时，即使分钟功能关闭，也会事务性将港股 schema 2 升至 3；`init` 不负责迁移该库。旧版港股写程序不支持 schema 3，回滚前必须停写并恢复迁移前完整备份，不能只替换旧二进制。A 股 `market.db` schema 不因港股分钟变更升级；`all-market.db` 的四灯 schema 由全市场写入口独立迁移。
+从旧 timer 迁移时，先停用它和可能仍在运行的旧 oneshot，再停止主服务并备份数据库；确认主服务数据目录和旧 timer 指向同一挂载后，部署新二进制并启动主服务：
+
+```bash
+sudo systemctl disable --now stock-watcher-hk-market.timer
+sudo systemctl stop stock-watcher-hk-market.service stock-watcher.service
+realpath /root/data/codebase/toys_project/stock_watcher/data
+sudo systemctl start stock-watcher.service
+```
+
+旧 timer/service 模板仅保留作旧版本回滚参考，不能与新循环同时启用。回滚旧二进制时应先停止新主服务，再按旧版本部署说明恢复 timer；不要在港股写任务运行时替换二进制或数据库。
+
+港股分钟默认关闭。部署前停止旧港股日线 timer、正在运行的港股同步和可能写分钟的主服务，确认锁释放并完整备份 `hk-market.db` 及 SQLite 相关文件。新版本第一次通过 `run`、`sync-hk-connect` 或 `sync-hk-minutes` 打开港股写库时，即使分钟功能关闭，也会事务性将港股 schema 2 升至 3；`init` 不负责迁移该库。旧版港股写程序不支持 schema 3，回滚前必须停写并恢复迁移前完整备份，不能只替换旧二进制。A 股 `market.db` schema 不因港股分钟变更升级；`all-market.db` 的四灯 schema 由全市场写入口独立迁移。
 
 先在隔离目录执行 `make hk-intraday-smoke` 和 `make docker-hk-intraday-smoke`，另行确认生产 HTTPS 行情端点、CIFS 挂载与锁行为，再按[环境变量](environment-variables.md#分钟行情)核实港股日历覆盖与半日市日期，并设置 `STOCK_WATCHER_HK_INTRADAY_ENABLED=true`。从单股、有限日期开始执行 `sync-hk-minutes`，检查退出码和 `intraday_sync`，再按需逐步扩大；请求窗口相差最多 62 天，现有缺口可从边缘分段重试。主服务的分钟轮询和日线任务使用同一 `.hk-market.lock`，不会并发写入；手动补采前应停止竞争任务或等待锁释放。共享盘、上游拒绝、截断、超时或缺根时保留旧数据并报告失败/缺口，不能以旧数据存在或 HTTP 200 证明补采完整。
 
 部署后对实际受控 URL 检查 `/healthz`、`/api/hk-intraday?code=hk00700&period=5` 与 `period=15/30/60`，核对 `source`、最新时间、`sync.status` 和未解决区间；按真实代理分别验证未登录、无权限及有权限会话，检查只读方法、Cookie、浏览器控制台和网络请求。应用没有内置角色，代理身份结果不能用本地模拟替代；当前也没有港股分钟图表页面。确认滚动发布完成、旧实例退出、有效日历与开关生效且日志无持续失败，再核对 `PRAGMA user_version=3` 和 `intraday_sync` 状态。若生产源、真实 CIFS、账号或部署 URL 不可用，只能记录“本地验证通过，部署后未验证”，不得宣称线上覆盖完成。
 
-港股通线上验收至少检查：`systemctl list-timers stock-watcher-hk-market.timer` 显示下一次触发时间；`journalctl -u stock-watcher-hk-market.service -n 80 --no-pager` 最后一行 JSON 为 `status=complete` 且 `universe_source=sina`、`eligible=667`（名单会随交易所调整），日志包含 `HK Connect recommendation generated`；`hk-market.db` 的 `sync_run` 最新记录 `as_of` 等于最近已完成港股交易日，`failed=partial=0`；`recommendation` 表最新快照的 `target` 是下一预期观察日（优先未来港股会话，未来日历为空时回退下一工作日）；`stock` 表不应出现 `GP-FUND` 对应的 31 个 ETF 代码；每只股票同时存在 `none` 与 `qfq` 的 `stock_sync` 成功记录。主服务验收还要确认运行的是包含本改动的 commit、`journalctl -u stock-watcher.service` 出现 `HK Connect recommendation queued`，并在 `state/delivery.json` 或微信公众号草稿箱看到对应 `"<推荐ID>:hk-connect:article"`。只读 SQL 可用系统自带的 Python SQLite：
+港股通线上验收至少检查：旧 `stock-watcher-hk-market.timer` 已停用，主服务运行制品与目标提交一致；`journalctl -u stock-watcher.service -n 200 --no-pager` 出现 `HK Connect daily monitor started` 和当轮 `HK Connect scheduled synchronization completed`，需要观察稿时还需检查 `HK Connect recommendation generated`。`hk-market.db` 的 `sync_run` 最新记录 `as_of` 等于最近已到期且已完成的港股交易日，`failed=partial=0`；`recommendation` 表最新快照的 `target` 是下一预期观察日（优先未来港股会话，未来日历为空时回退下一工作日）；股票类型和 `none`/`qfq` 同步状态应符合股池快照。确认推送时还要检查主服务的 `HK Connect recommendation queued` 和对应草稿；日线同步完成不保证推送已完成。只读 SQL 可用系统自带的 Python SQLite：
 
 ```bash
 python3 - <<'PY'
@@ -80,7 +87,7 @@ print('recommendation', db.execute('select as_of,target,id from recommendation o
 PY
 ```
 
-若 `sync-hk-connect` 报 `request_failed_status` 或 `missing_or_invalid_hk_daily_rows`，先确认腾讯日线端点和类型端点可用，再原命令续跑；`stock_sync` 失败记录会重试，已完成股票会跳过。若报 `history_start_incomplete`，必须核对上市日期或上游实际历史，不能把请求了十年当成已验证十年完整性。若当前尚未安装 timer，只能写“CLI/本地验证通过，部署后未验证”，不能宣称线上已按日更新。
+若自动循环或 `sync-hk-connect` 报 `request_failed_status` 或 `missing_or_invalid_hk_daily_rows`，先确认腾讯日线端点和类型端点可用；自动循环会退避重试，`stock_sync` 已完成股票会跳过。若报 `history_start_incomplete`，必须核对上市日期或上游实际历史，不能把请求了十年当成已验证十年完整性。若尚未在真实部署环境验证主服务和当轮结果，只能写“本地验证通过，部署后未验证”，不能宣称线上已按日更新。
 
 精排线上验收至少检查：`systemctl list-timers stock-watcher-secondstage.timer`、当日 `state/secondstage/<model>/<as_of>.json` 四份文件均存在、`/api/reports?as_of=<date>` 中 `second_stage.degraded=false`、精排稿只在初筛/主报告之后发送。若 `journalctl -u stock-watcher-secondstage.service` 显示模型目录、Python 依赖或 CIFS 挂载错误，先修复离线生成链；不要把缺失 artifact 误判为 Go 精排算法失败。
 

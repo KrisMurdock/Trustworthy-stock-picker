@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -67,6 +68,45 @@ func TestHKMarketViewRequiresInitializedDatabase(t *testing.T) {
 	defer view.Close()
 	if _, err := view.LastBarDate(context.Background(), "hk00700", "none"); err == nil {
 		t.Fatal("empty HK view unexpectedly returned a bar date")
+	}
+}
+
+func TestHasDailyBarsAfterChecksBothAdjustments(t *testing.T) {
+	for _, adjust := range []string{"none", "qfq"} {
+		t.Run(adjust, func(t *testing.T) {
+			db, err := OpenHKMarket(t.TempDir(), false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			ctx := context.Background()
+			if newer, err := db.HasDailyBarsAfter(ctx, "2026-10-29"); err != nil || newer {
+				t.Fatalf("empty market newer = %v, %v", newer, err)
+			}
+			stock := config.Stock{Code: "hk00700", Name: "腾讯控股"}
+			history := allMarketHistoryTest(stock.Code, adjust, "2026-10-29", "2026-10-30")
+			history.Name, history.Source = stock.Name, "tencent_hk"
+			if adjust == "qfq" {
+				history.DataField = "qfqday"
+			}
+			if err := db.SaveHistory(ctx, stock, history, true); err != nil {
+				t.Fatal(err)
+			}
+			if newer, err := db.HasDailyBarsAfter(ctx, "2026-10-29"); err != nil || !newer {
+				t.Fatalf("newer %s history = %v, %v", adjust, newer, err)
+			}
+			if newer, err := db.HasDailyBarsAfter(ctx, "2026-10-30"); err != nil || newer {
+				t.Fatalf("same-day %s history = %v, %v", adjust, newer, err)
+			}
+			if _, err := db.HasDailyBarsAfter(ctx, "2026-13-40"); err == nil {
+				t.Fatal("invalid cutoff was accepted")
+			}
+			canceled, cancel := context.WithCancel(ctx)
+			cancel()
+			if _, err := db.HasDailyBarsAfter(canceled, "2026-10-30"); !errors.Is(err, context.Canceled) {
+				t.Fatalf("canceled cutoff query returned %v", err)
+			}
+		})
 	}
 }
 

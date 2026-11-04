@@ -562,6 +562,31 @@ func (m *AllMarketDB) LastBarDate(ctx context.Context, code, adjust string) (str
 	return date.String, nil
 }
 
+func (m *AllMarketDB) HasDailyBarsAfter(ctx context.Context, asOf string) (bool, error) {
+	if m == nil || m.db == nil {
+		return false, fs.ErrNotExist
+	}
+	date, err := time.Parse("2006-01-02", asOf)
+	if err != nil || date.Format("2006-01-02") != asOf {
+		return false, errors.New("invalid daily history cutoff")
+	}
+	var found bool
+	err = m.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM stock s
+			WHERE COALESCE((SELECT MAX(trade_date) FROM daily_bar WHERE code=s.code AND adjust='none'), '') > ?
+			   OR COALESCE((SELECT MAX(trade_date) FROM daily_bar WHERE code=s.code AND adjust='qfq'), '') > ?
+		)
+	`, asOf, asOf).Scan(&found)
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return false, errors.New("cannot inspect latest daily histories")
+	}
+	return found, nil
+}
+
 // LatestQuotes returns one latest unadjusted close per active stock whose raw
 // synchronization completed for asOf. It does not silently carry a prior
 // as-of snapshot: callers receive the actual bar date and decide whether the

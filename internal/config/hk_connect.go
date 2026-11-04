@@ -7,6 +7,7 @@ import "errors"
 type HKConnect struct {
 	Enabled     bool `yaml:"enabled" json:"enabled"`
 	PushEnabled bool `yaml:"push_enabled" json:"push_enabled"`
+	SyncEnabled bool `yaml:"sync_enabled" json:"sync_enabled"`
 	TopN        int  `yaml:"top_n" json:"top_n"`
 }
 

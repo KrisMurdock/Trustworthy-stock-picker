@@ -351,6 +351,7 @@ Quick Tunnel 的地址在进程重启、机器休眠或隧道重连后可能变�
 | `STOCK_WATCHER_SECOND_STAGE_TOP_N` | 精排输出数量，默认 `10` |
 | `STOCK_WATCHER_SECOND_STAGE_PUBLISH_BY` | 精排等待 artifact 的最晚时刻，默认 `15:28`；到点未齐则降级发布 |
 | `STOCK_WATCHER_INTRADAY_ENABLED` | 是否启用 5 分钟采集 |
+| `STOCK_WATCHER_HK_SYNC_ENABLED` | 是否由 `run` 自动同步港股通日线，默认开启 |
 | `STOCK_WATCHER_HK_INTRADAY_ENABLED` | 是否启用独立港股通分钟采集，默认关闭 |
 | `STOCK_WATCHER_PREDICTOR_ENABLED` | 是否启用 5 分钟实验预测 |
 | `STOCK_WATCHER_PREDICTOR_PUSH_ENABLED` | 是否推送聚合预测卡；关闭后仍保存预测 |
@@ -376,16 +377,13 @@ make build
 sudo install -m 644 deploy/stock-watcher.service /etc/systemd/system/stock-watcher.service
 sudo install -m 644 deploy/stock-watcher-allmarket.service /etc/systemd/system/stock-watcher-allmarket.service
 sudo install -m 644 deploy/stock-watcher-allmarket.timer /etc/systemd/system/stock-watcher-allmarket.timer
-sudo install -m 644 deploy/stock-watcher-hk-market.service /etc/systemd/system/stock-watcher-hk-market.service
-sudo install -m 644 deploy/stock-watcher-hk-market.timer /etc/systemd/system/stock-watcher-hk-market.timer
 sudo systemctl daemon-reload
 sudo systemctl enable --now stock-watcher.service
 sudo systemctl enable --now stock-watcher-allmarket.timer
-sudo systemctl enable --now stock-watcher-hk-market.timer
 sudo systemctl status stock-watcher.service
 ```
 
-服务模板读取 `/etc/stock-watcher.env`，工作目录和二进制路径按实际安装位置调整。`stock-watcher-allmarket.timer` 在交易日 `18:40` 先调用 `sync-all`，成功后再执行 `four-light-all` 归档近似四灯；`sync-all` 把全市场沪深 A 股日线写入独立的 `all-market.db`，并在完整同步后生成低估值快照；启用交集时还会生成低估值低套牢快照。`stock-watcher-hk-market.timer` 在交易日 `18:50` 调用 `sync-hk-connect`，把当前港股通股票日线写入独立的 `hk-market.db`，并在完整同步后生成港股通观察快照；推送仍由主 `stock-watcher.service` 的 `run` 循环负责，因此升级后必须替换并重启主服务，只运行 timer 不会发送文章。四灯归档仅供观察；全市场 `sync-all` 不参与股池排名，两篇观察稿分别使用独立 `low_valuation`、`value_trapped` 路由。完整准备、SELinux、升级、回滚和排障步骤见[部署与排障](docs/deployment.md)。
+服务模板读取 `/etc/stock-watcher.env`，工作目录和二进制路径按实际安装位置调整。`stock-watcher-allmarket.timer` 在交易日 `18:40` 先调用 `sync-all`，成功后再执行 `four-light-all` 归档近似四灯；`sync-all` 把全市场沪深 A 股日线写入独立的 `all-market.db`，并在完整同步后生成低估值快照；启用交集时还会生成低估值低套牢快照。港股通日线默认由主 `run` 进程在周一至周五 `18:50` 后同步到独立的 `hk-market.db`，并生成观察快照；启动会检查上一个已到期工作日，旧 `stock-watcher-hk-market.timer` 必须停用。港股分钟采集仍需单独启用和验证。四灯归档仅供观察；全市场 `sync-all` 不参与股池排名，两篇观察稿分别使用独立 `low_valuation`、`value_trapped` 路由。完整准备、SELinux、升级、回滚和排障步骤见[部署与排障](docs/deployment.md)。
 
 ### Docker Compose
 

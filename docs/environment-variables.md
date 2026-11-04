@@ -71,6 +71,7 @@
 | STOCK_WATCHER_SECOND_STAGE_PUBLISH_BY | 15:28 | 精排等待离线 artifact 的最晚时刻；到点仍未齐则发送带 `degraded=true` 的中性降级结果 |
 | STOCK_WATCHER_HK_CONNECT_ENABLED | true | 完整同步港股通日线后，是否生成独立日线规则观察快照；不复用 A 股初筛、精排或成交模拟 |
 | STOCK_WATCHER_HK_CONNECT_PUSH_ENABLED | true | 是否由 `run`/`once` 读取最新港股快照并投递到 `hk_connect` 路由；依赖 `hk_connect.enabled` |
+| STOCK_WATCHER_HK_SYNC_ENABLED | true | 是否在 `run` 内自动同步港股通日线；关闭不影响手工 `sync-hk-connect` 和分钟采集 |
 | STOCK_WATCHER_HK_CONNECT_TOP_N | 10 | 港股通观察稿最多展示的候选数，允许 1～20；趋势分降序、同分按代码排序 |
 | STOCK_WATCHER_LOW_VALUATION_ENABLED | true | 完整全市场同步后，是否用不复权收盘价和财务研究区间生成低估值快照；不复用初筛、精排或成交模拟 |
 | STOCK_WATCHER_LOW_VALUATION_PUSH_ENABLED | true | 是否由 `run`/`once` 读取低估值快照并投递到 `low_valuation` 路由；依赖 `low_valuation.enabled` |

@@ -23,7 +23,7 @@ from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 DAYS = ["2026-10-29", "2026-10-30"]
-STATE = {"mode": "ok", "minute_requests": 0}
+STATE = {"mode": "ok", "minute_requests": 0, "daily_mode": "off"}
 TZ = ZoneInfo("Asia/Shanghai")
 
 
@@ -60,11 +60,26 @@ class Provider(BaseHTTPRequestHandler):
         elif path.path == "/universe":
             assert query.get("fs") == ["b:DLMK0146,b:DLMK0144"]
             self.reply(200, {"rc": 0, "data": {"total": 1, "diff": [{"f12": "00700", "f14": "腾讯控股"}]}})
-        elif path.path == "/appstock/app/fqkline/get":
+        elif path.path in ("/appstock/app/fqkline/get", "/appstock/app/hkfqkline/get"):
             parts = query["param"][0].split(",")
-            assert parts[0] == "hkHSI"
-            rows = [[day, "100", "101", "102", "99", "1000"] for day in DAYS if parts[2] <= day <= parts[3]]
-            self.reply(200, {"code": 0, "data": {"hkHSI": {"day": rows}}})
+            assert parts[0] in ("hkHSI", "hk00700")
+            if STATE["daily_mode"] == "deny":
+                self.reply(403, {"error": "fixture denied"})
+                return
+            if STATE["daily_mode"] == "run":
+                date = datetime.fromisoformat(parts[3]).date()
+                dates = []
+                while date.isoformat() >= parts[2] and len(dates) < 10:
+                    if date.weekday() < 5:
+                        dates.append(date.isoformat())
+                    date -= timedelta(days=1)
+                dates.reverse()
+            else:
+                assert parts[0] == "hkHSI"
+                dates = [day for day in DAYS if parts[2] <= day <= parts[3]]
+            rows = [[day, "100", "101", "102", "99", "1000"] for day in dates]
+            field = "qfqday" if parts[5] == "qfq" else "day"
+            self.reply(200, {"code": 0, "data": {parts[0]: {field: rows}}})
         elif path.path == "/minutes":
             STATE["minute_requests"] += 1
             assert query.get("secid") == ["116.00700"] and query.get("klt") == ["5"] and query.get("fqt") == ["0"]
@@ -169,6 +184,7 @@ def main():
             "STOCK_WATCHER_WEB_ADDR": f"{'0.0.0.0' if args.image else '127.0.0.1'}:{port}",
             "STOCK_WATCHER_INTRADAY_ENABLED": "false",
             "STOCK_WATCHER_HK_INTRADAY_ENABLED": "true",
+            "STOCK_WATCHER_HK_SYNC_ENABLED": "false",
             "STOCK_WATCHER_HK_INTRADAY_REQUEST_INTERVAL": "350ms",
             "STOCK_WATCHER_HK_CONNECT_ENABLED": "false",
             "STOCK_WATCHER_HK_CONNECT_PUSH_ENABLED": "false",
@@ -257,6 +273,34 @@ def main():
             invoke(["sync-hk-minutes"], False, {"STOCK_WATCHER_HK_INTRADAY_ENABLED": "false"})
             invoke(["check-config"], False, {"STOCK_WATCHER_HK_INTRADAY_VALID_THROUGH": ""})
             assert saved() == baseline
+
+            daily_overrides = {"STOCK_WATCHER_HK_SYNC_ENABLED": "true", "STOCK_WATCHER_HK_INTRADAY_ENABLED": "false"}
+            for mode, expected in (("deny", "HK Connect scheduled synchronization failed"),
+                                   ("run", "HK Connect scheduled synchronization completed")):
+                STATE["daily_mode"] = mode
+                daily_log = root / f"daily-{mode}.log"
+                with daily_log.open("w") as log:
+                    process = subprocess.Popen(command(["run"], service=True, overrides=daily_overrides), cwd=root,
+                                               env={**env, **daily_overrides}, stdout=log, stderr=subprocess.STDOUT)
+                    try:
+                        deadline = time.monotonic() + 25
+                        while expected not in daily_log.read_text():
+                            assert process.poll() is None and time.monotonic() < deadline, daily_log.read_text()
+                            time.sleep(0.1)
+                        with urlopen(app + "/healthz", timeout=1) as response:
+                            assert response.status == 200
+                        if mode == "run":
+                            with sqlite3.connect(root / "data/hk-market.db") as database:
+                                assert database.execute("SELECT status,total,failed,partial FROM sync_run ORDER BY started_at DESC LIMIT 1").fetchone() == ("complete", 1, 0, 0)
+                                assert database.execute("SELECT COUNT(DISTINCT adjust) FROM daily_bar WHERE code='hk00700'").fetchone() == (2,)
+                    finally:
+                        if args.image:
+                            subprocess.run(["docker", "stop", "--time", "10", container_name], capture_output=True, timeout=15)
+                        else:
+                            process.terminate()
+                        process.wait(timeout=20)
+                    assert process.returncode == 0, daily_log.read_text()
+            STATE["daily_mode"] = "off"
 
             with (root / "service.log").open("w") as log:
                 process = subprocess.Popen(command(["run"], service=True), cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -349,7 +393,7 @@ def main():
                         process.terminate()
                     process.wait(timeout=20)
                 assert process.returncode == 0, (root / "service.log").read_text()
-            print(json.dumps({"environment": args.image or "native", "result": "passed", "checks": "schema migration, backfill, gaps, 403/timeout, recovery, read API, browser, mock gateway, SIGTERM"}))
+            print(json.dumps({"environment": args.image or "native", "result": "passed", "checks": "runtime daily sync, upstream 403 and recovery, schema migration, backfill, gaps, read API, browser, mock gateway, SIGTERM"}))
         finally:
             provider.shutdown()
 

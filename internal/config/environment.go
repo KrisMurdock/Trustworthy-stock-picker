@@ -89,6 +89,7 @@ func applyEnvironment(c *Config) error {
 		"STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED":  &c.SecondStage.PushEnabled,
 		"STOCK_WATCHER_HK_CONNECT_ENABLED":         &c.HKConnect.Enabled,
 		"STOCK_WATCHER_HK_CONNECT_PUSH_ENABLED":    &c.HKConnect.PushEnabled,
+		"STOCK_WATCHER_HK_SYNC_ENABLED":            &c.HKConnect.SyncEnabled,
 		"STOCK_WATCHER_LOW_VALUATION_ENABLED":      &c.LowValuation.Enabled,
 		"STOCK_WATCHER_LOW_VALUATION_PUSH_ENABLED": &c.LowValuation.PushEnabled,
 		"STOCK_WATCHER_VALUE_TRAPPED_ENABLED":      &c.ValueTrapped.Enabled,

@@ -28,7 +28,7 @@ func TestHKConnectValidationAndRoute(t *testing.T) {
 
 func TestBuiltinEnablesIndependentHKConnectArtifactsAndPush(t *testing.T) {
 	c := Builtin()
-	if !c.HKConnect.Enabled || !c.HKConnect.PushEnabled || c.HKConnect.TopN != 10 {
+	if !c.HKConnect.Enabled || !c.HKConnect.PushEnabled || !c.HKConnect.SyncEnabled || c.HKConnect.TopN != 10 {
 		t.Fatalf("builtin HK Connect = %+v", c.HKConnect)
 	}
 	c.Wechat.Enabled = true
@@ -38,5 +38,17 @@ func TestBuiltinEnablesIndependentHKConnectArtifactsAndPush(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("HK Connect article channels = %v", c.ChannelNamesForRoute(NotifyRouteHKConnect))
+	}
+}
+
+func TestHKDailySyncEnvironmentOverride(t *testing.T) {
+	c := Builtin()
+	t.Setenv("STOCK_WATCHER_HK_SYNC_ENABLED", "false")
+	if err := applyEnvironment(&c); err != nil || c.HKConnect.SyncEnabled {
+		t.Fatalf("disabled HK sync = %+v, %v", c.HKConnect, err)
+	}
+	t.Setenv("STOCK_WATCHER_HK_SYNC_ENABLED", "invalid")
+	if err := applyEnvironment(&c); err == nil {
+		t.Fatal("invalid HK sync flag was accepted")
 	}
 }
