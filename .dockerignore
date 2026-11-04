@@ -1,6 +1,8 @@
 # Allow only source and public runtime examples into the build context.
 **
 !Dockerfile
+!docker/
+!docker/aris.Dockerfile
 !.dockerignore
 !go.mod
 !go.sum

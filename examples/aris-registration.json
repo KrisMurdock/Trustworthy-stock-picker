@@ -1,0 +1,43 @@
+{
+  "request": {"schema_version": 1, "run_id": "example-proxy", "strategy": "ma-proxy"},
+  "human_contract": "协议演示，无信号、无真实行情。必须另行确认风险和统计预算；不能据此得出策略结论。",
+  "contract": {
+    "schema_version": 1,
+    "id": "example-proxy-v1",
+    "human_contract_sha256": "",
+    "build_sha256": "",
+    "baseline": "baseline",
+    "candidates": ["candidate"],
+    "input_sha256": {},
+    "constraints": {
+      "max_drawdown": null,
+      "absolute_tail_loss": null,
+      "min_closed_trades": 60,
+      "min_signal_days": 30,
+      "min_profit_factor": 1,
+      "min_net_expectancy": 0,
+      "stress_slippage": []
+    },
+    "inference": {"block_sessions": 0, "min_independent_blocks": 0, "bootstrap_samples": 0, "confidence": 0, "seed": 0},
+    "budget": {"max_candidates": 1, "max_attempts_per_candidate": 1, "max_review_calls": 0, "timeout": "10m"},
+    "review": {"mode": "off", "require_cross_family": false}
+  },
+  "inputs": {
+    "baseline": {
+      "schema_version": 3,
+      "price_basis": "qfq_proxy",
+      "execution_model": "adjusted_return_proxy",
+      "provenance": {"calendar": "protocol fixture", "execution_rules": "assumed", "assumptions": "no market data"},
+      "config": {"capital": 200000, "position_fraction": 0.1, "max_positions": 10, "participation": 0.001, "tick": 0.000001, "holding_sessions": 20, "target": 0.05, "stop": 0.05, "slippage": 0.001, "annual_risk_free": 0},
+      "sessions": ["2026-01-05"], "signals": [], "bars": {}
+    },
+    "candidate": {
+      "schema_version": 3,
+      "price_basis": "qfq_proxy",
+      "execution_model": "adjusted_return_proxy",
+      "provenance": {"calendar": "protocol fixture", "execution_rules": "assumed", "assumptions": "no market data"},
+      "config": {"capital": 200000, "position_fraction": 0.1, "max_positions": 10, "participation": 0.001, "tick": 0.000001, "holding_sessions": 20, "target": 0.05, "stop": 0.05, "slippage": 0.001, "annual_risk_free": 0},
+      "sessions": ["2026-01-05"], "signals": [], "bars": {}
+    }
+  }
+}

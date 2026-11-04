@@ -2,6 +2,7 @@ VERSION ?= $(shell git rev-parse HEAD)
 GO ?= go
 IMAGE ?= stock-watcher:$(VERSION)
 BUILD_GOARCH ?= amd64
+ARIS_IMAGE ?= aris-stock:$(VERSION)
 .DEFAULT_GOAL := help
 
 .PHONY: help fmt-check test vet build run check status minute-backfill secondstage-laya-test secondstage-chinese-decision-test secondstage-deepseek-test secondstage-generate-daily-test smoke sources-smoke intraday-smoke hk-intraday-smoke docker-hk-intraday-smoke dashboard-smoke review-smoke docker-dashboard-smoke docker-review-smoke ci package image docker-build docker-smoke clean
@@ -21,6 +22,27 @@ vet:
 build:
 	mkdir -p bin
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o bin/stock-watcher ./cmd/stock-watcher
+
+.PHONY: aris-build aris-test aris-reconcile aris-image aris-smoke aris-docker-smoke
+aris-build:
+	mkdir -p bin
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o bin/aris-stock ./cmd/aris-stock
+
+aris-test:
+	$(GO) test -race ./internal/maexec ./internal/aris ./cmd/aris-stock ./internal/logging
+
+aris-reconcile:
+	@test -n "$(ARIS_REFERENCE_ROOT)" || (printf '%s\n' 'Set ARIS_REFERENCE_ROOT to the frozen proxy-baseline directory'; exit 1)
+	ARIS_REFERENCE_ROOT="$(ARIS_REFERENCE_ROOT)" $(GO) test ./internal/maexec -run TestFrozenReferenceReconciliation -count=1 -timeout 5m
+
+aris-image:
+	docker build -f docker/aris.Dockerfile --build-arg VERSION="$(VERSION)" -t "$(ARIS_IMAGE)" .
+
+aris-smoke: aris-build
+	bash tests/aris_smoke.sh "$(CURDIR)/bin/aris-stock"
+
+aris-docker-smoke: aris-image
+	bash tests/aris_smoke.sh --image "$(ARIS_IMAGE)"
 
 run:
 	bash scripts/run.sh
