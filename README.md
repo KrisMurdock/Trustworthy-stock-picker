@@ -1,7 +1,7 @@
 <h1 align="center">Trustworthy-stock-picker</h1>
 
 <p align="center">
-  <strong>A 股龙头股池 · 十年日线 · 多源回退 · 短线研究 · 内嵌看板</strong>
+  <strong>A 股研究 · 港股通数据 · 十年日线 · 多源回退 · 内嵌看板</strong>
 </p>
 
 <p align="center">
@@ -9,7 +9,7 @@
   <a href="https://go.dev/doc/devel/release"><img alt="Go" src="https://img.shields.io/github/go-mod/go-version/KrisMurdock/Trustworthy-stock-picker?logo=go&amp;logoColor=white"></a>
   <img alt="SQLite" src="https://img.shields.io/badge/Storage-SQLite-003B57?logo=sqlite&logoColor=white">
   <img alt="Dashboard" src="https://img.shields.io/badge/UI-Embedded-2ea44f">
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/KrisMurdock/Trustworthy-stock-picker?label=License&amp;color=green&amp;labelColor=555555"></a>
+  <a href="https://github.com/KrisMurdock/Trustworthy-stock-picker/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/KrisMurdock/Trustworthy-stock-picker?label=License&amp;color=green&amp;labelColor=555555"></a>
 </p>
 
 <p align="center">
@@ -38,28 +38,29 @@
   <a href="#license">License</a>
 </p>
 
-Stock Watcher 是一个用纯 Go 构建的 A 股研究型行情引擎。它从多个公开行情源同步龙头股池，校验交易日、复权窗口和十年历史完整性，将行情、报告与投递状态事务化保存到本地磁盘或挂载的 Windows/CIFS 共享盘上的 SQLite，并生成下一交易日的观察排名、短线研究结果、内嵌看板和飞书通知。
+Stock Watcher 是一个用 Go 构建的行情与量化研究引擎。主链路从多个公开行情源同步沪深 A 股观测股池，校验交易日、复权窗口和十年历史完整性，生成下一交易日的观察排名、短线研究结果、内嵌看板和通知；港股通日线、可选分钟线与观察名单使用独立的数据链路。行情和报告保存到本地磁盘或挂载的 Windows/CIFS 共享盘上的 SQLite，投递账本和模型文件保存在数据目录中。
 
-整个生产链路只有一个原生二进制：行情下载、数据校验、指标计算、策略研究、网页服务和消息投递都在同一进程内完成，不依赖 Python、Node.js、AKShare 或独立前端服务。
+主服务由一个原生 Go 二进制完成行情下载、数据校验、指标计算、策略研究、网页服务和消息投递，不调用 Python、Node.js、AKShare 或独立前端服务。完整的第二层多模型精排还需要单独运行 Python 脚本生成离线 artifact；临时公网入口则需要单独安装 `cloudflared`。未提供模型 artifact 时，精排按中性分降级，不代表四模型均已运行。
 
 > [!NOTE]
 > 本项目用于数据工程与量化研究，不构成投资建议。它不连接券商、不自动下单，也不会把研究排名描述为成功概率或收益承诺。
 
 ## 核心能力
 
-- **纯 Go、单二进制**：没有解释器、子进程和隐藏兼容层；网页资源通过 `go:embed` 打包进程序。
+- **纯 Go 主服务**：核心运行时没有解释器或旧 CLI 兼容层；网页资源通过 `go:embed` 打包进程序。
 - **多源行情回退**：默认按 `腾讯 → 新浪 → BaoStock → Tushare → 东方财富` 尝试完整数据窗口。
 - **十年原始日线 + 复权分析窗口**：长期留存不复权价格，分析使用独立刷新的前复权窗口，不跨来源或跨轮拼接。
 - **严格的数据完整性**：校验交易日历、上市日期、分页、复权口径、成交量单位和历史覆盖；覆盖率不足时不发布推荐。
-- **SQLite 事务存储**：行情、同步状态、报告和投递账本保存在 `<data_dir>/market.db`；盘前高低价模型、预测与核对档案保存在独立 `<data_dir>/dayrange.db`。同一数据目录只允许一个写入进程。
-- **独立全市场四灯归档**：`sync-all` 把全市场前复权日线写入 `<data_dir>/all-market.db`，随后可独立计算近似四灯，保存每日灯色、首次/持续/退出全红和无法判断原因；不依赖候选排名，也不改正式推荐或通知。
+- **分库持久化**：A 股行情与报告保存在 `market.db`，市场环境、全市场、港股通、财务和预测分别使用独立数据库；投递账本位于 `state/`，不是 `market.db` 的表。各写入链路使用对应的独占锁。
+- **港股通独立链路**：`run` 默认自动同步港股通日线并生成观察快照；东方财富 5 分钟采集默认关闭，启用后可派生 15/30/60 分钟，只读 API 与 A 股数据隔离。
+- **独立全市场四灯归档与研究**：`sync-all` 把全市场日线写入 `all-market.db`，`four-light-all` 归档近似灯色与首次/持续/退出全红；离线工具还可比较波段、行业和触发时点。四灯未与商业软件公式对齐，不改变正式推荐或通知。
 - **可审计的全天高低价观察**：盘前生成当日最高/最低价点估计、分位数与区间，收盘后核对实际极值；未通过验证门禁时保留历史波幅基线，不进入正式推荐或飞书主卡，独立结果可按目标日和页码幂等推送到“当日预测机器人”。盘前预测保存后还会把精排 Top N 与预测结果关联，向独立执行确认机器人推送“可执行／观察／放弃”清单。
-- **指数方向信号**：读取 `context.db` 的上证指数与创业板指日线，按截止日确定性重训逻辑回归，输出下一交易日上涨概率、40 日样本外对照和周一至周五历史胜率；只读展示，不改排名、不推送、不构成交易建议。
+- **指数方向信号**：读取 `context.db` 的上证指数与创业板指日线和分钟线，输出下一交易日日线、上午/下午方向及历史对照；韩国指数为可选特征，恒生与多窗口结果为影子研究，不改变正式排名或通知。
 - **可复核的短线研究**：前复权特征、真实费用与滑点、T+1 成交模拟、滚动验证和独立留出样本。
-- **两层选股**：正式 `short_horizon_v1` 精排之外，另有独立的高召回第一层初筛；初筛结果作为精排候选参考，当前不改变正式推荐。
-- **可维护的龙头股池**：`leaders.yaml` 当前包含 165 只沪深龙头，宇树科技、星网锐捷、亿联网络等已纳入，股池与运行参数分开维护。
-- **5 分钟预测 + 全天高低价预测**：5 分钟实验预测已接入监控、网页和飞书；全天最高/最低价盘前模型、区间校准、CLI、网页、调度和 `predictor_dayrange` 投递均已接入，阶段六盘中更新仍未实现。
-- **内嵌只读看板**：提供全池、个股 K 线、分钟周期、历史排名、复盘、策略实验室和仓位计算。
+- **两层观察筛选**：正式 `short_horizon_v1` 推荐之外，独立的高召回初筛和多模型精排生成观察候选，不改变正式推荐及其风险门槛。
+- **可维护的龙头股池**：沪深观测股池由 `leaders.yaml` 单独维护，实际股票数量以启动时加载的文件为准。
+- **5 分钟预测 + 全天高低价预测**：5 分钟实验预测接入监控、网页和飞书；全天高低价盘前模型及独立投递可按需启用，默认关闭，盘中剩余时段更新尚未实现。
+- **内嵌看板**：提供全池、个股 K 线、分钟周期、历史排名、复盘、策略实验室和仓位计算；行情与报告只读，少量配置及 AI 入口受写入限制。
 - **可恢复的通知投递**：飞书通道采用持久账本和至少一次语义，失败重试不会重新下载整池行情。
 - **生产级运行约束**：默认本地存储，也可显式要求 CIFS；挂载盘不可用时拒绝本地回退。日志统一文本/JSON、stdout/文件双通道和滚动压缩。
 
@@ -67,9 +68,10 @@ Stock Watcher 是一个用纯 Go 构建的 A 股研究型行情引擎。它从�
 
 ### 环境要求
 
-- Linux、Go 1.26.4+、Git、GNU Make、Bash。
-- 默认将行情与状态保存到当前目录的 `data/`（本地磁盘）；需要 Windows 共享盘时，先挂载并设置 `STOCK_WATCHER_DATA_DIR` 与 `STOCK_WATCHER_REQUIRE_CIFS=true`。
-- 运行参数和凭证从 `.env` 环境变量读取；观测股池仍独立保存在 `leaders.yaml`。启动不再需要 `config.yaml` 或 `feishu.config`。
+- Linux、Go 1.26.0+、Git、GNU Make、Bash；CI 和镜像使用 Go 1.26.4。
+- 默认将行情与状态保存到当前目录的 `data/`（本地磁盘）；本地 `init` 会创建缺失的数据目录。需要 Windows 共享盘时，先挂载并设置 `STOCK_WATCHER_DATA_DIR` 与 `STOCK_WATCHER_REQUIRE_CIFS=true`，不能用本地目录替代缺失挂载。
+- 业务默认值编译进二进制，运行时由环境变量覆盖；`make run` 会加载 `.env`，直接运行 CLI 需要自行加载。观测股池独立保存在 `leaders.yaml`，不需要 `config.yaml` 或 `feishu.config`。
+- 可选的四模型 artifact 生成需要另行准备 Python、模型文件和依赖；仅启动主服务不会自动安装或运行相应定时器。
 - Docker Engine 与 Compose ≥ 2.30.0 仅用于容器部署和容器验收。
 
 ### 构建与首次启动
@@ -80,6 +82,7 @@ cd Trustworthy-stock-picker
 
 # 复制完整参数模板；按部署实际修改数据目录、CIFS 和通知配置
 cp .env.example .env
+chmod 600 .env
 
 # 直接运行 CLI 前加载环境变量；make run 会自动加载 .env
 set -a
@@ -98,21 +101,23 @@ make build
 # 下载股票行情、指数与全量板块，校验覆盖率并保存报告
 ./bin/stock-watcher sync
 
-# 首次部署补齐最近 200 个交易日的历史 5 分钟线（日线同步后运行）
+# 日线同步后，按日历覆盖范围补采最多最近 200 个交易日的 A 股 5 分钟线
 ./bin/stock-watcher backfill-minutes -workers 6
 ./bin/stock-watcher preview -as-of YYYY-MM-DD
 
-# 前台运行监控、分钟采集、5 分钟预测与网页
+# 前台运行 A 股与港股通日线监控、可选分钟采集和网页
 make run
 ```
 
-将 `YYYY-MM-DD` 替换为最近已完成的交易日。`check-config` 只校验配置、股池、凭证和日志设置，`check` 才检查数据库、交易日历和投递状态。首次部署或升级数据库 schema 后，必须先完成 `status-backfill`；未完成时 `sync` 和 `run` 会拒绝发布。
+将 `YYYY-MM-DD` 替换为最近已完成的交易日。`check-config` 只校验配置、股池、凭证和日志设置，`check` 才检查数据库、交易日历和投递状态，并写入后删除临时探针。首次部署或升级数据库 schema 后，必须先完成 `status-backfill`；未完成时 `sync` 和 `run` 会拒绝发布。模板默认关闭飞书和微信投递；需要通知时再配置凭证并启用相应通道。
 
-`make run` 启动后会先绑定网页端口，再执行启动同步。网页默认地址为 `http://127.0.0.1:8080/`；常驻进程按内置的 `daily.run_at`（默认北京时间 15:00）在收盘后处理当日行情。初筛和主报告可先发布，四模型离线 artifact 由独立 systemd timer 生成，精排最晚在 `15:28` 消费；artifact 未齐或超时则按中性分降级发布，不阻塞主报告。
+`make run` 启动后先绑定网页端口，再启动 A 股监控与独立的港股通日线循环。网页默认地址为 `http://127.0.0.1:8080/`；A 股默认北京时间 15:00 收盘后处理当日行情，港股日线在工作日 18:50 后调度并在启动时检查应补跑的日期。初筛和主报告可先发布；四模型 artifact 只有另行配置独立生成任务后才会产生，精排最晚在 15:28 消费，缺失或超时则降级发布。
+
+注意：`make run` 检测到同一仓库的 `stock-watcher.service` 正在运行时，会先构建和校验，再停止该后台服务并切换前台；退出前台后需手动启动服务。不要在生产环境中无意执行此切换。
 
 ## 嵌入 Go 项目
 
-其他 Go 程序可以直接依赖本仓库的 `runtime` 包，复用配置加载、SQLite 存储、行情同步、调度、通知和只读看板，无需启动 `stock-watcher` 子进程。
+其他 Go 程序可以直接依赖本仓库的 `runtime` 包，复用配置加载、SQLite 存储、行情同步、调度、通知和看板，无需启动 `stock-watcher` 子进程。以下示例使用已加载环境变量和股池文件，运行时自行启动网页：
 
 ```go
 package main
@@ -120,7 +125,6 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
 	"os/signal"
 	"syscall"
 
@@ -128,57 +132,57 @@ import (
 )
 
 func main() {
-	cfg, err := stockwatcher.LoadConfig()
-	if err != nil {
+	if err := run(); err != nil {
 		log.Fatal(err)
 	}
-	cfg.DataDir = "/srv/stock-watcher/data"
-	cfg.PoolFile = ""
-	cfg.Stocks = []stockwatcher.Stock{{Code: "sz000001", Name: "平安银行"}}
-	cfg.Web.Enabled = false // 由宿主进程挂载看板 handler
+}
+
+func run() error {
+	cfg, err := stockwatcher.LoadConfig()
+	if err != nil {
+		return err
+	}
+	cfg.Web.Enabled = true
 
 	if _, err := stockwatcher.Init(&cfg); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	logger, err := stockwatcher.NewLogger(stockwatcher.LoggerOptions{
 		Dir: "logs", MaxBytes: 10 << 20, MaxDays: 7, Backups: 10, Color: "auto",
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer logger.Close()
 
 	rt, err := stockwatcher.New(stockwatcher.Options{Version: "my-app", Config: &cfg, Logger: logger})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer rt.Close()
 
-	mux := http.NewServeMux()
-	mux.Handle("/", rt.DashboardHandler())
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := rt.Run(ctx); err != nil {
-		log.Fatal(err)
-	}
+	return rt.Run(ctx)
 }
 ```
 
-`Runtime` 不接管 `os/signal`，由宿主控制退出；同一数据目录只允许一个写入实例。完整接口与生命周期说明见[作为 Go 库嵌入](docs/embedding.md)。
+`Runtime` 不接管 `os/signal`，由宿主控制退出；同一数据目录只允许一个主写入实例。若由宿主管理 HTTP 服务，可设置 `cfg.Web.Enabled = false`，将 `rt.DashboardHandler()` 挂到宿主路由，并由宿主负责监听和关闭服务。完整接口与生命周期说明见[作为 Go 库嵌入](docs/embedding.md)。
 
 ## 常用命令
 
 | 命令 | 作用 | 写入数据 | 发送通知 |
 | --- | --- | --- | --- |
 | `check-config` | 校验内置配置、股池、凭证与日志参数 | 否 | 否 |
-| `init` | 显式创建或迁移 `market.db`、`fundamentals.db`；启用时含 `dayrange.db` | 是 | 否 |
-| `check` | 检查存储、日历、任务和投递状态 | 否 | 否 |
+| `init` | 创建或迁移 `market.db`、`fundamentals.db`；启用时含 `context.db`、`dayrange.db` | 是 | 否 |
+| `check` | 检查存储、日历、任务和投递状态 | 临时探针 | 否 |
+| `health` | 只读汇总依赖、业务、任务、分钟采集和投递状态 | 否 | 否 |
+| `replay -revision R` | 使用冻结输入和同一构建重算已保存报告 | 否 | 否 |
 | `status-backfill` | 补齐股池十年停牌状态与交易所日历 | 是 | 否 |
 | `status-refresh` | 刷新最近一段时间的证券状态 | 是 | 否 |
 | `status-audit` | 只读审计交易日、停牌、缺口和可分析状态 | 否 | 否 |
 | `sync` | 同步整池行情、指数与全量板块并生成报告 | 是 | 否 |
-| `sync-all` | 独立同步全市场沪深 A 股日线到 `all-market.db`；完整同步后生成低估值和低估值低套牢快照 | 是（独立库） | 否 |
+| `sync-all` | 独立同步全市场沪深 A 股日线到 `all-market.db`；完整同步后按配置生成低估值快照 | 是（独立库） | 否 |
 | `scan-low-valuation` | 基于全市场不复权收盘价与财务研究区间重跑低估值扫描 | 是（独立库） | 否 |
 | `scan-value-trapped` | 基于已同步日线重跑低估值与低套牢交集观察 | 是（独立库） | 否 |
 | `sync-fundamentals` | 从 Tushare 追加 PIT 年度财务到 `fundamentals.db` | 是（独立库） | 否 |
@@ -190,6 +194,8 @@ func main() {
 | `sync-context` | 只补跑指数与板块同步，用于排障 | 是 | 否 |
 | `sync-index-minutes` | 补采上证/创业板指数 5/30 分钟线到 `context.db`，用于上午/下午树模型 | 是 | 否 |
 | `sync-korea-context` | 补采 KOSPI/KOSDAQ 日线到 `context.db`，作为可选盘前特征 | 是 | 否 |
+| `sync-hang-seng-context` | 补采恒生日线到 `context.db`，供下午影子模型使用 | 是 | 否 |
+| `sync-korea-minutes` | 前向采集韩国指数分钟线到 `context.db`，尚不进入预测模型 | 是 | 否 |
 | `sync-intraday` | 手动执行一轮 5 分钟采集 | 是 | 否 |
 | `backfill-minutes` | 用 BaoStock 或新浪补齐历史 5 分钟线，支持 staging 与断点续跑 | 是 | 否 |
 | `train-predictor` | 在停止 `run` 后手动训练下一有效期模型 | 是 | 否 |
@@ -204,21 +210,29 @@ func main() {
 | `preview` | 输出全池观察排名和研究结果 | 否 | 否 |
 | `research` | 输出研究统计 | 否 | 否 |
 | `experiment` | 运行或派生策略实验 | 是 | 否 |
+| `study-yang-pullback` | 只读研究阳线回踩形态并输出 JSON，不生成推荐 | 否 | 否 |
 | `plan` | 按实际成交价和预算计算交易计划 | 否 | 否 |
-| `run` | 常驻日线同步、分钟采集、5 分钟预测、调度和网页 | 是 | 是 |
-| `once` | 执行一次受时间窗口约束的调度 | 是 | 是 |
+| `run` | 常驻 A 股与港股日线同步、可选分钟采集、预测、调度和网页 | 是 | 按配置 |
+| `once` | 执行一次到期调度与投递（含已有港股观察稿），不启动港股日线循环 | 是 | 按配置 |
 | `status` | 查看各通道投递状态 | 否 | 否 |
 | `retry` | 解锁指定通道或全部通道的永久错误 | 是 | 可能 |
+| `version` | 输出构建版本 | 否 | 否 |
 
-`sync` 会在同一轮同步中并发下载整池股票、核心 A 股指数和东方财富可发现的所有行业/概念板块；指数或板块失败只记录在 `context.db` 的同步状态中，不阻断股票报告。`sync-context` 只用于单独补跑或排障，常规流程不需要手动执行。`sync` 不发送消息；`run` 和 `once` 才会执行调度与投递。常驻进程持有数据目录写锁，手动写入命令需要先停止常驻实例。修改股池、环境变量或凭证后需要重启。
+`sync` 会在同一轮同步中并发下载整池股票、核心 A 股指数和东方财富可发现的行业/概念板块，并尽力更新恒生日线和韩国指数分钟上下文；上下文失败不阻断股票报告。`sync-context` 用于单独补跑或排障。`sync` 不发送消息；`run` 和 `once` 按配置执行投递。常驻进程持有主数据目录写锁，手动写入 `market.db` 前须停止常驻实例；全市场、港股和财务等独立链路使用各自的写锁，运行前仍须确认对应锁没有被占用。修改股池、环境变量或凭证后需要重启。
 
 `sync-all` 是独立的全市场日线链路：通过新浪 `sh_a` + `sz_a` 节点发现当前沪深 A 股，排除 ST、名称含“退”的退市股票、北交所和 B 股，只保存 10 年不复权日线与分析窗口前复权日线到 `<data_dir>/all-market.db`。它使用独立 `.all-market.lock`，可与常驻 `run` 并行，不读取或写入 `market.db`，不参与股池排名、报告或直接通知。首次运行会全量抓取，之后同日已完成股票自动跳过；`-full` 强制全量刷新，`-codes` 用于小范围冒烟，`-workers` 控制 1～8 并发。新浪列表不提供上市日期，因此实际历史起点仍受上市日期和上游可用数据限制，不能把“请求了 10 年”表述为“已验证十年完整性”。完整且未使用 `-codes` 的同步会在启用 `low_valuation` 时自动生成全市场低估值快照：只保留现价低于财务研究区间下沿的股票，按距下沿折价升序排名并保存到 `all-market.db`；主 `run`/`once` 读取后投递《全市场低估值股》公众号文章。启用 `value_trapped` 时，同一轮扫描还会只对低估值候选复用套牢 V3 算法，保留上方套牢量不超过 30% 的股票，按折价、套牢量、20 日成交额和代码排序保存为 `value_trapped` 快照，并投递独立《低估值且低套牢》公众号稿。两条链路都不复用初筛、精排或成交模拟，低估值和低套牢都不等于上涨或买卖建议。日线已同步后可用 `scan-low-valuation` 单独重跑低估值，或用 `scan-value-trapped` 重跑交集观察，详见[全市场低估值观察](docs/low-valuation.md)和[低估值低套牢观察](docs/value-trapped.md)。
 
-`sync-hk-connect` 使用当前港股通股票快照，通过新浪 `hgt_hk`/`sgt_hk` 港通板块发现证券，再用腾讯行情类型剔除 ETF/产品，只保留 `GP` 股票（当前约 667 只），并以东方财富港股通股票行情页作为回退；只接受 `hk` 前缀的五位代码。每只股票保存最近十个自然年的不复权日线和 `daily.history_days` 前复权窗口，港股交易日由恒生指数日线推导，默认截止最近一个 16:00 后已完成的港股交易日。数据写入独立 `<data_dir>/hk-market.db`，使用独立 `.hk-market.lock`，不读取或写入 `market.db`。完整同步后会按同一套 A 股日线趋势规则独立复算港股通观察名单，保存到 `hk-market.db` 的 `recommendation` 表；常驻 `run` 或 `once` 在下一轮调度中读取最新快照，生成单独的《港股通精选》公众号稿，并与 A 股文章一起进入 `hk_connect` 投递路由。港股稿不复用 A 股初筛、精排模型或成交模拟，也不模拟港股 T+0 和无涨跌停制度。列表是当前成分快照，已移出港股通的股票不会被重新加入，但已保存历史仍保留。
+`sync-hk-connect` 使用当前港股通股票快照，通过新浪 `hgt_hk`/`sgt_hk` 板块发现证券，再用腾讯行情类型剔除 ETF/产品；发现失败时回退东方财富港股通股票行情页。日线来自腾讯港股主/备用端点，只接受 `hk` 加五位代码；不复权请求最近十个自然年，前复权请求 `daily.history_days` 窗口，实际历史受上市日期和上游数据限制。港股交易日由恒生指数日线确认，手动同步默认截止最近一个 16:00 后已完成的港股交易日。数据写入独立 `<data_dir>/hk-market.db`，使用 `.hk-market.lock`，不读取或写入 `market.db`。
 
-港股通分钟采集独立于日线同步，设置 `STOCK_WATCHER_HK_INTRADAY_ENABLED=true` 后由 `run` 按港股时段轮询，也可运行 `sync-hk-minutes -from YYYY-MM-DD -through YYYY-MM-DD -codes hk00700` 补采。东方财富原生不复权 5 分钟线保存在 `hk-market.db`，15/30/60 分钟从同一序列派生；`/api/hk-intraday?code=hk00700&period=5` 只读返回最近最多 640 根和缺口状态，当前没有港股图表页面。来源历史深度、生产限流和全股池覆盖尚需验证，未采集 1 分钟线，不能宣称多年历史完整或所有可获得粒度均已落地。日线和分钟写入共用 `.hk-market.lock`；升级、回滚和补采边界见[行情来源与回退](docs/data-sources.md#港股通分钟数据sync-hk-minutes)。
+`run` 中的港股日线循环默认开启：周一至周五 18:50（北京时间）后调度，启动时检查最近已到期工作日，遇港股休市回退到已确认的最近交易日。每轮默认 3 个 worker、24 小时上限，失败从 5 分钟开始退避、最长每小时重试，不阻断 A 股监控。设置 `STOCK_WATCHER_HK_SYNC_ENABLED=false` 可关闭自动循环，手动 `sync-hk-connect` 仍可使用；`once` 不执行港股日线采集。已完成股票会按断点规则跳过，若库中已有更晚日线则保留较新数据并退避。
+
+启用港股观察功能时，完整同步后按 A 股日线趋势规则独立生成观察名单，写入 `hk-market.db` 的 `recommendation` 表；`run` 或 `once` 可读取最新快照，通过 `hk_connect` 路由投递独立《港股通精选》稿。日线完成不等于观察稿已发送：是否生成和投递分别由开关与通知渠道控制。港股稿不复用 A 股初筛、精排模型或成交模拟，也不模拟港股 T+0 和无涨跌停制度；成分列表只代表当前快照，移出港股通的股票不会因移出而删除已保存历史。
+
+港股通分钟采集独立于日线同步，设置 `STOCK_WATCHER_HK_INTRADAY_ENABLED=true` 后，`run` 按港股时段轮询，也可运行 `sync-hk-minutes -from YYYY-MM-DD -through YYYY-MM-DD -codes hk00700` 补采；手动命令同样要求启用该开关。单次起止日期相差最多 62 个自然日，并须处于港股半日市日历覆盖范围。东方财富原生不复权 5 分钟线保存在 `hk-market.db`，15/30/60 分钟从同一序列派生；60 分钟可跨午休，日末或半日市末根可能仅含 30 个交易分钟。`/api/hk-intraday?code=hk00700&period=5` 只读返回最近最多 640 根和缺口状态，当前没有港股图表页面。来源历史深度、生产限流和全股池覆盖尚需验证，未采集 1 分钟线，不能宣称多年历史完整或所有可获得粒度均已落地。日线和分钟写入共用 `.hk-market.lock`；升级、回滚和补采边界见[行情来源与回退](docs/data-sources.md#港股通分钟数据sync-hk-minutes)。
 
 `four-light-all [-as-of YYYY-MM-DD]` 只读取 `all-market.db` 已保存的前复权日线，按冻结的 `four_light_approx_v1` 为全市场每只活跃股票保存 `red/green/unknown` 灯色和 `first_all_red/continuing_all_red/exit_all_red/non_all_red/unknown` 生命周期。它不会创建空库，不读取候选报告，不改变正式排名、结构门控或飞书；行情不足、上一交易日缺失或数据陈旧会明确记为 `unknown/partial`，数据库读取失败则整轮回滚，不会被解释成“退出全红”。汇总分别记录“当日灯色未知”和“转换状态未知”，列表分页默认 200 条、最多 500 条并返回各列表总数。同一日期和规则成功重跑会事务替换当日快照，失败重跑只记录失败状态并保留上次成功归档。systemd 定时任务先执行 `sync-all`，仅在同步成功后才执行 `four-light-all`；主网页启动时归档尚未创建也不会永久禁用，后续请求会重试打开。
+
+`cmd/four-light-study` 可读取冻结的全市场数据库备份和研究 manifest，比较首次/重复触发、同日市场与同行业基准，以及五日启动和 20/40/60 日路径。它不下载行情、不写生产数据库，也不改变四灯公式或正式推荐；事后分层与路径峰值不是信号日可知的买卖依据。研究输入、复现和偏差边界见[全市场四灯波段研究](docs/four-light-study.md)。
 
 ## 工作原理
 
@@ -228,7 +242,7 @@ func main() {
   </a>
 </p>
 
-图中上层为选股主链路，青绿层为持久化，紫色层为只读观察与实验功能，底部红色层为失败与降级边界。第一层初筛作为日报内的独立候选池输出，不进入正式 `Selected`；5 分钟预测优先读取当日 `Selected`，为空时回退观察 Top N，且不影响选股排名；`context.db` 只服务复盘上下文。点击图可查看原始 SVG。
+图中上层为 A 股选股主链路，青绿层为持久化，紫色层为只读观察与实验功能，底部红色层为失败与降级边界。第一层初筛作为日报内的独立候选池输出，不进入正式 `Selected`；5 分钟预测优先读取当日 `Selected`，为空时回退观察 Top N，且不影响选股排名。`context.db` 保存市场环境，也供复盘和指数方向研究使用；港股通与全市场链路独立于图中的 A 股主链路。点击图可查看原始 SVG。
 
 一次完整同步遵循以下顺序：
 
@@ -246,13 +260,29 @@ func main() {
 
 - 默认行情源为 `tencent, sina, baostock, tushare, eastmoney`，可通过 `STOCK_WATCHER_MARKET_PROVIDERS` 调整。
 - 每只有效股票保存至少最近十个自然年的不复权日线；上市不足十年的股票从上市日开始，不虚构上市前数据。
-- 分析窗口由 `daily.history_days` 控制，默认 365 天，允许 90–7300 天；原始窗口取十年与分析窗口中更长者。
+- 分析窗口由 `daily.history_days` 控制，默认 365 天，允许 90–7300 天；有效起点不早于上市日与十年前两者中较晚的日期，超长配置不会扩大原始日线的十年请求窗口。
 - 推荐要求十年完整性覆盖率默认不低于 95%，当日可分析覆盖率默认不低于 90%。
 - 交易日 15:00 收盘后同步当日行情；初筛和主报告完成后先投递，精排读取离线 artifact，最晚 15:28 发布，目标在 15:30 前完成整条收盘后链路。目标买入日 09:30 后不再推送旧推荐。
 - 内置交易日历当前覆盖 2026 年，必须在到期前按交易所新年度通知升级二进制。
 - 默认使用本地 `data/` 目录；使用 Windows/CIFS 共享盘时设置 `STOCK_WATCHER_REQUIRE_CIFS=true`。挂载盘不可用时停止本轮写入，不回退到服务器本地目录。
+- 港股日线自动同步、港股观察稿和港股分钟采集为独立开关；启用分钟采集前须核对港股半日市日历覆盖与上游可用性。
 
 行情源协议、分页、复权和回退细节见[数据源接入与回退](docs/data-sources.md)。
+
+### 数据目录
+
+| 文件或目录 | 内容 |
+| --- | --- |
+| `market.db` | A 股日线与分钟线、同步状态、报告、冻结输入、停牌和交易日历 |
+| `context.db` | 指数、行业/概念板块及恒生、韩国市场上下文 |
+| `all-market.db` | 全市场 A 股行情、低估值观察和近似四灯归档 |
+| `hk-market.db` | 港股通日线、5 分钟基线、同步状态和观察快照 |
+| `fundamentals.db` | PIT 年度财务事实与抓取批次 |
+| `predictions.db` / `dayrange.db` | 5 分钟预测、盘前高低价预测及核对结果 |
+| `experiments.db` / `calendar.db` | 实验快照、运行记录与冻结交易日历缓存 |
+| `state/` / `models/` | 投递账本、第二层 artifact、分钟预测模型与其他运行状态 |
+
+这些文件按功能启用或首次使用时创建，不保证 `init` 一次创建全部独立库。备份与升级须覆盖上述数据库、状态和上市信息缓存，停写后保留完整 SQLite 文件及相关配置，详见[部署与排障](docs/deployment.md#框架升级与恢复)。
 
 ## 短线研究
 
@@ -270,7 +300,7 @@ func main() {
 
 日报还包含独立的 `first_stage` 高召回初筛：以“未来 3 个交易日最高价相对信号日收盘触及 +1%”为历史标签，将机会分日内中位秩与版本化 logistic 模型分按 Rank-Gauss 融合，默认预算 95 只，推送开启时只展示综合分前 30 名并合并为一张飞书卡片，但第二层精排使用全部候选。3 个交易日窗口结束后，初筛机器人会追加窗口回看卡，分别展示全部候选召回率、Top 30 覆盖率与 Top 30 精确率，并按信号日与窗口结束日稳定去重。回看会从初筛报告还原当时股池，避免后续股池调整污染召回率。初筛只生成第二层精排的候选参考，不改变 `Selected`、`Ranking`、结构门控或风险门槛；初筛失败只写入 `first_stage.status=failed`，不阻断主报告。
 
-第二层精排默认使用 `risk_all20_local035_eta1`：第一层 20%，JEV、Laya official、Laya multilingual、Chinese Decision 各 20%；模型组内百分位按 5 人组计算，经 `0.35` 局部先验校准后融合，再扣除 ATR14 百分位风险惩罚。收盘后由 `scripts/secondstage/generate_daily.py` 并行生成四路 artifact；Go 进程只读取 artifact，不调用 Python。其他同 schema 模型可通过模型权重表加入；参数字段和环境变量见 [算法接入契约](docs/algorithm-interface.md) 与 [环境变量](docs/environment-variables.md)。模型分数只做排序研究，不改变正式推荐、风险门槛或交易建议。
+第二层精排默认使用 `risk_all20_local035_eta1`：第一层 20%，JEV、Laya official、Laya multilingual、Chinese Decision 各 20%；模型组内百分位按 5 人组计算，经 `0.35` 局部先验校准后融合，再扣除 ATR14 百分位风险惩罚。另行配置生成任务后，可在收盘时通过 `scripts/secondstage/generate_daily.py` 并行生成四路 artifact；Go 进程只读取 artifact，不调用 Python。其他同 schema 模型可通过模型权重表加入；参数字段和环境变量见 [算法接入契约](docs/algorithm-interface.md) 与 [环境变量](docs/environment-variables.md)。模型分数只做排序研究，不改变正式推荐、风险门槛或交易建议。
 精排完成后，若 `STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED=true`，系统会把同一份冻结精排结果转写为可直接复制的公众号纯文本稿，包含标题、正文、Top N 名单、逐只技术特征、行业分布、数据口径、降级状态和风险提示。稿件通过命名为 `second_stage` 的飞书路由投递，与初筛卡、正式日报卡使用各自独立的重试账本。启用 `STOCK_WATCHER_WECHAT_ENABLED=true` 时，同一份结构化文章还会通过 `wechat-draft` 写入公众号草稿箱；每只进入文章的精排候选都会附带一张日 K 结构图，叠加最近 80 个交易日、分型、缠论笔与笔重叠区，以及简化波浪的支撑、阻力、失效位和回撤刻度。图内摘要直接列出分型数、可见笔数、完成笔数和重叠区；支撑/压力按当前收盘价选择最近的下方/上方结构位，跌破上行笔起点时显示 `>100% BREAKDOWN`。图表由 Go 进程确定性生成 PNG，经 `media/uploadimg` 上传到微信素材地址后嵌入正文；上传或渲染失败会按通道错误重试，不会退化为无图文章。该通道只创建草稿，不会发布文章或群发粉丝。精排名单仍只是研究观察，不是正式推荐或交易建议。
 
 精排候选还会附带 `trapped_signal` 套牢盘诊断：使用最近 120 个交易日的不复权价格，把每日成交量先按行情来源换算为股数，再按低-收-高三角分布展开为 24 个基础价格桶，并在现价及 5%/15% 分档边界切分桶内成交量；历史筹码按 `昨日剩余筹码 × (1 - 当日换手率) + 当日新增成交` 逐日衰减，信号日新增筹码不参与当日衰减，零成交日保留为未换手样本，并同时输出衰减前后套牢量。系统还用成交股数与换手率推算流通股本，相邻日变化超过 10%（低换手率时按舍入误差放宽）即记 `unknown`，避免除权、送转或流通股本变化后跨口径衰减。上方套牢量达到 30%、加权成本高于现价 2% 且浅度加中度套牢区合计达到 50% 时记 `triggered`；达到 20%、1% 和 40% 时记 `watch`；日线不足、换手率缺失、推算流通股本口径变化或成交量来源不支持时记 `unknown`。三档套牢区按现价上方距离划分为浅度（0～5%）、中度（5～15%）和深度（15% 以上），给出每档实际成交价区间和按最大余数法归一化、合计 100% 的占比，并以加权成本所在档位标记当前套牢区。公众号正文在每只精排候选的价格信息中展示套牢状态、衰减前后套牢量、当前套牢区和三档股价区间；候选不超过 6 只时最多前 5 只展开成本带与区间回撤，其余使用单行摘要，更多候选时进一步压缩详情以控制 20,000 字符上限。完整字段随报告 JSON 保存，换手率作为冻结报告输入支持 replay。该信号只描述上方成交压力，成交量不等同于真实持仓成本，不改变排名、正式推荐、结构门控或交易建议。
@@ -302,12 +332,14 @@ func main() {
 | `/chart` | 日 K、成交量、MA5/10/20、前复权/不复权切换和分钟周期 |
 | `/rankings` | 当前及历史日推排名、5 分钟实验预测与本地推送开关 |
 | `/four-light` | 全市场近似四灯当日汇总、首次/持续/退出全红、无法判断原因与个股历史 |
-| `/day-range` | 盘前全天高低价预测、区间、模型与核对状态；阶段六盘中更新明确标注未实现 |
+| `/day-range` | 盘前全天高低价预测、区间、模型与核对状态；功能关闭时显示不可用，盘中更新尚未实现 |
 | `/experiments` | 策略实验室、父子实验、样本对比和固定数据快照 |
-| `/review` | 冻结推荐回看、T+1/T+3/T+5 检查点、证据详情和手动 AI 归因 |
+| `/review` | 冻结推荐回看、市场环境与指数方向、T+1/T+3/T+5 检查点和手动 AI 归因 |
 | `/calculator` | 浏览器内仓位、持仓、剩余风险与净止盈价计算 |
 
-行情、报告、复盘、指数方向、分钟预测、全市场四灯和全天高低价预测的读取接口只读，包括 `/healthz`、`/api/dashboard`、`/api/reports?as_of=YYYY-MM-DD`、`/api/history?code=sz000001`、`/api/intraday?code=sz000001&period=5`、`/api/hk-intraday?code=hk00700&period=5`、`/api/four-light?as_of=YYYY-MM-DD&page=1&page_size=200`、`/api/four-light/history?code=sz000001&from=YYYY-MM-DD&through=YYYY-MM-DD`、`/api/market-signal?as_of=YYYY-MM-DD`、`/api/predictions?date=YYYY-MM-DD`、`/api/predictor`、`/api/day-range?date=YYYY-MM-DD`、`/api/day-range/status` 和 `/api/day-range/evaluation?date=YYYY-MM-DD`。写入口仅有受保护的 `PUT /api/predictor/config`（飞书预测推送开关）以及 loopback/同源约束下的 LLM 配置与对话/归因接口；公网匿名模式会拒绝全部非 GET/HEAD 请求。摘要页和股票页每分钟刷新，刷新不会触发行情下载或消息推送。
+行情、报告、复盘、指数方向、分钟预测、全市场四灯和全天高低价预测的读取接口只读，包括 `/healthz`、`/readyz`、`/api/status`、`/api/dashboard`、`/api/reports?as_of=YYYY-MM-DD`、`/api/history?code=sz000001`、`/api/intraday?code=sz000001&period=5`、`/api/hk-intraday?code=hk00700&period=5`、`/api/four-light?as_of=YYYY-MM-DD&page=1&page_size=200`、`/api/four-light/history?code=sz000001&from=YYYY-MM-DD&through=YYYY-MM-DD`、`/api/market-context`、`/api/market-signal?as_of=YYYY-MM-DD`、`/api/predictions?date=YYYY-MM-DD`、`/api/predictor`、`/api/day-range?date=YYYY-MM-DD`、`/api/day-range/status` 和 `/api/day-range/evaluation?date=YYYY-MM-DD`。`/healthz` 只证明 HTTP 进程存活；`/readyz` 和 `/api/status` 检查本地依赖和业务状态。
+
+写入口仅有受保护的 `PUT /api/predictor/config`（飞书预测推送开关）以及受写入模式和同源约束的 LLM 配置与对话/归因接口；公网匿名模式会拒绝全部非 GET/HEAD 请求。摘要页和股票页每分钟刷新，刷新不会触发行情下载或消息推送。
 
 网页没有内置账号或权限系统，默认仅监听 `127.0.0.1:8080`。远程访问必须使用受控网络或已有认证反向代理；代理应保留根路径、`/api/` 和 `/assets/`。
 
@@ -319,7 +351,7 @@ Quick Tunnel 的地址在进程重启、机器休眠或隧道重连后可能变�
 
 ## 配置
 
-生产配置全部来自环境变量。根 `.env.example` 已包含完整参数、行情源、日志和 Docker 部署示例；复制为 `.env` 后即可启动，不需要额外 YAML 或凭证文件。观测股池独立保存在 `leaders.yaml`，不内联到 `.env`。
+生产配置由编译进二进制的默认值和环境变量组成。根 `.env.example` 包含常用参数、行情源、日志和 Docker 部署示例；观测股池仍须从独立的 `leaders.yaml` 加载，不内联到 `.env`。二进制不会自行读取 `.env`：`make run` 会加载它，直接运行 CLI、systemd 或 Compose 时须按各自方式注入环境变量。
 
 | 文件 / 变量 | 作用 |
 | --- | --- |
@@ -332,10 +364,10 @@ Quick Tunnel 的地址在进程重启、机器休眠或隧道重连后可能变�
 | `STOCK_WATCHER_WEB_ADDR` | 网页监听地址，默认 `127.0.0.1:8080` |
 | `STOCK_WATCHER_WEB_PUBLIC_READ_ONLY` | 公网匿名模式；只允许 GET/HEAD 并隐藏 AI 与预测写入口 |
 | `STOCK_WATCHER_PUBLIC_TUNNEL_ENABLED` | 临时 Cloudflare 公网隧道启动开关，默认 `false`；只由 `make run` 启动器读取 |
-| `STOCK_WATCHER_FEISHU_ENABLED` | 是否启用飞书投递 |
+| `STOCK_WATCHER_FEISHU_ENABLED` | 是否启用飞书投递；内置配置开启，`.env.example` 显式关闭 |
 | `FEISHU_WEBHOOK` / `FEISHU_SECRET` | 飞书 webhook 与可选签名密钥，只从环境读取 |
 | `FEISHU_PREMARKET_EXECUTION_WEBHOOK` | 盘前执行确认命名通道引用的独立 webhook；只从环境读取 |
-| `STOCK_WATCHER_NOTIFY_CHANNELS` | 命名飞书通道及阶段路由；可按初筛、精排文章、正式日报、盘前执行确认、实时预测和当日预测分流 |
+| `STOCK_WATCHER_NOTIFY_CHANNELS` | 命名飞书通道及阶段路由；可按初筛、精排、港股通、低估值、正式日报和预测等分流 |
 | `STOCK_WATCHER_FEISHU_CREDENTIALS_FILE` | 显式设置时才启用旧 `feishu.config` 兼容 |
 | `STOCK_WATCHER_WECHAT_ENABLED` | 是否把第二层精排、港股通、低估值、低估值低套牢和盘前观察稿写入公众号草稿箱；只创建草稿，不发布、不群发 |
 | `STOCK_WATCHER_WECHAT_CREDENTIALS_FILE` | 可选私有凭证文件路径；支持 Label/Value 或 key=value 格式，环境变量优先 |
@@ -345,18 +377,21 @@ Quick Tunnel 的地址在进程重启、机器休眠或隧道重连后可能变�
 | `STOCK_WATCHER_STRATEGY_ENABLED` | 是否启用全池短周期排名 |
 | `STOCK_WATCHER_FIRST_STAGE_ENABLED` | 是否计算高召回第一层初筛；要求 `daily_adjust=qfq` |
 | `STOCK_WATCHER_FIRST_STAGE_PUSH_ENABLED` | 是否推送初筛池飞书卡；关闭后仍计算 |
-| `STOCK_WATCHER_FIRST_STAGE_BUDGET` | 初筛候选上限，默认 `145` |
+| `STOCK_WATCHER_FIRST_STAGE_BUDGET` | 初筛候选上限，默认 `95` |
 | `STOCK_WATCHER_SECOND_STAGE_ENABLED` | 是否运行离线多模型 artifact Top10 精排 |
 | `STOCK_WATCHER_SECOND_STAGE_PUSH_ENABLED` | 是否生成公众号纯文本稿并投递到 `second_stage` 路由 |
 | `STOCK_WATCHER_SECOND_STAGE_TOP_N` | 精排输出数量，默认 `10` |
 | `STOCK_WATCHER_SECOND_STAGE_PUBLISH_BY` | 精排等待 artifact 的最晚时刻，默认 `15:28`；到点未齐则降级发布 |
-| `STOCK_WATCHER_INTRADAY_ENABLED` | 是否启用 5 分钟采集 |
+| `STOCK_WATCHER_INTRADAY_ENABLED` | 是否启用 A 股 5 分钟采集，默认开启 |
 | `STOCK_WATCHER_HK_SYNC_ENABLED` | 是否由 `run` 自动同步港股通日线，默认开启 |
+| `STOCK_WATCHER_HK_CONNECT_ENABLED` / `STOCK_WATCHER_HK_CONNECT_PUSH_ENABLED` | 是否生成港股观察快照 / 投递观察稿，默认开启；关闭观察时须同时关闭投递 |
+| `STOCK_WATCHER_HK_CONNECT_TOP_N` | 港股观察名单上限，默认 `10` |
 | `STOCK_WATCHER_HK_INTRADAY_ENABLED` | 是否启用独立港股通分钟采集，默认关闭 |
-| `STOCK_WATCHER_PREDICTOR_ENABLED` | 是否启用 5 分钟实验预测 |
+| `STOCK_WATCHER_HK_INTRADAY_VALID_FROM` / `STOCK_WATCHER_HK_INTRADAY_VALID_THROUGH` / `STOCK_WATCHER_HK_INTRADAY_EARLY_CLOSES` | 港股分钟半日市日历覆盖和提前收市日期；内置覆盖 2026 年 |
+| `STOCK_WATCHER_PREDICTOR_ENABLED` | 是否启用 5 分钟实验预测，内置配置默认开启 |
 | `STOCK_WATCHER_PREDICTOR_PUSH_ENABLED` | 是否推送聚合预测卡；关闭后仍保存预测 |
 | `STOCK_WATCHER_PREDICTOR_TRAIN_AT` | 收盘后训练时间，默认 `15:30` |
-| `STOCK_WATCHER_DAYRANGE_ENABLED` | 是否启用盘前全天高低价模型与 `/day-range` 页面；默认 `false` |
+| `STOCK_WATCHER_DAYRANGE_ENABLED` | 是否启用盘前全天高低价模型，默认 `false`；关闭时页面显示不可用 |
 | `STOCK_WATCHER_DAYRANGE_PUSH_ENABLED` | 是否推送分页盘前卡片到 `predictor_dayrange`；关闭后仍保存预测，执行确认卡仍可按独立路由投递 |
 | `STOCK_WATCHER_MARKET_PROVIDERS` | 逗号分隔的行情源顺序 |
 | `TUSHARE_TOKEN` | 可选 Tushare Token；缺失时跳过 Tushare |
@@ -365,9 +400,11 @@ Quick Tunnel 的地址在进程重启、机器休眠或隧道重连后可能变�
 
 ## 部署
 
-原生、systemd 与容器都直接运行同一个 Go CLI。同一数据目录同时只允许一个写入实例。
+原生、systemd 与容器都直接运行同一个 Go CLI。同一数据目录同时只允许一个主写入实例；独立数据库任务另受各自的写锁约束。
 
 ### 原生或 systemd
+
+以下命令假设数据已初始化、状态已回填，且已按实际环境调整服务模板中的工作目录、二进制、挂载和数据路径。不要直接把模板中的本机绝对路径用于其他机器。
 
 ```bash
 make build
@@ -383,16 +420,27 @@ sudo systemctl enable --now stock-watcher-allmarket.timer
 sudo systemctl status stock-watcher.service
 ```
 
-服务模板读取 `/etc/stock-watcher.env`，工作目录和二进制路径按实际安装位置调整。`stock-watcher-allmarket.timer` 在交易日 `18:40` 先调用 `sync-all`，成功后再执行 `four-light-all` 归档近似四灯；`sync-all` 把全市场沪深 A 股日线写入独立的 `all-market.db`，并在完整同步后生成低估值快照；启用交集时还会生成低估值低套牢快照。港股通日线默认由主 `run` 进程在周一至周五 `18:50` 后同步到独立的 `hk-market.db`，并生成观察快照；启动会检查上一个已到期工作日，旧 `stock-watcher-hk-market.timer` 必须停用。港股分钟采集仍需单独启用和验证。四灯归档仅供观察；全市场 `sync-all` 不参与股池排名，两篇观察稿分别使用独立 `low_valuation`、`value_trapped` 路由。完整准备、SELinux、升级、回滚和排障步骤见[部署与排障](docs/deployment.md)。
+服务模板读取 `/etc/stock-watcher.env`；全市场 service 还显式覆盖数据目录和 CIFS 设置，迁移到其他环境时必须一并修改。`stock-watcher-allmarket.timer` 周一至周五 18:40 先调用 `sync-all`，成功后再执行 `four-light-all`；启用时完整同步还会生成低估值及低估值低套牢快照。港股日线默认由主 `run` 进程调度；从旧部署升级时必须停用旧的 `stock-watcher-hk-market.timer` 和仍在运行的旧任务，避免重复调度。港股分钟采集仍需单独启用和验证。
+
+四模型精排的 `stock-watcher-secondstage.timer` 及其 Python 依赖、离线模型和路径需要单独配置；上面的主服务安装命令不会自动启用它。四灯和低估值均为独立观察，不参与正式股池排名。完整准备、SELinux、升级、回滚和排障步骤见[部署与排障](docs/deployment.md)。
 
 ### Docker Compose
 
+先根据 `.env.example` 配置 `.env`，确保数据目录、`leaders.yaml` 和日志目录已存在；CIFS 模式还需确认共享盘已挂载。以下首次初始化命令会写入所配置的数据目录，必须先停止使用同一目录的其他主服务：
+
 ```bash
-make image
-make docker-smoke
+export STOCK_WATCHER_VERSION="$(git rev-parse HEAD)"
+export STOCK_WATCHER_IMAGE="stock-watcher:${STOCK_WATCHER_VERSION}"
+docker compose --env-file .env -f docker/compose.yaml config --quiet
+docker compose --env-file .env -f docker/compose.yaml build
+docker compose --env-file .env -f docker/compose.yaml run --rm --no-deps stock-watcher init
+docker compose --env-file .env -f docker/compose.yaml run --rm --no-deps stock-watcher check
+docker compose --env-file .env -f docker/compose.yaml run --rm --no-deps stock-watcher status-backfill -as-of YYYY-MM-DD
+docker compose --env-file .env -f docker/compose.yaml up -d --no-build
+docker compose --env-file .env -f docker/compose.yaml ps
 ```
 
-Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/data`、日志映射到 `/logs`，容器监听 `0.0.0.0:8080`，宿主机默认只绑定 `127.0.0.1:8080`。容器根文件系统只读，仅 `/data` 和 `/logs` 可写。操作步骤见[Compose 部署](docker/README.md)。
+Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/data`、日志映射到 `/logs`，并将私有 AI 配置卷挂载到 `/config`；容器监听 `0.0.0.0:8080`，宿主机默认只绑定 `127.0.0.1:8080`。容器根文件系统只读，数据、日志和 AI 配置卷分别可写。将确定的镜像标签和版本写入 `.env`，避免新终端切换回默认标签；完整操作见[Compose 部署](https://github.com/KrisMurdock/Trustworthy-stock-picker/blob/main/docker/README.md)。
 
 发布前记录完整提交 SHA、镜像标识或发布包校验和。镜像 tag 建议使用提交 SHA，部署后用真实 URL 验证健康检查、页面、API、权限边界和退出行为。
 
@@ -410,13 +458,15 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | `make intraday-smoke` | 分钟采集、schema 迁移、只读 API 和 SIGTERM |
 | `make hk-intraday-smoke` | 港股分钟补采、缺口、只读 API 与真实浏览器冒烟 |
 | `make dashboard-smoke` | 真实 Chromium 页面、DOM、URL、网络和错误恢复 |
+| `make review-smoke` | 复盘、指数方向与 AI 交互的浏览器冒烟 |
 | `make docker-smoke` | 容器 CLI、权限、Compose 健康检查和生命周期 |
 | `make docker-dashboard-smoke` | 容器形态浏览器验收 |
 | `make docker-hk-intraday-smoke` | 容器形态港股分钟与浏览器验收 |
+| `make docker-review-smoke` | 容器形态复盘浏览器验收 |
 | `make ci` | 格式、静态检查、竞态测试、构建、CLI/行情/分钟冒烟和发布包 |
 | `make package` | Linux 发布包；`BUILD_GOARCH=amd64` 或 `arm64` |
 
-浏览器测试额外需要 Python 3.12 与 Playwright Chromium，策略模型测试需要 Node.js 20+；这些依赖不属于生产运行时。资源紧张时可使用 `GOMAXPROCS=2 GOFLAGS=-p=2 make ci`。
+CI 使用 Python 3.12、Playwright 与 Chromium 进行浏览器测试，策略模型测试需要 Node.js 20+；这些依赖不属于 Go 主服务。第二层 artifact 的可选生成脚本另需 Python 和相应模型依赖。`make ci` 不包含浏览器及容器冒烟；资源紧张时可使用 `GOMAXPROCS=2 GOFLAGS=-p=2 make ci`。
 
 ### 项目结构
 
@@ -427,6 +477,8 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | `cmd/bottom-study` | 底部形态与止损/持有期研究工具 |
 | `cmd/trapped-scan` | 全市场低套牢观察池离线扫描工具 |
 | `cmd/four-light-align` | 目标软件四灯样本与本地近似实现的逐灯/转换对照工具 |
+| `cmd/four-light-study` | 冻结全市场快照上的四灯触发、波段及同业对照研究 |
+| `cmd/turnover-study` | 换手率及成交额特征的离线研究工具 |
 | `cmd/resolve-pool` | 股池名称与代码核对辅助工具 |
 | `internal/config` | 内置生产配置、环境变量覆盖和严格校验 |
 | `internal/calendar` | 北京时间交易日、节假日、T+1 与过期窗口 |
@@ -435,16 +487,19 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | `internal/fundamentals` | PIT 年度财务事实、observed/vendor 可见性裁剪、抓取批次与 5-10 年标准化盈利/ROE/派息 |
 | `internal/fairvalue` | v1/v2/v3 研究估值、区间情景与滚动校准原语 |
 | `internal/allmarket` | 全市场日线发现、增量同步、断点续跑和独立四灯信号归档 |
+| `internal/hkconnect` / `internal/hkintraday` | 港股通日线调度、观察快照与独立分钟采集 |
 | `internal/monitor` | 整池同步、启动刷新、调度、重试和账本迁移 |
 | `internal/selection` | 趋势筛选与报告事件组装 |
 | `internal/firststage` | 高召回第一层初筛、版本化 logistic 模型和初筛报告 |
 | `internal/strategy` | 前复权特征、成交模拟、排名、滚动验证和留出样本 |
 | `internal/fourlightalign` | 近似四灯逐灯一致率、全红转换漏报/误报和提前滞后根数 |
+| `internal/fourlightstudy` | 冻结全市场数据的四灯事件、波段和行业相对研究 |
 | `internal/predictor` | 5 分钟 pooled GBDT、特征、卡尔曼趋势、预测库与投递 |
 | `internal/marketcontext` | 指数与行业/概念板块上下文同步和独立 `context.db` |
 | `internal/marketforecast` | 上证/创业板下一交易日方向模型、周内统计和只读信号 |
 | `internal/review` / `internal/advisor` | 冻结推荐复盘投影与基于证据的只读 AI 分析 |
 | `internal/dayrange` | 盘前高低价数据审计、确定性树模型、区间校准、预测/核对与评估 |
+| `internal/yangpullback` | 阳线回踩形态及其对照和稳健性研究 |
 | `internal/dashboard` | 内嵌 HTML/CSS/JavaScript、SVG K 线和只读 API |
 | `internal/notify` | 版本化消息、通道接口和投递账本 |
 | `internal/feishu` | 卡片、签名、HTTP/业务码确认和错误分类 |
@@ -460,29 +515,32 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 | --- | --- |
 | 嵌入与集成 | [作为 Go 库嵌入](docs/embedding.md) |
 | 环境与配置 | [环境变量](docs/environment-variables.md) · [工程结构](docs/repository-layout.md) |
-| 数据与运行 | [行情来源与回退](docs/data-sources.md) · [部署与排障](docs/deployment.md) |
+| 数据与运行 | [行情来源与回退](docs/data-sources.md) · [港股通日线](docs/data-sources.md#港股通日线sync-hk-connect) · [港股通分钟](docs/data-sources.md#港股通分钟数据sync-hk-minutes) · [部署与排障](docs/deployment.md) |
 | 看板视觉 | [深色主题与环境层 3D](docs/dashboard-visual-design.md) |
-| 开发与发布 | [开发、CI 与发布包](docs/development.md) · [测试范围](tests/README.md) |
-| 策略研究 | [推荐门槛诊断](docs/strategy-diagnostics.md) · [策略实验室](docs/experiments.md) · [实验快照](docs/experiment-result-snapshots.md) · [四灯对齐验收](docs/four-light-alignment.md) |
+| 开发与发布 | [开发、CI 与发布包](docs/development.md) · [测试范围](https://github.com/KrisMurdock/Trustworthy-stock-picker/blob/main/tests/README.md) |
+| 策略研究 | [推荐门槛诊断](docs/strategy-diagnostics.md) · [策略实验室](docs/experiments.md) · [实验快照](docs/experiment-result-snapshots.md) · [四灯对齐验收](docs/four-light-alignment.md) · [全市场四灯波段](docs/four-light-study.md) |
 | 财务估值 | [个股财务研究区间](docs/fair-value.md) · [全市场低估值观察](docs/low-valuation.md) · [低估值低套牢观察](docs/value-trapped.md) |
 | 选股算法 | [算法接入契约](docs/algorithm-interface.md) |
 | 模型与实验存储 | [模型、特征与评估产物存储](docs/model-storage.md) |
 | 5 分钟预测 | [5 分钟价格预测](docs/minute-predictor.md) · [close L1 损失评估](docs/predictor-l1-loss-evaluation.md) |
 | 全天高低价预测 | [开发路线与当前边界](docs/dayrange-roadmap.md) · [评估指标契约](docs/dayrange-evaluation.md) |
 | 指数方向信号 | [模型口径、周内统计与限制](docs/market-signal.md) |
-| 研究与工具 | [个股估值研究](docs/fair-value-research.md) · [个股财务研究区间](docs/fair-value.md) · [单股价格策略](docs/单股价格策略.md) · [底部形态](docs/bottom-signals.md) |
-| 容器 | [Compose 部署与升级](docker/README.md) |
+| 研究与工具 | [个股估值研究](docs/fair-value-research.md) · [个股财务研究区间](docs/fair-value.md) · [单股价格策略](docs/单股价格策略.md) · [底部形态](docs/bottom-signals.md) · [阳线回踩](https://github.com/KrisMurdock/Trustworthy-stock-picker/blob/main/docs/optimize/阳线回踩研究方案.md) |
+| 容器 | [Compose 部署与升级](https://github.com/KrisMurdock/Trustworthy-stock-picker/blob/main/docker/README.md) |
 
 ## 已知边界
 
 - 正式股池为沪深 A 股，港股通通过独立库和观察链路处理；不提供逐笔行情、盘口深度或自动交易。
 - A 股分钟线采集腾讯 5 分钟原始线，港股通可选采集东方财富 5 分钟线，均派生 15/30/60 分钟；港股历史深度及源稳定性尚未验证，上游窗口和修订规则可能变化。
+- 港股通成分仅使用当前快照；日线调度已接入代码不代表部署已更新，分钟采集默认关闭，实际覆盖需核对同步状态和部署环境。
+- 全市场四灯为自定义近似价量规则，尚未与目标商业软件逐灯对齐；波段、行业和触发时点结果仅供研究，不构成可执行推荐。
+- 第二层完整多模型精排依赖独立生成的离线 artifact；缺失、过期或超时会降级，不能把降级结果描述为四模型全部参与。
 - 高召回初筛只用于第二层候选，历史召回率和模型分都不代表未来收益；它不改变正式推荐，初筛失败也不会阻断主报告。
 - 全天最高/最低价预测已接入盘前模型、区间校准、CLI、网页、调度、`predictor_dayrange` 飞书推送和独立 `premarket_execution` 盘前执行确认卡；阶段六盘中剩余时段模型尚未实现，网页不会把盘前结果当作盘中更新。
-- 指数方向信号只读取本地 `context.db`，每次按截止日重训；当前 40 日样本外结果未显示稳定优势，不能把上涨概率当作可执行结论。
+- 指数方向信号只读取本地 `context.db`，每次按截止日重训；评估结果随截止日和输入变化，既有实验尚未证明稳定优势，不能把上涨概率当作可执行结论。
 - 内置交易日历当前覆盖 2026 年，过期后必须升级；测试覆盖变量不得用于生产。
 - 网页没有账号或角色体系；本地默认只允许受保护的预测推送开关、LLM 配置和同源/回环 AI 请求写入，公网匿名模式会拒绝全部写请求。远程暴露必须依赖受控网络或已有认证代理。
-- 微信公众号通道只调用 `draft/add`；未认证账号可创建草稿，但 `freepublish/submit` 和群发要求认证，自动发布或群发粉丝仍需在认证后另行实现并在公众号后台确认。投递账本中的 `delivered` 只表示草稿已创建。
+- 微信公众号通道只调用 `draft/add`，不自动发布或群发；账号认证、接口权限及发布能力以微信官方要求和公众号后台为准。投递账本中的 `delivered` 只表示草稿已创建。
 - 飞书投递为至少一次语义，请求成功后、确认落盘前崩溃可能产生重复消息。
 - 共享盘故障、临时网络错误或数据覆盖不足时，本轮不会发布缓存推荐；已有数据保留等待重试。
 - 研究结果受样本、费用假设、流动性和成交边界影响，历史统计不代表未来收益。
@@ -494,11 +552,11 @@ Compose 将宿主机数据目录（本地磁盘或 CIFS 挂载）映射到 `/dat
 1. 从最新 `main` 创建独立分支，控制改动范围。
 2. 运行受影响的单元/集成测试；行为变化至少运行 `make ci`，前端变化另跑 `make dashboard-smoke`。
 3. 不提交凭证、行情数据库、日志、浏览器截图或私有环境文件。
-4. 在 PR 中说明改动、用户可见行为和验证命令；详细规范见[贡献指南](CONTRIBUTING.md)，并使用仓库的 [PR 模板](.github/pull_request_template.md)。
+4. 在 PR 中说明改动、用户可见行为和验证命令；详细规范见[贡献指南](https://github.com/KrisMurdock/Trustworthy-stock-picker/blob/main/CONTRIBUTING.md)，并使用仓库的 [PR 模板](https://github.com/KrisMurdock/Trustworthy-stock-picker/blob/main/.github/pull_request_template.md)。
 
 ## License
 
-本项目采用 [Apache License 2.0](LICENSE)。提交贡献即表示同意按该许可证授权。
+本项目采用 [Apache License 2.0](https://github.com/KrisMurdock/Trustworthy-stock-picker/blob/main/LICENSE)。提交贡献即表示同意按该许可证授权。
 
 ---
 
