@@ -17,6 +17,31 @@ type credentialConfig struct {
 	Secret  string `json:"secret"`
 }
 
+func TestNamedLogRotationIsIsolated(t *testing.T) {
+	root := t.TempDir()
+	legacy := filepath.Join(root, "stock-watcher-20000101.log.gz")
+	if e := os.WriteFile(legacy, []byte("retained"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	l, e := New(Options{Name: "aris-stock", Dir: root, MaxBytes: 100, MaxDays: 1, Backups: 1, Stdout: io.Discard})
+	if e != nil {
+		t.Fatal(e)
+	}
+	for i := 0; i < 4; i++ {
+		l.Info("Research event")
+	}
+	l.Close()
+	if _, e = os.Stat(filepath.Join(root, "aris-stock.log")); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = os.Stat(legacy); e != nil {
+		t.Fatal("removed other process logs")
+	}
+	if _, e = New(Options{Name: "../escape", Dir: root, MaxBytes: 100, MaxDays: 1, Backups: 1}); e == nil {
+		t.Fatal("accepted path")
+	}
+}
+
 func TestTextLocationRedactionAndRotation(t *testing.T) {
 	root := t.TempDir()
 	var stdout bytes.Buffer

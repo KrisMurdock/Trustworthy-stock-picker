@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 )
 
 type Options struct {
+	Name             string // Defaults to stock-watcher; controls only this process's files.
 	Dir              string
 	MaxBytes         int64
 	MaxDays, Backups int
@@ -120,6 +122,12 @@ func projectRoot(start string) string {
 }
 
 func New(o Options) (*Logger, error) {
+	if o.Name == "" {
+		o.Name = "stock-watcher"
+	}
+	if !regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`).MatchString(o.Name) {
+		return nil, errors.New("invalid log name")
+	}
 	if o.MaxBytes < 1 || o.MaxDays < 1 || o.Backups < 1 {
 		return nil, errors.New("invalid log retention")
 	}
@@ -146,7 +154,7 @@ func New(o Options) (*Logger, error) {
 	return l, nil
 }
 func (l *Logger) open() error {
-	f, err := os.OpenFile(filepath.Join(l.opts.Dir, "stock-watcher.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(filepath.Join(l.opts.Dir, l.opts.Name+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
@@ -318,14 +326,14 @@ func (l *Logger) write(level, msg string, attrs []any) {
 	}
 	if l.size > 0 && (l.size+int64(len(line)) > l.opts.MaxBytes || now.Format("2006-01-02") != l.day) {
 		if err := l.rotate(now); err != nil {
-			fmt.Fprintln(os.Stderr, "stock-watcher log rotation failed")
+			fmt.Fprintln(os.Stderr, l.opts.Name+" log rotation failed")
 		}
 	}
 	if l.file != nil {
 		n, err := l.file.Write(line)
 		l.size += int64(n)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "stock-watcher log file write failed")
+			fmt.Fprintln(os.Stderr, l.opts.Name+" log file write failed")
 		}
 	}
 	color := l.opts.Color == "force"
@@ -347,9 +355,9 @@ func (l *Logger) rotate(now time.Time) error {
 		return err
 	}
 	l.file = nil
-	path := filepath.Join(l.opts.Dir, "stock-watcher.log")
+	path := filepath.Join(l.opts.Dir, l.opts.Name+".log")
 	l.seq++
-	rotated := filepath.Join(l.opts.Dir, fmt.Sprintf("stock-watcher-%s-%d-%d.log", now.Format("20060102T150405.000000000"), os.Getpid(), l.seq))
+	rotated := filepath.Join(l.opts.Dir, fmt.Sprintf("%s-%s-%d-%d.log", l.opts.Name, now.Format("20060102T150405.000000000"), os.Getpid(), l.seq))
 	if err := os.Rename(path, rotated); err != nil {
 		_ = l.open()
 		return err
@@ -380,7 +388,7 @@ func (l *Logger) rotate(now time.Time) error {
 	return l.prune(now)
 }
 func (l *Logger) prune(now time.Time) error {
-	files, err := filepath.Glob(filepath.Join(l.opts.Dir, "stock-watcher-*.log*"))
+	files, err := filepath.Glob(filepath.Join(l.opts.Dir, l.opts.Name+"-*.log*"))
 	if err != nil {
 		return err
 	}
