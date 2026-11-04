@@ -123,3 +123,16 @@ func TestValidationCancellationAndDeterminism(t *testing.T) {
 		t.Fatal("accepted duplicate")
 	}
 }
+
+func TestFiniteInputArithmeticOverflowReturnsError(t *testing.T) {
+	in := fixture(3)
+	b := in.Bars[in.Sessions[1]]["sz000001"]
+	b.Open = math.MaxFloat64
+	b.High = math.MaxFloat64
+	b.Close = math.MaxFloat64
+	b.Upper = math.MaxFloat64
+	in.Bars[in.Sessions[1]]["sz000001"] = b
+	if _, e := Simulate(context.Background(), in); e == nil {
+		t.Fatal("overflow accepted")
+	}
+}

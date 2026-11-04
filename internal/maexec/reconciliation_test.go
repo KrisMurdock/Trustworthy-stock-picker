@@ -3,8 +3,10 @@ package maexec
 import (
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -24,6 +26,16 @@ func TestFrozenReferenceReconciliation(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer f.Close()
+	h := sha256.New()
+	if _, e = io.Copy(h, f); e != nil {
+		t.Fatal(e)
+	}
+	if fmt.Sprintf("%x", h.Sum(nil)) != "4450054aa56683993238d038445f25ff891e15516698cd1b50354b8f7e09517d" {
+		t.Fatal("reference snapshot differs from approved frozen baseline")
+	}
+	if _, e = f.Seek(0, io.SeekStart); e != nil {
+		t.Fatal(e)
+	}
 	z, e := gzip.NewReader(f)
 	if e != nil {
 		t.Fatal(e)

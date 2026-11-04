@@ -90,6 +90,12 @@ func (in Input) Validate(ctx context.Context) error {
 // Match Decimal(str(float)) rounding in the frozen Python reference. A binary
 // epsilon would change fees at exact-cent boundaries and hide reconciliation errors.
 func rounded(v, tick float64, up bool) float64 {
+	// Finite JSON values can still overflow during multiplication. Propagate an
+	// invalid value to the caller's numeric invariant instead of dereferencing a
+	// nil Rat returned by parsing infinity.
+	if !finite(v) || !positive(tick) {
+		return math.NaN()
+	}
 	a, _ := new(big.Rat).SetString(strconv.FormatFloat(v, 'g', -1, 64))
 	b, _ := new(big.Rat).SetString(strconv.FormatFloat(tick, 'g', -1, 64))
 	q := new(big.Rat).Quo(a, b)
@@ -224,6 +230,9 @@ func Simulate(ctx context.Context, in Input) (Result, error) {
 				continue
 			}
 			fill := rounded(b.Open*(1+c.Slippage), c.Tick, true)
+			if !positive(fill) {
+				return r, errors.New("invalid buy fill after rounding")
+			}
 			if fill >= b.Upper {
 				r.Decisions = append(r.Decisions, Decision{s, "entry_price_limit"})
 				continue
