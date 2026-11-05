@@ -146,3 +146,27 @@ docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-
 历史对账以提交 `9d21c3f196003ee4d0249b69ebdfdc5144fdac25` 对应的冻结基线为参考，41 个情景覆盖 3%/5% 止盈、10/20bp 滑点及 5% 限价敏感性。订单/日期/原因/顺序/分母精确一致，浮点容差为 `1e-6 + abs(expected)*1e-10`。参考数据不提交仓库；未设置 `ARIS_REFERENCE_ROOT` 时该专用测试跳过，普通测试通过不能代替基线对账。
 
 当前版本提供 MA 首版执行器及研究流程基础。完整独立留出签发、严格现金账户、受隔离的 exec reviewer、外部策略子进程协议、第二种策略适配器和跨运行研究记忆仍属后续能力，不应把此版本标为整个长期路线图全部完成。尚未部署到生产环境。
+
+## 从冻结特征编译候选
+
+现有离线研究脚本可以先生成共同的 `maexec.Input` 和一份逐信号特征表，再用候选编译器登记固定条件：
+
+```bash
+python3 tools/aris/compile_candidates.py \
+  --base-input .scratch/aris/base-input.json \
+  --features .scratch/aris/features.json \
+  --constraints .scratch/aris/constraints.json \
+  --inference .scratch/aris/inference.json \
+  --budget .scratch/aris/budget.json \
+  --human-contract .scratch/aris/contract.md \
+  --run-id ma-entry-20261105 \
+  --candidate ma20-slope=ma20_slope_gt_02 \
+  --candidate close-position=close_position_65 \
+  --output .scratch/aris/request.json
+bin/aris-stock seal --request .scratch/aris/request.json > .scratch/aris/bundle.json
+bin/aris-stock run --request .scratch/aris/bundle.json --state-dir .scratch/aris/state --json
+```
+
+编译器只做三件事：校验每个基线信号有对应的特征行、按布尔特征筛选候选信号、复制同一份价格和组合配置。它拒绝重复信号、未知特征、空候选和保留名称 `baseline`，不会搜索阈值、组合条件、调整退出或自动挑选历史赢家。`baseline` 与候选共享 bars、sessions、费用和仓位约束；候选差异只来自信号集合。
+
+`tools/aris/test_compile_candidates.py` 覆盖候选子集编译和非法候选名。候选生成仍属于研究层，ARIS 只负责登记后的冻结执行、压力回放、门禁与审计；当前 G11/G14 仍为 `inconclusive`，任何运行都不能自动晋级为 accepted。
