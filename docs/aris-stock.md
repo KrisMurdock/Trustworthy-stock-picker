@@ -169,4 +169,6 @@ bin/aris-stock run --request .scratch/aris/bundle.json --state-dir .scratch/aris
 
 编译器只做三件事：校验每个基线信号有对应的特征行、按布尔特征筛选候选信号、复制同一份价格和组合配置。它拒绝重复信号、未知特征、空候选和保留名称 `baseline`，不会搜索阈值、组合条件、调整退出或自动挑选历史赢家。`baseline` 与候选共享 bars、sessions、费用和仓位约束；候选差异只来自信号集合。
 
+历史扩展缓存可先用 `tools/aris/build_snapshot.py` 生成 ARIS 快照。`--max-codes` 用于小规模协议验证；快照包含前复权日线和独立容量缓存，后者的 OHLC 是容量估值近似，不能当作真实不复权成交序列。由于 bundle v1 会为每个候选复制完整输入，候选股票较多时应拆成多个登记 run，或在协议后续版本引入共享快照引用；超过 256 MiB 的 bundle 会被拒绝。
+
 `tools/aris/test_compile_candidates.py` 覆盖候选子集编译和非法候选名。候选生成仍属于研究层，ARIS 只负责登记后的冻结执行、压力回放、门禁与审计；当前 G11/G14 仍为 `inconclusive`，任何运行都不能自动晋级为 accepted。
