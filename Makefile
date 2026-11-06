@@ -23,7 +23,7 @@ build:
 	mkdir -p bin
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o bin/stock-watcher ./cmd/stock-watcher
 
-.PHONY: aris-build aris-test aris-reconcile aris-image aris-smoke aris-docker-smoke
+.PHONY: aris-build aris-test aris-reconcile aris-image aris-smoke aris-docker-smoke aris-discovery-smoke aris-discovery-docker-smoke
 aris-build:
 	mkdir -p bin
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o bin/aris-stock ./cmd/aris-stock
@@ -118,3 +118,9 @@ docker-smoke: image
 
 clean:
 	rm -rf bin .builds
+
+aris-discovery-smoke: aris-build
+	python3 tests/aris_discovery_smoke.py "$(CURDIR)/bin/aris-stock"
+
+aris-discovery-docker-smoke: aris-image
+	python3 tests/aris_discovery_smoke.py --image "$(ARIS_IMAGE)"

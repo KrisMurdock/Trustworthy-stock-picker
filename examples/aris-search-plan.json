@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "autonomous-ma-example",
+  "train_through": "2021-12-31",
+  "validation_from": "2022-03-01",
+  "validation_through": "2026-11-03",
+  "max_trials": 12,
+  "patience": 4,
+  "max_terms": 2,
+  "timeout": "30m"
+}

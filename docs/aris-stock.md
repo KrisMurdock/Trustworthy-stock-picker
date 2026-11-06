@@ -197,3 +197,48 @@ python3 tools/aris/compile_candidates.py \
 特征文件必须覆盖每个基线信号；被选择的字段必须逐行存在，且为布尔或 null（null 不入选）。编译器将特征文件 SHA-256 和选择表达式附在可见的人类契约末尾，随后一起 seal，拒绝覆盖已有输出。Python 只在离线制作输入时使用，Go 执行、恢复和重放不启动 Python。
 
 `build_snapshot.py` 的原价缓存只有收盘和成交量，用于容量估计；其填充的 OHLC 不得用于成交模拟。信号输出剔除研究元数据 `cross_date`，只保留执行协议的 code/date/atr。
+
+## 原生自主迭代
+
+`discover` 将假设生成、特征计算、训练失败归因、下一轮候选、成本压力、停止和最终验证接成一个原生 Go 流程。无需人工逐轮填写候选，也不调用模型服务、Python、子进程或任意代码。其搜索范围是可审计的表达式语法，不是无限制发明任何算法。
+
+```bash
+# 新二进制必须重新 seal；输入仍为完整 v2 共同行情 bundle。
+bin/aris-stock seal --request /local/frozen/request.json > /local/frozen/sealed-new.json
+bin/aris-stock discover --request /local/frozen/sealed-new.json \
+  --search-plan examples/aris-search-plan.json --state-dir .scratch/aris-auto \
+  --timeout 30m --json
+bin/aris-stock discover-status --run autonomous-ma-example --state-dir .scratch/aris-auto --json
+bin/aris-stock discover-cancel --run autonomous-ma-example --state-dir .scratch/aris-auto --json
+bin/aris-stock discover-resume --run autonomous-ma-example --state-dir .scratch/aris-auto --timeout 30m --json
+bin/aris-stock discover-verify --run autonomous-ma-example --state-dir .scratch/aris-auto --timeout 30m --json
+```
+
+`examples/aris-search-plan.json` 给出日期和试验预算示例；日期必须存在于输入日历，请按自己的冻结数据调整。原 bundle 的其他人工候选不参与自主搜索，只有 `contract.baseline` 的事件作为入场母集；风险、样本、费用压力与时间块参数沿用明确登记的 contract。旧 run/verify/HTTP 接口不变；自主搜索目前只通过 CLI 调用。
+
+### 特征与下一轮生成
+
+- 特征只使用信号日及之前的前复权观察日线：5/20/60 根收益、收益标准差、当日量比（以前 w 根、不含当日的均量为分母）、均线偏离与均线单日斜率；另有当日振幅/收盘、上影占振幅、收盘在振幅中的位置。均线斜率为当日 w 根均价相对前一根 w 根均价的变化，不等同于旧人工候选的其他斜率定义。
+- 缺少历史、零振幅、无有效分母时相应特征缺失，不能用零填补；未知值不满足过滤条件。原始非复权容量缓存不充当量价特征。
+- 每个特征的阈值取训练信号特征的25%/50%/75%分位，每个阈值生成 `<=`、`>=` 两种方向，冻结完整谓词池及哈希。改变验证段行情不会改变这些阈值。
+- 每轮计算各表达式在当前开发冠军已闭合交易中剔除的亏损与盈利金额，优先评估“剔除亏损金额减去剔除盈利金额”最大的表达式。这个估计只负责提出假设，实际结果必须重新执行全池组合回测，不能把原交易子集收益当成新组合收益。
+- 可以尝试单条件，或在当前开发冠军上增加一个不同特征条件，最多两个条件；已经尝试过的训练信号子集不重复回测。当前轮新结果会更新开发冠军和下一轮失败归因，所有尝试都保留。
+- 开发冠军按基础和压力情景中最差的组合净收益比较，必须同时满足样本、信号日期、回撤、尾损及无未平仓约束。即使暂时降低亏损，也只表示搜索改进；最终还要求开发与验证净期望/PF达标，并检查验证时间块证据。
+
+### 数据隔离与停止
+
+`train_through`、`validation_from`、`validation_through` 固定两个执行窗口，各自从相同初始资金启动。两个窗口间至少空出 `holding_sessions+1` 个交易日，各窗口末尾也排除无法覆盖完整持仓窗口的新信号。实际无法卖出的仓位仍保留并阻止资格通过，不强制平仓。
+
+验证段只在搜索结束、开发冠军固定后执行一次最终对照，不参与阈值、下一轮、开发冠军或停止决策。验证阶段进程中断可以重跑同一冻结对照，不重新搜索。所有选择和试验次数均记录；训练段经过自适应多重搜索，训练收益和筛选统计有选择偏差。历史数据此前已被观察、或在另一个 campaign 再次使用时，不能把隔离验证称为全新独立样本外。
+
+`max_trials` 为完整候选回测预算（1～100），`patience` 为连续无改进上限，`max_terms` 为1或2。表达式池穷尽、达到预算或连续无改进均会自动结束。池中廉价的失败归因筛选同样属于搜索，不等于只探索了最终回测的若干表达式；不能据有限回测次数宣称已消除多重检验。
+
+### 检查点与结果
+
+状态保存在本地 `<state-dir>/campaigns/<id>/`，拒绝 CIFS/NFS、符号链接和目录穿越。`campaign.json` 保存版本化计划、完整共同输入、信号时点特征及谓词池；`state.json` 保存期限、停止原因、开发冠军、每次公式/假设依据、压力收益、失败分类和产物哈希；`baseline.json`、`trial-NNN.json`、`validation.json` 保存完整模拟账本。
+
+每个尝试在执行前登记。崩溃或取消后尚未提交完成的尝试标记 `interrupted`，仍消耗预算；恢复跳过该信号子集。运行 ID 不可复用，恢复不重置次数、阈值、期限或停止规则。单写锁阻止并行操作同一 campaign。`discover-verify` 验证冻结输入及产物，并重放全部自适应候选顺序、失败反馈、开发冠军与最终验证；中断预留也原样计入，不补做隐藏试验。
+
+`completed_rejected` 表示搜索运行正常结束但没有通过研究门槛；`completed_research_only` 表示诊断门槛通过，仍缺独立证据，不能晋升正式推荐。二者 CLI 均返回0，必须看 `status`/`validation_failures`，不能把退出码0当策略获批。暂停/超时和错误由状态及非零退出码体现。`timeout` 最大24小时，是不可在恢复时重置的 campaign 期限；CLI `--timeout` 另限制本次调用时间。
+
+验证入口：`make aris-test`、`make aris-discovery-smoke`、`make aris-discovery-docker-smoke`。容器冒烟使用 UID10001、只读文件系统、禁网，运行原生 CLI 的完整生成/迭代/查询/重放，并验证重复 ID、非法区间、缺配置和产物篡改拒绝；Python 仅在宿主机生成合成输入。

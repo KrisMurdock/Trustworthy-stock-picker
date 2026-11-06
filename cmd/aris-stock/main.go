@@ -62,13 +62,14 @@ func readJSON(path string, v any) error {
 func execute(ctx context.Context, args []string, out, stderr io.Writer) int {
 	fail := func(e error) int { fmt.Fprintln(stderr, e); return 1 }
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "aris-stock: prepare | simulate | seal | hash | run | status | resume | cancel | verify | serve | version")
+		fmt.Fprintln(stderr, "aris-stock: prepare | simulate | seal | hash | run | status | resume | cancel | verify | discover | discover-resume | discover-status | discover-cancel | discover-verify | serve | version")
 		return 1
 	}
 	cmd := args[0]
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	request := fs.String("request", "", "frozen bundle JSON")
+	searchPlan := fs.String("search-plan", "", "versioned autonomous search plan JSON")
 	input := fs.String("input", "", "simulator input JSON")
 	runID := fs.String("run", "", "run ID")
 	stateDir := fs.String("state-dir", ".scratch/aris-stock", "local research state")
@@ -178,7 +179,7 @@ func execute(ctx context.Context, args []string, out, stderr io.Writer) int {
 			return fail(e)
 		}
 		return emit(in)
-	case "run", "status", "resume", "cancel", "verify", "serve":
+	case "run", "status", "resume", "cancel", "verify", "serve", "discover", "discover-resume", "discover-status", "discover-cancel", "discover-verify":
 	default:
 		return fail(errors.New("unknown command"))
 	}
@@ -207,6 +208,11 @@ func execute(ctx context.Context, args []string, out, stderr io.Writer) int {
 		return fail(e)
 	}
 	defer app.Close()
+	if strings.HasPrefix(cmd, "discover") {
+		searchCtx, cancel := context.WithTimeout(ctx, *timeout)
+		defer cancel()
+		return executeDiscovery(searchCtx, app, cmd, *request, *searchPlan, *runID, emit, fail)
+	}
 	if endpoint := os.Getenv("ARIS_REVIEW_ENDPOINT"); endpoint != "" {
 		token := os.Getenv("ARIS_REVIEW_TOKEN")
 		logger.RegisterSecret(token)

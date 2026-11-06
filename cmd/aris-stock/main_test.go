@@ -52,3 +52,16 @@ func TestCLISealRunAndInspect(t *testing.T) {
 		t.Fatal(out.String())
 	}
 }
+
+func TestDiscoveryCLIRejectsMissingInputAndReportsStatus(t *testing.T) {
+	root := t.TempDir()
+	var out, stderr bytes.Buffer
+	for _, cmd := range []string{"discover", "discover-resume", "discover-status", "discover-cancel", "discover-verify"} {
+		out.Reset()
+		stderr.Reset()
+		status := execute(context.Background(), []string{cmd, "--state-dir", root, "--log-dir", filepath.Join(root, "logs"), "--json"}, &out, &stderr)
+		if status != 1 || bytes.Contains(stderr.Bytes(), []byte("unknown command")) {
+			t.Fatalf("%s: %d %s", cmd, status, stderr.String())
+		}
+	}
+}
