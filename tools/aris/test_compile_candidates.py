@@ -29,6 +29,35 @@ class CompileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.parse_candidate("Bad Name=x")
 
+class SharedCompileTests(unittest.TestCase):
+    def test_shared_protocol_and_strict_features(self):
+        import argparse
+        import gzip
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            values = {"signals": [{"code":"sz000001","date":"2026-01-02","atr":.04}],
+                      "features": [{"code":"sz000001","date":"2026-01-02","demand":True}],
+                      "sessions":["2026-01-02"], "model_config":{}, "constraints":{}, "inference":{}, "budget":{}}
+            kwargs = {}
+            for key,value in values.items():
+                path=root/(key+'.json'); path.write_text(json.dumps(value)); kwargs[key]=path
+            snapshot=root/'snapshot.gz'; snapshot.write_bytes(gzip.compress(b'{}',mtime=0))
+            contract=root/'contract.md'; contract.write_text('Fixed hypothesis')
+            args=argparse.Namespace(**kwargs, shared_snapshot=snapshot, base_input=None,
+                                    human_contract=contract,run_id='shared',candidate=['demand=demand'])
+            result=module.compile_request(args)
+            self.assertEqual(result['request']['schema_version'],2)
+            self.assertNotIn('inputs',result)
+            self.assertEqual(result['shared']['signals']['baseline'],result['shared']['signals']['demand'])
+            self.assertIn('features_sha256',result['human_contract'])
+            for invalid in (1, 'true', {}, []):
+                values['features'][0]['demand']=invalid
+                kwargs['features'].write_text(json.dumps(values['features']))
+                with self.assertRaises(ValueError): module.compile_request(args)
+            del values['features'][0]['demand']
+            kwargs['features'].write_text(json.dumps(values['features']))
+            with self.assertRaises(ValueError): module.compile_request(args)
+
 
 if __name__ == "__main__":
     unittest.main()

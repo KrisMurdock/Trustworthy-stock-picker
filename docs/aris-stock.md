@@ -44,7 +44,7 @@ bin/aris-stock hash --input .scratch/aris-stock/input.json
 - 先用所有候选信号代码的并集准备共同 `bars`，再给各候选填入自己的信号数组。基线和候选必须共享价格、交易日、来源说明、费用、滑点和组合约束；只允许信号和止盈目标不同。不同滑点基准应登记为另一运行，额外压力滑点由 `stress_slippage` 固定。
 - `simulate` 是诊断命令，不执行研究验收，也不产生 `accepted`。默认 10 分钟，可用 `--timeout` 设置，最多 24 小时。
 
-输入 JSON 拒绝未知字段、重复键、尾随文档、非有限数值和超过 64 层嵌套。单文件及 gzip 解压后上限均为 256 MiB。省略执行状态不会被当成可成交。
+输入 JSON 拒绝未知字段、重复键、尾随文档、非有限数值和超过 64 层嵌套。v1 单文件及 gzip 解压后上限均为 256 MiB；v2 共享快照边界见下节。省略执行状态不会被当成可成交。
 
 ## 契约、预算和门禁
 
@@ -172,3 +172,28 @@ bin/aris-stock run --request .scratch/aris/bundle.json --state-dir .scratch/aris
 历史扩展缓存可先用 `tools/aris/build_snapshot.py` 生成 ARIS 快照。`--max-codes` 用于小规模协议验证；快照包含前复权日线和独立容量缓存，后者的 OHLC 是容量估值近似，不能当作真实不复权成交序列。由于 bundle v1 会为每个候选复制完整输入，候选股票较多时应拆成多个登记 run，或在协议后续版本引入共享快照引用；超过 256 MiB 的 bundle 会被拒绝。
 
 `tools/aris/test_compile_candidates.py` 覆盖候选子集编译和非法候选名。候选生成仍属于研究层，ARIS 只负责登记后的冻结执行、压力回放、门禁与审计；当前 G11/G14 仍为 `inconclusive`，任何运行都不能自动晋级为 accepted。
+
+## 多年全池共享输入（request schema 2）
+
+v2 用 `shared` 替代 `inputs`，同一个 gzip 冻结快照只保存一次。候选在内存共享不可变行情，各自持有信号数组；资金、容量、并发仓位仍在完整股池上统一回放，不能按股票分批后拼接收益。v1 的文件、哈希和执行口径继续兼容。
+
+`shared` schema 1 包含 `snapshot_gzip`（base64）、压缩字节的 `snapshot_sha256`、评估 `sessions`、统一 `config`、按候选 ID 索引的 `signals` 和 `limit_mode=historical_board`。信号并集决定共同价格覆盖。外层文档最多 256 MiB，压缩快照最多 64 MiB，解压最多 1 GiB；严格校验重复键、未知字段、快照哈希和混用协议。归档自包含，不读取可变外部路径。
+
+历史模式沿用原多年代理基线：创业板在 2020-08-24 前后分别使用 10%/20% 假设涨跌幅；过户费在 2022-04-29 从 0.00002 切换为 0.00001，印花税在 2023-08-28 从 0.001 切换为 0.0005。容量均值使用冻结交易日历前 20 日的原价成交额（保留预热日期），缺失按原基线零额处理。旧 `board`/`five_percent` 模式不变。这是已有模型的口径对齐，不能替代历史 ST、停牌和公司行为证据。
+
+候选编译器增加共享输入模式：
+
+```bash
+python3 tools/aris/compile_candidates.py \
+  --shared-snapshot /local/frozen/full.json.gz \
+  --signals /local/frozen/signals.json --sessions /local/frozen/sessions.json \
+  --model-config /local/frozen/model-config.json \
+  --features /local/frozen/features.json --candidate demand=cross_demand \
+  --constraints /local/frozen/constraints.json --inference /local/frozen/inference.json \
+  --budget /local/frozen/budget.json --human-contract /local/frozen/contract.md \
+  --run-id full-demand-v1 --output /local/frozen/request.json
+```
+
+特征文件必须覆盖每个基线信号；被选择的字段必须逐行存在，且为布尔或 null（null 不入选）。编译器将特征文件 SHA-256 和选择表达式附在可见的人类契约末尾，随后一起 seal，拒绝覆盖已有输出。Python 只在离线制作输入时使用，Go 执行、恢复和重放不启动 Python。
+
+`build_snapshot.py` 的原价缓存只有收盘和成交量，用于容量估计；其填充的 OHLC 不得用于成交模拟。信号输出剔除研究元数据 `cross_date`，只保留执行协议的 code/date/atr。

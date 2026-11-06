@@ -28,7 +28,7 @@ def build(histories, capacity, signals, sessions, max_codes=None):
             raw = json.load(f)
         none = [["none", date, close, close, close, close, volume, source] for date, close, volume, source in raw]
         stocks[code] = qfq + none
-    kept = [s for s in signals if s["code"] in selected]
+    kept = [{k:s[k] for k in ("code", "date", "atr")} for s in signals if s["code"] in selected]
     return {"schema_version": 1, "calendar": sessions, "stocks": stocks}, kept
 
 

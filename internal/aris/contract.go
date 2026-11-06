@@ -33,8 +33,9 @@ func Digest(v any) string {
 
 // Decode rejects duplicate members as well as unknown fields and trailing JSON.
 // Numbers have the concrete destination type; non-finite values cannot decode.
-func Decode(raw []byte, v any) error {
-	if len(raw) > MaxDocument {
+func Decode(raw []byte, v any) error { return decodeLimit(raw, v, MaxDocument) }
+func decodeLimit(raw []byte, v any, limit int) error {
+	if len(raw) > limit {
 		return errors.New("document exceeds limit")
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
@@ -139,12 +140,13 @@ type Bundle struct {
 	Request       Request                 `json:"request"`
 	Contract      Contract                `json:"contract"`
 	HumanContract string                  `json:"human_contract"`
-	Inputs        map[string]maexec.Input `json:"inputs"`
+	Inputs        map[string]maexec.Input `json:"inputs,omitempty"`
+	Shared        *SharedInput            `json:"shared,omitempty"`
 }
 
 func (b Bundle) validate(build string) error {
 	c := b.Contract
-	if b.Request.Version != 1 || !ValidID(b.Request.RunID) || b.Request.Strategy != "ma-proxy" || c.Version != 1 || !ValidID(c.ID) || !ValidID(c.Baseline) || strings.TrimSpace(b.HumanContract) == "" || c.HumanHash != Hash([]byte(b.HumanContract)) || c.Build != build {
+	if (b.Request.Version != 1 && b.Request.Version != 2) || !ValidID(b.Request.RunID) || b.Request.Strategy != "ma-proxy" || c.Version != 1 || !ValidID(c.ID) || !ValidID(c.Baseline) || strings.TrimSpace(b.HumanContract) == "" || c.HumanHash != Hash([]byte(b.HumanContract)) || c.Build != build {
 		return errors.New("request, contract, human hash or build mismatch")
 	}
 	if len(c.Candidates) < 1 || c.Budget.Candidates < 1 || c.Budget.Candidates > 100 || len(c.Candidates) > c.Budget.Candidates || c.Budget.Attempts < 1 || c.Budget.Attempts > 10 || c.Budget.ReviewCalls < 0 || c.Budget.ReviewCalls > 10 {

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Compile fixed feature predicates into an aris-stock registration request."""
 import argparse
+import base64
+import hashlib
 import copy
 import json
 import re
@@ -22,8 +24,13 @@ def parse_candidate(raw):
 
 
 def compile_request(args):
-    base = load(args.base_input)
-    features = load(args.features)
+    shared_path = getattr(args, "shared_snapshot", None)
+    if shared_path:
+        base = {"schema_version": 3, "signals": load(args.signals)}
+    else:
+        base = load(args.base_input)
+    features_bytes = Path(args.features).read_bytes()
+    features = json.loads(features_bytes)
     constraints = load(args.constraints)
     inference = load(args.inference)
     budget = load(args.budget)
@@ -58,8 +65,10 @@ def compile_request(args):
         name, feature = parse_candidate(raw)
         if name == "baseline" or name in names:
             raise ValueError("duplicate or reserved candidate: " + name)
-        if feature not in by_key[keys[0]]:
-            raise ValueError("feature not present: " + feature)
+        for key in keys:
+            row = by_key[key]
+            if feature not in row or (row[feature] is not None and type(row[feature]) is not bool):
+                raise ValueError("feature must be present and boolean or null: " + feature)
         selected = [signal for signal, key in zip(signals, keys) if by_key[key].get(feature) is True]
         if not selected:
             raise ValueError("candidate has no signals: " + name)
@@ -74,7 +83,7 @@ def compile_request(args):
         candidate = copy.deepcopy(base)
         candidate["signals"] = selected
         inputs[name] = candidate
-    return {
+    result = {
         "request": {"schema_version": 1, "run_id": args.run_id, "strategy": "ma-proxy"},
         "human_contract": Path(args.human_contract).read_text(),
         "contract": {
@@ -85,18 +94,45 @@ def compile_request(args):
         },
         "inputs": inputs,
     }
+    specification = {"features_sha256": hashlib.sha256(features_bytes).hexdigest(),
+                     "selectors": args.candidate}
+    result["human_contract"] += "\nCompiler specification: " + json.dumps(specification, sort_keys=True) + "\n"
+    if shared_path:
+        compressed = Path(shared_path).read_bytes()
+        if not 0 < len(compressed) <= 64 << 20:
+            raise ValueError("shared snapshot compressed size exceeds 64 MiB")
+        result["request"]["schema_version"] = 2
+        result["shared"] = {
+            "schema_version": 1, "snapshot_gzip": base64.b64encode(compressed).decode("ascii"),
+            "snapshot_sha256": hashlib.sha256(compressed).hexdigest(),
+            "sessions": load(args.sessions), "config": load(args.model_config),
+            "signals": {name: value["signals"] for name, value in inputs.items()},
+            "limit_mode": "historical_board",
+        }
+        del result["inputs"]
+    return result
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    for name in ("base-input", "features", "constraints", "inference", "budget", "human-contract", "run-id", "output"):
+    source = ap.add_mutually_exclusive_group(required=True)
+    source.add_argument("--base-input")
+    source.add_argument("--shared-snapshot")
+    for name in ("sessions", "signals", "model-config"):
+        ap.add_argument("--" + name)
+    for name in ("features", "constraints", "inference", "budget", "human-contract", "run-id", "output"):
         ap.add_argument("--" + name, required=True)
     ap.add_argument("--candidate", action="append", default=[])
     args = ap.parse_args()
-    if not ID.fullmatch(args.run_id):
+    if not ID.fullmatch(args.run_id) or len(args.run_id) > 61:
         ap.error("invalid run id")
+    if args.shared_snapshot and not all((args.sessions, args.signals, args.model_config)):
+        ap.error("shared snapshot requires sessions, signals and model-config")
     try:
-        Path(args.output).write_text(json.dumps(compile_request(args), ensure_ascii=False, indent=2) + "\n")
+        result = compile_request(args)
+        with Path(args.output).open("x") as f:
+            json.dump(result, f, ensure_ascii=False, separators=(",", ":"))
+            f.write("\n")
     except (OSError, ValueError, json.JSONDecodeError) as error:
         ap.error(str(error))
 

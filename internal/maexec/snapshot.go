@@ -47,7 +47,7 @@ type Snapshot struct {
 func Prepare(ctx context.Context, s Snapshot, sessions []string, signals []Signal, c Config, limitMode string) (Input, map[string]int, error) {
 	in := Input{Version: 3, PriceBasis: "qfq_proxy", Model: "adjusted_return_proxy", Config: c, Provenance: Provenance{Calendar: "frozen snapshot calendar", Rules: "assumed board bands and missing/volume guards", Assumptions: "qfq synthetic units; no historical ST/corporate-action ledger; approximate fees and capacity"}, Sessions: append([]string{}, sessions...), Signals: append([]Signal{}, signals...), Bars: map[string]map[string]Bar{}}
 	audit := map[string]int{}
-	if s.Version != 1 || (limitMode != "board" && limitMode != "five_percent") {
+	if s.Version != 1 || (limitMode != "board" && limitMode != "five_percent" && limitMode != "historical_board") {
 		return in, audit, errors.New("invalid snapshot version or limit mode")
 	}
 	dates := map[string]bool{}
@@ -79,6 +79,9 @@ func Prepare(ctx context.Context, s Snapshot, sessions []string, signals []Signa
 		}
 	}
 	priorDates := keys(prior)
+	if limitMode == "historical_board" {
+		priorDates = append([]string{}, s.Calendar...)
+	}
 	dayIndex := map[string]int{}
 	for i, d := range priorDates {
 		dayIndex[d] = i
@@ -120,6 +123,11 @@ func Prepare(ctx context.Context, s Snapshot, sessions []string, signals []Signa
 		for i, d := range qds {
 			qi[d] = i
 		}
+		amountPrefix := make([]float64, len(priorDates)+1)
+		for i, day := range priorDates {
+			p := raw[day]
+			amountPrefix[i+1] = amountPrefix[i] + float64(p.Close)/1e6*p.Volume
+		}
 		last := 0.0
 		for _, d := range keys(all) {
 			p, seen := q[d]
@@ -153,7 +161,7 @@ func Prepare(ctx context.Context, s Snapshot, sessions []string, signals []Signa
 				ma = float64(sum) / 1e7
 			}
 			pct := .1
-			if strings.HasPrefix(code, "sh68") || strings.HasPrefix(code, "sz30") {
+			if strings.HasPrefix(code, "sh68") || (strings.HasPrefix(code, "sz30") && (limitMode != "historical_board" || d >= "2020-08-24")) {
 				pct = .2
 			}
 			if limitMode == "five_percent" {
@@ -174,6 +182,9 @@ func Prepare(ctx context.Context, s Snapshot, sessions []string, signals []Signa
 					adv += float64(rp.Close) / 1e6 * rp.Volume
 				}
 				adv /= 20
+				if limitMode == "historical_board" {
+					adv = (amountPrefix[idx] - amountPrefix[idx-20]) / 20
+				}
 			}
 			observation := "observed"
 			if !seen {
@@ -189,7 +200,16 @@ func Prepare(ctx context.Context, s Snapshot, sessions []string, signals []Signa
 			if seen && p.Volume <= 0 {
 				audit["zero_volume_days"]++
 			}
-			in.Bars[d][code] = Bar{Open: o, High: h, Low: l, Close: close, MA10: ma, Assumed: true, Observation: observation, Buy: usable && index >= 9 && lower < o && o < upper, Sell: usable && lower < o && o < upper, Intraday: usable && !anomalous && h > l && h > lower, Lower: lower, Upper: upper, Commission: .0003, Minimum: 5, Transfer: .00001, Stamp: .0005, ADV: adv}
+			transfer, stamp := .00001, .0005
+			if limitMode == "historical_board" {
+				if d < "2022-04-29" {
+					transfer = .00002
+				}
+				if d < "2023-08-28" {
+					stamp = .001
+				}
+			}
+			in.Bars[d][code] = Bar{Open: o, High: h, Low: l, Close: close, MA10: ma, Assumed: true, Observation: observation, Buy: usable && index >= 9 && lower < o && o < upper, Sell: usable && lower < o && o < upper, Intraday: usable && !anomalous && h > l && h > lower, Lower: lower, Upper: upper, Commission: .0003, Minimum: 5, Transfer: transfer, Stamp: stamp, ADV: adv}
 		}
 	}
 	return in, audit, in.Validate(ctx)
